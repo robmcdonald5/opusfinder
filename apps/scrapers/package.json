@@ -1,0 +1,9 @@
+{
+  "name": "@opusfinder/scrapers",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "echo @opusfinder/scrapers is a placeholder - Cloudflare Workers are scaffolded in a later phase"
+  }
+}

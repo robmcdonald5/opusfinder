@@ -1,0 +1,44 @@
+# docs
+research/*
+
+# coding CLI
+CLAUDE.md
+
+# dependencies
+node_modules/
+
+# env / secrets
+.env
+.env.*
+!.env.example
+.dev.vars
+.dev.vars.*
+
+# build / cache
+dist/
+.svelte-kit/
+.wrangler/
+.turbo/
+.vercel/
+coverage/
+.nyc_output/
+*.tsbuildinfo
+.eslintcache
+vite.config.*.timestamp-*
+
+# logs
+*.log
+pnpm-debug.log*
+
+# editor
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+!.vscode/launch.json
+!.vscode/tasks.json
+
+# OS
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini

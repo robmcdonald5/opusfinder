@@ -1,0 +1,12 @@
+node_modules
+dist
+.svelte-kit
+.wrangler
+.turbo
+.vercel
+coverage
+.nyc_output
+pnpm-lock.yaml
+packages/db/drizzle/**
+research
+CLAUDE.md
