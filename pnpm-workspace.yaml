@@ -1,0 +1,8 @@
+packages:
+  - "apps/*"
+  - "packages/*"
+
+# Allowlist of deps permitted to run install/build scripts (pnpm 10+ blocks by
+# default). Moved here from package.json's "pnpm" field, which pnpm 11 ignores.
+onlyBuiltDependencies:
+  - esbuild

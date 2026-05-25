@@ -1,0 +1,9 @@
+{
+  "name": "@opusfinder/web",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "echo @opusfinder/web is a placeholder - SvelteKit is scaffolded in a later phase"
+  }
+}

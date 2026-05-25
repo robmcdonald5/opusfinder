@@ -1,0 +1,28 @@
+{
+  "name": "@opusfinder/db",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/client.ts",
+    "./schema": "./src/schema.ts"
+  },
+  "types": "./src/client.ts",
+  "scripts": {
+    "migrate": "tsx scripts/migrate.ts",
+    "generate": "drizzle-kit generate",
+    "studio": "drizzle-kit studio",
+    "ping": "tsx scripts/ping.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@neondatabase/serverless": "^1",
+    "@opusfinder/shared": "workspace:*",
+    "dotenv": "^17",
+    "drizzle-orm": "^0.45.2"
+  },
+  "devDependencies": {
+    "drizzle-kit": "^0.31.10",
+    "tsx": "^4"
+  }
+}

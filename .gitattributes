@@ -1,0 +1,4 @@
+# Normalize line endings to LF on checkout and commit for all text files,
+# so the Prettier `endOfLine: lf` gate stays green regardless of a
+# contributor's core.autocrlf setting (common Git-for-Windows default is true).
+* text=auto eol=lf
