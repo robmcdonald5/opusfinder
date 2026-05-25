@@ -15,7 +15,8 @@
     "format:check": "prettier --check .",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "db:migrate": "pnpm --filter @opusfinder/db migrate",
-    "db:ping": "pnpm --filter @opusfinder/db ping"
+    "db:ping": "pnpm --filter @opusfinder/db ping",
+    "fetch:greenhouse": "pnpm --filter @opusfinder/sources fetch:greenhouse"
   },
   "devDependencies": {
     "@eslint/js": "^10",
