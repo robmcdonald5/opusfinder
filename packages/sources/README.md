@@ -1,0 +1,45 @@
+# @opusfinder/sources
+
+ATS adapters that fetch public job-board postings and normalize them into the
+shared `NormalizedJob` shape. Phase 1 ships one concrete adapter — **Greenhouse** —
+as a local script, with no database, retries, or queueing (just fetch + normalize).
+
+There is intentionally **no shared adapter interface or registry** yet. Greenhouse
+is a plain `fetchJobs(slug)` function; the abstraction is extracted in Phase 6, once
+a second/third adapter (Lever, Ashby) reveals what actually varies across sources.
+
+## Usage
+
+```sh
+# from the repo root, after `pnpm install`:
+pnpm fetch:greenhouse vercel
+# equivalently:
+pnpm --filter @opusfinder/sources fetch:greenhouse vercel
+```
+
+Prints the normalized jobs for `boards-api.greenhouse.io/v1/boards/<slug>/jobs`. The
+script replaces each job's `raw` field with `"[omitted]"` in the printout for
+readability (the field itself still carries the full source payload).
+
+## Greenhouse adapter notes (institutional memory)
+
+- **Unpaginated.** The board API returns every posting in one response
+  (`{ jobs, meta }`), so `fetchJobs` is a single fetch with no cursor loop.
+- **`content` is double-entity-encoded HTML.** Tags arrive as `&lt;div&gt;` and
+  inner text entities as `&amp;nbsp;` / `&amp;#39;`. `descriptionText` is produced by
+  decode → strip tags → decode again → collapse whitespace; stripping before decoding
+  would match no real tags and ship entity soup. The original HTML stays on `raw`.
+- **No structured remote flag.** `remote` is inferred from the location string
+  (`/\bremote\b/i`); `"Hybrid - …"` postings intentionally resolve to `false`.
+- **Slug casing.** Board tokens are lowercase, so the adapter lowercases the slug
+  before `companySlug()` (which only enforces the universal floor and must not change
+  casing — Phase 6 SmartRecruiters is case-sensitive). This per-source rule is what
+  Phase 6 lifts onto `SourceAdapter.normalizeSlug`.
+- **`postedAt`** uses `first_published`, falling back to `updated_at` (including when
+  `first_published` is an empty string); an unparseable date becomes `null`.
+- **Resilient mapping.** The response is untrusted `unknown`: each posting is validated
+  individually, and a malformed one (non-object, or missing `id`/`title`/`absolute_url`)
+  is skipped and counted — never fatal, so one bad row can't abort the whole board.
+- **Defensive entity decoding.** Numeric entities that are out of range, lone surrogates,
+  or C0 control chars (e.g. `&#0;`) are left as their literal text rather than crashing
+  (`String.fromCodePoint` throws above `0x10FFFF`) or injecting invalid/NUL characters.

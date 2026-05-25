@@ -45,3 +45,73 @@ export const unsafeCompanySlug = (value: string): CompanySlug => value as Compan
 
 /** Escape hatch for already-trusted values (e.g. read back from the DB). */
 export const unsafeJobId = (value: string): JobId => value as JobId;
+
+/**
+ * Which ATS produced a job. A single-member union for now (Greenhouse is the
+ * only adapter in Phase 1); it grows one member per adapter as they land in
+ * Phase 6+. Kept a union, NOT `string`, so a typo is a compile error and the
+ * Phase 2 `jobs.source` column / Phase 6 source registry stay exhaustive.
+ */
+export type SourceName = "greenhouse";
+
+/**
+ * Cross-source normalized job posting — the first real normalization contract.
+ * In-memory only in Phase 1; persisted to Neon in Phase 2. Each field encodes a
+ * decision about how heterogeneous ATS payloads collapse into one shape:
+ *
+ * - The shape is deliberately flat and source-agnostic. Source-specific quirks
+ *   are resolved by each adapter's mapper, never leaked into this type.
+ * - It is intentionally NOT generic over the raw payload and there is NO adapter
+ *   interface here — that abstraction is extracted in Phase 6 from 2–3 concrete
+ *   adapters, not designed up front.
+ */
+export interface NormalizedJob {
+  /** Which ATS this came from. */
+  source: SourceName;
+  /**
+   * The ATS-native posting id, branded. Numeric ids (Greenhouse `id`) are
+   * stringified before `jobId()`; the brand is the canonical cross-ATS id type.
+   */
+  externalId: JobId;
+  /** Posting title, as given by the ATS. */
+  title: string;
+  /**
+   * Platform-canonical company slug. The per-ATS canonicalizer runs BEFORE
+   * `companySlug()` (e.g. Greenhouse lowercases); `companySlug()` only enforces
+   * the universal floor and must not transform casing (Phase 6 SmartRecruiters
+   * is case-sensitive).
+   */
+  companySlug: CompanySlug;
+  /**
+   * Human-readable location strings exactly as the ATS gives them, e.g.
+   * "Remote - United States" or "Hybrid - San Francisco, New York City". Empty
+   * when the ATS supplies none. Multi-city strings are kept whole — no parsing
+   * or splitting in Phase 1; structured location is a later concern.
+   */
+  locations: string[];
+  /**
+   * Best-effort remote flag. Many ATS (incl. Greenhouse) expose no structured
+   * remote boolean, so adapters infer it from the location string. "Hybrid"
+   * postings resolve to `false`. Treat as a heuristic, not ground truth.
+   */
+  remote: boolean;
+  /**
+   * Plain-text job description: HTML entities decoded, tags stripped, whitespace
+   * collapsed. May be "" when the ATS supplies no body. The original markup is
+   * always preserved in `raw`, so downstream consumers can re-derive richer text.
+   */
+  descriptionText: string;
+  /** Public apply / listing URL. */
+  applyUrl: string;
+  /**
+   * When the posting went live, or `null` if the ATS gives no parseable date.
+   * Adapters pick the most "posted-like" field available (e.g. Greenhouse
+   * `first_published`, falling back to `updated_at`).
+   */
+  postedAt: Date | null;
+  /**
+   * The untouched source object, for debugging and reprocessing. Typed `unknown`
+   * (never `any`) so callers must narrow before reading source-specific fields.
+   */
+  raw: unknown;
+}
