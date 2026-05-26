@@ -2,3 +2,12 @@
 # so the Prettier `endOfLine: lf` gate stays green regardless of a
 # contributor's core.autocrlf setting (common Git-for-Windows default is true).
 * text=auto eol=lf
+
+# Generated and committed: these stay tracked (they're required — the lockfile
+# pins installs; the Drizzle `meta/*_snapshot.json` files are the diff baseline
+# `drizzle-kit generate` needs to produce the next migration). Marking them
+# generated only collapses them in GitHub PR diffs and drops them from language
+# stats — they are not hand-reviewed line by line. (`_journal.json` and the
+# `.sql` migrations are intentionally left diffable: those you do read.)
+pnpm-lock.yaml linguist-generated=true
+packages/db/drizzle/meta/*_snapshot.json linguist-generated=true

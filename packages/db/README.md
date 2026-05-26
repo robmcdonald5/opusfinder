@@ -35,7 +35,7 @@ Run from the repo root via the workspace filter so the cwd is `packages/db`:
 
 ## Caveats
 
-- **Schema is empty until Phase 1+.** `src/schema.ts` is intentionally
+- **Schema is empty until Phase 2.** `src/schema.ts` is intentionally
   `export {}` — no tables yet. pgvector is enabled via the SQL migration
   (`drizzle/0000_enable_pgvector.sql`), not declared in Drizzle. Tables
   (`companies`, `jobs`, …) land from Phase 2 onward.
