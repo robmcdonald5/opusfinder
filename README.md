@@ -12,6 +12,7 @@ pipeline, and delivers a personalized digest on a regular cadence. See
 | `apps/web/`         | SvelteKit frontend (placeholder until Phase 12)                                               |
 | `apps/scrapers/`    | Cloudflare Workers scraper runtime (placeholder until Phase 8)                                |
 | `packages/db/`      | Drizzle ORM over Neon Postgres + pgvector ([README](packages/db/README.md))                   |
+| `packages/llm/`     | Vercel AI SDK + Anthropic wrapper, prompt caching ([README](packages/llm/README.md))          |
 | `packages/shared/`  | Shared brand types + validators ([README](packages/shared/README.md))                         |
 | `packages/sources/` | ATS adapters → `NormalizedJob` (Greenhouse in Phase 1) ([README](packages/sources/README.md)) |
 | `research/`         | Specs + source-discovery catalog (local planning docs — see below)                            |
@@ -31,6 +32,9 @@ pnpm install
 # Create the db package's env file and paste your Neon connection string:
 #   copy .env.example  ->  packages/db/.env   then set DATABASE_URL
 # Use the DIRECT (non-pooled) Neon host. See .env.example for the format.
+#
+# For the LLM package (Phase 3), paste your Anthropic key into packages/llm/.env:
+#   ANTHROPIC_API_KEY=sk-ant-...   (or export it as a shell env var)
 
 pnpm db:migrate   # applies packages/db/drizzle (enables the pgvector extension)
 pnpm db:ping      # round-trips SELECT 1 against Neon
@@ -38,14 +42,15 @@ pnpm db:ping      # round-trips SELECT 1 against Neon
 
 ## Root scripts
 
-| Script                         | Does                                                                     |
-| ------------------------------ | ------------------------------------------------------------------------ |
-| `pnpm lint` / `lint:fix`       | ESLint over the repo                                                     |
-| `pnpm format` / `format:check` | Prettier write / check                                                   |
-| `pnpm typecheck`               | `tsc --noEmit` (covers `packages/*`; apps excluded until they gain code) |
-| `pnpm db:migrate`              | Run Neon migrations (`@opusfinder/db`)                                   |
-| `pnpm db:ping`                 | Connectivity check against Neon                                          |
-| `pnpm fetch:greenhouse <slug>` | Fetch + normalize one Greenhouse board and print it (no DB yet)          |
+| Script                         | Does                                                                       |
+| ------------------------------ | -------------------------------------------------------------------------- |
+| `pnpm lint` / `lint:fix`       | ESLint over the repo                                                       |
+| `pnpm format` / `format:check` | Prettier write / check                                                     |
+| `pnpm typecheck`               | `tsc --noEmit` (covers `packages/*`; apps excluded until they gain code)   |
+| `pnpm db:migrate`              | Run Neon migrations (`@opusfinder/db`)                                     |
+| `pnpm db:ping`                 | Connectivity check against Neon                                            |
+| `pnpm fetch:greenhouse <slug>` | Fetch + normalize one Greenhouse board and print it (no DB yet)            |
+| `pnpm llm:test`                | Call Haiku twice with a cached system prompt; assert cache write then read |
 
 ## Documentation (local planning docs — not committed)
 
@@ -59,7 +64,8 @@ but not in a fresh clone:
 
 ## Status
 
-Phase 1 complete (Greenhouse ATS adapter — `pnpm fetch:greenhouse <slug>` fetches and
-normalizes a board into in-memory `NormalizedJob`s; no DB yet). Phase 0 before it
-scaffolded the monorepo + Neon/pgvector db package. See the implementation plan for
-what comes next.
+Phase 3 complete (`packages/llm` — Vercel AI SDK + Anthropic wrapper with first-class
+prompt caching; `pnpm llm:test` proves a cache write-then-read). Phases 0–2 before it
+scaffolded the monorepo + Neon/pgvector db package, shipped the Greenhouse ATS adapter
+(`pnpm fetch:greenhouse <slug>`), and added the `companies`/`jobs` tables with idempotent
+upsert (ingestion now persists to Neon). See the implementation plan for what comes next.
