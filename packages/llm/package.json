@@ -1,0 +1,24 @@
+{
+  "name": "@opusfinder/llm",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./env": "./src/env.ts"
+  },
+  "types": "./src/index.ts",
+  "scripts": {
+    "test:llm": "tsx scripts/test-llm.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@ai-sdk/anthropic": "^2",
+    "ai": "^5",
+    "dotenv": "^17",
+    "zod": "^4"
+  },
+  "devDependencies": {
+    "tsx": "^4"
+  }
+}
