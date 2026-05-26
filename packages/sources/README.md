@@ -2,7 +2,9 @@
 
 ATS adapters that fetch public job-board postings and normalize them into the
 shared `NormalizedJob` shape. Phase 1 ships one concrete adapter — **Greenhouse** —
-as a local script, with no database, retries, or queueing (just fetch + normalize).
+a plain fetch + normalize with no retries or queueing. As of Phase 2 the runnable
+script persists its output to Neon through `@opusfinder/db`; the adapter itself
+stays pure (persistence lives in `db`).
 
 There is intentionally **no shared adapter interface or registry** yet. Greenhouse
 is a plain `fetchJobs(slug)` function; the abstraction is extracted in Phase 6, once
@@ -17,9 +19,11 @@ pnpm fetch:greenhouse vercel
 pnpm --filter @opusfinder/sources fetch:greenhouse vercel
 ```
 
-Prints the normalized jobs for `boards-api.greenhouse.io/v1/boards/<slug>/jobs`. The
-script replaces each job's `raw` field with `"[omitted]"` in the printout for
-readability (the field itself still carries the full source payload).
+Fetches from `boards-api.greenhouse.io/v1/boards/<slug>/jobs`, then upserts the
+normalized jobs into Neon via `@opusfinder/db` (`upsertCompany` + `upsertJobs`) and
+prints a one-line summary — `changed` / `unchanged` counts plus any duplicate ids
+collapsed within the batch. An empty board persists nothing and bails before opening
+a DB connection.
 
 ## Greenhouse adapter notes (institutional memory)
 
