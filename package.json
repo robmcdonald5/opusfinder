@@ -16,7 +16,8 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "db:migrate": "pnpm --filter @opusfinder/db migrate",
     "db:ping": "pnpm --filter @opusfinder/db ping",
-    "fetch:greenhouse": "pnpm --filter @opusfinder/sources fetch:greenhouse"
+    "fetch:greenhouse": "pnpm --filter @opusfinder/sources fetch:greenhouse",
+    "llm:test": "pnpm --filter @opusfinder/llm test:llm"
   },
   "devDependencies": {
     "@eslint/js": "^10",

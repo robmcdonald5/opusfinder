@@ -4,7 +4,9 @@ Drizzle ORM over Neon Postgres, using the **neon-http** driver
 (`@neondatabase/serverless`). HTTP/fetch-based, no TCP sockets — so the same
 client runs in Node today and in Cloudflare Workers later (Phase 8). The package
 exports raw `.ts` (no build step / no `dist`): `createDb(connectionString)`
-returns a Drizzle client and is the single entry point.
+returns a Drizzle client. Phase 2 added two subpath exports alongside it:
+`@opusfinder/db/repos` (`upsertCompany` / `upsertJobs`) and `@opusfinder/db/env`
+(`getDatabaseUrl`).
 
 ## Environment
 
@@ -35,10 +37,12 @@ Run from the repo root via the workspace filter so the cwd is `packages/db`:
 
 ## Caveats
 
-- **Schema is empty until Phase 2.** `src/schema.ts` is intentionally
-  `export {}` — no tables yet. pgvector is enabled via the SQL migration
-  (`drizzle/0000_enable_pgvector.sql`), not declared in Drizzle. Tables
-  (`companies`, `jobs`, …) land from Phase 2 onward.
+- **Schema (Phase 2).** `src/schema.ts` defines `companies` (unique
+  `(slug, source)`) and `jobs` (unique `(source, external_id)`, FK → `companies`,
+  `company_id` index, text `lifecycle_state`). `jobs.embedding` is a nullable
+  `vector(1024)` reserved for Phase 4 (unindexed until then). pgvector is enabled
+  via the SQL migration (`drizzle/0000_enable_pgvector.sql`), not declared in
+  Drizzle; the tables land in `drizzle/0001_petite_namor.sql`.
 - **neon-http migrations are NOT transactional.** The neon-http migrator applies
   a migration's statements without a wrapping transaction, so a multi-statement
   migration that fails partway leaves a partial apply with no rollback (and a
