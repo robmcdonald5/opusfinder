@@ -1,0 +1,158 @@
+/**
+ * Persistence for companies + jobs. Functional style: the Drizzle client is
+ * injected (no module-level singleton), matching `createDb()` in ../client.
+ *
+ * Both upserts are idempotent. `upsertCompany` is get-or-create; `upsertJobs`
+ * dedupes the batch, then only advances `updated_at` when a job's content
+ * actually changed, so re-ingesting an unchanged board is a no-op.
+ */
+import { sql } from "drizzle-orm";
+
+import type { CompanySlug, NormalizedJob, SourceName } from "@opusfinder/shared";
+
+import type { Db } from "../client";
+import { companies, jobs } from "../schema";
+
+/** The NUL code point (U+0000), constructed at runtime so this source file never
+ * contains an actual NUL byte. */
+const NUL = String.fromCharCode(0);
+
+/**
+ * Recursively strip U+0000 (NUL) from every string in a JSON-origin value.
+ * Postgres `text` and `jsonb` cannot store a NUL byte, so an unsanitized NUL in
+ * any field — or anywhere inside the `raw` payload — would abort the whole
+ * insert. Safe to recurse over `raw` because it came from `JSON.parse` (only
+ * objects/arrays/strings/numbers/bools/null — no Dates or branded values to
+ * mangle).
+ */
+function stripNul(value: unknown): unknown {
+  if (typeof value === "string") return value.replaceAll(NUL, "");
+  if (Array.isArray(value)) return value.map(stripNul);
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([k, v]) => [k.replaceAll(NUL, ""), stripNul(v)]),
+    );
+  }
+  return value;
+}
+
+/**
+ * Get-or-create the company for `(slug, source)` and return its id.
+ *
+ * The no-op `set` (slug ← its own excluded value) makes the conflicting row
+ * "affected" so `RETURNING` yields the id even when the company already exists —
+ * a bare `onConflictDoNothing` returns no rows on conflict. It writes nothing
+ * meaningful, so `companies.updated_at` is left untouched.
+ */
+export async function upsertCompany(
+  db: Db,
+  slug: CompanySlug,
+  source: SourceName,
+): Promise<number> {
+  const rows = await db
+    .insert(companies)
+    .values({ slug, source })
+    .onConflictDoUpdate({
+      target: [companies.slug, companies.source],
+      set: { slug: sql`excluded.slug` },
+    })
+    .returning({ id: companies.id });
+
+  const row = rows[0];
+  if (!row) {
+    throw new Error(`upsertCompany returned no row for ${source}:${slug}`);
+  }
+  return row.id;
+}
+
+/**
+ * Batch-upsert a board's jobs in a single INSERT ... ON CONFLICT statement
+ * (one HTTP round-trip on neon-http). Conflict key is `(source, external_id)`.
+ *
+ * Returns `{ changed, total }`: `total` is the count of DISTINCT jobs after
+ * de-duplication; `changed` is how many were inserted or updated (rows whose
+ * content was unchanged are skipped by `setWhere` and not returned). The caller
+ * reports `unchanged = total - changed` and `collapsed = input.length - total`.
+ */
+export async function upsertJobs(
+  db: Db,
+  companyId: number,
+  list: NormalizedJob[],
+): Promise<{ changed: number; total: number }> {
+  // Collapse duplicate (source, external_id) BEFORE the batch: a single
+  // INSERT ... ON CONFLICT cannot affect the same conflict key twice (Postgres
+  // raises 21000), and a board can repeat a posting id (cross-listed roles) or a
+  // future source may reuse ids. Last occurrence wins; richer merging of
+  // duplicates (e.g. multi-location postings) is an adapter concern, not here.
+  const deduped = new Map<string, NormalizedJob>();
+  for (const job of list) {
+    deduped.set(JSON.stringify([job.source, job.externalId]), job);
+  }
+  // Guard the empty case: `INSERT ... VALUES` with no rows is invalid SQL.
+  if (deduped.size === 0) return { changed: 0, total: 0 };
+
+  const values = [...deduped.values()].map((job) => ({
+    externalId: job.externalId,
+    companyId,
+    source: job.source,
+    // Strip U+0000 from anything bound for text/jsonb (Postgres rejects it).
+    title: job.title.replaceAll(NUL, ""),
+    descriptionText: job.descriptionText.replaceAll(NUL, ""),
+    locations: job.locations.map((l) => l.replaceAll(NUL, "")),
+    remote: job.remote,
+    applyUrl: job.applyUrl.replaceAll(NUL, ""),
+    postedAt: job.postedAt,
+    raw: stripNul(job.raw),
+    // embedding intentionally omitted — populated in Phase 4.
+  }));
+
+  const updated = await db
+    .insert(jobs)
+    .values(values)
+    .onConflictDoUpdate({
+      target: [jobs.source, jobs.externalId],
+      // Write every comparable field + company_id, refresh write-only fields
+      // (posted_at, raw), and advance updated_at. INVARIANT: every column tested
+      // in `setWhere` below must also appear here — a field compared but not
+      // written would make every re-ingest look "changed" forever.
+      set: {
+        companyId: sql`excluded.company_id`,
+        title: sql`excluded.title`,
+        descriptionText: sql`excluded.description_text`,
+        locations: sql`excluded.locations`,
+        remote: sql`excluded.remote`,
+        applyUrl: sql`excluded.apply_url`,
+        postedAt: sql`excluded.posted_at`,
+        raw: sql`excluded.raw`,
+        updatedAt: sql`now()`,
+      },
+      // Advance the row only when a real change differs. Two fields are written
+      // above but deliberately EXCLUDED from this test:
+      //  - `raw`: Greenhouse bumps an internal timestamp inside it on nearly
+      //    every fetch, so comparing it would defeat idempotency.
+      //  - `posted_at`: the adapter derives it as `first_published || updated_at`,
+      //    so for postings lacking `first_published` it ALIASES that same churning
+      //    `updated_at`; comparing it would reintroduce exactly the instability
+      //    `raw` is excluded to avoid. Still written, so it stays fresh whenever a
+      //    real change fires.
+      // FUTURE PHASES, note:
+      //  - `lifecycle_state` is not written here (Phase 2 only writes 'active').
+      //    When closing/reopening lands, resetting a reappearing job to 'active'
+      //    must NOT be gated by this content test — an unchanged-but-reappearing
+      //    job would otherwise stay 'closed'.
+      //  - `locations` is compared as an ORDER-SENSITIVE jsonb array. Greenhouse
+      //    yields <=1 location so order is moot today, but a multi-location
+      //    adapter should normalize order or this will report spurious changes.
+      setWhere: sql`
+        ${jobs.companyId} IS DISTINCT FROM excluded.company_id OR
+        ${jobs.title} IS DISTINCT FROM excluded.title OR
+        ${jobs.descriptionText} IS DISTINCT FROM excluded.description_text OR
+        ${jobs.locations} IS DISTINCT FROM excluded.locations OR
+        ${jobs.remote} IS DISTINCT FROM excluded.remote OR
+        ${jobs.applyUrl} IS DISTINCT FROM excluded.apply_url
+      `,
+    })
+    .returning({ id: jobs.id });
+
+  return { changed: updated.length, total: deduped.size };
+}

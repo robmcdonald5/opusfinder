@@ -1,11 +1,18 @@
+import { fileURLToPath } from "node:url";
+
 import { config } from "dotenv";
 
-// quiet: silence dotenv@17's default load banner (filename + key count) on every run.
-config({ quiet: true });
+// Resolve packages/db/.env relative to THIS module, not the cwd. db scripts run
+// with cwd=packages/db, but cross-package callers (e.g. the sources fetch script)
+// run from their own directory — a cwd-relative load would silently miss the file
+// and leave DATABASE_URL undefined. fileURLToPath (not a raw file:// string) keeps
+// the Windows drive-letter path valid. quiet: silence dotenv@17's load banner.
+config({ path: fileURLToPath(new URL("../.env", import.meta.url)), quiet: true });
 
 /**
- * Read + validate DATABASE_URL (loaded from packages/db/.env by dotenv, relative
- * to the cwd — run db scripts via `pnpm --filter @opusfinder/db <script>`).
+ * Read + validate DATABASE_URL. The `config()` call above loads packages/db/.env
+ * resolved relative to THIS module (see the note there), so any package's scripts
+ * — not just db's — pick it up regardless of the cwd they run from.
  *
  * Centralizes the env guard so every script shares one friendly, actionable
  * error instead of an opaque driver failure. Throws (never returns a bad value).

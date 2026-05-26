@@ -5,7 +5,9 @@
   "type": "module",
   "exports": {
     ".": "./src/client.ts",
-    "./schema": "./src/schema.ts"
+    "./schema": "./src/schema.ts",
+    "./repos": "./src/repos/index.ts",
+    "./env": "./src/env.ts"
   },
   "types": "./src/client.ts",
   "scripts": {

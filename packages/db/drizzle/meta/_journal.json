@@ -8,6 +8,13 @@
       "when": 1779648642672,
       "tag": "0000_enable_pgvector",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1779817225515,
+      "tag": "0001_petite_namor",
+      "breakpoints": true
     }
   ]
 }

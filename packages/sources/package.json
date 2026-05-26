@@ -12,6 +12,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@opusfinder/db": "workspace:*",
     "@opusfinder/shared": "workspace:*"
   },
   "devDependencies": {

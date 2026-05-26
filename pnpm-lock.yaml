@@ -60,6 +60,9 @@ importers:
 
   packages/sources:
     dependencies:
+      '@opusfinder/db':
+        specifier: workspace:*
+        version: link:../db
       '@opusfinder/shared':
         specifier: workspace:*
         version: link:../shared
