@@ -115,3 +115,12 @@ export interface NormalizedJob {
    */
   raw: unknown;
 }
+
+/**
+ * Narrow an `unknown` to a plain object (record). Shared by the ATS adapters and the
+ * embeddings provider when validating untrusted JSON response shapes, so the guard has
+ * one definition instead of a copy per parser.
+ */
+export function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
