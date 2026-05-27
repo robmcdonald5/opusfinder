@@ -1,0 +1,24 @@
+{
+  "name": "@opusfinder/embeddings",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./env": "./src/env.ts"
+  },
+  "types": "./src/index.ts",
+  "scripts": {
+    "backfill": "tsx scripts/backfill.ts",
+    "search": "tsx scripts/search.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@opusfinder/db": "workspace:*",
+    "@opusfinder/shared": "workspace:*",
+    "dotenv": "^17"
+  },
+  "devDependencies": {
+    "tsx": "^4"
+  }
+}
