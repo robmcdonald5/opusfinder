@@ -2,3 +2,11 @@
 // Drizzle schema. Imported by ingestion scripts (and later Workers) to write
 // normalized jobs through to Neon.
 export { upsertCompany, upsertJobs } from "./jobs";
+export {
+  jobsNeedingEmbedding,
+  writeJobEmbeddings,
+  backfillJobEmbeddings,
+  nearestJobs,
+  jobEmbeddingText,
+} from "./embeddings";
+export type { JobNeedingEmbedding, JobNeighbor } from "./embeddings";
