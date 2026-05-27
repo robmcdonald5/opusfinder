@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@opusfinder/db": "workspace:*",
+    "@opusfinder/embeddings": "workspace:*",
     "@opusfinder/shared": "workspace:*"
   },
   "devDependencies": {
