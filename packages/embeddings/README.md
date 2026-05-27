@@ -45,7 +45,7 @@ estimateCostUsd(usage.totalTokens); // USD at voyage-3-large list price
 ```
 
 `embed()` transparently chunks large inputs to respect Voyage's per-request limits
-(≤1000 items + a token budget), preserving order and summing usage. Empty input is a
+(≤128 items + a ~90K-token budget — see `MAX_ITEMS_PER_REQUEST` / `MAX_TOKENS_PER_REQUEST` in `provider.ts`), preserving order and summing usage. Empty input is a
 no-op (no network call).
 
 ### input_type asymmetry
