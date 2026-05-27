@@ -1,20 +1,22 @@
 {
-  "name": "@opusfinder/sources",
+  "name": "@opusfinder/embeddings",
   "version": "0.0.0",
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./env": "./src/env.ts"
   },
   "types": "./src/index.ts",
   "scripts": {
-    "fetch:greenhouse": "tsx scripts/fetch-greenhouse.ts",
+    "backfill": "tsx scripts/backfill.ts",
+    "search": "tsx scripts/search.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@opusfinder/db": "workspace:*",
-    "@opusfinder/embeddings": "workspace:*",
-    "@opusfinder/shared": "workspace:*"
+    "@opusfinder/shared": "workspace:*",
+    "dotenv": "^17"
   },
   "devDependencies": {
     "tsx": "^4"

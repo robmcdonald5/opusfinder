@@ -17,7 +17,9 @@
     "db:migrate": "pnpm --filter @opusfinder/db migrate",
     "db:ping": "pnpm --filter @opusfinder/db ping",
     "fetch:greenhouse": "pnpm --filter @opusfinder/sources fetch:greenhouse",
-    "llm:test": "pnpm --filter @opusfinder/llm test:llm"
+    "llm:test": "pnpm --filter @opusfinder/llm test:llm",
+    "embeddings:backfill": "pnpm --filter @opusfinder/embeddings backfill",
+    "embeddings:search": "pnpm --filter @opusfinder/embeddings run search"
   },
   "devDependencies": {
     "@eslint/js": "^10",

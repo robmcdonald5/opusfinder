@@ -15,6 +15,13 @@
       "when": 1779817225515,
       "tag": "0001_petite_namor",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1779900982158,
+      "tag": "0002_flashy_joshua_kane",
+      "breakpoints": true
     }
   ]
 }

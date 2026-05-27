@@ -112,7 +112,8 @@ export async function upsertJobs(
     .onConflictDoUpdate({
       target: [jobs.source, jobs.externalId],
       // Write every comparable field + company_id, refresh write-only fields
-      // (posted_at, raw), and advance updated_at. INVARIANT: every column tested
+      // (posted_at, raw), conditionally reset the derived embedding, and advance
+      // updated_at. INVARIANT: every column tested
       // in `setWhere` below must also appear here — a field compared but not
       // written would make every re-ingest look "changed" forever.
       set: {
@@ -124,6 +125,18 @@ export async function upsertJobs(
         applyUrl: sql`excluded.apply_url`,
         postedAt: sql`excluded.posted_at`,
         raw: sql`excluded.raw`,
+        // The embedding is derived from title + description_text ONLY, so invalidate it
+        // (NULL → the backfill / inline-embed step re-embeds next pass) only when one of
+        // those two actually changed. The setWhere below also fires on apply_url /
+        // locations / remote / company_id changes; on those this CASE keeps the existing
+        // vector rather than paying to re-embed identical text. (An unchanged re-ingest
+        // never runs the set at all.)
+        embedding: sql`CASE
+          WHEN ${jobs.title} IS DISTINCT FROM excluded.title
+            OR ${jobs.descriptionText} IS DISTINCT FROM excluded.description_text
+          THEN NULL
+          ELSE ${jobs.embedding}
+        END`,
         updatedAt: sql`now()`,
       },
       // Advance the row only when a real change differs. Two fields are written

@@ -1,0 +1,73 @@
+import {
+  CHARS_PER_TOKEN,
+  embedRequest,
+  EMBED_MODEL,
+  MAX_ITEMS_PER_REQUEST,
+  MAX_TOKENS_PER_REQUEST,
+  type VoyageInputType,
+} from "./provider";
+
+export type { VoyageInputType };
+
+export interface EmbedParams {
+  /**
+   * Voyage retrieval hint. Embed the corpus (jobs) as "document" and the search text
+   * (the user profile) as "query"; the asymmetry improves retrieval. Defaults to null
+   * (no prompt prepended).
+   */
+  inputType?: VoyageInputType;
+}
+
+export interface EmbedResult {
+  /** One vector per input text, in input order. */
+  embeddings: number[][];
+  /** Voyage token usage, summed across the (possibly chunked) requests. */
+  usage: { totalTokens: number };
+  /** The embedding model used (for logging / provenance). */
+  model: string;
+}
+
+/**
+ * Embed an arbitrary number of texts, transparently chunking to respect Voyage's
+ * per-request limits, preserving input order and summing token usage. Provider-agnostic:
+ * all Voyage specifics live in ./provider (the swap point). Empty input short-circuits
+ * with no network call.
+ */
+export async function embed(texts: string[], params: EmbedParams = {}): Promise<EmbedResult> {
+  const inputType = params.inputType ?? null;
+  if (texts.length === 0) {
+    return { embeddings: [], usage: { totalTokens: 0 }, model: EMBED_MODEL };
+  }
+
+  const embeddings: number[][] = [];
+  let totalTokens = 0;
+  for (const chunk of chunkByLimits(texts)) {
+    const res = await embedRequest(chunk, inputType);
+    embeddings.push(...res.embeddings);
+    totalTokens += res.totalTokens;
+  }
+  return { embeddings, usage: { totalTokens }, model: EMBED_MODEL };
+}
+
+/**
+ * Split `texts` into chunks respecting BOTH the item cap and a rough token budget. A
+ * single text that alone exceeds the token budget still goes out as its own chunk
+ * (Voyage truncates it per the API's default `truncation: true`) rather than stalling.
+ */
+function* chunkByLimits(texts: string[]): Generator<string[]> {
+  let batch: string[] = [];
+  let batchTokens = 0;
+  for (const text of texts) {
+    const estTokens = Math.ceil(text.length / CHARS_PER_TOKEN);
+    const wouldExceed =
+      batch.length >= MAX_ITEMS_PER_REQUEST || batchTokens + estTokens > MAX_TOKENS_PER_REQUEST;
+    if (batch.length > 0 && wouldExceed) {
+      yield batch;
+      batch = [];
+      batchTokens = 0;
+    }
+    batch.push(text);
+    batchTokens += estTokens;
+  }
+  if (batch.length > 0) yield batch;
+}

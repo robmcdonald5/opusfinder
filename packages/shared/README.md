@@ -59,3 +59,10 @@ The type is intentionally **not** generic over the raw payload, and there is
 member per adapter as they land). Kept a union rather than `string` so a typo is
 a compile error and the Phase 2 `jobs.source` column / Phase 6 source registry
 stay exhaustive.
+
+## Type guards
+
+`isRecord(value): value is Record<string, unknown>` narrows an `unknown` to a non-null
+object — the floor check before reading properties off an untrusted JSON value (e.g. an
+ATS response, or an embedding-provider reply). Centralized here so each parser doesn't
+re-define it.

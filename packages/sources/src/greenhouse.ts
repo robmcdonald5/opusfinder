@@ -1,4 +1,4 @@
-import { companySlug, jobId } from "@opusfinder/shared";
+import { companySlug, isRecord, jobId } from "@opusfinder/shared";
 import type { CompanySlug, NormalizedJob } from "@opusfinder/shared";
 
 const BOARDS_API = "https://boards-api.greenhouse.io/v1/boards";
@@ -93,10 +93,6 @@ function toNormalizedJob(raw: unknown, token: CompanySlug): NormalizedJob | null
     postedAt,
     raw,
   };
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
 }
 
 /**

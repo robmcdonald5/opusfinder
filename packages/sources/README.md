@@ -25,6 +25,14 @@ prints a one-line summary — `changed` / `unchanged` counts plus any duplicate 
 collapsed within the batch. An empty board persists nothing and bails before opening
 a DB connection.
 
+After persisting, the script embeds this board's postings that still lack a vector —
+freshly inserted jobs plus any whose content changed (`upsertJobs` nulls a job's embedding
+when its title or description changes) — via `@opusfinder/embeddings`, logging the count
+and token cost. Embedding is best-effort: a Voyage failure is caught and warned, never
+failing an otherwise-successful ingest (re-run `pnpm embeddings:backfill` to retry). It is
+skipped (with a notice) when `VOYAGE_API_KEY` is unset, or explicitly via
+`pnpm fetch:greenhouse <slug> --no-embed`.
+
 ## Greenhouse adapter notes (institutional memory)
 
 - **Unpaginated.** The board API returns every posting in one response
