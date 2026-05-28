@@ -1,0 +1,41 @@
+{
+  "ranker": "random",
+  "embedder": null,
+  "dataset": "data/dataset.jsonl",
+  "exampleCount": 2,
+  "metrics": [
+    {
+      "k": 3,
+      "precision": 0,
+      "recall": 0,
+      "ndcg": 0,
+      "counts": {
+        "precision": 2,
+        "recall": 2,
+        "ndcg": 2
+      }
+    },
+    {
+      "k": 5,
+      "precision": 0.1,
+      "recall": 0.03333333333333333,
+      "ndcg": 0.07303417492135322,
+      "counts": {
+        "precision": 2,
+        "recall": 2,
+        "ndcg": 2
+      }
+    },
+    {
+      "k": 10,
+      "precision": 0.1,
+      "recall": 0.06666666666666667,
+      "ndcg": 0.08659331667411305,
+      "counts": {
+        "precision": 2,
+        "recall": 2,
+        "ndcg": 2
+      }
+    }
+  ]
+}

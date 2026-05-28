@@ -60,7 +60,7 @@ All Voyage specifics (endpoint, model id, dimensions, price, request/response ma
 live in `src/provider.ts` plus the key guard in `src/env.ts`. Swapping to OpenAI
 `text-embedding-3-small` (the Phase-5 eval comparison) is contained to those two files —
 `embed()` stays provider-agnostic. Note: an OpenAI swap must request `dimensions: 1024`
-to reuse the `jobs.embedding vector(1024)` column.
+to reuse the `jobs.embedding vector(1024)` column — the eval harness's OpenAI embedder (`packages/eval`) already does exactly this.
 
 ## Scripts
 

@@ -1,0 +1,27 @@
+{
+  "name": "@opusfinder/eval",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "types": "./src/index.ts",
+  "scripts": {
+    "eval": "tsx scripts/eval.ts",
+    "eval:compare": "tsx scripts/compare.ts",
+    "export:candidates": "tsx scripts/export-candidates.ts",
+    "build:dataset": "tsx scripts/build-dataset.ts",
+    "test:metrics": "tsx scripts/test-metrics.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@opusfinder/db": "workspace:*",
+    "@opusfinder/embeddings": "workspace:*",
+    "@opusfinder/shared": "workspace:*",
+    "dotenv": "^17"
+  },
+  "devDependencies": {
+    "tsx": "^4"
+  }
+}
