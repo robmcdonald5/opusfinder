@@ -14,6 +14,14 @@ node_modules/
 .dev.vars
 .dev.vars.*
 
+# eval: raw CVs (PII — derived, anonymized profiles are committed; the source CVs are not) and any
+# working *.json dump under data/. The committed datasets are *.jsonl; candidates-export.json and
+# any custom --out target are *.json working artifacts, never committed. Fixture reports are
+# smoke-test output, not baselines.
+packages/eval/data/cvs/
+packages/eval/data/*.json
+packages/eval/reports/*.fixture.json
+
 # build / cache
 dist/
 .svelte-kit/

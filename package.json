@@ -19,7 +19,9 @@
     "fetch:greenhouse": "pnpm --filter @opusfinder/sources fetch:greenhouse",
     "llm:test": "pnpm --filter @opusfinder/llm test:llm",
     "embeddings:backfill": "pnpm --filter @opusfinder/embeddings backfill",
-    "embeddings:search": "pnpm --filter @opusfinder/embeddings run search"
+    "embeddings:search": "pnpm --filter @opusfinder/embeddings run search",
+    "eval": "pnpm --filter @opusfinder/eval run eval",
+    "eval:compare": "pnpm --filter @opusfinder/eval run eval:compare"
   },
   "devDependencies": {
     "@eslint/js": "^10",

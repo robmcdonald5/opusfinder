@@ -72,6 +72,25 @@ importers:
         specifier: ^4
         version: 4.22.3
 
+  packages/eval:
+    dependencies:
+      '@opusfinder/db':
+        specifier: workspace:*
+        version: link:../db
+      '@opusfinder/embeddings':
+        specifier: workspace:*
+        version: link:../embeddings
+      '@opusfinder/shared':
+        specifier: workspace:*
+        version: link:../shared
+      dotenv:
+        specifier: ^17
+        version: 17.4.2
+    devDependencies:
+      tsx:
+        specifier: ^4
+        version: 4.22.3
+
   packages/llm:
     dependencies:
       '@ai-sdk/anthropic':
