@@ -7,16 +7,17 @@ pipeline, and delivers a personalized digest on a regular cadence. See
 
 ## Monorepo layout
 
-| Path                | What                                                                                          |
-| ------------------- | --------------------------------------------------------------------------------------------- |
-| `apps/web/`         | SvelteKit frontend (placeholder until Phase 12)                                               |
-| `apps/scrapers/`    | Cloudflare Workers scraper runtime (placeholder until Phase 8)                                |
-| `packages/db/`      | Drizzle ORM over Neon Postgres + pgvector ([README](packages/db/README.md))                   |
+| Path                   | What                                                                                          |
+| ---------------------- | --------------------------------------------------------------------------------------------- |
+| `apps/web/`            | SvelteKit frontend (placeholder until Phase 12)                                               |
+| `apps/scrapers/`       | Cloudflare Workers scraper runtime (placeholder until Phase 8)                                |
+| `packages/db/`         | Drizzle ORM over Neon Postgres + pgvector ([README](packages/db/README.md))                   |
 | `packages/embeddings/` | Voyage `voyage-3-large` embeddings + HNSW retrieval ([README](packages/embeddings/README.md)) |
-| `packages/llm/`     | Vercel AI SDK + Anthropic wrapper, prompt caching ([README](packages/llm/README.md))          |
-| `packages/shared/`  | Shared brand types + validators ([README](packages/shared/README.md))                         |
-| `packages/sources/` | ATS adapters → `NormalizedJob` (Greenhouse in Phase 1) ([README](packages/sources/README.md)) |
-| `research/`         | Specs + source-discovery catalog (local planning docs — see below)                            |
+| `packages/eval/`       | Matching-quality eval harness — metrics, rankers, reports ([README](packages/eval/README.md)) |
+| `packages/llm/`        | Vercel AI SDK + Anthropic wrapper, prompt caching ([README](packages/llm/README.md))          |
+| `packages/shared/`     | Shared brand types + validators ([README](packages/shared/README.md))                         |
+| `packages/sources/`    | ATS adapters → `NormalizedJob` (Greenhouse in Phase 1) ([README](packages/sources/README.md)) |
+| `research/`            | Specs + source-discovery catalog (local planning docs — see below)                            |
 
 pnpm workspaces; the package manager is pinned to pnpm 11.3.0.
 
@@ -53,10 +54,12 @@ pnpm db:ping      # round-trips SELECT 1 against Neon
 | `pnpm typecheck`               | `tsc --noEmit` (covers `packages/*`; apps excluded until they gain code)   |
 | `pnpm db:migrate`              | Run Neon migrations (`@opusfinder/db`)                                     |
 | `pnpm db:ping`                 | Connectivity check against Neon                                            |
-| `pnpm fetch:greenhouse <slug>` | Fetch + normalize a Greenhouse board, upsert to Neon, embed new postings            |
+| `pnpm fetch:greenhouse <slug>` | Fetch + normalize a Greenhouse board, upsert to Neon, embed new postings   |
 | `pnpm llm:test`                | Call Haiku twice with a cached system prompt; assert cache write then read |
 | `pnpm embeddings:backfill`     | Embed every job whose `embedding` is still NULL (idempotent)               |
-| `pnpm embeddings:search "<q>"` | Embed a query and print the nearest jobs by cosine distance (HNSW)          |
+| `pnpm embeddings:search "<q>"` | Embed a query and print the nearest jobs by cosine distance (HNSW)         |
+| `pnpm eval`                    | Score a ranker over the labeled set; write a report + diff vs last run     |
+| `pnpm eval:compare`            | Voyage vs OpenAI embedding retrieval, side-by-side                         |
 
 ## Documentation (local planning docs — not committed)
 
@@ -70,11 +73,17 @@ but not in a fresh clone:
 
 ## Status
 
-Phase 4 complete (`packages/embeddings` — a provider-agnostic Voyage `voyage-3-large`
-wrapper; jobs are embedded inline during ingestion and via `pnpm embeddings:backfill`,
-and `pnpm embeddings:search "<query>"` returns nearest jobs over an HNSW cosine index).
-Phase 3 before it shipped `packages/llm` (Vercel AI SDK + Anthropic wrapper with
-first-class prompt caching; `pnpm llm:test` proves a cache write-then-read). Phases 0–2
-scaffolded the monorepo + Neon/pgvector db package, shipped the Greenhouse ATS adapter
-(`pnpm fetch:greenhouse <slug>`), and added the `companies`/`jobs` tables with idempotent
-upsert (ingestion now persists to Neon). See the implementation plan for what comes next.
+Phase 5 substantially complete (`packages/eval` — a matching-quality harness scoring
+precision/recall/NDCG@k over a JSONL labeled set, with a random baseline and an embedding
+ranker; `pnpm eval` writes committed per-config reports and diffs the last run). Voyage
+retrieval is validated on the seed set (2 profiles anonymized from real CVs × 80 real jobs);
+the Voyage-vs-OpenAI head-to-head (`pnpm eval:compare`) ran and Voyage won (NDCG@10 83.2% vs
+66.9%), so Voyage is the chosen provider — and the harness proved provider-agnostic, so the
+choice is cheap to revisit as the labeled set scales. Phase 4 before it shipped
+`packages/embeddings` (Voyage `voyage-3-large`; jobs embedded inline + via
+`pnpm embeddings:backfill`; `pnpm embeddings:search "<query>"` over an HNSW cosine index).
+Phase 3 shipped `packages/llm` (Vercel AI SDK + Anthropic wrapper with first-class prompt
+caching; `pnpm llm:test` proves a cache write-then-read). Phases 0–2 scaffolded the monorepo +
+Neon/pgvector db package, shipped the Greenhouse ATS adapter (`pnpm fetch:greenhouse <slug>`),
+and added the `companies`/`jobs` tables with idempotent upsert. See the implementation plan for
+what comes next.
