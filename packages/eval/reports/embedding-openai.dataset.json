@@ -1,0 +1,41 @@
+{
+  "ranker": "embedding",
+  "embedder": "openai",
+  "dataset": "data/dataset.jsonl",
+  "exampleCount": 2,
+  "metrics": [
+    {
+      "k": 3,
+      "precision": 0.6666666666666666,
+      "recall": 0.31666666666666665,
+      "ndcg": 0.6480409554829325,
+      "counts": {
+        "precision": 2,
+        "recall": 2,
+        "ndcg": 2
+      }
+    },
+    {
+      "k": 5,
+      "precision": 0.6,
+      "recall": 0.475,
+      "ndcg": 0.6597907099438133,
+      "counts": {
+        "precision": 2,
+        "recall": 2,
+        "ndcg": 2
+      }
+    },
+    {
+      "k": 10,
+      "precision": 0.44999999999999996,
+      "recall": 0.575,
+      "ndcg": 0.6690838266291413,
+      "counts": {
+        "precision": 2,
+        "recall": 2,
+        "ndcg": 2
+      }
+    }
+  ]
+}

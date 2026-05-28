@@ -1,0 +1,41 @@
+{
+  "ranker": "embedding",
+  "embedder": "voyage",
+  "dataset": "data/dataset.jsonl",
+  "exampleCount": 2,
+  "metrics": [
+    {
+      "k": 3,
+      "precision": 1,
+      "recall": 0.475,
+      "ndcg": 1,
+      "counts": {
+        "precision": 2,
+        "recall": 2,
+        "ndcg": 2
+      }
+    },
+    {
+      "k": 5,
+      "precision": 0.7,
+      "recall": 0.5083333333333333,
+      "ndcg": 0.8429020569430881,
+      "counts": {
+        "precision": 2,
+        "recall": 2,
+        "ndcg": 2
+      }
+    },
+    {
+      "k": 10,
+      "precision": 0.55,
+      "recall": 0.6416666666666666,
+      "ndcg": 0.8318600886299858,
+      "counts": {
+        "precision": 2,
+        "recall": 2,
+        "ndcg": 2
+      }
+    }
+  ]
+}
