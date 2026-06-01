@@ -10,6 +10,8 @@
  */
 import { join } from "node:path";
 
+import { runScript } from "@opusfinder/shared/script";
+
 import { getFlag } from "../src/cli";
 import { loadDataset } from "../src/dataset";
 import { resolveEmbedder } from "../src/embedders";
@@ -103,8 +105,4 @@ function printDelta(reports: EvalReport[]): void {
   }
 }
 
-// Set exitCode (not process.exit) so undici/neon-http handles drain — Windows clean-exit caveat.
-main().catch((err: unknown) => {
-  console.error(`Compare failed: ${err instanceof Error ? err.message : String(err)}`);
-  process.exitCode = 1;
-});
+await runScript("Compare", main);

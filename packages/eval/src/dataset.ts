@@ -8,7 +8,7 @@
  */
 import { readFileSync } from "node:fs";
 
-import { isRecord } from "@opusfinder/shared";
+import { composeEmbeddingText, isRecord } from "@opusfinder/shared";
 
 import { profileEmbeddingText } from "./profile";
 import type { EvalExample, EvalJob, EvalProfile } from "./types";
@@ -153,12 +153,13 @@ function validateJob(value: unknown, at: string): EvalJob {
   if (typeof value.descriptionText !== "string") {
     throw new Error(`${at}: descriptionText must be a string.`);
   }
-  // Every candidate must have embeddable content. This is a deliberately LIGHTWEIGHT, db-free
-  // mirror of jobEmbeddingText (title + description; blank on BOTH composes to "" and the embedder
-  // 400s) — kept db-free on purpose so loadDataset never pulls @opusfinder/db onto the random /
-  // fixture path. The AUTHORITATIVE, drift-proof check (asserting jobEmbeddingText's actual output)
-  // lives in embeddingRanker, where the composer is already imported and only loaded when embedding.
-  if (value.title.trim() === "" && value.descriptionText.trim() === "") {
+  // Every candidate must have embeddable content (blank on BOTH title and description composes to
+  // "" and the embedder 400s). Uses the shared composeEmbeddingText so the "empty" notion matches
+  // jobEmbeddingText's composition — but stays db-free (it lists the fields locally rather than
+  // importing jobEmbeddingText), so loadDataset never pulls @opusfinder/db onto the random / fixture
+  // path. The AUTHORITATIVE check against jobEmbeddingText's ACTUAL output (which also catches a
+  // future field-list change) lives in embeddingRanker, where the composer is loaded only when embedding.
+  if (composeEmbeddingText([value.title, value.descriptionText]) === "") {
     throw new Error(
       `${at}: job ${value.id} has no embeddable content (title and descriptionText are both empty).`,
     );

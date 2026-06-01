@@ -1,8 +1,11 @@
 # @opusfinder/embeddings
 
 A thin, **provider-agnostic** wrapper over [Voyage AI](https://voyageai.com) embeddings
-(`voyage-3-large`, 1024 dims). The public surface is one function — `embed()` — that
-turns texts into vectors and reports token usage. Job ingestion (Phase 4) writes
+(`voyage-3-large`, 1024 dims). The primary surface is one function — `embed()` — that
+turns texts into vectors and reports token usage; the package also exports a
+provider-agnostic embedding-request **contract** (`chunkByLimits`,
+`parseEmbeddingResponse`, from `src/contract.ts`) that the Voyage provider and the
+eval-only OpenAI embedder share instead of forking. Job ingestion (Phase 4) writes
 `jobs.embedding`; the user-profile embedding (Phase 9) and digest vector-retrieval
 (Phase 10) reuse the same `embed()`.
 
@@ -45,8 +48,11 @@ estimateCostUsd(usage.totalTokens); // USD at voyage-3-large list price
 ```
 
 `embed()` transparently chunks large inputs to respect Voyage's per-request limits
-(≤128 items + a ~90K-token budget — see `MAX_ITEMS_PER_REQUEST` / `MAX_TOKENS_PER_REQUEST` in `provider.ts`), preserving order and summing usage. Empty input is a
-no-op (no network call).
+(≤128 items + a ~90K-token budget). The chunking algorithm lives in `src/contract.ts`
+(`chunkByLimits`) and the response-envelope validation in `parseEmbeddingResponse`, both
+shared with the eval OpenAI embedder; `provider.ts` only injects Voyage's own limits
+(`MAX_ITEMS_PER_REQUEST` / `MAX_TOKENS_PER_REQUEST`) and dimensions. Order is preserved
+and usage summed; empty input is a no-op (no network call).
 
 ### input_type asymmetry
 
@@ -57,8 +63,10 @@ documents; the user profile is the query.
 ### Swapping providers
 
 All Voyage specifics (endpoint, model id, dimensions, price, request/response mapping)
-live in `src/provider.ts` plus the key guard in `src/env.ts`. Swapping to OpenAI
-`text-embedding-3-small` (the Phase-5 eval comparison) is contained to those two files —
+live in `src/provider.ts` plus the key guard in `src/env.ts`. The request-chunking and
+response-validation invariants are shared via `src/contract.ts`, so a swap reuses them and
+only supplies the provider's own model, limits, and request body. Swapping to OpenAI
+`text-embedding-3-small` (the Phase-5 eval comparison) is contained to that surface —
 `embed()` stays provider-agnostic. Note: an OpenAI swap must request `dimensions: 1024`
 to reuse the `jobs.embedding vector(1024)` column — the eval harness's OpenAI embedder (`packages/eval`) already does exactly this.
 

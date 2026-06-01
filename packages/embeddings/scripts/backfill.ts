@@ -1,6 +1,7 @@
 import { createDb } from "@opusfinder/db";
 import { getDatabaseUrl } from "@opusfinder/db/env";
 import { backfillJobEmbeddings } from "@opusfinder/db/repos";
+import { runScript } from "@opusfinder/shared/script";
 
 import { embed, formatEmbedCost } from "../src/index";
 
@@ -20,10 +21,4 @@ async function main(): Promise<void> {
   console.log(`Embedded ${embedded} job${embedded === 1 ? "" : "s"} (${formatEmbedCost(tokens)}).`);
 }
 
-// Set exitCode rather than process.exit(): an abrupt exit while a Voyage/undici or
-// neon-http socket handle is still closing trips a libuv assertion on Windows. Letting
-// the event loop drain exits cleanly once those handles are released.
-main().catch((err: unknown) => {
-  console.error(`Backfill failed: ${err instanceof Error ? err.message : String(err)}`);
-  process.exitCode = 1;
-});
+await runScript("Backfill", main);

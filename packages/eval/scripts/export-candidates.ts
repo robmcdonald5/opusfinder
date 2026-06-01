@@ -15,6 +15,7 @@ import { join } from "node:path";
 import { createDb } from "@opusfinder/db";
 import { getDatabaseUrl } from "@opusfinder/db/env";
 import { jobs } from "@opusfinder/db/schema";
+import { runScript } from "@opusfinder/shared/script";
 
 import { getFlag } from "../src/cli";
 import { PKG_ROOT } from "../src/runner";
@@ -71,8 +72,4 @@ async function main(): Promise<void> {
   );
 }
 
-// Set exitCode (not process.exit) so the neon-http fetch sockets drain — Windows teardown caveat.
-main().catch((err: unknown) => {
-  console.error(`Export failed: ${err instanceof Error ? err.message : String(err)}`);
-  process.exitCode = 1;
-});
+await runScript("Export", main);

@@ -19,6 +19,8 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
+import { runScript } from "@opusfinder/shared/script";
+
 import { parseDatasetLines } from "../src/dataset";
 import { PKG_ROOT } from "../src/runner";
 import type { EvalExample, EvalJob, EvalProfile } from "../src/types";
@@ -158,7 +160,18 @@ function main(): void {
       `${exportPath} not found — run \`pnpm --filter @opusfinder/eval export:candidates\` first.`,
     );
   }
-  const jobs = JSON.parse(readFileSync(exportPath, "utf8")) as ExportJob[];
+  // Guard the parse: a truncated (interrupted export) or hand-edited file would otherwise
+  // throw a raw SyntaxError, defeating the friendly missing/empty-file guidance right above.
+  let jobs: ExportJob[];
+  try {
+    jobs = JSON.parse(readFileSync(exportPath, "utf8")) as ExportJob[];
+  } catch (err) {
+    throw new Error(
+      `${exportPath} is not valid JSON (${err instanceof Error ? err.message : String(err)}). ` +
+        "Re-run `pnpm --filter @opusfinder/eval export:candidates` to regenerate it.",
+      { cause: err },
+    );
+  }
   if (jobs.length === 0) {
     throw new Error(
       "candidates-export.json is empty — run `pnpm --filter @opusfinder/eval export:candidates` first.",
@@ -218,4 +231,4 @@ function main(): void {
   );
 }
 
-main();
+await runScript("Build", main);

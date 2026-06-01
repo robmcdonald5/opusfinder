@@ -1,5 +1,4 @@
-import { isRecord } from "@opusfinder/shared";
-
+import { parseEmbeddingResponse } from "./contract";
 import { getVoyageApiKey } from "./env";
 
 /**
@@ -95,47 +94,11 @@ export async function embedRequest(
     );
   }
 
-  return parseResponse((await res.json()) as unknown, input.length);
-}
-
-/** Validate the response envelope and extract order-aligned vectors + token usage. */
-function parseResponse(body: unknown, expected: number): VoyageEmbedResponse {
-  if (!isRecord(body) || !Array.isArray(body.data)) {
-    throw new Error("Voyage embeddings response missing a `data` array.");
-  }
-
-  const rows = body.data.map((item: unknown, i: number) => {
-    if (!isRecord(item) || !Array.isArray(item.embedding)) {
-      throw new Error(`Voyage embeddings response item ${i} is missing its vector.`);
-    }
-    const embedding = item.embedding as number[];
-    // Validate before these reach the pgvector `::vector(N)` cast downstream: a wrong-length
-    // or non-finite vector would otherwise fail the whole write batch with an opaque cast
-    // error. Catch it here, attributed to the specific response item.
-    if (embedding.length !== EMBED_DIMENSIONS) {
-      throw new Error(
-        `Voyage returned a ${embedding.length}-dim vector for item ${i}; expected ${EMBED_DIMENSIONS}.`,
-      );
-    }
-    if (!embedding.every((x) => typeof x === "number" && Number.isFinite(x))) {
-      throw new Error(`Voyage returned a non-finite embedding component for item ${i}.`);
-    }
-    const index = typeof item.index === "number" ? item.index : i;
-    return { index, embedding };
+  // Envelope validation + order-aligned extraction is the shared embedding contract; only
+  // the provider name, dimension, and count are Voyage-specific.
+  return parseEmbeddingResponse((await res.json()) as unknown, {
+    provider: "Voyage",
+    expectedDimensions: EMBED_DIMENSIONS,
+    expectedCount: input.length,
   });
-
-  // Voyage returns results in request order, but sort by `index` defensively so a
-  // future out-of-order response can never misalign a vector with its input text.
-  rows.sort((a, b) => a.index - b.index);
-  if (rows.length !== expected) {
-    throw new Error(`Voyage returned ${rows.length} embeddings for ${expected} inputs.`);
-  }
-
-  const usage = isRecord(body.usage) ? body.usage : undefined;
-  const totalTokens =
-    usage && typeof usage.total_tokens === "number" && Number.isFinite(usage.total_tokens)
-      ? usage.total_tokens
-      : 0;
-
-  return { embeddings: rows.map((r) => r.embedding), totalTokens };
 }

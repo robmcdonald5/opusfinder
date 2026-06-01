@@ -14,9 +14,12 @@ returns a Drizzle client. Phase 2 added two subpath exports alongside it:
 
 The real connection string lives in `packages/db/.env` (gitignored). Copy the
 repo-root `.env.example` there and set `DATABASE_URL` to your Neon **direct**
-(non-pooled) connection string. `getDatabaseUrl()` (`src/env.ts`) validates it is
+(non-pooled) connection string. `getDatabaseUrl()` (`src/env.ts`, built on
+`@opusfinder/shared/env`'s `loadPackageEnv` + `requireEnv`) validates it is
 a `postgres(ql)://` URL and, on failure, echoes only the scheme — never the
-credentials.
+credentials. `loadPackageEnv(import.meta.url)` resolves `packages/db/.env`
+relative to the module (not the cwd), so any package's scripts pick up
+`DATABASE_URL` however they're invoked.
 
 ## Commands
 
@@ -32,10 +35,11 @@ Run from the repo root via the workspace filter so the cwd is `packages/db`:
 
 `migrate` and `ping` are also exposed at the root as `pnpm db:migrate` / `pnpm db:ping`.
 
-> **Cwd matters.** The scripts and `drizzle.config.ts` use **cwd-relative** paths
-> (`./drizzle` for migrations, `.env` for dotenv). They must run with the cwd set
-> to `packages/db` — always invoke them via `pnpm --filter @opusfinder/db <script>`
-> (or `cd packages/db` first), never by pathing into the script directly.
+> **Cwd matters.** `drizzle.config.ts` and the `./drizzle` migration path are
+> **cwd-relative**, so db scripts must run with the cwd set to `packages/db` —
+> always invoke them via `pnpm --filter @opusfinder/db <script>` (or `cd packages/db`
+> first), never by pathing into the script directly. (Env loading is no longer
+> cwd-relative — `getDatabaseUrl()` loads via `@opusfinder/shared/env`; see Environment above.)
 
 ## Caveats
 
