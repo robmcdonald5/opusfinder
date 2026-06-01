@@ -8,6 +8,7 @@
  * embeddings package (the dependency points the other way: embeddings/sources scripts
  * import these repos). Same dependency-injection style as `createDb` taking its client.
  */
+import { composeEmbeddingText } from "@opusfinder/shared";
 import { and, eq, isNull, sql } from "drizzle-orm";
 
 import type { Db } from "../client";
@@ -198,7 +199,7 @@ export async function nearestJobs(
  * the same way. Voyage truncates overlong inputs (its `truncation` defaults on).
  */
 export function jobEmbeddingText(job: { title: string; descriptionText: string }): string {
-  return [job.title, job.descriptionText].filter((s) => s.trim().length > 0).join("\n\n");
+  return composeEmbeddingText([job.title, job.descriptionText]);
 }
 
 /** pgvector text literal: a JS number[] -> `[a,b,c]`. */

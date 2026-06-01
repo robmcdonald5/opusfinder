@@ -124,3 +124,17 @@ export interface NormalizedJob {
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
+
+/**
+ * Compose the text sent to an embedding model from its parts: drop blank (whitespace-only)
+ * parts and join the rest with a blank line. This is the SINGLE definition of how embedding
+ * input is composed and of what "no embeddable content" means — the result is `""` iff every
+ * part is blank. Shared by the job composer (`jobEmbeddingText` in @opusfinder/db), the profile
+ * composer (`profileEmbeddingText` in eval), and the dataset validator, so that notion has one
+ * source of truth instead of a per-site copy of the trim/join logic. (The list of FIELDS each
+ * composer feeds in necessarily stays at its call site.) Lives here, not in @opusfinder/embeddings,
+ * so the dataset loader can reuse it without pulling the embeddings/db stack onto the load path.
+ */
+export function composeEmbeddingText(parts: string[]): string {
+  return parts.filter((s) => s.trim().length > 0).join("\n\n");
+}

@@ -1,3 +1,5 @@
+import { composeEmbeddingText } from "@opusfinder/shared";
+
 import type { EvalProfile } from "./types";
 
 /**
@@ -8,11 +10,9 @@ import type { EvalProfile } from "./types";
  * Phase 9 may refine exactly what goes into the profile vector.
  */
 export function profileEmbeddingText(profile: EvalProfile): string {
-  return [
+  return composeEmbeddingText([
     profile.summary,
     profile.skills.length > 0 ? `Skills: ${profile.skills.join(", ")}` : "",
     profile.targetRoles.length > 0 ? `Target roles: ${profile.targetRoles.join(", ")}` : "",
-  ]
-    .filter((s) => s.trim().length > 0)
-    .join("\n\n");
+  ]);
 }

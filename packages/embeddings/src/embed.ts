@@ -1,3 +1,4 @@
+import { chunkByLimits } from "./contract";
 import {
   CHARS_PER_TOKEN,
   embedRequest,
@@ -39,35 +40,17 @@ export async function embed(texts: string[], params: EmbedParams = {}): Promise<
     return { embeddings: [], usage: { totalTokens: 0 }, model: EMBED_MODEL };
   }
 
+  const limits = {
+    maxItems: MAX_ITEMS_PER_REQUEST,
+    maxTokens: MAX_TOKENS_PER_REQUEST,
+    charsPerToken: CHARS_PER_TOKEN,
+  };
   const embeddings: number[][] = [];
   let totalTokens = 0;
-  for (const chunk of chunkByLimits(texts)) {
+  for (const chunk of chunkByLimits(texts, limits)) {
     const res = await embedRequest(chunk, inputType);
     embeddings.push(...res.embeddings);
     totalTokens += res.totalTokens;
   }
   return { embeddings, usage: { totalTokens }, model: EMBED_MODEL };
-}
-
-/**
- * Split `texts` into chunks respecting BOTH the item cap and a rough token budget. A
- * single text that alone exceeds the token budget still goes out as its own chunk
- * (Voyage truncates it per the API's default `truncation: true`) rather than stalling.
- */
-function* chunkByLimits(texts: string[]): Generator<string[]> {
-  let batch: string[] = [];
-  let batchTokens = 0;
-  for (const text of texts) {
-    const estTokens = Math.ceil(text.length / CHARS_PER_TOKEN);
-    const wouldExceed =
-      batch.length >= MAX_ITEMS_PER_REQUEST || batchTokens + estTokens > MAX_TOKENS_PER_REQUEST;
-    if (batch.length > 0 && wouldExceed) {
-      yield batch;
-      batch = [];
-      batchTokens = 0;
-    }
-    batch.push(text);
-    batchTokens += estTokens;
-  }
-  if (batch.length > 0) yield batch;
 }
