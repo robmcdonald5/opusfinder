@@ -2,6 +2,7 @@ import { createDb } from "@opusfinder/db";
 import { getDatabaseUrl } from "@opusfinder/db/env";
 import { backfillJobEmbeddings, upsertCompany, upsertJobs } from "@opusfinder/db/repos";
 import { embed, formatEmbedCost } from "@opusfinder/embeddings";
+import { runScript } from "@opusfinder/shared/script";
 
 import { fetchJobs } from "../src/greenhouse";
 
@@ -71,11 +72,4 @@ async function main(): Promise<void> {
   }
 }
 
-// Set exitCode rather than calling process.exit(): an abrupt exit while an undici
-// socket handle is still closing trips a libuv assertion on Windows. Letting the
-// event loop drain exits cleanly once fetchJobs / the neon-http driver have
-// released their handles.
-main().catch((err: unknown) => {
-  console.error(`Ingest failed: ${err instanceof Error ? err.message : String(err)}`);
-  process.exitCode = 1;
-});
+await runScript("Ingest", main);

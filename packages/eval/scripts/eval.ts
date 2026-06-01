@@ -16,6 +16,8 @@
  */
 import { join } from "node:path";
 
+import { runScript } from "@opusfinder/shared/script";
+
 import { getFlag } from "../src/cli";
 import { loadDataset } from "../src/dataset";
 import { resolveEmbedder } from "../src/embedders";
@@ -101,10 +103,4 @@ async function main(): Promise<void> {
   console.log(`\nWrote ${relativeToPkg(reportPath)}`);
 }
 
-// Set exitCode rather than process.exit() so any pending handles (the embeddings / neon-http fetch
-// sockets used by the embedding rankers) drain and the Windows process exits cleanly — same caveat
-// as the other fetch scripts in this repo.
-main().catch((err: unknown) => {
-  console.error(`Eval failed: ${err instanceof Error ? err.message : String(err)}`);
-  process.exitCode = 1;
-});
+await runScript("Eval", main);

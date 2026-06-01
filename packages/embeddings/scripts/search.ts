@@ -1,6 +1,7 @@
 import { createDb } from "@opusfinder/db";
 import { getDatabaseUrl } from "@opusfinder/db/env";
 import { nearestJobs } from "@opusfinder/db/repos";
+import { runScript } from "@opusfinder/shared/script";
 
 import { embed } from "../src/index";
 
@@ -36,9 +37,4 @@ async function main(): Promise<void> {
   }
 }
 
-// Set exitCode rather than process.exit(): let the Voyage/undici + neon-http handles
-// drain so the Windows process exits cleanly (same caveat as the other fetch scripts).
-main().catch((err: unknown) => {
-  console.error(`Search failed: ${err instanceof Error ? err.message : String(err)}`);
-  process.exitCode = 1;
-});
+await runScript("Search", main);

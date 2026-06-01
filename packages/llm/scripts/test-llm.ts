@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
 
+import { runScript } from "@opusfinder/shared/script";
+
 import { generate } from "../src/index";
 import type { GenerateResult } from "../src/index";
 
@@ -89,10 +91,4 @@ async function main(): Promise<void> {
   process.exitCode = 1;
 }
 
-// Set exitCode rather than process.exit(): the AI SDK's fetch/undici handles need the
-// event loop to drain, and an abrupt exit mid-teardown trips a libuv assert on Windows
-// (same caveat as the Greenhouse fetch script).
-main().catch((err: unknown) => {
-  console.error(`test-llm failed: ${err instanceof Error ? err.message : String(err)}`);
-  process.exitCode = 1;
-});
+await runScript("test-llm", main);
