@@ -5,10 +5,14 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./script": "./src/script.ts"
+    "./script": "./src/script.ts",
+    "./env": "./src/env.ts"
   },
   "types": "./src/index.ts",
   "scripts": {
     "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "dotenv": "^17"
   }
 }
