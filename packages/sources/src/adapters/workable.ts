@@ -1,0 +1,109 @@
+import { companySlug, isRecord, jobId } from "@opusfinder/shared";
+import type { NormalizedJob } from "@opusfinder/shared";
+
+import { cleanHtml } from "./text";
+import type { SourceAdapter, SourceContext } from "./types";
+
+const WIDGET_API = "https://apply.workable.com/api/v1/widget/accounts";
+
+/**
+ * Workable account-widget adapter. Returns the full board in one (potentially large)
+ * `{ name, description, jobs }` response — no pagination (`nextCursor` omitted).
+ *
+ * Hydration is INLINE, not an N+1: the descriptions arrive on every posting when the list
+ * request carries `?details=true` (the per-job widget path 404s on the public host), so
+ * that is a `jobsRequest` query param, not a `hydrate` second fetch. Slugs are case-
+ * sensitive lowercase, so `normalizeSlug` lowercases. The host RATE-LIMITS rapid calls
+ * (429 with an HTML body) — handled centrally by runAdapter's backoff + non-JSON guard.
+ */
+export const workableAdapter: SourceAdapter = {
+  source: "workable",
+
+  // Lowercase: canonical board slugs are lowercase and the host 404s other casings.
+  normalizeSlug: (rawSlug) => companySlug(rawSlug.toLowerCase()),
+
+  jobsRequest: (ctx) => ({ url: `${WIDGET_API}/${ctx.slug}?details=true` }),
+
+  locate: (body, ctx) => {
+    // body.name / body.description are the COMPANY blurb, not job data — only body.jobs[].
+    if (!isRecord(body) || !Array.isArray(body.jobs)) {
+      throw new Error(`Workable returned an unexpected response shape for "${ctx.slug}"`);
+    }
+    return body.jobs;
+  },
+
+  mapItem: (raw, ctx) => toNormalizedJob(raw, ctx),
+};
+
+function toNormalizedJob(raw: unknown, ctx: SourceContext): NormalizedJob | null {
+  if (!isRecord(raw)) return null;
+  // The posting id is `shortcode` (an alphanumeric code), already a string.
+  if (typeof raw.shortcode !== "string" || raw.shortcode.trim().length === 0) return null;
+  if (typeof raw.title !== "string") return null;
+
+  const applyUrl =
+    (typeof raw.url === "string" && raw.url) ||
+    (typeof raw.shortlink === "string" && raw.shortlink) ||
+    "";
+  if (!applyUrl) return null;
+
+  const locations = extractLocations(raw);
+
+  // Structured `telecommuting` flag, OR infer from the location text (a posting can be
+  // text-only remote with telecommuting=false). "Hybrid" stays false unless text says remote.
+  const remote = raw.telecommuting === true || /\bremote\b/i.test(locations.join(" "));
+
+  // `published_on` / `created_at` are date-only "YYYY-MM-DD" (parsed as UTC midnight). `||`
+  // (not `??`) so an empty string falls through to created_at.
+  const dateText =
+    (typeof raw.published_on === "string" ? raw.published_on : "") ||
+    (typeof raw.created_at === "string" ? raw.created_at : "");
+  const parsed = dateText ? new Date(dateText) : null;
+  const postedAt = parsed && !Number.isNaN(parsed.getTime()) ? parsed : null;
+
+  return {
+    source: "workable",
+    externalId: jobId(raw.shortcode),
+    title: raw.title,
+    companySlug: ctx.slug,
+    locations,
+    remote,
+    // `description` is single-encoded HTML, present only with ?details=true: strip → decode
+    // once → collapse.
+    descriptionText: cleanHtml(typeof raw.description === "string" ? raw.description : "", [
+      "strip",
+      "decode",
+      "collapse",
+    ]),
+    applyUrl,
+    postedAt,
+    raw,
+  };
+}
+
+/**
+ * Compose a display string per `locations[]` entry from city/region/country (skipping
+ * hidden ones); fall back to the flat top-level city/state/country. `[]` if none.
+ */
+function extractLocations(raw: Record<string, unknown>): string[] {
+  const out: string[] = [];
+  if (Array.isArray(raw.locations)) {
+    for (const loc of raw.locations) {
+      if (!isRecord(loc) || loc.hidden === true) continue;
+      const composed = joinParts([loc.city, loc.region, loc.country]);
+      if (composed) out.push(composed);
+    }
+  }
+  if (out.length === 0) {
+    const flat = joinParts([raw.city, raw.state, raw.country]);
+    if (flat) out.push(flat);
+  }
+  return out;
+}
+
+function joinParts(parts: unknown[]): string {
+  return parts
+    .filter((p): p is string => typeof p === "string" && p.trim().length > 0)
+    .map((p) => p.trim())
+    .join(", ");
+}

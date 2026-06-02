@@ -5,7 +5,7 @@ Drizzle ORM over Neon Postgres, using the **neon-http** driver
 client runs in Node today and in Cloudflare Workers later (Phase 8). The package
 exports raw `.ts` (no build step / no `dist`): `createDb(connectionString)`
 returns a Drizzle client. Phase 2 added two subpath exports alongside it:
-`@opusfinder/db/repos` (`upsertCompany` / `upsertJobs`, plus the Phase-4 embedding repo —
+`@opusfinder/db/repos` (`upsertCompany` / `upsertJobs` / `listCompanies`, plus the Phase-4 embedding repo —
 `backfillJobEmbeddings` / `nearestJobs` / `jobsNeedingEmbedding` / `writeJobEmbeddings` /
 `jobEmbeddingText`) and `@opusfinder/db/env`
 (`getDatabaseUrl`).
@@ -71,6 +71,11 @@ Run from the repo root via the workspace filter so the cwd is `packages/db`:
   `NULL` only when `title` OR `description_text` changed (a `CASE` in the conflict `set`);
   changes to other fields keep the existing vector, so re-embedding cost is paid only on
   real content change.
+- **Canonical `locations` on upsert (Phase 6).** `upsertJobs` sorts each job's `locations`
+  to a canonical order on write. `locations` is compared as an order-sensitive jsonb array in
+  the change test, so a multi-location board that emits the same offices in a different order
+  across runs would otherwise report a spurious change every ingest. (`runAdapter` already
+  canonicalizes in memory; the sort here is the defense for any direct `upsertJobs` caller.)
 - **0002 HNSW migration is hand-guarded.** drizzle-kit emits a bare `CREATE INDEX`;
   `0002_flashy_joshua_kane.sql` is hand-edited to `CREATE INDEX IF NOT EXISTS` because
   neon-http migrations aren't transactional (same discipline as the FK in 0001).

@@ -54,13 +54,16 @@ stripped → whitespace collapsed), `applyUrl`, `postedAt` (`Date | null`), and
 in `src/index.ts` comments.
 
 The type is intentionally **not** generic over the raw payload, and there is
-**no adapter interface here** — that abstraction is extracted in Phase 6 from
-2–3 concrete adapters, not designed up front.
+**no adapter interface here** — that abstraction was extracted in Phase 6 (it
+lives in `@opusfinder/sources` as `SourceAdapter`), from 2–3 concrete adapters,
+not designed up front.
 
-`SourceName` is the union of ATS names (`"greenhouse"` only in Phase 1; one new
-member per adapter as they land). Kept a union rather than `string` so a typo is
-a compile error and the Phase 2 `jobs.source` column / Phase 6 source registry
-stay exhaustive.
+`SourceName` is the union of ATS names — `"greenhouse" | "lever" | "ashby" |
+"workable" | "smartrecruiters"` (the five Launch ATS; Phase 1 shipped Greenhouse,
+Phase 6 added the other four). Kept a union rather than `string` so a typo is a
+compile error and the `jobs.source` column / the Phase 6 source→adapter registry
+(`Record<SourceName, SourceAdapter>`) stay exhaustive — a missing adapter is a
+compile error.
 
 ## Type guards
 

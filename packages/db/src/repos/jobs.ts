@@ -6,12 +6,34 @@
  * dedupes the batch, then only advances `updated_at` when a job's content
  * actually changed, so re-ingesting an unchanged board is a no-op.
  */
-import { sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 
 import type { CompanySlug, NormalizedJob, SourceName } from "@opusfinder/shared";
 
 import type { Db } from "../client";
 import { companies, jobs } from "../schema";
+
+/** One row of the companies table, as the ingestion driver needs it (id + identity). */
+export interface CompanyRow {
+  id: number;
+  slug: CompanySlug;
+  source: SourceName;
+}
+
+/**
+ * List companies to ingest (id + canonical slug + source), oldest id first. Slugs come back
+ * already branded (the column is `$type<CompanySlug>()`) and in their platform-canonical form
+ * — stored post-`normalizeSlug` — so the driver requests them exactly as ingestion expects.
+ * Optionally scoped to one `source` (for a per-source pass). Used by the all-companies
+ * ingestion script (and later the Phase-8 Worker cron).
+ */
+export function listCompanies(db: Db, opts: { source?: SourceName } = {}): Promise<CompanyRow[]> {
+  return db
+    .select({ id: companies.id, slug: companies.slug, source: companies.source })
+    .from(companies)
+    .where(opts.source ? eq(companies.source, opts.source) : undefined)
+    .orderBy(companies.id);
+}
 
 /** The NUL code point (U+0000), constructed at runtime so this source file never
  * contains an actual NUL byte. */
@@ -98,7 +120,13 @@ export async function upsertJobs(
     // Strip U+0000 from anything bound for text/jsonb (Postgres rejects it).
     title: job.title.replaceAll(NUL, ""),
     descriptionText: job.descriptionText.replaceAll(NUL, ""),
-    locations: job.locations.map((l) => l.replaceAll(NUL, "")),
+    // Sort to a canonical order on write. `locations` is compared as an ORDER-SENSITIVE
+    // jsonb array in setWhere below; a multi-location source emitting the same offices in a
+    // different order across ingests would otherwise report a spurious "changed" every run.
+    // runAdapter already canonicalizes the in-memory job's locations, so on the ingestion
+    // path this is a no-op — it stays here as the defense for any direct upsertJobs caller.
+    // Order isn't semantically meaningful for ATS locations (the original is kept on `raw`).
+    locations: [...job.locations].map((l) => l.replaceAll(NUL, "")).sort(),
     remote: job.remote,
     applyUrl: job.applyUrl.replaceAll(NUL, ""),
     postedAt: job.postedAt,
@@ -153,9 +181,10 @@ export async function upsertJobs(
       //    When closing/reopening lands, resetting a reappearing job to 'active'
       //    must NOT be gated by this content test — an unchanged-but-reappearing
       //    job would otherwise stay 'closed'.
-      //  - `locations` is compared as an ORDER-SENSITIVE jsonb array. Greenhouse
-      //    yields <=1 location so order is moot today, but a multi-location
-      //    adapter should normalize order or this will report spurious changes.
+      //  - `locations` is compared as an ORDER-SENSITIVE jsonb array, but the
+      //    values above are sorted to a canonical order on write, so a
+      //    multi-location adapter that reorders offices won't report a spurious
+      //    change. (Keep that sort if this comparison stays order-sensitive.)
       setWhere: sql`
         ${jobs.companyId} IS DISTINCT FROM excluded.company_id OR
         ${jobs.title} IS DISTINCT FROM excluded.title OR

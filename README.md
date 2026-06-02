@@ -16,7 +16,7 @@ pipeline, and delivers a personalized digest on a regular cadence. See
 | `packages/eval/`       | Matching-quality eval harness — metrics, rankers, reports ([README](packages/eval/README.md)) |
 | `packages/llm/`        | Vercel AI SDK + Anthropic wrapper, prompt caching ([README](packages/llm/README.md))          |
 | `packages/shared/`     | Shared brand types + validators ([README](packages/shared/README.md))                         |
-| `packages/sources/`    | ATS adapters → `NormalizedJob` (Greenhouse in Phase 1) ([README](packages/sources/README.md)) |
+| `packages/sources/`    | ATS adapters → `NormalizedJob` (Greenhouse, Lever, Ashby, Workable, SmartRecruiters) ([README](packages/sources/README.md)) |
 | `research/`            | Specs + source-discovery catalog (local planning docs — see below)                            |
 
 pnpm workspaces; the package manager is pinned to pnpm 11.3.0.
@@ -54,7 +54,8 @@ pnpm db:ping      # round-trips SELECT 1 against Neon
 | `pnpm typecheck`               | `tsc --noEmit` (covers `packages/*`; apps excluded until they gain code)   |
 | `pnpm db:migrate`              | Run Neon migrations (`@opusfinder/db`)                                     |
 | `pnpm db:ping`                 | Connectivity check against Neon                                            |
-| `pnpm fetch:greenhouse <slug>` | Fetch + normalize a Greenhouse board, upsert to Neon, embed new postings   |
+| `pnpm ingest <source> <slug>`  | Fetch + normalize one ATS board, upsert to Neon, embed new postings (`--no-embed` to skip) |
+| `pnpm ingest:all`              | Ingest every seeded company across all sources (`[--no-embed] [--source=<name>]`)          |
 | `pnpm llm:test`                | Call Haiku twice with a cached system prompt; assert cache write then read |
 | `pnpm embeddings:backfill`     | Embed every job whose `embedding` is still NULL (idempotent)               |
 | `pnpm embeddings:search "<q>"` | Embed a query and print the nearest jobs by cosine distance (HNSW)         |
@@ -73,7 +74,12 @@ but not in a fresh clone:
 
 ## Status
 
-Phase 5 substantially complete (`packages/eval` — a matching-quality harness scoring
+Phase 6 substantially complete (`packages/sources` — extracted a shared `runAdapter`
+abstraction + a source→adapter registry and added Lever, Ashby, Workable, and
+SmartRecruiters alongside Greenhouse; ingestion is now `pnpm ingest <source> <slug>` for
+one board or `pnpm ingest:all` across every seeded company; `packages/db` gained a
+`listCompanies` repo and now canonically sorts `jobs.locations` on write). Phase 5
+substantially complete (`packages/eval` — a matching-quality harness scoring
 precision/recall/NDCG@k over a JSONL labeled set, with a random baseline and an embedding
 ranker; `pnpm eval` writes committed per-config reports and diffs the last run). Voyage
 retrieval is validated on the seed set (2 profiles anonymized from real CVs × 80 real jobs);
@@ -84,6 +90,6 @@ choice is cheap to revisit as the labeled set scales. Phase 4 before it shipped
 `pnpm embeddings:backfill`; `pnpm embeddings:search "<query>"` over an HNSW cosine index).
 Phase 3 shipped `packages/llm` (Vercel AI SDK + Anthropic wrapper with first-class prompt
 caching; `pnpm llm:test` proves a cache write-then-read). Phases 0–2 scaffolded the monorepo +
-Neon/pgvector db package, shipped the Greenhouse ATS adapter (`pnpm fetch:greenhouse <slug>`),
+Neon/pgvector db package, shipped the first ATS adapter (Greenhouse),
 and added the `companies`/`jobs` tables with idempotent upsert. See the implementation plan for
 what comes next.

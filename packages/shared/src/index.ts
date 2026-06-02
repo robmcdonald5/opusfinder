@@ -47,12 +47,13 @@ export const unsafeCompanySlug = (value: string): CompanySlug => value as Compan
 export const unsafeJobId = (value: string): JobId => value as JobId;
 
 /**
- * Which ATS produced a job. A single-member union for now (Greenhouse is the
- * only adapter in Phase 1); it grows one member per adapter as they land in
- * Phase 6+. Kept a union, NOT `string`, so a typo is a compile error and the
- * Phase 2 `jobs.source` column / Phase 6 source registry stay exhaustive.
+ * Which ATS produced a job. Grows one member per adapter as they land (Phase 6
+ * adds Lever, Ashby, Workable, SmartRecruiters). Kept a union, NOT `string`, so a
+ * typo is a compile error and the `jobs.source` column / Phase 6 source registry
+ * (`Record<SourceName, SourceAdapter>`) stay exhaustive — a missing adapter is a
+ * compile error.
  */
-export type SourceName = "greenhouse";
+export type SourceName = "greenhouse" | "lever" | "ashby" | "workable" | "smartrecruiters";
 
 /**
  * Cross-source normalized job posting — the first real normalization contract.
