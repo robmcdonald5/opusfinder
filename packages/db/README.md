@@ -5,7 +5,7 @@ Drizzle ORM over Neon Postgres, using the **neon-http** driver
 client runs in Node today and in Cloudflare Workers later (Phase 8). The package
 exports raw `.ts` (no build step / no `dist`): `createDb(connectionString)`
 returns a Drizzle client. Phase 2 added two subpath exports alongside it:
-`@opusfinder/db/repos` (`upsertCompany` / `upsertJobs`, plus the Phase-4 embedding repo —
+`@opusfinder/db/repos` (`upsertCompany` / `upsertJobs` / `listCompanies`, plus the Phase-4 embedding repo —
 `backfillJobEmbeddings` / `nearestJobs` / `jobsNeedingEmbedding` / `writeJobEmbeddings` /
 `jobEmbeddingText`) and `@opusfinder/db/env`
 (`getDatabaseUrl`).
