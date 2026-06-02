@@ -8,7 +8,8 @@
   },
   "types": "./src/index.ts",
   "scripts": {
-    "fetch:greenhouse": "tsx scripts/fetch-greenhouse.ts",
+    "ingest": "tsx scripts/ingest.ts",
+    "ingest:all": "tsx scripts/ingest-all.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
