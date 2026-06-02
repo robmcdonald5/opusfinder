@@ -9,6 +9,7 @@ import { recruiteeAdapter } from "./recruitee";
 import { runAdapter } from "./run-adapter";
 import type { RunAdapterOptions } from "./run-adapter";
 import { smartRecruitersAdapter } from "./smartrecruiters";
+import { trakstarAdapter } from "./trakstar";
 import type { SourceAdapter } from "./types";
 import { workableAdapter } from "./workable";
 
@@ -26,6 +27,7 @@ export const adapters: Record<SourceName, SourceAdapter> = {
   pinpoint: pinpointAdapter,
   gem: gemAdapter,
   recruitee: recruiteeAdapter,
+  trakstar: trakstarAdapter,
 };
 
 /** The known source names (registry keys), for CLI validation + iteration. */
