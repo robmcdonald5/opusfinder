@@ -53,7 +53,13 @@ export const unsafeJobId = (value: string): JobId => value as JobId;
  * (`Record<SourceName, SourceAdapter>`) stay exhaustive — a missing adapter is a
  * compile error.
  */
-export type SourceName = "greenhouse" | "lever" | "ashby" | "workable" | "smartrecruiters";
+export type SourceName =
+  | "greenhouse"
+  | "lever"
+  | "ashby"
+  | "workable"
+  | "smartrecruiters"
+  | "pinpoint";
 
 /**
  * Cross-source normalized job posting — the first real normalization contract.
