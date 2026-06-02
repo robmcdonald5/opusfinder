@@ -122,8 +122,8 @@ real-but-empty ⇒ `200 []`.
 OFFSET-paginated `{ meta:{total}, objects }` — reuses the existing `{ kind:"offset" }` Cursor
 (`PAGE_LIMIT=20`), `nextCursor` mirrors the SmartRecruiters defensive shape. Slugs lowercase
 (host echoes `client_name` lowercased). `id` is a string. `location` is a single OBJECT
-(compose city/state/country). `remote` from `allows_remote` (true authoritative; false/null infer
-from text — no "Hybrid" value). `description` single-encoded HTML, may be `""`. NO posted date
+(compose city/state/country). `remote` from `allows_remote` (true/false both authoritative; only
+null infers from text — no "Hybrid" value). `description` single-encoded HTML, may be `""`. NO posted date
 (`close_date` is an expiry) ⇒ `postedAt` null. `applyUrl` = `hosted_url` (canonical reconstruct
 fallback). Unknown slug ⇒ 400; real-but-empty ⇒ `200 meta.total:0`.
 
