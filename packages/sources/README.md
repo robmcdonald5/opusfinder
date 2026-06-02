@@ -2,7 +2,7 @@
 
 ATS adapters that fetch public job-board postings and normalize them into the shared
 `NormalizedJob` shape, then persist them through `@opusfinder/db`. Phase 6 covers all five
-Launch-1 ATS — **Greenhouse, Lever, Ashby, Workable, SmartRecruiters** — behind one shared
+Launch-5 ATS — **Greenhouse, Lever, Ashby, Workable, SmartRecruiters** — behind one shared
 abstraction.
 
 ## Architecture
