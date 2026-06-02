@@ -5,6 +5,7 @@ import { gemAdapter } from "./gem";
 import { greenhouseAdapter } from "./greenhouse";
 import { leverAdapter } from "./lever";
 import { pinpointAdapter } from "./pinpoint";
+import { recruiteeAdapter } from "./recruitee";
 import { runAdapter } from "./run-adapter";
 import type { RunAdapterOptions } from "./run-adapter";
 import { smartRecruitersAdapter } from "./smartrecruiters";
@@ -24,6 +25,7 @@ export const adapters: Record<SourceName, SourceAdapter> = {
   smartrecruiters: smartRecruitersAdapter,
   pinpoint: pinpointAdapter,
   gem: gemAdapter,
+  recruitee: recruiteeAdapter,
 };
 
 /** The known source names (registry keys), for CLI validation + iteration. */
