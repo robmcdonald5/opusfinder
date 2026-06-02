@@ -2,7 +2,7 @@ import { companySlug, isRecord, jobId } from "@opusfinder/shared";
 import type { NormalizedJob } from "@opusfinder/shared";
 
 import { inferRemoteFromText } from "./fields";
-import { cleanHtml } from "./text";
+import { cleanHtml, htmlToText } from "./text";
 import type { SourceAdapter, SourceContext } from "./types";
 
 const JOB_BOARD_API = "https://api.gem.com/job_board/v0";
@@ -70,10 +70,7 @@ function toNormalizedJob(raw: unknown, ctx: SourceContext): NormalizedJob | null
   // Prefer the genuine plain-text `content_plain` (collapse only). Fall back to the single-
   // encoded HTML `content` (strip → decode once → collapse) only if content_plain is empty.
   const plain = typeof raw.content_plain === "string" ? raw.content_plain : "";
-  const html = typeof raw.content === "string" ? raw.content : "";
-  const descriptionText = plain.trim()
-    ? cleanHtml(plain, ["collapse"])
-    : cleanHtml(html, ["strip", "decode", "collapse"]);
+  const descriptionText = plain.trim() ? cleanHtml(plain, ["collapse"]) : htmlToText(raw.content);
 
   return {
     source: "gem",

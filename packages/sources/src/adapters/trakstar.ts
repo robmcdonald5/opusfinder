@@ -2,13 +2,14 @@ import { companySlug, isRecord, jobId } from "@opusfinder/shared";
 import type { NormalizedJob } from "@opusfinder/shared";
 
 import { inferRemoteFromText, joinParts } from "./fields";
-import { cleanHtml } from "./text";
+import { htmlToText } from "./text";
 import type { Cursor, SourceAdapter, SourceContext } from "./types";
 
 const API = "https://jsapi.recruiterbox.com/v1/openings/";
 
-// The server's default page size (meta.limit when unspecified); set explicitly so nextCursor's
-// offset math is robust. meta.total is the authoritative count for termination.
+// The server's default page size (meta.limit when unspecified): the explicit page size sent in
+// the request URL and used by the full-page termination check. meta.total is the authoritative
+// count; nextCursor advances by the actual page-item count, not this constant.
 const PAGE_LIMIT = 20;
 
 /**
@@ -58,9 +59,9 @@ export const trakstarAdapter: SourceAdapter = {
         ? meta.total
         : undefined;
     if (total !== undefined) {
-      return offset >= total ? null : { kind: "offset", offset, limit: PAGE_LIMIT };
+      return offset >= total ? null : { kind: "offset", offset };
     }
-    return pageItemCount < PAGE_LIMIT ? null : { kind: "offset", offset, limit: PAGE_LIMIT };
+    return pageItemCount < PAGE_LIMIT ? null : { kind: "offset", offset };
   },
 
   mapItem: (raw, ctx) => toNormalizedJob(raw, ctx),
@@ -102,11 +103,7 @@ function toNormalizedJob(raw: unknown, ctx: SourceContext): NormalizedJob | null
     remote,
     // `description` is raw HTML tags + SINGLE-encoded entities: strip → decode once → collapse.
     // It can legitimately be "" (some postings carry no body) — cleanHtml returns "" safely.
-    descriptionText: cleanHtml(typeof raw.description === "string" ? raw.description : "", [
-      "strip",
-      "decode",
-      "collapse",
-    ]),
+    descriptionText: htmlToText(raw.description),
     applyUrl,
     // No posted/created date — only close_date (an EXPIRY date), which must NOT be used.
     postedAt: null,

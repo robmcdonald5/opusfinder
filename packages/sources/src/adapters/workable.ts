@@ -2,7 +2,7 @@ import { companySlug, isRecord, jobId } from "@opusfinder/shared";
 import type { NormalizedJob } from "@opusfinder/shared";
 
 import { inferRemoteFromText, joinParts } from "./fields";
-import { cleanHtml } from "./text";
+import { htmlToText } from "./text";
 import type { SourceAdapter, SourceContext } from "./types";
 
 const WIDGET_API = "https://apply.workable.com/api/v1/widget/accounts";
@@ -69,13 +69,8 @@ function toNormalizedJob(raw: unknown, ctx: SourceContext): NormalizedJob | null
     companySlug: ctx.slug,
     locations,
     remote,
-    // `description` is single-encoded HTML, present only with ?details=true: strip → decode
-    // once → collapse.
-    descriptionText: cleanHtml(typeof raw.description === "string" ? raw.description : "", [
-      "strip",
-      "decode",
-      "collapse",
-    ]),
+    // `description` is single-encoded HTML, present only with ?details=true (the htmlToText recipe).
+    descriptionText: htmlToText(raw.description),
     applyUrl,
     postedAt,
     raw,

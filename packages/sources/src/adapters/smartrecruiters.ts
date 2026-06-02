@@ -2,7 +2,7 @@ import { companySlug, isRecord, jobId } from "@opusfinder/shared";
 import type { NormalizedJob } from "@opusfinder/shared";
 
 import { joinParts } from "./fields";
-import { cleanHtml } from "./text";
+import { htmlToText } from "./text";
 import type { Cursor, FetchJson, SourceAdapter, SourceContext } from "./types";
 
 const API = "https://api.smartrecruiters.com/v1/companies";
@@ -61,9 +61,9 @@ export const smartRecruitersAdapter: SourceAdapter = {
         ? body.totalFound
         : undefined;
     if (totalFound !== undefined) {
-      return offset >= totalFound ? null : { kind: "offset", offset, limit: PAGE_LIMIT };
+      return offset >= totalFound ? null : { kind: "offset", offset };
     }
-    return pageItemCount < PAGE_LIMIT ? null : { kind: "offset", offset, limit: PAGE_LIMIT };
+    return pageItemCount < PAGE_LIMIT ? null : { kind: "offset", offset };
   },
 
   mapItem: (raw, ctx) => toNormalizedJob(raw, ctx),
@@ -155,9 +155,8 @@ function cleanSections(sections: Record<string, unknown>): string {
   const parts: string[] = [];
   for (const key of SECTION_ORDER) {
     const section = sections[key];
-    const text = isRecord(section) && typeof section.text === "string" ? section.text : "";
-    // jobAd section text is RAW tags + single-encoded entities: strip → decode once → collapse.
-    const cleaned = cleanHtml(text, ["strip", "decode", "collapse"]);
+    // jobAd section text is RAW tags + single-encoded entities (the htmlToText recipe).
+    const cleaned = htmlToText(isRecord(section) ? section.text : "");
     if (cleaned) parts.push(cleaned);
   }
   return parts.join("\n\n");

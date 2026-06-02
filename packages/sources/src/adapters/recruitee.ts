@@ -2,7 +2,7 @@ import { companySlug, isRecord, jobId } from "@opusfinder/shared";
 import type { NormalizedJob } from "@opusfinder/shared";
 
 import { inferRemoteFromText } from "./fields";
-import { cleanHtml } from "./text";
+import { htmlToText } from "./text";
 import type { SourceAdapter, SourceContext } from "./types";
 
 const RECRUITEE_HOST = "recruitee.com";
@@ -79,11 +79,7 @@ function toNormalizedJob(raw: unknown, ctx: SourceContext): NormalizedJob | null
     // `description` is raw HTML tags + SINGLE-encoded entities: strip → decode once → collapse.
     // The separate `requirements` field (same encoding, board-dependent) stays on `raw`
     // (primary body only for now; revisit under the Phase-5 eval).
-    descriptionText: cleanHtml(typeof raw.description === "string" ? raw.description : "", [
-      "strip",
-      "decode",
-      "collapse",
-    ]),
+    descriptionText: htmlToText(raw.description),
     applyUrl,
     postedAt: parsePublishedAt(raw.published_at),
     raw,

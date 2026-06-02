@@ -2,7 +2,7 @@ import { companySlug, isRecord, jobId } from "@opusfinder/shared";
 import type { NormalizedJob } from "@opusfinder/shared";
 
 import { inferRemoteFromText, joinParts } from "./fields";
-import { cleanHtml } from "./text";
+import { htmlToText } from "./text";
 import type { SourceAdapter, SourceContext } from "./types";
 
 const POSTINGS_HOST = "pinpointhq.com";
@@ -76,11 +76,7 @@ function toNormalizedJob(raw: unknown, ctx: SourceContext): NormalizedJob | null
     // plus SINGLE-encoded entities: strip → decode once → collapse. The richer
     // key_responsibilities / skills_knowledge_expertise / benefits sections stay on `raw`
     // (primary body only for now; revisit under the Phase-5 eval).
-    descriptionText: cleanHtml(typeof raw.description === "string" ? raw.description : "", [
-      "strip",
-      "decode",
-      "collapse",
-    ]),
+    descriptionText: htmlToText(raw.description),
     applyUrl,
     // No posted/created date on the posting — only deadline_at (an application-CLOSE date),
     // which must NOT be used. postedAt is therefore always null (contract-valid).

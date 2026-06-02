@@ -2,7 +2,7 @@ import { companySlug, isRecord, jobId } from "@opusfinder/shared";
 import type { NormalizedJob } from "@opusfinder/shared";
 
 import { inferRemoteFromText } from "./fields";
-import { cleanHtml } from "./text";
+import { cleanHtml, htmlToText } from "./text";
 import type { SourceAdapter, SourceContext } from "./types";
 
 const JOB_BOARD_API = "https://api.ashbyhq.com/posting-api/job-board";
@@ -71,10 +71,9 @@ function toNormalizedJob(raw: unknown, ctx: SourceContext): NormalizedJob | null
   // descriptionPlain is genuine plain text (collapse only). Fall back to the single-encoded
   // descriptionHtml (strip → decode once → collapse) only if the plain text is empty.
   const plain = typeof raw.descriptionPlain === "string" ? raw.descriptionPlain : "";
-  const html = typeof raw.descriptionHtml === "string" ? raw.descriptionHtml : "";
   const descriptionText = plain.trim()
     ? cleanHtml(plain, ["collapse"])
-    : cleanHtml(html, ["strip", "decode", "collapse"]);
+    : htmlToText(raw.descriptionHtml);
 
   return {
     source: "ashby",

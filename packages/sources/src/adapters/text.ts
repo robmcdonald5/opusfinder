@@ -28,6 +28,18 @@ export function cleanHtml(input: string, steps: readonly CleanStep[]): string {
   return s;
 }
 
+/**
+ * The canonical "raw tags + single-encoded entities" cleaner: coerce a value to a string
+ * (non-strings → ""), then strip → decode one entity layer → collapse. Most ATS description
+ * fields are this shape (Workable / SmartRecruiters / Pinpoint / Recruitee / Trakstar, and the
+ * HTML fallback of Gem / Ashby), so this names the recipe once. Greenhouse's asymmetric
+ * DOUBLE-encoding is the exception and calls `cleanHtml(..., ["decode","strip","decode","collapse"])`
+ * directly; plain-text fields use `cleanHtml(..., ["collapse"])`.
+ */
+export function htmlToText(value: unknown): string {
+  return cleanHtml(typeof value === "string" ? value : "", ["strip", "decode", "collapse"]);
+}
+
 const NAMED_ENTITIES: Record<string, string> = {
   amp: "&",
   lt: "<",
