@@ -1,6 +1,7 @@
 import { companySlug, isRecord, jobId } from "@opusfinder/shared";
 import type { NormalizedJob } from "@opusfinder/shared";
 
+import { inferRemoteFromText, joinParts } from "./fields";
 import { cleanHtml } from "./text";
 import type { Cursor, SourceAdapter, SourceContext } from "./types";
 
@@ -19,8 +20,8 @@ const PAGE_LIMIT = 20;
  * Quirks: the host is case-INSENSITIVE and echoes `client_name` lowercased, so `normalizeSlug`
  * lowercases to the canonical form. `id` is already a string (e.g. "fk0745"). `location` is a
  * single OBJECT (`{ city, state, country, zipcode }`), composed into one string. `remote` is
- * the structured `allows_remote` (true | false | null) — only `true` is authoritative; false/
- * null infer from the location text (no "Hybrid" string exists, so no Hybrid trap). There is NO
+ * the structured `allows_remote` (true | false | null) — `true`/`false` are BOTH authoritative;
+ * only `null`/absent infers from the location text (no "Hybrid" string exists, so no Hybrid trap). There is NO
  * posted/created date (only `close_date`, an EXPIRY date), so `postedAt` is always null. An
  * unknown slug returns HTTP 400 (handled loud by runAdapter); a real-but-empty board returns
  * 200 with `meta.total: 0`.
@@ -82,9 +83,15 @@ function toNormalizedJob(raw: unknown, ctx: SourceContext): NormalizedJob | null
 
   const locations = extractLocations(raw.location);
 
-  // Structured `allows_remote` (true | false | null): only `true` is authoritative. false/null
-  // infer from the location text (a posting can be text-only remote). No "Hybrid" value exists.
-  const remote = raw.allows_remote === true ? true : /\bremote\b/i.test(locations.join(" "));
+  // Structured `allows_remote` (true | false | null): `true`/`false` are BOTH authoritative
+  // (matching the sibling enum adapters — an explicit non-remote value must not be overridden by
+  // location text); only `null`/absent infers from the text. No "Hybrid" value exists.
+  const remote =
+    raw.allows_remote === true
+      ? true
+      : raw.allows_remote === false
+        ? false
+        : inferRemoteFromText(locations);
 
   return {
     source: "trakstar",
@@ -113,9 +120,6 @@ function toNormalizedJob(raw: unknown, ctx: SourceContext): NormalizedJob | null
  */
 function extractLocations(loc: unknown): string[] {
   if (!isRecord(loc)) return [];
-  const composed = [loc.city, loc.state, loc.country]
-    .filter((p): p is string => typeof p === "string" && p.trim().length > 0)
-    .map((p) => p.trim())
-    .join(", ");
+  const composed = joinParts([loc.city, loc.state, loc.country]);
   return composed ? [composed] : [];
 }

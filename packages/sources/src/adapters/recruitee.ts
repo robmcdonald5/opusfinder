@@ -1,6 +1,7 @@
 import { companySlug, isRecord, jobId } from "@opusfinder/shared";
 import type { NormalizedJob } from "@opusfinder/shared";
 
+import { inferRemoteFromText } from "./fields";
 import { cleanHtml } from "./text";
 import type { SourceAdapter, SourceContext } from "./types";
 
@@ -66,7 +67,7 @@ function toNormalizedJob(raw: unknown, ctx: SourceContext): NormalizedJob | null
         ? true
         : raw.on_site === true
           ? false
-          : /\bremote\b/i.test(locations.join(" "));
+          : inferRemoteFromText(locations);
 
   return {
     source: "recruitee",
@@ -114,8 +115,12 @@ function extractLocations(raw: Record<string, unknown>): string[] {
  * the raw form but a Cloudflare Worker may not, and this code must run unchanged there.
  */
 function parsePublishedAt(value: unknown): Date | null {
-  if (typeof value !== "string" || !value.trim()) return null;
-  const iso = value.replace(" UTC", "Z").replace(" ", "T");
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  // Massage the trimmed value (NOT the raw one): trimming first avoids a leading space being
+  // turned into the date/time `T` by the single-space replace below.
+  const iso = trimmed.replace(" UTC", "Z").replace(" ", "T");
   const parsed = new Date(iso);
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 }

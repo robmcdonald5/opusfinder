@@ -1,6 +1,7 @@
 import { companySlug, isRecord, jobId } from "@opusfinder/shared";
 import type { NormalizedJob } from "@opusfinder/shared";
 
+import { inferRemoteFromText, joinParts } from "./fields";
 import { cleanHtml } from "./text";
 import type { SourceAdapter, SourceContext } from "./types";
 
@@ -51,7 +52,7 @@ function toNormalizedJob(raw: unknown, ctx: SourceContext): NormalizedJob | null
 
   // Structured `telecommuting` flag, OR infer from the location text (a posting can be
   // text-only remote with telecommuting=false). "Hybrid" stays false unless text says remote.
-  const remote = raw.telecommuting === true || /\bremote\b/i.test(locations.join(" "));
+  const remote = raw.telecommuting === true || inferRemoteFromText(locations);
 
   // `published_on` / `created_at` are date-only "YYYY-MM-DD" (parsed as UTC midnight). `||`
   // (not `??`) so an empty string falls through to created_at.
@@ -99,11 +100,4 @@ function extractLocations(raw: Record<string, unknown>): string[] {
     if (flat) out.push(flat);
   }
   return out;
-}
-
-function joinParts(parts: unknown[]): string {
-  return parts
-    .filter((p): p is string => typeof p === "string" && p.trim().length > 0)
-    .map((p) => p.trim())
-    .join(", ");
 }

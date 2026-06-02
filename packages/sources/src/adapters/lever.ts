@@ -1,6 +1,7 @@
 import { companySlug, isRecord, jobId } from "@opusfinder/shared";
 import type { NormalizedJob } from "@opusfinder/shared";
 
+import { inferRemoteFromText } from "./fields";
 import { cleanHtml } from "./text";
 import type { SourceAdapter, SourceContext } from "./types";
 
@@ -58,7 +59,7 @@ function toNormalizedJob(raw: unknown, ctx: SourceContext): NormalizedJob | null
       ? true
       : workplaceType === "onsite" || workplaceType === "hybrid"
         ? false
-        : /\bremote\b/i.test(locations.join(" "));
+        : inferRemoteFromText(locations);
 
   // `createdAt` is milliseconds-since-epoch (an integer), not an ISO string.
   let postedAt: Date | null = null;

@@ -1,6 +1,7 @@
 import { companySlug, isRecord, jobId } from "@opusfinder/shared";
 import type { NormalizedJob } from "@opusfinder/shared";
 
+import { joinParts } from "./fields";
 import { cleanHtml } from "./text";
 import type { Cursor, FetchJson, SourceAdapter, SourceContext } from "./types";
 
@@ -168,8 +169,6 @@ function extractLocation(loc: unknown): string[] {
   if (typeof loc.fullLocation === "string" && loc.fullLocation.trim()) {
     return [loc.fullLocation.trim()];
   }
-  const parts = [loc.city, loc.region, loc.country]
-    .filter((p): p is string => typeof p === "string" && p.trim().length > 0)
-    .map((p) => p.trim());
-  return parts.length > 0 ? [parts.join(", ")] : [];
+  const composed = joinParts([loc.city, loc.region, loc.country]);
+  return composed ? [composed] : [];
 }

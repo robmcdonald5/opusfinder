@@ -1,6 +1,7 @@
 import { companySlug, isRecord, jobId } from "@opusfinder/shared";
 import type { NormalizedJob } from "@opusfinder/shared";
 
+import { inferRemoteFromText } from "./fields";
 import { cleanHtml } from "./text";
 import type { SourceAdapter, SourceContext } from "./types";
 
@@ -58,7 +59,7 @@ function toNormalizedJob(raw: unknown, ctx: SourceContext): NormalizedJob | null
       ? true
       : locationType === "hybrid" || locationType === "in_office"
         ? false
-        : /\bremote\b/i.test(locations.join(" "));
+        : inferRemoteFromText(locations);
 
   let postedAt: Date | null = null;
   if (typeof raw.first_published_at === "string" && raw.first_published_at) {

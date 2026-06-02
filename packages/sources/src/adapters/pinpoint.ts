@@ -1,6 +1,7 @@
 import { companySlug, isRecord, jobId } from "@opusfinder/shared";
 import type { NormalizedJob } from "@opusfinder/shared";
 
+import { inferRemoteFromText, joinParts } from "./fields";
 import { cleanHtml } from "./text";
 import type { SourceAdapter, SourceContext } from "./types";
 
@@ -62,7 +63,7 @@ function toNormalizedJob(raw: unknown, ctx: SourceContext): NormalizedJob | null
       ? true
       : workplaceType === "hybrid" || workplaceType === "onsite"
         ? false
-        : /\bremote\b/i.test(locations.join(" "));
+        : inferRemoteFromText(locations);
 
   return {
     source: "pinpoint",
@@ -95,9 +96,6 @@ function toNormalizedJob(raw: unknown, ctx: SourceContext): NormalizedJob | null
  */
 function extractLocations(loc: unknown): string[] {
   if (!isRecord(loc)) return [];
-  const composed = [loc.city, loc.province]
-    .filter((p): p is string => typeof p === "string" && p.trim().length > 0)
-    .map((p) => p.trim())
-    .join(", ");
+  const composed = joinParts([loc.city, loc.province]);
   return composed ? [composed] : [];
 }
