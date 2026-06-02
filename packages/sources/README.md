@@ -11,7 +11,7 @@ pagination, so it isn't zero-hydrate.)
 ## Architecture
 
 The abstraction was **extracted** from concrete Greenhouse + Lever + SmartRecruiters adapters
-(not designed up front). It has three parts:
+(not designed up front). It has these parts:
 
 - **`runAdapter` (`src/adapters/run-adapter.ts`)** — the invariant plumbing, identical for
   every source: slug normalization → the pagination loop (`jobsRequest` → fetch → `locate` →
@@ -27,6 +27,16 @@ The abstraction was **extracted** from concrete Greenhouse + Lever + SmartRecrui
   decode/strip/collapse atoms are invariant; only their ORDER varies per source, so it takes
   an ordered step list (e.g. Greenhouse's asymmetric double-encoding needs
   `["decode","strip","decode","collapse"]`).
+- **`htmlToText(value)` (`src/adapters/text.ts`)** — names the most common recipe once: the
+  "raw tags + single-encoded entities" cleaner (`strip → decode → collapse`) used by
+  Workable/SmartRecruiters/Pinpoint/Recruitee/Trakstar and the HTML fallback of Gem/Ashby.
+  Greenhouse keeps `cleanHtml(..., ["decode","strip","decode","collapse"])` directly; plain-text
+  fields use `cleanHtml(..., ["collapse"])`.
+- **`fields.ts` (`src/adapters/fields.ts`)** — shared `NormalizedJob` field-derivation atoms:
+  `inferRemoteFromText(locations)` (the word-boundary "remote" fallback, applied only after any
+  authoritative structured signal) and `joinParts(parts)` (compose one location string from
+  ordered city/region/country parts). The invariant lives once; per-source variation stays in
+  `mapItem`. Pure string ops — Worker-safe (Phase 8).
 
 The registry (`src/adapters/index.ts`) maps `SourceName → SourceAdapter` as a
 `Record<SourceName, SourceAdapter>`, so a forgotten adapter is a **compile error**. The public
