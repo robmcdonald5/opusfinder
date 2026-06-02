@@ -3,7 +3,10 @@
 ATS adapters that fetch public job-board postings and normalize them into the shared
 `NormalizedJob` shape, then persist them through `@opusfinder/db`. Phase 6 covers all five
 Launch-5 ATS — **Greenhouse, Lever, Ashby, Workable, SmartRecruiters** — behind one shared
-abstraction.
+abstraction. Phase 6.5 Wave A adds four more zero-hydrate public boards —
+**Recruitee, Pinpoint, Gem, Trakstar Hire** — each a descriptor + one `mapItem` with no change
+to the shared plumbing. (Polymer was deferred to Wave B: it needs an N+1 hydrate and page
+pagination, so it isn't zero-hydrate.)
 
 ## Architecture
 
@@ -16,7 +19,7 @@ The abstraction was **extracted** from concrete Greenhouse + Lever + SmartRecrui
   non-JSON-body guard) → two-tier resilience (`locate` fails LOUD on a bad envelope; `mapItem`
   fails SOFT, skipping one bad posting) → the optional bounded-concurrency hydrate pool →
   per-board accounting. Returns `NormalizedJob[]`.
-- **`SourceAdapter` descriptors (`src/adapters/{greenhouse,lever,ashby,workable,smartrecruiters}.ts`)**
+- **`SourceAdapter` descriptors (`src/adapters/{greenhouse,lever,ashby,workable,smartrecruiters,recruitee,pinpoint,gem,trakstar}.ts`)**
   — per-source data: `source`, `normalizeSlug`, `jobsRequest`, `locate`, `mapItem`, and the
   optional `nextCursor` (pagination) / `hydrate` (a second fetch). `mapItem` is a typed
   function per source — never declarative config. See `src/adapters/types.ts`.
@@ -39,7 +42,11 @@ pnpm ingest lever leverdemo
 pnpm ingest ashby Notion
 pnpm ingest workable fuku
 pnpm ingest smartrecruiters Visa
-#   <source> ∈ greenhouse | lever | ashby | workable | smartrecruiters
+pnpm ingest recruitee xite
+pnpm ingest pinpoint workwithus
+pnpm ingest gem gem
+pnpm ingest trakstar instacart
+#   <source> ∈ greenhouse | lever | ashby | workable | smartrecruiters | recruitee | pinpoint | gem | trakstar
 #   add --no-embed to skip the Voyage embedding step
 
 # Ingest every seeded company across all sources (iterates the `companies` table):
@@ -84,9 +91,49 @@ public apply URL, so `mapItem` reconstructs `applyUrl` + sets `descriptionText: 
 un-hydrated job. Sections are concatenated in a FIXED order (stable re-ingest). NOTE: an unknown
 slug returns `200 + totalFound:0` (not 404), so slug existence can't be asserted here (Phase 7).
 
+### Phase 6.5 Wave A (zero-hydrate public boards)
+
+**Recruitee** — `{slug}.recruitee.com/api/offers/`. Unpaginated `{ offers }`. Slugs lowercase
+(host case-insensitive). `id` is NUMERIC (stringified before `jobId`). `remote` is THREE
+independent booleans `remote`/`hybrid`/`on_site` that CO-OCCUR (`remote:true` ships with
+`hybrid:true`), so `hybrid` is checked FIRST → Hybrid ⇒ false. Locations prefer the multi-office
+`locations[].name` over the primary-only top-level `location`. `published_at` is
+`"YYYY-MM-DD HH:MM:SS UTC"` (NOT ISO) → massaged to ISO for engine-independent parsing
+(Worker-forward). `applyUrl` = `careers_apply_url` ‖ `careers_url` VERBATIM (custom careers
+domains exist — never reconstruct). Unknown slug ⇒ 404 (assertable, Phase 7).
+
+**Pinpoint** — `{slug}.pinpointhq.com/postings.json`. Unpaginated `{ data }` (the `?page` param
+is silently IGNORED). Slugs lowercase. Posting `id` (string) is DISTINCT from the nested
+`job.id` and the url UUID. Locations compose `location.city` + `province` — NOT `location.name`
+(an office label, sometimes the literal "Remote" trap). `remote` from the `workplace_type` enum.
+`description` is single-encoded HTML (`<!--block-->` markers removed by the tag regex). NO posted
+date (only `deadline_at`, an application-CLOSE date) ⇒ `postedAt` null. Unknown slug ⇒ 404;
+real-but-empty ⇒ `200 {data:[]}`.
+
+**Gem** — `api.gem.com/job_board/v0/{slug}/job_posts/` (**trailing slash required**). BARE
+top-level array (like Lever) — `locate` throws if not an array. Slugs CASE-SENSITIVE (an
+uppercased slug 404s). `id` is already a string (legacy numeric-strings + opaque tokens).
+`remote` from the `location_type` enum (remote/hybrid/in_office; no isRemote trap). Description
+prefers the genuine plain-text `content_plain` (collapse only), falling back to single-encoded
+HTML `content` only when empty. `postedAt` = `first_published_at` (ISO). Unknown slug ⇒ 404;
+real-but-empty ⇒ `200 []`.
+
+**Trakstar Hire (Recruiterbox)** — `jsapi.recruiterbox.com/v1/openings/?client_name={slug}`.
+OFFSET-paginated `{ meta:{total}, objects }` — reuses the existing `{ kind:"offset" }` Cursor
+(`PAGE_LIMIT=20`), `nextCursor` mirrors the SmartRecruiters defensive shape. Slugs lowercase
+(host echoes `client_name` lowercased). `id` is a string. `location` is a single OBJECT
+(compose city/state/country). `remote` from `allows_remote` (true authoritative; false/null infer
+from text — no "Hybrid" value). `description` single-encoded HTML, may be `""`. NO posted date
+(`close_date` is an expiry) ⇒ `postedAt` null. `applyUrl` = `hosted_url` (canonical reconstruct
+fallback). Unknown slug ⇒ 400; real-but-empty ⇒ `200 meta.total:0`.
+
 ## Deferred
 
 Structured facets (`workplaceType`/hybrid, salary, employment type, department) are NOT promoted
 to `NormalizedJob` columns — they're captured losslessly on `raw` and promoted later (Phase 9/10,
 eval-driven). EU Lever, `source_runs` health tracking, and Lever offset pagination are deferred
-(see `research/specs/IMPLEMENTATION_PLAN_TENATIVE.md`).
+(see `research/specs/IMPLEMENTATION_PLAN_TENATIVE.md`). **Wave B ATS** — Polymer, Workday,
+Eightfold, Rippling, Personio — are deferred too: each adds a new axis of variation (an N+1
+hydrate, POST/page pagination, or custom career domains beyond a clean slug). Polymer
+specifically needs an N+1 description hydrate **and** page pagination (a `{ kind:"page" }` member
+on the `Cursor` union), so it is not a zero-hydrate Wave-A board.
