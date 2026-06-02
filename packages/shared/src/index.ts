@@ -59,7 +59,8 @@ export type SourceName =
   | "ashby"
   | "workable"
   | "smartrecruiters"
-  | "pinpoint";
+  | "pinpoint"
+  | "gem";
 
 /**
  * Cross-source normalized job posting — the first real normalization contract.

@@ -1,6 +1,7 @@
 import type { NormalizedJob, SourceName } from "@opusfinder/shared";
 
 import { ashbyAdapter } from "./ashby";
+import { gemAdapter } from "./gem";
 import { greenhouseAdapter } from "./greenhouse";
 import { leverAdapter } from "./lever";
 import { pinpointAdapter } from "./pinpoint";
@@ -22,6 +23,7 @@ export const adapters: Record<SourceName, SourceAdapter> = {
   workable: workableAdapter,
   smartrecruiters: smartRecruitersAdapter,
   pinpoint: pinpointAdapter,
+  gem: gemAdapter,
 };
 
 /** The known source names (registry keys), for CLI validation + iteration. */
