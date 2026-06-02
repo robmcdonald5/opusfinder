@@ -7,17 +7,17 @@ pipeline, and delivers a personalized digest on a regular cadence. See
 
 ## Monorepo layout
 
-| Path                   | What                                                                                          |
-| ---------------------- | --------------------------------------------------------------------------------------------- |
-| `apps/web/`            | SvelteKit frontend (placeholder until Phase 12)                                               |
-| `apps/scrapers/`       | Cloudflare Workers scraper runtime (placeholder until Phase 8)                                |
-| `packages/db/`         | Drizzle ORM over Neon Postgres + pgvector ([README](packages/db/README.md))                   |
-| `packages/embeddings/` | Voyage `voyage-3-large` embeddings + HNSW retrieval ([README](packages/embeddings/README.md)) |
-| `packages/eval/`       | Matching-quality eval harness — metrics, rankers, reports ([README](packages/eval/README.md)) |
-| `packages/llm/`        | Vercel AI SDK + Anthropic wrapper, prompt caching ([README](packages/llm/README.md))          |
-| `packages/shared/`     | Shared brand types + validators ([README](packages/shared/README.md))                         |
-| `packages/sources/`    | ATS adapters → `NormalizedJob` (Greenhouse, Lever, Ashby, Workable, SmartRecruiters) ([README](packages/sources/README.md)) |
-| `research/`            | Specs + source-discovery catalog (local planning docs — see below)                            |
+| Path                   | What                                                                                                                                                            |
+| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/web/`            | SvelteKit frontend (placeholder until Phase 12)                                                                                                                 |
+| `apps/scrapers/`       | Cloudflare Workers scraper runtime (placeholder until Phase 8)                                                                                                  |
+| `packages/db/`         | Drizzle ORM over Neon Postgres + pgvector ([README](packages/db/README.md))                                                                                     |
+| `packages/embeddings/` | Voyage `voyage-3-large` embeddings + HNSW retrieval ([README](packages/embeddings/README.md))                                                                   |
+| `packages/eval/`       | Matching-quality eval harness — metrics, rankers, reports ([README](packages/eval/README.md))                                                                   |
+| `packages/llm/`        | Vercel AI SDK + Anthropic wrapper, prompt caching ([README](packages/llm/README.md))                                                                            |
+| `packages/shared/`     | Shared brand types + validators ([README](packages/shared/README.md))                                                                                           |
+| `packages/sources/`    | ATS adapters → `NormalizedJob` (Greenhouse, Lever, Ashby, Workable, SmartRecruiters, Recruitee, Pinpoint, Gem, Trakstar) ([README](packages/sources/README.md)) |
+| `research/`            | Specs + source-discovery catalog (local planning docs — see below)                                                                                              |
 
 pnpm workspaces; the package manager is pinned to pnpm 11.3.0.
 
@@ -47,20 +47,20 @@ pnpm db:ping      # round-trips SELECT 1 against Neon
 
 ## Root scripts
 
-| Script                         | Does                                                                       |
-| ------------------------------ | -------------------------------------------------------------------------- |
-| `pnpm lint` / `lint:fix`       | ESLint over the repo                                                       |
-| `pnpm format` / `format:check` | Prettier write / check                                                     |
-| `pnpm typecheck`               | `tsc --noEmit` (covers `packages/*`; apps excluded until they gain code)   |
-| `pnpm db:migrate`              | Run Neon migrations (`@opusfinder/db`)                                     |
-| `pnpm db:ping`                 | Connectivity check against Neon                                            |
+| Script                         | Does                                                                                       |
+| ------------------------------ | ------------------------------------------------------------------------------------------ |
+| `pnpm lint` / `lint:fix`       | ESLint over the repo                                                                       |
+| `pnpm format` / `format:check` | Prettier write / check                                                                     |
+| `pnpm typecheck`               | `tsc --noEmit` (covers `packages/*`; apps excluded until they gain code)                   |
+| `pnpm db:migrate`              | Run Neon migrations (`@opusfinder/db`)                                                     |
+| `pnpm db:ping`                 | Connectivity check against Neon                                                            |
 | `pnpm ingest <source> <slug>`  | Fetch + normalize one ATS board, upsert to Neon, embed new postings (`--no-embed` to skip) |
 | `pnpm ingest:all`              | Ingest every seeded company across all sources (`[--no-embed] [--source=<name>]`)          |
-| `pnpm llm:test`                | Call Haiku twice with a cached system prompt; assert cache write then read |
-| `pnpm embeddings:backfill`     | Embed every job whose `embedding` is still NULL (idempotent)               |
-| `pnpm embeddings:search "<q>"` | Embed a query and print the nearest jobs by cosine distance (HNSW)         |
-| `pnpm eval`                    | Score a ranker over the labeled set; write a report + diff vs last run     |
-| `pnpm eval:compare`            | Voyage vs OpenAI embedding retrieval, side-by-side                         |
+| `pnpm llm:test`                | Call Haiku twice with a cached system prompt; assert cache write then read                 |
+| `pnpm embeddings:backfill`     | Embed every job whose `embedding` is still NULL (idempotent)                               |
+| `pnpm embeddings:search "<q>"` | Embed a query and print the nearest jobs by cosine distance (HNSW)                         |
+| `pnpm eval`                    | Score a ranker over the labeled set; write a report + diff vs last run                     |
+| `pnpm eval:compare`            | Voyage vs OpenAI embedding retrieval, side-by-side                                         |
 
 ## Documentation (local planning docs — not committed)
 
@@ -74,7 +74,11 @@ but not in a fresh clone:
 
 ## Status
 
-Phase 6 substantially complete (`packages/sources` — extracted a shared `runAdapter`
+Phase 6.5 (Wave A) shipped four more zero-hydrate ATS adapters — **Recruitee, Pinpoint, Gem,
+Trakstar** — each a `SourceAdapter` descriptor + one `mapItem` with no change to the shared
+plumbing (`SourceName` is now nine sources; shared `inferRemoteFromText` / `joinParts` /
+`htmlToText` helpers extracted); Polymer was deferred to Wave B (it needs an N+1 hydrate + page
+pagination). Phase 6 substantially complete (`packages/sources` — extracted a shared `runAdapter`
 abstraction + a source→adapter registry and added Lever, Ashby, Workable, and
 SmartRecruiters alongside Greenhouse; ingestion is now `pnpm ingest <source> <slug>` for
 one board or `pnpm ingest:all` across every seeded company; `packages/db` gained a

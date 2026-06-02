@@ -1,11 +1,15 @@
 import type { NormalizedJob, SourceName } from "@opusfinder/shared";
 
 import { ashbyAdapter } from "./ashby";
+import { gemAdapter } from "./gem";
 import { greenhouseAdapter } from "./greenhouse";
 import { leverAdapter } from "./lever";
+import { pinpointAdapter } from "./pinpoint";
+import { recruiteeAdapter } from "./recruitee";
 import { runAdapter } from "./run-adapter";
 import type { RunAdapterOptions } from "./run-adapter";
 import { smartRecruitersAdapter } from "./smartrecruiters";
+import { trakstarAdapter } from "./trakstar";
 import type { SourceAdapter } from "./types";
 import { workableAdapter } from "./workable";
 
@@ -20,6 +24,10 @@ export const adapters: Record<SourceName, SourceAdapter> = {
   ashby: ashbyAdapter,
   workable: workableAdapter,
   smartrecruiters: smartRecruitersAdapter,
+  pinpoint: pinpointAdapter,
+  gem: gemAdapter,
+  recruitee: recruiteeAdapter,
+  trakstar: trakstarAdapter,
 };
 
 /** The known source names (registry keys), for CLI validation + iteration. */

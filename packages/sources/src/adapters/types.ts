@@ -79,4 +79,4 @@ export type FetchJson = (req: JobsRequest) => Promise<unknown>;
  * always). A `page` kind can be added as another union member when a page-number ATS lands;
  * the loop and `jobsRequest` already accept any Cursor shape, so no plumbing changes.
  */
-export type Cursor = { kind: "offset"; offset: number; limit: number };
+export type Cursor = { kind: "offset"; offset: number };

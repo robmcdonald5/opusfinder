@@ -48,12 +48,22 @@ export const unsafeJobId = (value: string): JobId => value as JobId;
 
 /**
  * Which ATS produced a job. Grows one member per adapter as they land (Phase 6
- * adds Lever, Ashby, Workable, SmartRecruiters). Kept a union, NOT `string`, so a
- * typo is a compile error and the `jobs.source` column / Phase 6 source registry
- * (`Record<SourceName, SourceAdapter>`) stay exhaustive — a missing adapter is a
- * compile error.
+ * adds Lever, Ashby, Workable, SmartRecruiters; Phase 6.5 Wave A adds Recruitee,
+ * Pinpoint, Gem, Trakstar — all zero-hydrate public boards). Kept a union, NOT
+ * `string`, so a typo is a compile error and the `jobs.source` column / source
+ * registry (`Record<SourceName, SourceAdapter>`) stay exhaustive — a missing
+ * adapter is a compile error.
  */
-export type SourceName = "greenhouse" | "lever" | "ashby" | "workable" | "smartrecruiters";
+export type SourceName =
+  | "greenhouse"
+  | "lever"
+  | "ashby"
+  | "workable"
+  | "smartrecruiters"
+  | "pinpoint"
+  | "gem"
+  | "recruitee"
+  | "trakstar";
 
 /**
  * Cross-source normalized job posting — the first real normalization contract.
