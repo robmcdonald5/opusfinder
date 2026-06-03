@@ -1,9 +1,10 @@
 # @opusfinder/shared
 
-Cross-package types and validators, plus two small cross-cutting runtime helpers.
+Cross-package types and validators, plus a few small cross-cutting runtime helpers.
 Exports the raw `src/index.ts` barrel (types + validators, dependency-free), a
-`@opusfinder/shared/script` subpath for the CLI runner (dependency-free), and a
-`@opusfinder/shared/env` subpath for env loading (depends on `dotenv`).
+`@opusfinder/shared/script` subpath for the CLI runner (dependency-free), a
+`@opusfinder/shared/env` subpath for env loading (depends on `dotenv`), and a
+`@opusfinder/shared/async` subpath for the shared retry/backoff (dependency-free, Worker-forward).
 
 ## Brand types
 
@@ -98,6 +99,15 @@ import { runScript } from "@opusfinder/shared/script";
 
 await runScript("Backfill", main);
 ```
+
+## Async / backoff
+
+`backoff(attempt, retryAfter?)` (from `@opusfinder/shared/async`) is the shared retry sleep for the
+repo's resilient fetch loops — exponential (`2s · 2^attempt`, capped at 15s) + jitter, with an HTTP
+`Retry-After` override (delta-seconds or HTTP-date, capped at 30s; `Retry-After: 0` is honored as
+~0 ms rather than dropped). **Extracted in Phase 7** from `@opusfinder/sources`' run-adapter so the
+ingestion list-fetch and the discovery prober share ONE definition. Pure + Worker-forward (global
+`setTimeout` / `Math.random` / `Date`, no Node-only APIs and no `process.env` reads).
 
 ## Env loading
 

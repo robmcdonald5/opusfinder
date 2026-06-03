@@ -20,9 +20,12 @@ The abstraction was **extracted** from concrete Greenhouse + Lever + SmartRecrui
   fails SOFT, skipping one bad posting) → the optional bounded-concurrency hydrate pool →
   per-board accounting. Returns `NormalizedJob[]`.
 - **`SourceAdapter` descriptors (`src/adapters/{greenhouse,lever,ashby,workable,smartrecruiters,recruitee,pinpoint,gem,trakstar}.ts`)**
-  — per-source data: `source`, `normalizeSlug`, `jobsRequest`, `locate`, `mapItem`, and the
-  optional `nextCursor` (pagination) / `hydrate` (a second fetch). `mapItem` is a typed
-  function per source — never declarative config. See `src/adapters/types.ts`.
+  — per-source data: `source`, `normalizeSlug`, `jobsRequest`, `locate`, `mapItem`, the Phase-7
+  discovery pair `matchUrl` (REQUIRED — the URL→raw-slug inverse of `jobsRequest`; must not throw;
+  parses the board/API host only) and the optional `classifyProbe` (probe response → `ProbeOutcome`;
+  overridden only on SmartRecruiters + Trakstar), plus the optional `nextCursor` (pagination) /
+  `hydrate` (a second fetch). `mapItem` is a typed function per source — never declarative config.
+  See `src/adapters/types.ts`.
 - **`cleanHtml(input, steps)` (`src/adapters/text.ts`)** — the shared HTML→text primitive. The
   decode/strip/collapse atoms are invariant; only their ORDER varies per source, so it takes
   an ordered step list (e.g. Greenhouse's asymmetric double-encoding needs
@@ -37,6 +40,13 @@ The abstraction was **extracted** from concrete Greenhouse + Lever + SmartRecrui
   authoritative structured signal) and `joinParts(parts)` (compose one location string from
   ordered city/region/country parts). The invariant lives once; per-source variation stays in
   `mapItem`. Pure string ops — Worker-safe (Phase 8).
+- **`url-match.ts` (`src/adapters/url-match.ts`, Phase 7)** — pure WHATWG-`URL` parsing primitives
+  shared by the adapters' `matchUrl` (`pathSegments` / `firstPathSegment` / `segmentAfter` /
+  `subdomainLabel`; none throw). `RESERVED_SUBDOMAINS` blocks vendor infra + apply/marketing hosts
+  (`www`, `api`, `apply`, `careers`, `jobs`, `talent`, `recruiting`, …) so a seed link like
+  `apply.recruitee.com` (which serves a real offers board) can't mint a phantom tenant;
+  `segmentAfter` anchors on the FIRST marker occurrence so a board slugged like a structural token
+  (e.g. `boards`) still resolves.
 
 The registry (`src/adapters/index.ts`) maps `SourceName → SourceAdapter` as a
 `Record<SourceName, SourceAdapter>`, so a forgotten adapter is a **compile error**. The public
@@ -79,7 +89,8 @@ location string. `postedAt` = `first_published` ‖ `updated_at`.
 Slugs CASE-SENSITIVE (don't lowercase). `id` is a UUID string; title is on `text`; `createdAt`
 is ms-epoch. Structured `workplaceType` (`remote`⇒true, `hybrid`/`onsite`⇒false). Description
 from `descriptionPlain` (collapse only); the `lists[]`/`additional` sections stay on `raw`.
-**US host only** — EU tenants (`api.eu.lever.co`) are deferred to Phase 7.
+**US host only** — EU tenants (`api.eu.lever.co` / `jobs.eu.lever.co`) return `null` from `matchUrl`
+and stay deferred (EU needs a per-company region channel; Phase 8).
 
 **Ashby** — `api.ashbyhq.com/posting-api/job-board/{slug}?includeCompensation=true`. Unpaginated
 `{ jobs, apiVersion }`. Slugs case-PRESERVED (server is case-insensitive but apply URLs echo
@@ -141,8 +152,9 @@ fallback). Unknown slug ⇒ 400; real-but-empty ⇒ `200 meta.total:0`.
 
 Structured facets (`workplaceType`/hybrid, salary, employment type, department) are NOT promoted
 to `NormalizedJob` columns — they're captured losslessly on `raw` and promoted later (Phase 9/10,
-eval-driven). EU Lever, `source_runs` health tracking, and Lever offset pagination are deferred
-(see `research/specs/IMPLEMENTATION_PLAN_TENATIVE.md`). **Wave B ATS** — Polymer, Workday,
+eval-driven). EU Lever and Lever offset pagination are deferred
+(see `research/specs/IMPLEMENTATION_PLAN_TENATIVE.md`); `source_runs` run-tracking landed in Phase 7
+(see `@opusfinder/db`). **Wave B ATS** — Polymer, Workday,
 Eightfold, Rippling, Personio — are deferred too: each adds a new axis of variation (an N+1
 hydrate, POST/page pagination, or custom career domains beyond a clean slug). Polymer
 specifically needs an N+1 description hydrate **and** page pagination (a `{ kind:"page" }` member
