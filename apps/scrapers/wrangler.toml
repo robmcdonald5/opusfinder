@@ -10,13 +10,20 @@ compatibility_date = "2026-06-03"
 enabled = true
 
 [triggers]
-# UTC. Ingestion is frequent; discovery is weekly. NOTE: Cloudflare numbers weekdays 1=Sun..7=Sat
-# (Quartz-style) — Sunday is "SUN" (or 1), NEVER "0". The strings here MUST match the `case`
-# literals in src/index.ts character-for-character or the dispatch branch silently never runs.
-crons = [
-  "*/30 * * * *", # ingestion — every 30 minutes
-  "0 3 * * SUN",  # discovery — Sunday 03:00 (REQUIRES Workers Paid; see PHASE_8_PLAN.md §6)
-]
+# SCHEDULING TOGGLE — pause/resume the deployed cron (see README "Pause / resume the schedule").
+#   PAUSED  : crons = []         + `wrangler deploy`  -> removes the deployed triggers; nothing fires.
+#   RUNNING : restore the array  + `wrangler deploy`  -> re-registers the triggers.
+# An idle Worker costs nothing and never touches Neon. `crons = []` is the documented way to REMOVE
+# triggers; omitting [triggers] entirely would instead LEAVE the deployed ones untouched.
+#
+# >>> Currently PAUSED until the backend is finalized. <<<  To RESUME: delete `crons = []`, uncomment
+# the array below, and `wrangler deploy`. (UTC; CF weekdays are 1=Sun..7=Sat — Sunday is "SUN", never
+# "0"; the strings MUST match the `case` literals in src/index.ts character-for-character.)
+crons = []
+# crons = [
+#   "*/30 * * * *", # ingestion — every 30 minutes
+#   "0 3 * * SUN",  # discovery — Sunday 03:00 (REQUIRES Workers Paid; see PHASE_8_PLAN.md §6)
+# ]
 
 [vars]
 # Non-secret config only. The secret (DATABASE_URL) is set with `wrangler secret put` and arrives as

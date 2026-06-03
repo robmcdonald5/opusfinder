@@ -13,6 +13,10 @@ dispatch shell; the real work lives in the already-Worker-forward libraries it c
 | `*/30 * * * *` | ingestion | `runIngestion(db, …)` from `@opusfinder/sources`   |
 | `0 3 * * SUN`  | discovery | `runDiscovery(db, …)` from `@opusfinder/discovery` |
 
+> **Scheduling is PAUSED by default** (`crons = []` in `wrangler.toml`) so the Worker doesn't run
+> constantly during development — see "Pause / resume the schedule" below. The schedules above are what
+> runs once resumed.
+
 Each handler builds `createDb(env.DATABASE_URL)` (the neon-http client — fetch-only, no `process.env`)
 and the library it calls owns its own `source_runs` row (`startRun`/`finishRun`).
 
@@ -61,15 +65,31 @@ wrangler login
 wrangler kv namespace create INGEST_CURSOR   # then uncomment the `id` line in wrangler.toml + paste it
 wrangler secret put DATABASE_URL
 # wrangler secret put VOYAGE_API_KEY          # ONLY if you enable inline embedding (see src/index.ts)
-pnpm --filter @opusfinder/scrapers deploy     # registers the Worker + activates the cron triggers
+pnpm --filter @opusfinder/scrapers deploy     # registers/updates the Worker + applies the current [triggers]
 wrangler tail opusfinder-scrapers             # stream live cron invocations
 ```
 
 - **Workers Paid is required for the weekly discovery cron** — the Free plan caps at 50 subrequests per
   invocation, which the seed fetch + a handful of probes exhaust. Ingestion's `INGEST_LIMIT` keeps a tick
   under budget either way.
-- Deploying with `crons = []` removes all triggers; omitting `[triggers]` leaves deployed triggers
-  untouched.
+
+## Pause / resume the schedule
+
+The Worker ships **scheduling-paused** (`crons = []` in `wrangler.toml`) so it doesn't run constantly
+during development. An idle deployed Worker costs nothing and never touches Neon — it only does anything
+when a cron fires. The toggle lives in `wrangler.toml` under `[triggers]`, and a change takes effect on
+the **next deploy**:
+
+- **Pause** (stop all scheduled runs): set `crons = []`, then
+  `pnpm --filter @opusfinder/scrapers deploy`. Deploying with `crons = []` is the documented way to
+  _remove_ the deployed triggers. (Omitting `[triggers]` entirely would instead _leave_ them untouched,
+  so always set the empty array — don't just delete the block.)
+- **Resume**: uncomment the cron array in `wrangler.toml` (and delete `crons = []`), then
+  `pnpm --filter @opusfinder/scrapers deploy`.
+
+The Worker code, secret, and KV binding are untouched by the toggle, so resuming is a one-step redeploy.
+Verify either way with `pnpm --filter @opusfinder/scrapers exec wrangler deployments list`, or the
+Cloudflare dashboard (Workers → opusfinder-scrapers → Settings → Triggers).
 
 ## Scaling note
 
