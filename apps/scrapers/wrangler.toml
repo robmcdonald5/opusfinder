@@ -1,10 +1,10 @@
 name = "opusfinder-scrapers"
 main = "src/index.ts"
 compatibility_date = "2026-06-03"
-# nodejs_compat (a) neutralizes the @opusfinder/embeddings env-module import (dotenv + node:url at
-# load) and (b) — because compatibility_date >= 2025-04-01 — auto-populates process.env from Worker
-# secrets. NOT needed for the Neon HTTP driver (pure fetch). See research/specs/PHASE_8_PLAN.md §2.3.
-compatibility_flags = ["nodejs_compat"]
+# No compatibility_flags: the Worker imports only fetch-based libraries (neon-http, the ATS adapters,
+# discovery) — no Node-targeted package enters the bundle, so nodejs_compat is not needed. Enabling
+# inline embedding later re-introduces @opusfinder/embeddings' dotenv env-module and would need
+# `compatibility_flags = ["nodejs_compat"]` — see src/index.ts.
 
 [observability]
 enabled = true
@@ -19,10 +19,9 @@ crons = [
 ]
 
 [vars]
-# Non-secret config only. Secrets (DATABASE_URL, VOYAGE_API_KEY) are set with `wrangler secret put`
-# and arrive as env.* (and, under nodejs_compat, also on process.env — PHASE_8_PLAN.md §2.3).
-INGEST_LIMIT = "150"  # boards processed per ingestion tick (the wall/subrequest budget)
-INGEST_EMBED = "false" # "true" enables inline embedding (needs a Voyage card lifting the 3 RPM cap)
+# Non-secret config only. The secret (DATABASE_URL) is set with `wrangler secret put` and arrives as
+# env.DATABASE_URL.
+INGEST_LIMIT = "150" # boards processed per ingestion tick (the wall/subrequest budget)
 
 # Chunk-cursor store for the Option-A chunked-cron ingestion lane. The binding is DECLARED so
 # `wrangler dev` simulates a local KV for it (no id needed) and the ingestion tick can read/write the

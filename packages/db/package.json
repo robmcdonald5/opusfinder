@@ -15,6 +15,7 @@
     "generate": "drizzle-kit generate",
     "studio": "drizzle-kit studio",
     "ping": "tsx scripts/ping.ts",
+    "runs": "tsx scripts/show-runs.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

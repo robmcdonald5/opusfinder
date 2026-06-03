@@ -51,9 +51,6 @@ importers:
       '@cloudflare/workers-types':
         specifier: ^4
         version: 4.20260602.1
-      '@types/node':
-        specifier: ^24
-        version: 24.12.4
       wrangler:
         specifier: ^4
         version: 4.97.0(@cloudflare/workers-types@4.20260602.1)

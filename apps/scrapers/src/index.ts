@@ -1,7 +1,6 @@
 import { createDb, type Db } from "@opusfinder/db";
 import { runDiscovery } from "@opusfinder/discovery";
-import { embed } from "@opusfinder/embeddings";
-import { runIngestion, type IngestEmbedFn } from "@opusfinder/sources";
+import { runIngestion } from "@opusfinder/sources";
 
 /**
  * The opusfinder scrapers Worker (Phase 8): two scheduled (cron) handlers — ingestion (frequent)
@@ -9,25 +8,30 @@ import { runIngestion, type IngestEmbedFn } from "@opusfinder/sources";
  * `createDb(env.DATABASE_URL)` (fetch-only, no `process.env`) and calls an already-Worker-forward
  * library (`runIngestion` / `runDiscovery`) that owns its own `source_runs` row.
  *
- * The cron strings below MUST match wrangler.toml [triggers].crons CHARACTER-FOR-CHARACTER — in
- * particular the discovery weekday: Cloudflare numbers weekdays 1=Sun..7=Sat, so it is "SUN",
- * never "0" (a numeric 0 is out-of-range and the branch would never fire).
+ * The Worker imports ONLY fetch-based libraries — no Node-targeted package enters the bundle — so it
+ * needs no `nodejs_compat`. Inline embedding is intentionally NOT wired here: it is off by default on
+ * the Voyage free tier (§2.4 / F-EMBED), and wiring `@opusfinder/embeddings` would drag its dotenv
+ * env-module into the Worker (and require nodejs_compat). Jobs are upserted regardless; the still-NULL
+ * vectors are filled by `pnpm embeddings:backfill`. To enable inline embedding later:
+ *   1. `import { embed } from "@opusfinder/embeddings";`
+ *      `import { type IngestEmbedFn } from "@opusfinder/sources";`
+ *   2. build `const workerEmbed: IngestEmbedFn = (t, p) => embed(t, { ...p, apiKey: env.VOYAGE_API_KEY });`
+ *      and pass `embed: workerEmbed` to runIngestion (guarded by an INGEST_EMBED flag);
+ *   3. add the `VOYAGE_API_KEY` secret + `compatibility_flags = ["nodejs_compat"]` in wrangler.toml.
  *
- * The handler AWAITS the dispatched work (rather than fire-and-forget `ctx.waitUntil`) inside one
- * try/catch, so a failure in the KV cursor I/O or the pipeline is logged to `wrangler tail` AND
- * re-thrown so Cloudflare records the invocation as errored.
+ * The cron strings below MUST match wrangler.toml [triggers].crons CHARACTER-FOR-CHARACTER — in
+ * particular the discovery weekday: Cloudflare numbers weekdays 1=Sun..7=Sat, so it is "SUN", never
+ * "0". The handler AWAITS the dispatched work (not fire-and-forget `ctx.waitUntil`) in one try/catch,
+ * so a failure in the KV cursor I/O or the pipeline is logged to `wrangler tail` and re-thrown so
+ * Cloudflare records the invocation as errored.
  */
 interface Env {
   /** Neon connection string (a `wrangler secret`). */
   DATABASE_URL: string;
-  /** Voyage API key (a `wrangler secret`) — needed ONLY when inline embedding is enabled, so optional. */
-  VOYAGE_API_KEY?: string;
   /** Chunk-cursor store for the Option-A chunked-cron ingestion lane (a KV namespace binding). */
   INGEST_CURSOR: KVNamespace;
   /** Boards per ingestion tick (the wall/subrequest budget). Default 150. */
   INGEST_LIMIT?: string;
-  /** "true" enables inline embedding during ingestion. Off by default (Voyage free-tier 3 RPM cap). */
-  INGEST_EMBED?: string;
 }
 
 // Must equal the wrangler.toml cron strings exactly (esp. the weekday — "SUN", not "0").
@@ -92,23 +96,9 @@ async function runIngestionTick(db: Db, env: Env): Promise<void> {
   const limit =
     Number.isFinite(limitRaw) && limitRaw > 0 ? Math.trunc(limitRaw) : DEFAULT_INGEST_LIMIT;
 
-  const embedEnabled = env.INGEST_EMBED === "true";
-  if (embedEnabled && !env.VOYAGE_API_KEY) {
-    console.warn(
-      "INGEST_EMBED=true but VOYAGE_API_KEY is not set — inline embedding will fail per board.",
-    );
-  }
-  // The embed closure is wired (the Voyage key is injected from the secret); enabled only when
-  // INGEST_EMBED="true" once a Voyage card lifts the free-tier 3 RPM cap (§2.4 / F-EMBED).
-  const workerEmbed: IngestEmbedFn = (texts, params) =>
-    embed(texts, { ...params, apiKey: env.VOYAGE_API_KEY });
-
-  const counts = await runIngestion(db, {
-    activeOnly: true,
-    afterId,
-    limit,
-    embed: embedEnabled ? workerEmbed : undefined,
-  });
+  // Inline embedding is OFF (not wired — see the module doc-comment). Jobs are upserted; the still-NULL
+  // vectors are filled by `pnpm embeddings:backfill`.
+  const counts = await runIngestion(db, { activeOnly: true, afterId, limit });
 
   const next = counts.companies < limit ? 0 : counts.lastId;
   await env.INGEST_CURSOR.put("afterId", String(next));

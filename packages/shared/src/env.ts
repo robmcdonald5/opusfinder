@@ -21,7 +21,19 @@ import { config } from "dotenv";
  * must NOT use this — it would resolve `../.env` one directory too high.
  */
 export function loadPackageEnv(metaUrl: string): void {
-  config({ path: fileURLToPath(new URL("../.env", metaUrl)), quiet: true });
+  // Best-effort. In Node this loads the package's own `.env`. In a Cloudflare Worker there is no
+  // filesystem and `import.meta.url` is not a resolvable file URL, so resolving the `.env` path throws
+  // — catch ONLY that resolution (env there comes from runtime bindings / injection, not a file).
+  // `config()` itself runs UNGUARDED so a genuine Node failure (an unreadable `.env`, a dotenv-vault
+  // misconfig) still surfaces instead of being silently swallowed. dotenv never overrides an
+  // already-set var, and a missing file is a no-op, so this stays safe in every context.
+  let envPath: string | null = null;
+  try {
+    envPath = fileURLToPath(new URL("../.env", metaUrl));
+  } catch {
+    // Non-file metaUrl (e.g. a Worker) — no `.env` on disk; use the ambient environment.
+  }
+  if (envPath !== null) config({ path: envPath, quiet: true });
 }
 
 export interface RequireEnvOptions {

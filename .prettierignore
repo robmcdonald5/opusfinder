@@ -8,5 +8,6 @@ coverage
 .nyc_output
 pnpm-lock.yaml
 packages/db/drizzle/**
+apps/scrapers/worker-configuration.d.ts
 research
 CLAUDE.md
