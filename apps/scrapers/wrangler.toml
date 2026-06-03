@@ -29,4 +29,4 @@ INGEST_LIMIT = "150" # boards processed per ingestion tick (the wall/subrequest 
 #   wrangler kv namespace create INGEST_CURSOR   # then uncomment `id` below and paste the value
 [[kv_namespaces]]
 binding = "INGEST_CURSOR"
-# id = "<paste from `wrangler kv namespace create INGEST_CURSOR`>"
+id = "512214e0882d4816bc397cf092956a66"
