@@ -22,7 +22,12 @@ const DEFAULT_REPROBE_LIMIT = 500;
 export interface DiscoveryOptions {
   /** Scope to one source (omit = all covered sources — the broader default pass). */
   source?: SourceName;
-  /** Cap the NEW/INACTIVE-candidate probe worklist (omit = no cap — probe every resolved candidate). */
+  /**
+   * Cap the NEW/INACTIVE-candidate probe worklist (omit = no cap — probe every resolved candidate).
+   * A fixed seed-ordered PREFIX slice, NOT a cursor: repeated capped runs re-probe the same head
+   * (live candidates reactivate and drop out, so progress is throttled, not zero). For ad-hoc/test
+   * runs — the broad pass is uncapped.
+   */
   limit?: number;
   /** Preview only: probe + classify + tally, but write NOTHING (no upsert, reprobe, sweep, or run row). */
   dryRun?: boolean;
@@ -40,6 +45,7 @@ export interface DiscoveryOptions {
  */
 export interface DiscoveryCounts {
   [key: string]: number;
+  // Resolve phase (seed → candidates).
   seedRecords: number;
   atsLinks: number;
   badUrl: number;
@@ -48,6 +54,9 @@ export interface DiscoveryCounts {
   candidates: number;
   alreadyActive: number;
   probeWorklist: number;
+  // NEW/INACTIVE worklist pass ONLY (written by tally + probeAndUpsert). These do NOT include
+  // reprobe outcomes — a network-exhausted REPROBE lands in reprobeInconclusive below, not in
+  // transientFailed — so read these as worklist-pass figures, not run-wide totals.
   probed: number;
   live: number;
   liveEmpty: number;
@@ -55,10 +64,12 @@ export interface DiscoveryCounts {
   indeterminate: number;
   transientFailed: number;
   upserted: number;
+  // ACTIVE-company reprobe pass ONLY — its own buckets, kept separate from the worklist tallies above.
   reprobed: number;
   refreshedLive: number;
   markedFailed: number;
   reprobeInconclusive: number;
+  // Staleness sweep.
   deactivated: number;
 }
 

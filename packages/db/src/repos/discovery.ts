@@ -153,9 +153,15 @@ export async function markProbed(db: Db, companyId: number): Promise<void> {
  * from each row alone: ACTIVE, a non-zero failure streak, and a staleness clock
  * COALESCE(last_live_at, created_at) older than the window. The COALESCE falls back to `created_at`
  * for a row a discovery LIVE probe has never refreshed (an ingestion-seeded company with
- * `last_live_at` NULL), so it still gets the FULL window instead of being swept on its first failed
- * probe. A never-failed row (streak 0) is untouched, so a source whose absence can't be asserted —
- * SmartRecruiters' ambiguous 200, which never increments the streak — never wrongly deactivates.
+ * `last_live_at` NULL), so the clock runs from when the row was created. NOTE: this gives the FULL
+ * window only to a row created WITHIN it — an ingestion-seeded row created longer ago than
+ * `olderThanDays` can be swept on its FIRST confirmed-absent reprobe (its created_at clock is
+ * already past). That is acceptable: `absent` is a definitive 404/400 (transients classify as
+ * `indeterminate` and never increment the streak), and deactivation is reversible — a later live
+ * probe reactivates the row. A true first-failure clock (a `first_failed_at` column) is deferred to
+ * the Phase-8 worker. A never-failed row (streak 0) is untouched, so a source whose absence can't be
+ * asserted — SmartRecruiters' ambiguous 200, which never increments the streak — never wrongly
+ * deactivates.
  * `opts.source` scopes the sweep to one source so a `--source` run doesn't deactivate rows of an
  * unrelated source it never re-probed; omit it (the broader pass) to sweep all sources. Returns the
  * number of rows flipped. `days` is the trunc of an in-code number, never user input.

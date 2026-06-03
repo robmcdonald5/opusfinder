@@ -62,12 +62,13 @@ export const companies = pgTable(
     // `active` flips false after ~30 days of CONSECUTIVE failed probes (deactivateStale). The
     // staleness clock is COALESCE(last_live_at, created_at): a row decays from its last
     // confirmed-live probe, or — for a company seeded by ingestion that a discovery LIVE probe
-    // has never refreshed (last_live_at NULL) — from when it was created, so it still gets a
-    // window instead of being swept on its first failed probe. last_probed_at (every probe)
-    // drives reprobe ORDERING, not staleness. Deactivation is gated on a non-zero failure
-    // STREAK, so a never-failed row is never swept and SmartRecruiters' unassertable 200 (which
-    // never increments the streak) can't drift a healthy company. A new row starts active with a
-    // zero streak.
+    // has never refreshed (last_live_at NULL) — from when it was created. A row created longer ago
+    // than the window can therefore be swept on its FIRST confirmed-absent probe; that is fine
+    // (absent is a definitive 404, transients stay indeterminate, and deactivation is reversible).
+    // last_probed_at (every probe) drives reprobe ORDERING, not staleness. Deactivation is gated on
+    // a non-zero failure STREAK, so a never-failed row is never swept and SmartRecruiters'
+    // unassertable 200 (which never increments the streak) can't drift a healthy company. A new row
+    // starts active with a zero streak.
     active: boolean("active").notNull().default(true),
     lastProbedAt: timestamp("last_probed_at", { withTimezone: true }),
     lastLiveAt: timestamp("last_live_at", { withTimezone: true }),
