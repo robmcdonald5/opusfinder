@@ -38,3 +38,12 @@ export function backoff(attempt: number, retryAfter?: string | null): Promise<vo
   ms += Math.random() * 250; // jitter so concurrent retries don't synchronize
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
+
+/**
+ * Resolve after `ms` milliseconds — the repo's one inter-request pacing primitive. Lifted here
+ * (Phase 8) so the ingestion pacer (`runIngestion`) and the discovery prober's host throttle share
+ * ONE definition instead of two identical copies. Pure + Worker-forward: global `setTimeout` only.
+ */
+export function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}

@@ -6,7 +6,7 @@
  * dedupes the batch, then only advances `updated_at` when a job's content
  * actually changed, so re-ingesting an unchanged board is a no-op.
  */
-import { eq, sql } from "drizzle-orm";
+import { and, eq, gt, sql, type SQL } from "drizzle-orm";
 
 import type { CompanySlug, NormalizedJob, SourceName } from "@opusfinder/shared";
 
@@ -24,15 +24,27 @@ export interface CompanyRow {
  * List companies to ingest (id + canonical slug + source), oldest id first. Slugs come back
  * already branded (the column is `$type<CompanySlug>()`) and in their platform-canonical form
  * — stored post-`normalizeSlug` — so the driver requests them exactly as ingestion expects.
- * Optionally scoped to one `source` (for a per-source pass). Used by the all-companies
- * ingestion script (and later the Phase-8 Worker cron).
+ * Optionally scoped to one `source` (for a per-source pass) and/or to `activeOnly` rows —
+ * the Phase-8 Worker cron sets `activeOnly: true` to skip boards discovery has deactivated
+ * (Phase-7 deferred #5); it defaults falsey so existing callers are unchanged. `afterId` +
+ * `limit` form an id-keyset cursor (`WHERE id > afterId ORDER BY id LIMIT limit`) for the
+ * Phase-8 chunked-cron lane — the chunk is built in SQL, not by loading the whole table and
+ * slicing in memory. Used by the all-companies ingestion path (CLI + the Phase-8 Worker cron).
  */
-export function listCompanies(db: Db, opts: { source?: SourceName } = {}): Promise<CompanyRow[]> {
-  return db
+export function listCompanies(
+  db: Db,
+  opts: { source?: SourceName; activeOnly?: boolean; afterId?: number; limit?: number } = {},
+): Promise<CompanyRow[]> {
+  const conditions: SQL[] = [];
+  if (opts.source) conditions.push(eq(companies.source, opts.source));
+  if (opts.activeOnly) conditions.push(eq(companies.active, true));
+  if (opts.afterId !== undefined) conditions.push(gt(companies.id, opts.afterId));
+  const query = db
     .select({ id: companies.id, slug: companies.slug, source: companies.source })
     .from(companies)
-    .where(opts.source ? eq(companies.source, opts.source) : undefined)
+    .where(conditions.length ? and(...conditions) : undefined)
     .orderBy(companies.id);
+  return opts.limit !== undefined ? query.limit(opts.limit) : query;
 }
 
 /** The NUL code point (U+0000), constructed at runtime so this source file never

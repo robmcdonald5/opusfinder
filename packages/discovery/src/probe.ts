@@ -1,4 +1,4 @@
-import { backoff } from "@opusfinder/shared/async";
+import { backoff, sleep } from "@opusfinder/shared/async";
 import {
   adapters,
   type JobsRequest,
@@ -14,8 +14,6 @@ const DEFAULT_GLOBAL_CONCURRENCY = 12;
 const DEFAULT_HOST_CONCURRENCY = 3;
 const DEFAULT_HOST_MIN_INTERVAL_MS = 400;
 const THROTTLE_POLL_MS = 25;
-
-const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
 export interface ProbeFetchResult {
   /** HTTP status of the final attempt, or 0 when the network attempt was exhausted (retries spent). */

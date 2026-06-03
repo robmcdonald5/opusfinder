@@ -64,15 +64,23 @@ export interface VoyageEmbedResponse {
  * One Voyage embeddings request. `input` MUST already respect the API limits (<=1000
  * items and the per-request token budget) — chunking is embed()'s job, not this layer's.
  * Returns vectors aligned to input order plus usage for cost accounting.
+ *
+ * `apiKey` is the Phase-8 injection seam: a caller without `process.env` (the Cloudflare
+ * Worker) passes the key explicitly; omit it (or pass an empty string) and we fall back to
+ * `getVoyageApiKey()` (the local-script / env path). An empty injected key is treated as
+ * absent — not sent as `Bearer ` — so a misconfigured secret surfaces the env path's
+ * friendly error instead of a silent 401. The key is never logged (no-secrets-in-logs rule).
  */
 export async function embedRequest(
   input: string[],
   inputType: VoyageInputType,
+  apiKey?: string,
 ): Promise<VoyageEmbedResponse> {
+  const key = apiKey && apiKey.length > 0 ? apiKey : getVoyageApiKey();
   const res = await fetch(VOYAGE_URL, {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${getVoyageApiKey()}`,
+      Authorization: `Bearer ${key}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify({

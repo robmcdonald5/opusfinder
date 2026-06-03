@@ -3,6 +3,8 @@
 // + per-source `SourceAdapter` descriptors, behind a source-name → adapter registry. The
 // entry point is the two-arg `fetchJobs(source, slug)`.
 export { fetchJobs, adapters, SOURCE_NAMES, isSourceName } from "./adapters";
+export { runIngestion } from "./ingest";
+export type { IngestionOptions, IngestionCounts, IngestEmbedFn } from "./ingest";
 export { runAdapter } from "./adapters/run-adapter";
 export type { RunAdapterOptions } from "./adapters/run-adapter";
 export type {
