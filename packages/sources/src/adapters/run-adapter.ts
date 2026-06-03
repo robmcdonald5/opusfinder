@@ -1,4 +1,5 @@
 import type { NormalizedJob } from "@opusfinder/shared";
+import { backoff } from "@opusfinder/shared/async";
 
 import type { Cursor, FetchJson, JobsRequest, SourceAdapter, SourceContext } from "./types";
 
@@ -25,8 +26,6 @@ export interface RunAdapterOptions {
 
 const DEFAULT_HYDRATE_CONCURRENCY = 5;
 const DEFAULT_MAX_RETRIES = 3;
-const MAX_BACKOFF_MS = 15_000;
-const MAX_RETRY_AFTER_MS = 30_000;
 
 export async function runAdapter(
   adapter: SourceAdapter,
@@ -152,26 +151,6 @@ async function fetchJsonResilient(
     }
     throw new Error(`${tag} fetch failed: ${res.status} ${res.statusText}`);
   }
-}
-
-/** Exponential backoff with jitter; honors a numeric `Retry-After` (seconds) when present. */
-function backoff(attempt: number, retryAfter?: string | null): Promise<void> {
-  let ms = Math.min(2000 * 2 ** attempt, MAX_BACKOFF_MS);
-  if (retryAfter) {
-    // Retry-After is either delta-seconds (a number) or an HTTP-date (RFC 7231 allows both).
-    const seconds = Number(retryAfter);
-    if (Number.isFinite(seconds) && seconds > 0) {
-      ms = Math.min(seconds * 1000, MAX_RETRY_AFTER_MS);
-    } else {
-      const until = Date.parse(retryAfter);
-      if (!Number.isNaN(until)) {
-        const delta = until - Date.now();
-        if (delta > 0) ms = Math.min(delta, MAX_RETRY_AFTER_MS);
-      }
-    }
-  }
-  ms += Math.random() * 250; // jitter so concurrent retries don't synchronize
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /** Run up to `limit` async tasks concurrently, preserving input order in the result. */
