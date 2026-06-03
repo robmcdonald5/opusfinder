@@ -39,6 +39,9 @@ const INGEST_CRON = "*/30 * * * *";
 const DISCOVERY_CRON = "0 3 * * SUN";
 
 const DEFAULT_INGEST_LIMIT = 150;
+// Upper bound: a misconfigured INGEST_LIMIT (e.g. "50000") is clamped so one tick can't blow the
+// subrequest/wall budget (~500 boards x up to ~20 subrequests ~= the Workers Paid 10K cap; §6).
+const MAX_INGEST_LIMIT = 500;
 // limit + reprobeLimit sized to the subrequest budget (PHASE_8_PLAN.md §6 — REQUIRES Workers Paid).
 const DISCOVERY_LIMIT = 400;
 const DISCOVERY_REPROBE_LIMIT = 500;
@@ -63,7 +66,13 @@ export default {
           await runDiscovery(db, { limit: DISCOVERY_LIMIT, reprobeLimit: DISCOVERY_REPROBE_LIMIT });
           break;
         default:
-          console.warn(`Unhandled cron: ${controller.cron}`);
+          // A cron fired that no case matches — wrangler.toml [triggers].crons and the INGEST_CRON/
+          // DISCOVERY_CRON constants above have drifted (most likely on resume). THROW so it surfaces
+          // as a FAILED invocation in the CF Cron Events table instead of a silent no-op.
+          throw new Error(
+            `Unhandled cron "${controller.cron}": wrangler.toml [triggers].crons and the cron ` +
+              `constants in src/index.ts must match character-for-character.`,
+          );
       }
     } catch (err) {
       // The KV cursor read/write happens here, OUTSIDE runIngestion's own try/catch, so this is the
@@ -94,7 +103,9 @@ async function runIngestionTick(db: Db, env: Env): Promise<void> {
   // on LIMIT 0 (zero boards every tick) or erroring on LIMIT NaN.
   const limitRaw = env.INGEST_LIMIT ? Number(env.INGEST_LIMIT) : DEFAULT_INGEST_LIMIT;
   const limit =
-    Number.isFinite(limitRaw) && limitRaw > 0 ? Math.trunc(limitRaw) : DEFAULT_INGEST_LIMIT;
+    Number.isFinite(limitRaw) && limitRaw > 0
+      ? Math.min(Math.trunc(limitRaw), MAX_INGEST_LIMIT)
+      : DEFAULT_INGEST_LIMIT;
 
   // Inline embedding is OFF (not wired — see the module doc-comment). Jobs are upserted; the still-NULL
   // vectors are filled by `pnpm embeddings:backfill`.

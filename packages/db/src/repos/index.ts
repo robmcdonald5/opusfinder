@@ -6,6 +6,7 @@ export type { CompanyRow } from "./jobs";
 export {
   startRun,
   finishRun,
+  failStaleRuns,
   listCompaniesForReprobe,
   listCompanyStates,
   markProbeResult,
