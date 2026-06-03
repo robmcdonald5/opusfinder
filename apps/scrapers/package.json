@@ -4,6 +4,21 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "echo @opusfinder/scrapers is a placeholder - Cloudflare Workers are scaffolded in a later phase"
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "types:generate": "wrangler types",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@opusfinder/db": "workspace:*",
+    "@opusfinder/discovery": "workspace:*",
+    "@opusfinder/embeddings": "workspace:*",
+    "@opusfinder/shared": "workspace:*",
+    "@opusfinder/sources": "workspace:*"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4",
+    "@types/node": "^24",
+    "wrangler": "^4"
   }
 }

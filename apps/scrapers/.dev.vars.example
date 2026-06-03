@@ -1,0 +1,4 @@
+# Copy to `.dev.vars` (gitignored) and fill with real values for local `wrangler dev`.
+# These arrive as env.DATABASE_URL / env.VOYAGE_API_KEY exactly as the deployed secrets do.
+DATABASE_URL="postgresql://USER:PASSWORD@HOST/DB?sslmode=require"
+VOYAGE_API_KEY="pa-..."

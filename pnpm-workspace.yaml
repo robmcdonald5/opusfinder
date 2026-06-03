@@ -4,8 +4,13 @@ packages:
 
 allowBuilds:
   esbuild: true
+  workerd: true
+  sharp: false
 
 # Allowlist of deps permitted to run install/build scripts (pnpm 10+ blocks by
 # default). Moved here from package.json's "pnpm" field, which pnpm 11 ignores.
+# workerd is wrangler's Workers runtime (apps/scrapers); sharp is an optional
+# wrangler image dep our cron-only Worker never uses, so it stays unbuilt.
 onlyBuiltDependencies:
   - esbuild
+  - workerd

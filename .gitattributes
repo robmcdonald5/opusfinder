@@ -11,3 +11,6 @@
 # `.sql` migrations are intentionally left diffable: those you do read.)
 pnpm-lock.yaml linguist-generated=true
 packages/db/drizzle/meta/*_snapshot.json linguist-generated=true
+# `wrangler types` output — committed so the Worker app typechecks without a generate step first;
+# regenerated when apps/scrapers/wrangler.toml (or wrangler) changes.
+apps/scrapers/worker-configuration.d.ts linguist-generated=true

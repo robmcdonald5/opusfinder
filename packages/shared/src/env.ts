@@ -1,4 +1,9 @@
-import { fileURLToPath } from "node:url";
+// `URL` is imported from node:url (not the ambient global) so this Node-only module still
+// type-checks when it is pulled into a Cloudflare Workers typecheck context (Phase 8: the Worker
+// bundles @opusfinder/embeddings → this env module). There the global `URL` is the Workers one,
+// which doesn't match node:url's `fileURLToPath(string | url.URL)`; the explicit import keeps the
+// Node URL type. Runtime is unchanged — in Node the two URLs are identical.
+import { fileURLToPath, URL } from "node:url";
 
 import { config } from "dotenv";
 

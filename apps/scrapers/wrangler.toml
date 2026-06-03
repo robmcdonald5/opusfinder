@@ -1,0 +1,33 @@
+name = "opusfinder-scrapers"
+main = "src/index.ts"
+compatibility_date = "2026-06-03"
+# nodejs_compat (a) neutralizes the @opusfinder/embeddings env-module import (dotenv + node:url at
+# load) and (b) — because compatibility_date >= 2025-04-01 — auto-populates process.env from Worker
+# secrets. NOT needed for the Neon HTTP driver (pure fetch). See research/specs/PHASE_8_PLAN.md §2.3.
+compatibility_flags = ["nodejs_compat"]
+
+[observability]
+enabled = true
+
+[triggers]
+# UTC. Ingestion is frequent; discovery is weekly. NOTE: Cloudflare numbers weekdays 1=Sun..7=Sat
+# (Quartz-style) — Sunday is "SUN" (or 1), NEVER "0". The strings here MUST match the `case`
+# literals in src/index.ts character-for-character or the dispatch branch silently never runs.
+crons = [
+  "*/30 * * * *", # ingestion — every 30 minutes
+  "0 3 * * SUN",  # discovery — Sunday 03:00 (REQUIRES Workers Paid; see PHASE_8_PLAN.md §6)
+]
+
+[vars]
+# Non-secret config only. Secrets (DATABASE_URL, VOYAGE_API_KEY) are set with `wrangler secret put`
+# and arrive as env.* (and, under nodejs_compat, also on process.env — PHASE_8_PLAN.md §2.3).
+INGEST_LIMIT = "150"  # boards processed per ingestion tick (the wall/subrequest budget)
+INGEST_EMBED = "false" # "true" enables inline embedding (needs a Voyage card lifting the 3 RPM cap)
+
+# Chunk-cursor store for the Option-A chunked-cron ingestion lane. The binding is DECLARED so
+# `wrangler dev` simulates a local KV for it (no id needed) and the ingestion tick can read/write the
+# cursor locally. A real `wrangler deploy` needs the id — USER step (PHASE_8_PLAN.md §9):
+#   wrangler kv namespace create INGEST_CURSOR   # then uncomment `id` below and paste the value
+[[kv_namespaces]]
+binding = "INGEST_CURSOR"
+# id = "<paste from `wrangler kv namespace create INGEST_CURSOR`>"

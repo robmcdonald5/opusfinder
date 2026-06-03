@@ -1,0 +1,16 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // Workers runtime globals (ScheduledController, ExecutionContext, ExportedHandler, KVNamespace,
+    // the Workers fetch types) come from the wrangler-generated worker-configuration.d.ts. "node" is
+    // kept alongside it because the bundle's transitive imports (@opusfinder/shared/env →
+    // loadPackageEnv) reference node:url + process.env, which need @types/node to typecheck. If a
+    // global collision surfaces, narrow this to just the generated file. (skipLibCheck, set in the
+    // base config, keeps the two ambient .d.ts sets from colliding.)
+    "types": ["./worker-configuration.d.ts", "node"],
+    "lib": ["ES2022"],
+    "noEmit": true
+  },
+  "include": ["src/**/*.ts", "worker-configuration.d.ts"],
+  "exclude": ["node_modules", ".wrangler", "dist"]
+}
