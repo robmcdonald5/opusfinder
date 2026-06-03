@@ -12,6 +12,7 @@ pipeline, and delivers a personalized digest on a regular cadence. See
 | `apps/web/`            | SvelteKit frontend (placeholder until Phase 12)                                                                                                                 |
 | `apps/scrapers/`       | Cloudflare Workers scraper runtime (placeholder until Phase 8)                                                                                                  |
 | `packages/db/`         | Drizzle ORM over Neon Postgres + pgvector ([README](packages/db/README.md))                                                                                     |
+| `packages/discovery/`  | Slug-discovery pipeline — seed → probe → upsert + staleness (Phase 7) ([README](packages/discovery/README.md))                                                  |
 | `packages/embeddings/` | Voyage `voyage-3-large` embeddings + HNSW retrieval ([README](packages/embeddings/README.md))                                                                   |
 | `packages/eval/`       | Matching-quality eval harness — metrics, rankers, reports ([README](packages/eval/README.md))                                                                   |
 | `packages/llm/`        | Vercel AI SDK + Anthropic wrapper, prompt caching ([README](packages/llm/README.md))                                                                            |
@@ -47,20 +48,21 @@ pnpm db:ping      # round-trips SELECT 1 against Neon
 
 ## Root scripts
 
-| Script                         | Does                                                                                       |
-| ------------------------------ | ------------------------------------------------------------------------------------------ |
-| `pnpm lint` / `lint:fix`       | ESLint over the repo                                                                       |
-| `pnpm format` / `format:check` | Prettier write / check                                                                     |
-| `pnpm typecheck`               | `tsc --noEmit` (covers `packages/*`; apps excluded until they gain code)                   |
-| `pnpm db:migrate`              | Run Neon migrations (`@opusfinder/db`)                                                     |
-| `pnpm db:ping`                 | Connectivity check against Neon                                                            |
-| `pnpm ingest <source> <slug>`  | Fetch + normalize one ATS board, upsert to Neon, embed new postings (`--no-embed` to skip) |
-| `pnpm ingest:all`              | Ingest every seeded company across all sources (`[--no-embed] [--source=<name>]`)          |
-| `pnpm llm:test`                | Call Haiku twice with a cached system prompt; assert cache write then read                 |
-| `pnpm embeddings:backfill`     | Embed every job whose `embedding` is still NULL (idempotent)                               |
-| `pnpm embeddings:search "<q>"` | Embed a query and print the nearest jobs by cosine distance (HNSW)                         |
-| `pnpm eval`                    | Score a ranker over the labeled set; write a report + diff vs last run                     |
-| `pnpm eval:compare`            | Voyage vs OpenAI embedding retrieval, side-by-side                                         |
+| Script                         | Does                                                                                                     |
+| ------------------------------ | -------------------------------------------------------------------------------------------------------- |
+| `pnpm lint` / `lint:fix`       | ESLint over the repo                                                                                     |
+| `pnpm format` / `format:check` | Prettier write / check                                                                                   |
+| `pnpm typecheck`               | `tsc --noEmit` (covers `packages/*`; apps excluded until they gain code)                                 |
+| `pnpm db:migrate`              | Run Neon migrations (`@opusfinder/db`)                                                                   |
+| `pnpm db:ping`                 | Connectivity check against Neon                                                                          |
+| `pnpm ingest <source> <slug>`  | Fetch + normalize one ATS board, upsert to Neon, embed new postings (`--no-embed` to skip)               |
+| `pnpm ingest:all`              | Ingest every seeded company across all sources (`[--no-embed] [--source=<name>]`)                        |
+| `pnpm discover`                | Discover + validate + upsert company slugs from the seed (`[--source=<name>] [--limit=<n>] [--dry-run]`) |
+| `pnpm llm:test`                | Call Haiku twice with a cached system prompt; assert cache write then read                               |
+| `pnpm embeddings:backfill`     | Embed every job whose `embedding` is still NULL (idempotent)                                             |
+| `pnpm embeddings:search "<q>"` | Embed a query and print the nearest jobs by cosine distance (HNSW)                                       |
+| `pnpm eval`                    | Score a ranker over the labeled set; write a report + diff vs last run                                   |
+| `pnpm eval:compare`            | Voyage vs OpenAI embedding retrieval, side-by-side                                                       |
 
 ## Documentation (local planning docs — not committed)
 
@@ -69,10 +71,22 @@ but not in a fresh clone:
 
 - `research/specs/TECH_SPEC.md` — product + architecture
 - `research/specs/IMPLEMENTATION_PLAN_TENATIVE.md` — canonical phased roadmap
+- `research/specs/PHASE_7_PLAN.md` — the Phase 7 slug-discovery build plan
 - `research/specs/OPEN_DECISIONS.md` — deferred, trigger-based decisions
 - `research/sources/README.md` — source-discovery catalog
 
 ## Status
+
+Phase 7 added `packages/discovery` — a slug-discovery pipeline that seeds companies from a curated
+GitHub list (outscal/OpenJobs, pinned), HTTP-probes each candidate by **reusing the Phase-6 adapter
+request-builders** (two new descriptor members: a required `matchUrl` URL→slug inverse + an optional
+`classifyProbe`), idempotently upserts the live subset, and deactivates slugs after 30 days of
+consecutive failed probes — all tracked in a new `source_runs` table, with `companies` gaining
+`active` / `last_probed_at` / `last_live_at` / `consecutive_probe_failures`. `pnpm discover` runs it
+locally (`--source` / `--limit` / `--dry-run`); the live pinned seed resolves to ~1,677 candidates
+across 8 sources (gem is seed-absent). The resilient `backoff` was lifted into
+`@opusfinder/shared/async` and shared with the ingestion fetch. Moves to a Cloudflare Worker in
+Phase 8.
 
 Phase 6.5 (Wave A) shipped four more zero-hydrate ATS adapters — **Recruitee, Pinpoint, Gem,
 Trakstar** — each a `SourceAdapter` descriptor + one `mapItem` with no change to the shared
