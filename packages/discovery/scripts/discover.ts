@@ -17,18 +17,48 @@ import { runDiscovery } from "../src/discover";
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
   const dryRun = args.includes("--dry-run");
-  const rawSource = args.find((a) => a.startsWith("--source="))?.slice("--source=".length);
-  const rawLimit = args.find((a) => a.startsWith("--limit="))?.slice("--limit=".length);
 
-  if (rawSource !== undefined && !isSourceName(rawSource)) {
-    console.error(`Unknown --source=${rawSource}`);
+  // Accept BOTH `--flag=value` and `--flag value`. `present` stays true when the value is missing,
+  // so a bare `--source` (or the space form `--source greenhouse`) is handled explicitly instead of
+  // silently falling back to the broad all-source pass — which would run the UNSCOPED
+  // deactivateStale sweep the operator never intended.
+  const flagValue = (name: string): { present: boolean; value: string | undefined } => {
+    const eq = `--${name}=`;
+    for (let i = 0; i < args.length; i++) {
+      const a = args[i];
+      if (a === undefined) continue;
+      if (a === `--${name}`) {
+        const next = args[i + 1];
+        return {
+          present: true,
+          value: next !== undefined && !next.startsWith("--") ? next : undefined,
+        };
+      }
+      if (a.startsWith(eq)) return { present: true, value: a.slice(eq.length) };
+    }
+    return { present: false, value: undefined };
+  };
+
+  const sourceFlag = flagValue("source");
+  if (sourceFlag.present && sourceFlag.value === undefined) {
+    console.error("--source needs a value, e.g. --source=greenhouse");
     process.exitCode = 1; // NOT process.exit() — Windows libuv teardown crash
     return;
   }
+  // Narrow a plain `string | undefined` so isSourceName's type guard applies (a compound guard on
+  // sourceFlag.value would not carry the SourceName narrowing through to runDiscovery's arg).
+  const rawSource = sourceFlag.value;
+  if (rawSource !== undefined && !isSourceName(rawSource)) {
+    console.error(`Unknown --source=${rawSource}`);
+    process.exitCode = 1;
+    return;
+  }
+
+  const limitFlag = flagValue("limit");
   let limit: number | undefined;
-  if (rawLimit !== undefined) {
-    limit = Number(rawLimit);
-    if (!Number.isFinite(limit) || limit <= 0) {
+  if (limitFlag.present) {
+    limit = Number(limitFlag.value);
+    if (limitFlag.value === undefined || !Number.isFinite(limit) || limit <= 0) {
       console.error("--limit must be a positive number");
       process.exitCode = 1;
       return;

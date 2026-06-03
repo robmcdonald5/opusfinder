@@ -10,9 +10,10 @@ const WIDGET_API = "https://apply.workable.com/api/v1/widget/accounts";
 const WIDGET_API_URL = new URL(WIDGET_API);
 const WIDGET_API_HOST = WIDGET_API_URL.hostname; // "apply.workable.com"
 const WIDGET_API_PATH = WIDGET_API_URL.pathname; // "/api/v1/widget/accounts"
-// First-path-segment tokens on apply.workable.com that are NOT a board slug (API paths, the
-// /j/ short-link, the /jobs alias). A bare /{slug} outside these IS a board slug.
-const RESERVED_FIRST_SEGMENTS = new Set(["api", "v3", "accounts", "j", "jobs"]);
+// First-path-segment tokens on apply.workable.com that are NOT a board slug (API version paths,
+// the /j/ short-link, the /jobs alias). A bare /{slug} outside these IS a board slug. v1/v2/v3
+// cover the widget-API version prefixes so a version token is never mistaken for a tenant.
+const RESERVED_FIRST_SEGMENTS = new Set(["api", "v1", "v2", "v3", "accounts", "j", "jobs"]);
 
 /**
  * Workable account-widget adapter. Returns the full board in one (potentially large)

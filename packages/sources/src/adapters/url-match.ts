@@ -16,21 +16,29 @@ export function firstPathSegment(url: URL): string | null {
 }
 
 /**
- * The path segment immediately after the last occurrence of `marker`, or `null` when `marker`
- * is absent or is itself the final segment. Used for `.../{marker}/{slug}/...` API URLs.
+ * The path segment immediately after the FIRST occurrence of `marker`, or `null` when `marker`
+ * is absent or is itself the final segment. Used for `.../{marker}/{slug}/...` API URLs — `marker`
+ * is a fixed structural token, so anchoring on its FIRST occurrence stays correct even when the
+ * slug itself equals the marker (e.g. a board literally slugged "boards" → `/v1/boards/boards/jobs`,
+ * where `lastIndexOf` would wrongly return the segment after the SLUG).
  */
 export function segmentAfter(url: URL, marker: string): string | null {
   const segs = pathSegments(url);
-  const i = segs.lastIndexOf(marker);
+  const i = segs.indexOf(marker);
   return i >= 0 ? (segs[i + 1] ?? null) : null;
 }
 
 /**
- * Non-tenant subdomain labels common to ATS vendors' own infrastructure. A seed `ats_links` entry
- * pointing at one of these (e.g. a marketing page `www.recruitee.com/...`) would otherwise resolve
- * to a phantom tenant (`www`) that passes the universal slug floor and gets probed/upserted.
+ * Non-tenant subdomain labels common to ATS vendors' own infrastructure AND their apply/marketing
+ * hosts. A seed `ats_links` entry pointing at one of these (e.g. `www.recruitee.com/...`, or the
+ * confirmed `apply.recruitee.com/api/offers/` host that returns real offers) would otherwise
+ * resolve to a phantom tenant that passes the universal slug floor and gets probed/upserted. The
+ * recruiting-generic words (apply/careers/jobs/talent/…) are vendor apply/landing hosts, never a
+ * company's tenant slug; the rare real tenant literally named one of these is the accepted
+ * false-negative cost of avoiding the far more common phantom-tenant false-positive.
  */
 const RESERVED_SUBDOMAINS = new Set([
+  // Generic web infrastructure.
   "www",
   "api",
   "app",
@@ -48,6 +56,17 @@ const RESERVED_SUBDOMAINS = new Set([
   "dashboard",
   "go",
   "info",
+  // Recruiting / apply / marketing infrastructure (vendor hosts, not a tenant slug).
+  "apply",
+  "careers",
+  "career",
+  "jobs",
+  "job",
+  "talent",
+  "recruiting",
+  "recruit",
+  "hiring",
+  "hire",
 ]);
 
 /**

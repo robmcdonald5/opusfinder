@@ -73,7 +73,13 @@ export interface DiscoveryCounts {
  */
 export async function runDiscovery(db: Db, opts: DiscoveryOptions = {}): Promise<DiscoveryCounts> {
   const dryRun = opts.dryRun ?? false;
-  const olderThanDays = opts.olderThanDays ?? DEFAULT_OLDER_THAN_DAYS;
+  // Coerce a non-positive window to the default: a 0/negative `olderThanDays` makes deactivateStale
+  // sweep EVERY failing row (COALESCE(...) < now() - 0). Plain `?? DEFAULT` would preserve a passed
+  // 0 — and the Phase-8 worker calls runDiscovery directly — so the guard lives here, not just `??`.
+  const olderThanDays =
+    opts.olderThanDays !== undefined && opts.olderThanDays > 0
+      ? opts.olderThanDays
+      : DEFAULT_OLDER_THAN_DAYS;
   const counts = emptyCounts();
 
   const runId = dryRun ? null : await startRun(db, "discovery", { source: opts.source });

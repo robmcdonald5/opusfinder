@@ -21,8 +21,11 @@ export function backoff(attempt: number, retryAfter?: string | null): Promise<vo
   let ms = Math.min(2000 * 2 ** attempt, MAX_BACKOFF_MS);
   if (retryAfter) {
     // Retry-After is either delta-seconds (a number) or an HTTP-date (RFC 7231 allows both).
+    // `>= 0` so a `Retry-After: 0` ("retry immediately") is honored as ~0 ms; with `> 0` it would
+    // fall through to Date.parse("0") (which V8 reads as the year 2000) and be silently dropped,
+    // leaving the full exponential backoff. An empty header is already screened by `if (retryAfter)`.
     const seconds = Number(retryAfter);
-    if (Number.isFinite(seconds) && seconds > 0) {
+    if (Number.isFinite(seconds) && seconds >= 0) {
       ms = Math.min(seconds * 1000, MAX_RETRY_AFTER_MS);
     } else {
       const until = Date.parse(retryAfter);
