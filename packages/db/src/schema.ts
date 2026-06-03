@@ -10,6 +10,7 @@
  * brand types (`CompanySlug`, `JobId`, `SourceName`) come from `@opusfinder/shared`
  * and are attached with `.$type<>()` so the repo layer stays type-safe end to end.
  */
+import { sql } from "drizzle-orm";
 import {
   boolean,
   foreignKey,
@@ -57,8 +58,32 @@ export const companies = pgTable(
     metadata: jsonb("metadata"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    // --- Phase 7 discovery / staleness tracking ---
+    // `active` flips false after ~30 days of CONSECUTIVE failed probes (deactivateStale). The
+    // staleness clock is COALESCE(last_live_at, created_at): a row decays from its last
+    // confirmed-live probe, or — for a company seeded by ingestion that a discovery LIVE probe
+    // has never refreshed (last_live_at NULL) — from when it was created, so it still gets a
+    // window instead of being swept on its first failed probe. last_probed_at (every probe)
+    // drives reprobe ORDERING, not staleness. Deactivation is gated on a non-zero failure
+    // STREAK, so a never-failed row is never swept and SmartRecruiters' unassertable 200 (which
+    // never increments the streak) can't drift a healthy company. A new row starts active with a
+    // zero streak.
+    active: boolean("active").notNull().default(true),
+    lastProbedAt: timestamp("last_probed_at", { withTimezone: true }),
+    lastLiveAt: timestamp("last_live_at", { withTimezone: true }),
+    consecutiveProbeFailures: integer("consecutive_probe_failures").notNull().default(0),
   },
-  (t) => [uniqueIndex("companies_slug_source_uq").on(t.slug, t.source)],
+  (t) => [
+    uniqueIndex("companies_slug_source_uq").on(t.slug, t.source),
+    // Partial index over the reprobe candidates only (active rows), keyed to MATCH the reprobe
+    // query's FULL ordering — last_probed_at ASC NULLS FIRST (never-probed rows first), then id
+    // as the tiebreaker — so the planner range-scans it and LIMIT stops early instead of sorting
+    // the whole active set (every row shares last_probed_at = NULL on the first sweep, one big
+    // tie). Backs Phase 7's listCompaniesForReprobe.
+    index("companies_active_last_probed_idx")
+      .on(t.lastProbedAt.asc().nullsFirst(), t.id)
+      .where(sql`${t.active} = true`),
+  ],
 );
 
 /**
@@ -115,4 +140,42 @@ export const jobs = pgTable(
       name: "jobs_company_id_companies_id_fk",
     }),
   ],
+);
+
+/** A pipeline run's lifecycle: a `running` row is written at the start and patched to a
+ * terminal state at the end. TS union on a plain `text` column (NOT a pgEnum: `CREATE TYPE`
+ * has no `IF NOT EXISTS`, which would break the idempotent-migration rule — same call as
+ * {@link LifecycleState}). */
+export type RunStatus = "running" | "ok" | "error";
+
+/** Which pipeline a run belongs to. Phase 7 only writes `discovery`; `ingestion` lands in
+ * Phase 8 when the ingestion Worker starts recording its runs here too. */
+export type RunPipeline = "discovery" | "ingestion";
+
+/** Open metric bag for a run, keyed by count name. Discovery and ingestion tally different
+ * things (candidates/probed/inserted vs boards/changed/…), so it stays a free-form jsonb map
+ * rather than fixed columns — same rationale as `companies.metadata` / `jobs.raw`. */
+export type RunCounts = Record<string, number>;
+
+/**
+ * One row per pipeline run — the first run-tracked pipeline (Phase 7 discovery); Phase 8
+ * reuses it for the ingestion + discovery Workers. `source` is NULL for a run that spans all
+ * sources (a discovery sweep) and set for a per-source pass. `started_at` IS the row's creation
+ * time (startRun is the only insert), so there is no separate created_at. `error_sample` holds a
+ * truncated, SECRET-FREE first error (shape, never credentials — same discipline as the env
+ * guards). No FK: a run is not owned by a company, so there is no DO/EXCEPTION constraint to guard.
+ */
+export const sourceRuns = pgTable(
+  "source_runs",
+  {
+    id: serial("id").primaryKey(),
+    pipeline: text("pipeline").$type<RunPipeline>().notNull(),
+    source: text("source").$type<SourceName>(),
+    status: text("status").$type<RunStatus>().notNull().default("running"),
+    startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+    counts: jsonb("counts").$type<RunCounts>().notNull().default({}),
+    errorSample: text("error_sample"),
+  },
+  (t) => [index("source_runs_pipeline_started_idx").on(t.pipeline, t.startedAt)],
 );
