@@ -4,6 +4,16 @@
 export { upsertCompany, upsertJobs, listCompanies } from "./jobs";
 export type { CompanyRow } from "./jobs";
 export {
+  startRun,
+  finishRun,
+  listCompaniesForReprobe,
+  listCompanyStates,
+  markProbeResult,
+  markProbed,
+  deactivateStale,
+} from "./discovery";
+export type { CompanyState } from "./discovery";
+export {
   jobsNeedingEmbedding,
   writeJobEmbeddings,
   backfillJobEmbeddings,

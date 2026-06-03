@@ -5,9 +5,11 @@ Drizzle ORM over Neon Postgres, using the **neon-http** driver
 client runs in Node today and in Cloudflare Workers later (Phase 8). The package
 exports raw `.ts` (no build step / no `dist`): `createDb(connectionString)`
 returns a Drizzle client. Phase 2 added two subpath exports alongside it:
-`@opusfinder/db/repos` (`upsertCompany` / `upsertJobs` / `listCompanies`, plus the Phase-4 embedding repo —
+`@opusfinder/db/repos` (`upsertCompany` / `upsertJobs` / `listCompanies`, the Phase-4 embedding repo —
 `backfillJobEmbeddings` / `nearestJobs` / `jobsNeedingEmbedding` / `writeJobEmbeddings` /
-`jobEmbeddingText`) and `@opusfinder/db/env`
+`jobEmbeddingText` — and the Phase-7 discovery repo — `startRun` / `finishRun` /
+`listCompaniesForReprobe` / `listCompanyStates` / `markProbeResult` / `markProbed` /
+`deactivateStale`) and `@opusfinder/db/env`
 (`getDatabaseUrl`).
 
 ## Environment
@@ -43,7 +45,7 @@ Run from the repo root via the workspace filter so the cwd is `packages/db`:
 
 ## Caveats
 
-- **Schema (Phase 2 + 4).** `src/schema.ts` defines `companies` (unique
+- **Schema (Phase 2 + 4 + 7).** `src/schema.ts` defines `companies` (unique
   `(slug, source)`) and `jobs` (unique `(source, external_id)`, FK → `companies`,
   `company_id` index, text `lifecycle_state`). `jobs.embedding` is a nullable
   `vector(1024)` — width = the exported `EMBEDDING_DIMENSIONS` constant (the single source of truth, kept
@@ -51,7 +53,14 @@ Run from the repo root via the workspace filter so the cwd is `packages/db`:
   HNSW-indexed for cosine retrieval (`jobs_embedding_hnsw_idx`, `vector_cosine_ops`). pgvector is enabled
   via the SQL migration (`drizzle/0000_enable_pgvector.sql`), not declared in
   Drizzle; the tables land in `drizzle/0001_petite_namor.sql` and the HNSW index in
-  `drizzle/0002_flashy_joshua_kane.sql`.
+  `drizzle/0002_flashy_joshua_kane.sql`. **Phase 7** added the `source_runs` run-audit table
+  (`pipeline` / `source` / `status` / `started_at` / `finished_at` / `counts` jsonb / `error_sample`;
+  index `source_runs_pipeline_started_idx`) and four staleness columns on `companies` — `active`,
+  `last_probed_at`, `last_live_at`, `consecutive_probe_failures` — plus the partial reprobe index
+  `companies_active_last_probed_idx` (active rows, `last_probed_at ASC NULLS FIRST, id`). The
+  `status`/`pipeline` fields are TS unions on plain `text` (not `pgEnum`), same idempotent-migration
+  reason as `lifecycle_state`. The Phase-7 schema lands in `drizzle/0003_lame_black_tom.sql`, with
+  every `CREATE TABLE` / `ADD COLUMN` / `CREATE INDEX` hand-guarded `IF NOT EXISTS`.
 - **neon-http migrations are NOT transactional.** The neon-http migrator applies
   a migration's statements without a wrapping transaction, so a multi-statement
   migration that fails partway leaves a partial apply with no rollback (and a

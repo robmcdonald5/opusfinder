@@ -50,3 +50,6 @@ pnpm-debug.log*
 Thumbs.db
 ehthumbs.db
 Desktop.ini
+
+# Coding CLI
+.claude/

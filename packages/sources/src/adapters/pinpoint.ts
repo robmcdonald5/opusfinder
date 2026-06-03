@@ -4,6 +4,7 @@ import type { NormalizedJob } from "@opusfinder/shared";
 import { inferRemoteFromText, joinParts } from "./fields";
 import { htmlToText } from "./text";
 import type { SourceAdapter, SourceContext } from "./types";
+import { subdomainLabel } from "./url-match";
 
 const POSTINGS_HOST = "pinpointhq.com";
 
@@ -28,6 +29,9 @@ export const pinpointAdapter: SourceAdapter = {
   // Lowercase: the subdomain host is case-insensitive and the apply URL is an explicit field
   // (never slug-derived), so lowercasing canonicalizes without corrupting any echoed casing.
   normalizeSlug: (rawSlug) => companySlug(rawSlug.toLowerCase()),
+
+  // {slug}.pinpointhq.com → the tenant subdomain label.
+  matchUrl: (url) => subdomainLabel(url, POSTINGS_HOST),
 
   jobsRequest: (ctx) => ({ url: `https://${ctx.slug}.${POSTINGS_HOST}/postings.json` }),
 

@@ -4,6 +4,7 @@ import type { NormalizedJob } from "@opusfinder/shared";
 import { inferRemoteFromText } from "./fields";
 import { htmlToText } from "./text";
 import type { SourceAdapter, SourceContext } from "./types";
+import { subdomainLabel } from "./url-match";
 
 const RECRUITEE_HOST = "recruitee.com";
 
@@ -30,6 +31,9 @@ export const recruiteeAdapter: SourceAdapter = {
   // Lowercase: the subdomain host is case-insensitive and the apply URL is an explicit field
   // (never slug-derived), so lowercasing canonicalizes safely (same rationale as Workable).
   normalizeSlug: (rawSlug) => companySlug(rawSlug.toLowerCase()),
+
+  // {slug}.recruitee.com → the tenant subdomain label.
+  matchUrl: (url) => subdomainLabel(url, RECRUITEE_HOST),
 
   jobsRequest: (ctx) => ({ url: `https://${ctx.slug}.${RECRUITEE_HOST}/api/offers/` }),
 

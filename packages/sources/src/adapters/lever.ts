@@ -4,10 +4,13 @@ import type { NormalizedJob } from "@opusfinder/shared";
 import { inferRemoteFromText } from "./fields";
 import { cleanHtml } from "./text";
 import type { SourceAdapter, SourceContext } from "./types";
+import { firstPathSegment, segmentAfter } from "./url-match";
 
 // US host only. EU tenants live on api.eu.lever.co (the .co host 404s them); EU support
 // is deferred to Phase 7 (needs a per-company region channel).
 const POSTINGS_API = "https://api.lever.co/v0/postings";
+const API_HOST = new URL(POSTINGS_API).hostname; // "api.lever.co"
+const PUBLIC_HOST = "jobs.lever.co";
 
 /**
  * Lever board adapter. The board returns ALL postings in one BARE top-level array (no
@@ -23,6 +26,15 @@ export const leverAdapter: SourceAdapter = {
 
   // Case-sensitive: trim only, never lowercase.
   normalizeSlug: (rawSlug) => companySlug(rawSlug),
+
+  // jobs.lever.co/{slug} OR api.lever.co/v0/postings/{slug}. EU hosts (jobs.eu.lever.co /
+  // api.eu.lever.co) deliberately return null — the US-only probe can't validate them.
+  matchUrl: (url) =>
+    url.hostname === PUBLIC_HOST
+      ? firstPathSegment(url)
+      : url.hostname === API_HOST
+        ? segmentAfter(url, "postings")
+        : null,
 
   jobsRequest: (ctx) => ({ url: `${POSTINGS_API}/${ctx.slug}?mode=json` }),
 

@@ -1,5 +1,5 @@
 {
-  "name": "@opusfinder/sources",
+  "name": "@opusfinder/discovery",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -8,15 +8,15 @@
   },
   "types": "./src/index.ts",
   "scripts": {
-    "ingest": "tsx scripts/ingest.ts",
-    "ingest:all": "tsx scripts/ingest-all.ts",
-    "test:match": "tsx scripts/test-match-url.ts",
+    "discover": "tsx scripts/discover.ts",
+    "test:probe": "tsx scripts/test-probe.ts",
+    "test:resolve": "tsx scripts/test-resolve.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@opusfinder/db": "workspace:*",
-    "@opusfinder/embeddings": "workspace:*",
-    "@opusfinder/shared": "workspace:*"
+    "@opusfinder/shared": "workspace:*",
+    "@opusfinder/sources": "workspace:*"
   },
   "devDependencies": {
     "tsx": "^4"
