@@ -47,6 +47,9 @@ usage.totalTokens; // summed across any internal chunking
 estimateCostUsd(usage.totalTokens); // USD at voyage-3-large list price
 ```
 
+`embed(texts, { apiKey })` accepts an injected Voyage key for a caller without `process.env`
+(the Phase-8 Cloudflare Worker path); omitting `apiKey` falls back to `getVoyageApiKey()`.
+
 `embed()` transparently chunks large inputs to respect Voyage's per-request limits
 (≤128 items + a ~90K-token budget). The chunking algorithm lives in `src/contract.ts`
 (`chunkByLimits`) and the response-envelope validation in `parseEmbeddingResponse`, both

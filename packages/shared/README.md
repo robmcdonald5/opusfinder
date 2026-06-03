@@ -109,6 +109,9 @@ repo's resilient fetch loops — exponential (`2s · 2^attempt`, capped at 15s) 
 ingestion list-fetch and the discovery prober share ONE definition. Pure + Worker-forward (global
 `setTimeout` / `Math.random` / `Date`, no Node-only APIs and no `process.env` reads).
 
+`sleep(ms)` also lives in `@opusfinder/shared/async` (lifted in Phase 8); it backs `runIngestion`'s
+inter-board pacing and discovery's `probe.ts`.
+
 ## Env loading
 
 `@opusfinder/shared/env` centralizes the dotenv bootstrap each package's `env.ts`

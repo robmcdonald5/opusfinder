@@ -78,6 +78,9 @@ new/changed postings via `@opusfinder/embeddings` (best-effort: a Voyage failure
 fatal; skipped when `VOYAGE_API_KEY` is unset or `--no-embed` is passed). `ingest:all` isolates
 each board in a try/catch — one dead slug doesn't halt the run.
 
+`ingest:all` is now a thin CLI shell over the shared `runIngestion(db, opts)` library
+(`src/ingest.ts`), which the Phase-8 Worker cron also calls — the CLI commands are unchanged.
+
 ## Per-adapter quirks (institutional memory)
 
 **Greenhouse** — `boards-api.greenhouse.io/v1/boards/{slug}/jobs?content=true`. Unpaginated

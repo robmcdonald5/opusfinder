@@ -7,7 +7,7 @@ exports raw `.ts` (no build step / no `dist`): `createDb(connectionString)`
 returns a Drizzle client. Phase 2 added two subpath exports alongside it:
 `@opusfinder/db/repos` (`upsertCompany` / `upsertJobs` / `listCompanies`, the Phase-4 embedding repo —
 `backfillJobEmbeddings` / `nearestJobs` / `jobsNeedingEmbedding` / `writeJobEmbeddings` /
-`jobEmbeddingText` — and the Phase-7 discovery repo — `startRun` / `finishRun` /
+`jobEmbeddingText` — and the Phase-7 discovery repo — `startRun` / `finishRun` / `failStaleRuns` /
 `listCompaniesForReprobe` / `listCompanyStates` / `markProbeResult` / `markProbed` /
 `deactivateStale`) and `@opusfinder/db/env`
 (`getDatabaseUrl`).
@@ -27,13 +27,14 @@ relative to the module (not the cwd), so any package's scripts pick up
 
 Run from the repo root via the workspace filter so the cwd is `packages/db`:
 
-| Command                                  | Does                                           |
-| ---------------------------------------- | ---------------------------------------------- |
-| `pnpm --filter @opusfinder/db migrate`   | Apply migrations from `./drizzle`              |
-| `pnpm --filter @opusfinder/db generate`  | `drizzle-kit generate` (offline; no DB needed) |
-| `pnpm --filter @opusfinder/db studio`    | Open Drizzle Studio                            |
-| `pnpm --filter @opusfinder/db ping`      | Round-trip `SELECT 1` against Neon             |
-| `pnpm --filter @opusfinder/db typecheck` | `tsc --noEmit`                                 |
+| Command                                  | Does                                                       |
+| ---------------------------------------- | ---------------------------------------------------------- |
+| `pnpm --filter @opusfinder/db migrate`   | Apply migrations from `./drizzle`                          |
+| `pnpm --filter @opusfinder/db generate`  | `drizzle-kit generate` (offline; no DB needed)             |
+| `pnpm --filter @opusfinder/db studio`    | Open Drizzle Studio                                        |
+| `pnpm --filter @opusfinder/db ping`      | Round-trip `SELECT 1` against Neon                         |
+| `pnpm --filter @opusfinder/db runs`      | Print the most recent `source_runs` rows (pipeline health) |
+| `pnpm --filter @opusfinder/db typecheck` | `tsc --noEmit`                                             |
 
 `migrate` and `ping` are also exposed at the root as `pnpm db:migrate` / `pnpm db:ping`.
 
