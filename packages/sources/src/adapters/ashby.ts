@@ -4,8 +4,11 @@ import type { NormalizedJob } from "@opusfinder/shared";
 import { inferRemoteFromText } from "./fields";
 import { cleanHtml, htmlToText } from "./text";
 import type { SourceAdapter, SourceContext } from "./types";
+import { firstPathSegment, segmentAfter } from "./url-match";
 
 const JOB_BOARD_API = "https://api.ashbyhq.com/posting-api/job-board";
+const API_HOST = new URL(JOB_BOARD_API).hostname; // "api.ashbyhq.com"
+const PUBLIC_HOST = "jobs.ashbyhq.com";
 
 /**
  * Ashby job-board adapter. Returns every posting in one `{ jobs, apiVersion }` response,
@@ -23,6 +26,14 @@ export const ashbyAdapter: SourceAdapter = {
 
   // Case-preserving: keep the caller's casing so apply URLs stay canonical.
   normalizeSlug: (rawSlug) => companySlug(rawSlug),
+
+  // jobs.ashbyhq.com/{slug} OR api.ashbyhq.com/posting-api/job-board/{slug}.
+  matchUrl: (url) =>
+    url.hostname === PUBLIC_HOST
+      ? firstPathSegment(url)
+      : url.hostname === API_HOST
+        ? segmentAfter(url, "job-board")
+        : null,
 
   jobsRequest: (ctx) => ({
     url: `${JOB_BOARD_API}/${ctx.slug}?includeCompensation=true`,

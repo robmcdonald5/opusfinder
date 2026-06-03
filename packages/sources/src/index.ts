@@ -11,5 +11,6 @@ export type {
   JobsRequest,
   FetchJson,
   Cursor,
+  ProbeOutcome,
 } from "./adapters/types";
 export type { NormalizedJob, SourceName } from "@opusfinder/shared";

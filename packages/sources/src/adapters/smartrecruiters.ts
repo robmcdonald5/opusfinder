@@ -3,10 +3,14 @@ import type { NormalizedJob } from "@opusfinder/shared";
 
 import { joinParts } from "./fields";
 import { htmlToText } from "./text";
-import type { Cursor, FetchJson, SourceAdapter, SourceContext } from "./types";
+import type { Cursor, FetchJson, ProbeOutcome, SourceAdapter, SourceContext } from "./types";
+import { firstPathSegment, segmentAfter } from "./url-match";
 
 const API = "https://api.smartrecruiters.com/v1/companies";
 const PUBLIC = "https://jobs.smartrecruiters.com";
+const API_HOST = new URL(API).hostname; // "api.smartrecruiters.com"
+const PUBLIC_HOST = new URL(PUBLIC).hostname; // "jobs.smartrecruiters.com"
+const CAREERS_HOST = "careers.smartrecruiters.com";
 
 // SmartRecruiters clamps `limit` at 100 server-side; 100 minimizes round-trips.
 const PAGE_LIMIT = 100;
@@ -35,6 +39,24 @@ export const smartRecruitersAdapter: SourceAdapter = {
 
   // Case-sensitive company IDs: trim only, never lowercase.
   normalizeSlug: (rawSlug) => companySlug(rawSlug),
+
+  // jobs/careers.smartrecruiters.com/{slug} OR api.smartrecruiters.com/v1/companies/{slug}/...
+  matchUrl: (url) =>
+    url.hostname === PUBLIC_HOST || url.hostname === CAREERS_HOST
+      ? firstPathSegment(url)
+      : url.hostname === API_HOST
+        ? segmentAfter(url, "companies")
+        : null,
+
+  // An unknown slug returns 200 + totalFound:0 (NOT 404), indistinguishable from a real-but-empty
+  // board, so existence can't be asserted: a positive count is live, anything else indeterminate
+  // (never "absent", so SmartRecruiters can never drive a deactivation).
+  classifyProbe: (status, body): ProbeOutcome => {
+    if (status === 200 && isRecord(body) && typeof body.totalFound === "number") {
+      return body.totalFound > 0 ? "live" : "indeterminate";
+    }
+    return "indeterminate";
+  },
 
   jobsRequest: (ctx, cursor) => {
     const offset = cursor ? cursor.offset : 0;

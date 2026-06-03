@@ -10,6 +10,7 @@
   "scripts": {
     "ingest": "tsx scripts/ingest.ts",
     "ingest:all": "tsx scripts/ingest-all.ts",
+    "test:match": "tsx scripts/test-match-url.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

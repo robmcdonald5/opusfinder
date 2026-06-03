@@ -3,9 +3,13 @@ import type { NormalizedJob } from "@opusfinder/shared";
 
 import { inferRemoteFromText, joinParts } from "./fields";
 import { htmlToText } from "./text";
-import type { Cursor, SourceAdapter, SourceContext } from "./types";
+import type { Cursor, ProbeOutcome, SourceAdapter, SourceContext } from "./types";
+import { subdomainLabel } from "./url-match";
 
 const API = "https://jsapi.recruiterbox.com/v1/openings/";
+const API_HOST = new URL(API).hostname; // "jsapi.recruiterbox.com"
+const TRAKSTAR_HOST = "hire.trakstar.com";
+const RECRUITERBOX_HOST = "recruiterbox.com";
 
 // The server's default page size (meta.limit when unspecified): the explicit page size sent in
 // the request URL and used by the full-page termination check. meta.total is the authoritative
@@ -33,6 +37,29 @@ export const trakstarAdapter: SourceAdapter = {
   // Lowercase: the host is case-insensitive and echoes client_name lowercased; the apply URL
   // is an explicit field (reconstruction also uses the lowercased slug), so lowercasing is safe.
   normalizeSlug: (rawSlug) => companySlug(rawSlug.toLowerCase()),
+
+  // jsapi.recruiterbox.com?client_name={slug}; OR {slug}.hire.trakstar.com / {slug}.recruiterbox.com.
+  // The jsapi host is checked first (it is also a recruiterbox.com sub-domain) so its tenant comes
+  // from the query param, never the "jsapi" label.
+  matchUrl: (url) => {
+    // `|| null`: an empty `?client_name=` yields "" — defer it (deferredNoAdapter), don't claim it.
+    if (url.hostname === API_HOST) return url.searchParams.get("client_name") || null;
+    return subdomainLabel(url, TRAKSTAR_HOST) ?? subdomainLabel(url, RECRUITERBOX_HOST);
+  },
+
+  // Unknown slug ⇒ HTTP 400 (absent). A real board ⇒ 200; count on meta.total (0 ⇒ live-empty).
+  classifyProbe: (status, body): ProbeOutcome => {
+    if (status === 400) return "absent";
+    if (
+      status === 200 &&
+      isRecord(body) &&
+      isRecord(body.meta) &&
+      typeof body.meta.total === "number"
+    ) {
+      return body.meta.total > 0 ? "live" : "live-empty";
+    }
+    return status === 404 ? "absent" : "indeterminate";
+  },
 
   jobsRequest: (ctx, cursor) => {
     const offset = cursor ? cursor.offset : 0;

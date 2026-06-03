@@ -3,8 +3,18 @@ import type { NormalizedJob } from "@opusfinder/shared";
 
 import { cleanHtml } from "./text";
 import type { SourceAdapter, SourceContext } from "./types";
+import { firstPathSegment, segmentAfter } from "./url-match";
 
 const BOARDS_API = "https://boards-api.greenhouse.io/v1/boards";
+const BOARDS_API_HOST = new URL(BOARDS_API).hostname; // "boards-api.greenhouse.io"
+// Public board hosts (US + EU) that carry the slug as the first path segment. Distinct
+// hostnames, NOT ".greenhouse.io" with an ".eu" path segment.
+const BOARD_HOSTS = new Set([
+  "boards.greenhouse.io",
+  "job-boards.greenhouse.io",
+  "boards.eu.greenhouse.io",
+  "job-boards.eu.greenhouse.io",
+]);
 
 /**
  * Greenhouse board adapter (the Phase-1 reference, now a descriptor). The board API
@@ -19,6 +29,14 @@ export const greenhouseAdapter: SourceAdapter = {
   // not change casing (case-sensitive platforms like SmartRecruiters rely on that), so the
   // per-source lowercasing lives here.
   normalizeSlug: (rawSlug) => companySlug(rawSlug.toLowerCase()),
+
+  // A public board host → first path segment; the boards-API host → the segment after "boards".
+  matchUrl: (url) =>
+    BOARD_HOSTS.has(url.hostname)
+      ? firstPathSegment(url)
+      : url.hostname === BOARDS_API_HOST
+        ? segmentAfter(url, "boards")
+        : null,
 
   jobsRequest: (ctx) => ({ url: `${BOARDS_API}/${ctx.slug}/jobs?content=true` }),
 

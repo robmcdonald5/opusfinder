@@ -4,8 +4,11 @@ import type { NormalizedJob } from "@opusfinder/shared";
 import { inferRemoteFromText } from "./fields";
 import { cleanHtml, htmlToText } from "./text";
 import type { SourceAdapter, SourceContext } from "./types";
+import { firstPathSegment, segmentAfter } from "./url-match";
 
 const JOB_BOARD_API = "https://api.gem.com/job_board/v0";
+const API_HOST = new URL(JOB_BOARD_API).hostname; // "api.gem.com"
+const PUBLIC_HOST = "jobs.gem.com";
 
 /**
  * Gem job-board adapter (Phase 6.5 Wave A). Gem white-labels a Greenhouse-style board but
@@ -26,6 +29,15 @@ export const gemAdapter: SourceAdapter = {
 
   // Case-sensitive host (an uppercased slug 404s): trim only, never lowercase.
   normalizeSlug: (rawSlug) => companySlug(rawSlug),
+
+  // jobs.gem.com/{slug} OR api.gem.com/job_board/v0/{slug}/... . NOT Greenhouse-shaped apply URLs
+  // (Gem white-labels a Greenhouse board, but those hosts belong to the greenhouse adapter).
+  matchUrl: (url) =>
+    url.hostname === PUBLIC_HOST
+      ? firstPathSegment(url)
+      : url.hostname === API_HOST
+        ? segmentAfter(url, "v0")
+        : null,
 
   // The trailing slash on /job_posts/ is required by the endpoint.
   jobsRequest: (ctx) => ({ url: `${JOB_BOARD_API}/${ctx.slug}/job_posts/` }),

@@ -4,8 +4,15 @@ import type { NormalizedJob } from "@opusfinder/shared";
 import { inferRemoteFromText, joinParts } from "./fields";
 import { htmlToText } from "./text";
 import type { SourceAdapter, SourceContext } from "./types";
+import { firstPathSegment, segmentAfter } from "./url-match";
 
 const WIDGET_API = "https://apply.workable.com/api/v1/widget/accounts";
+const WIDGET_API_URL = new URL(WIDGET_API);
+const WIDGET_API_HOST = WIDGET_API_URL.hostname; // "apply.workable.com"
+const WIDGET_API_PATH = WIDGET_API_URL.pathname; // "/api/v1/widget/accounts"
+// First-path-segment tokens on apply.workable.com that are NOT a board slug (API paths, the
+// /j/ short-link, the /jobs alias). A bare /{slug} outside these IS a board slug.
+const RESERVED_FIRST_SEGMENTS = new Set(["api", "v3", "accounts", "j", "jobs"]);
 
 /**
  * Workable account-widget adapter. Returns the full board in one (potentially large)
@@ -22,6 +29,15 @@ export const workableAdapter: SourceAdapter = {
 
   // Lowercase: canonical board slugs are lowercase and the host 404s other casings.
   normalizeSlug: (rawSlug) => companySlug(rawSlug.toLowerCase()),
+
+  // apply.workable.com only. The widget-API path → segment after "accounts"; otherwise a bare
+  // /{slug} board path, unless the first segment is a reserved (non-slug) token.
+  matchUrl: (url) => {
+    if (url.hostname !== WIDGET_API_HOST) return null;
+    if (url.pathname.startsWith(WIDGET_API_PATH + "/")) return segmentAfter(url, "accounts");
+    const first = firstPathSegment(url);
+    return first && !RESERVED_FIRST_SEGMENTS.has(first) ? first : null;
+  },
 
   jobsRequest: (ctx) => ({ url: `${WIDGET_API}/${ctx.slug}?details=true` }),
 
