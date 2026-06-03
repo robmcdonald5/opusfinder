@@ -56,6 +56,22 @@ importers:
         specifier: ^4
         version: 4.22.3
 
+  packages/discovery:
+    dependencies:
+      '@opusfinder/db':
+        specifier: workspace:*
+        version: link:../db
+      '@opusfinder/shared':
+        specifier: workspace:*
+        version: link:../shared
+      '@opusfinder/sources':
+        specifier: workspace:*
+        version: link:../sources
+    devDependencies:
+      tsx:
+        specifier: ^4
+        version: 4.22.3
+
   packages/embeddings:
     dependencies:
       '@opusfinder/db':

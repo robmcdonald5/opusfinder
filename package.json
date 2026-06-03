@@ -18,6 +18,7 @@
     "db:ping": "pnpm --filter @opusfinder/db ping",
     "ingest": "pnpm --filter @opusfinder/sources ingest",
     "ingest:all": "pnpm --filter @opusfinder/sources ingest:all",
+    "discover": "pnpm --filter @opusfinder/discovery discover",
     "llm:test": "pnpm --filter @opusfinder/llm test:llm",
     "embeddings:backfill": "pnpm --filter @opusfinder/embeddings backfill",
     "embeddings:search": "pnpm --filter @opusfinder/embeddings run search",

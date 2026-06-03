@@ -1,0 +1,24 @@
+{
+  "name": "@opusfinder/discovery",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "types": "./src/index.ts",
+  "scripts": {
+    "discover": "tsx scripts/discover.ts",
+    "test:probe": "tsx scripts/test-probe.ts",
+    "test:resolve": "tsx scripts/test-resolve.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@opusfinder/db": "workspace:*",
+    "@opusfinder/shared": "workspace:*",
+    "@opusfinder/sources": "workspace:*"
+  },
+  "devDependencies": {
+    "tsx": "^4"
+  }
+}
