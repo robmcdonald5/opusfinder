@@ -1,0 +1,5 @@
+# Copy to `.dev.vars` (gitignored) and fill with a real value for local `wrangler dev`.
+# Arrives as env.DATABASE_URL exactly as the deployed secret does.
+DATABASE_URL="postgresql://USER:PASSWORD@HOST/DB?sslmode=require"
+# VOYAGE_API_KEY is only needed if you enable inline embedding (see src/index.ts):
+# VOYAGE_API_KEY="pa-..."

@@ -5,8 +5,8 @@ being hand-seeded. It pulls company/ATS pairs from one curated GitHub list (outs
 HTTP-probes each candidate against its ATS endpoint **by reusing the Phase-6 `SourceAdapter`
 request-builders** in `@opusfinder/sources`, idempotently upserts the live subset into `companies`,
 and deactivates slugs after 30 days of consecutive failed probes. Every run is tracked in
-`source_runs`. Stays a **local** `pnpm discover` script — it moves to a Cloudflare Worker in Phase 8
-(`runDiscovery` is already argv-free for that).
+`source_runs`. `pnpm discover` runs it locally; the Phase-8 Worker's weekly cron (`0 3 * * SUN`)
+calls the same `runDiscovery(db, opts)` directly (`runDiscovery` is argv-free for that).
 
 ## Pipeline
 
@@ -75,8 +75,8 @@ refreshes `last_live_at`, and re-activates — so a revived slug un-deactivates 
 ## Deferred (later passes of Phase 7 / Phase 8)
 
 HN "Who is hiring" / Algolia, passive DNS (RapidDNS) for subdomain tenants, Common Crawl URL mining,
-the Wave-B seed, an `activeOnly` filter on `listCompanies` so `ingest:all` skips deactivated boards,
-and an optional `probeRequest?` descriptor member to drop hydration params on the bulk pass.
+the Wave-B seed, and an optional `probeRequest?` descriptor member to drop hydration params on the
+bulk pass.
 
 ## Tests
 

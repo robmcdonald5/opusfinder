@@ -14,16 +14,52 @@ import type { Db } from "../client";
 import { companies, sourceRuns, type RunCounts, type RunPipeline, type RunStatus } from "../schema";
 import type { CompanyRow } from "./jobs";
 
+// Stale-`running` window. A run never legitimately exceeds the Cloudflare Worker wall limit (15 min)
+// — a tick is ~30s — so anything still `running` after this is a zombie from a killed/timed-out
+// process. Set well above the max real duration so a slow-but-live concurrent run is never swept.
+const DEFAULT_STALE_RUN_MINUTES = 60;
+
+/**
+ * Sweep zombie `source_runs` rows. A hard Worker kill / timeout leaves a row stuck `running` — NO
+ * code runs to call `finishRun` (a `finally` can't help a terminated isolate), so the only recovery
+ * is to clean it up on a later run. Mark any `running` row older than `olderThanMinutes` as `error`
+ * with a clear sample. Returns the count swept. Called from `startRun` (Phase-7/8 deferred item —
+ * relevant now that the deployed Worker cron can time out). The window protects a live concurrent run.
+ */
+export async function failStaleRuns(
+  db: Db,
+  olderThanMinutes = DEFAULT_STALE_RUN_MINUTES,
+): Promise<number> {
+  const minutes = Math.trunc(olderThanMinutes);
+  const rows = await db
+    .update(sourceRuns)
+    .set({
+      status: "error",
+      finishedAt: sql`now()`,
+      errorSample: "swept: stale running row (process killed or timed out before finishRun)",
+    })
+    .where(
+      and(
+        eq(sourceRuns.status, "running"),
+        sql`${sourceRuns.startedAt} < now() - ${minutes} * interval '1 minute'`,
+      ),
+    )
+    .returning({ id: sourceRuns.id });
+  return rows.length;
+}
+
 /**
  * Open a run: insert a `running` row (status + started_at come from column defaults) and return
  * its id. Call BEFORE any work so a hard crash leaves a visible `running` row; `finishRun`
  * patches it to a terminal state. `source` is omitted (NULL) for a sweep across all sources.
+ * First sweeps zombie `running` rows left by a previously killed/timed-out run (see `failStaleRuns`).
  */
 export async function startRun(
   db: Db,
   pipeline: RunPipeline,
   opts: { source?: SourceName } = {},
 ): Promise<number> {
+  await failStaleRuns(db); // cheap no-op when none are stale; keeps source_runs trustworthy
   const rows = await db
     .insert(sourceRuns)
     .values({ pipeline, source: opts.source })

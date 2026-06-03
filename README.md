@@ -10,7 +10,7 @@ pipeline, and delivers a personalized digest on a regular cadence. See
 | Path                   | What                                                                                                                                                            |
 | ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `apps/web/`            | SvelteKit frontend (placeholder until Phase 12)                                                                                                                 |
-| `apps/scrapers/`       | Cloudflare Workers scraper runtime (placeholder until Phase 8)                                                                                                  |
+| `apps/scrapers/`       | Cloudflare Workers cron runtime — scheduled ingestion + discovery against Neon (Phase 8) ([README](apps/scrapers/README.md))                                    |
 | `packages/db/`         | Drizzle ORM over Neon Postgres + pgvector ([README](packages/db/README.md))                                                                                     |
 | `packages/discovery/`  | Slug-discovery pipeline — seed → probe → upsert + staleness (Phase 7) ([README](packages/discovery/README.md))                                                  |
 | `packages/embeddings/` | Voyage `voyage-3-large` embeddings + HNSW retrieval ([README](packages/embeddings/README.md))                                                                   |
@@ -53,8 +53,10 @@ pnpm db:ping      # round-trips SELECT 1 against Neon
 | `pnpm lint` / `lint:fix`       | ESLint over the repo                                                                                     |
 | `pnpm format` / `format:check` | Prettier write / check                                                                                   |
 | `pnpm typecheck`               | `tsc --noEmit` (covers `packages/*`; apps excluded until they gain code)                                 |
+| `pnpm typecheck:scrapers`      | `tsc --noEmit` for `apps/scrapers` (the root typecheck excludes `apps/*`)                                |
 | `pnpm db:migrate`              | Run Neon migrations (`@opusfinder/db`)                                                                   |
 | `pnpm db:ping`                 | Connectivity check against Neon                                                                          |
+| `pnpm runs`                    | Print the most recent `source_runs` rows (pipeline health at a glance)                                   |
 | `pnpm ingest <source> <slug>`  | Fetch + normalize one ATS board, upsert to Neon, embed new postings (`--no-embed` to skip)               |
 | `pnpm ingest:all`              | Ingest every seeded company across all sources (`[--no-embed] [--source=<name>]`)                        |
 | `pnpm discover`                | Discover + validate + upsert company slugs from the seed (`[--source=<name>] [--limit=<n>] [--dry-run]`) |
@@ -72,10 +74,22 @@ but not in a fresh clone:
 - `research/specs/TECH_SPEC.md` — product + architecture
 - `research/specs/IMPLEMENTATION_PLAN_TENATIVE.md` — canonical phased roadmap
 - `research/specs/PHASE_7_PLAN.md` — the Phase 7 slug-discovery build plan
+- `research/specs/PHASE_8_PLAN.md` — the Phase 8 Cloudflare Worker cron build plan
 - `research/specs/OPEN_DECISIONS.md` — deferred, trigger-based decisions
 - `research/sources/README.md` — source-discovery catalog
 
 ## Status
+
+Phase 8 promoted `apps/scrapers` from a placeholder into a real Cloudflare Worker — a `scheduled()`
+handler that dispatches on `controller.cron` into two crons: **ingestion** (`*/30 * * * *`) and
+**discovery** (`0 3 * * SUN`). It is deployed and verified end-to-end, but currently **PAUSED**
+(`crons = []`) behind a documented pause/resume toggle in `wrangler.toml`. `runIngestion(db, opts)`
+was extracted into `packages/sources/src/ingest.ts` (`ingest-all.ts` is now a thin shell over it),
+wiring the previously-unused `"ingestion"` arm of `source_runs`. `listCompanies` gained `activeOnly`
+plus an `afterId`/`limit` id-keyset cursor (the chunked-cron lane), and a new `pnpm runs` monitor and a
+`failStaleRuns()` zombie-run sweep keep `source_runs` trustworthy. Inline embedding is intentionally
+left **un-wired** in the Worker (Voyage free-tier 3 RPM), so vectors are filled by
+`pnpm embeddings:backfill`; re-enabling it is a documented ~3-step change.
 
 Phase 7 added `packages/discovery` — a slug-discovery pipeline that seeds companies from a curated
 GitHub list (outscal/OpenJobs, pinned), HTTP-probes each candidate by **reusing the Phase-6 adapter
@@ -85,7 +99,7 @@ consecutive failed probes — all tracked in a new `source_runs` table, with `co
 `active` / `last_probed_at` / `last_live_at` / `consecutive_probe_failures`. `pnpm discover` runs it
 locally (`--source` / `--limit` / `--dry-run`); the live pinned seed resolves to ~1,677 candidates
 across 8 sources (gem is seed-absent). The resilient `backoff` was lifted into
-`@opusfinder/shared/async` and shared with the ingestion fetch. Moves to a Cloudflare Worker in
+`@opusfinder/shared/async` and shared with the ingestion fetch. It moved to a Cloudflare Worker in
 Phase 8.
 
 Phase 6.5 (Wave A) shipped four more zero-hydrate ATS adapters — **Recruitee, Pinpoint, Gem,

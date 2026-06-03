@@ -17,6 +17,12 @@ export interface EmbedParams {
    * (no prompt prepended).
    */
   inputType?: VoyageInputType;
+  /**
+   * Injected Voyage API key (Phase-8 Worker path, where there is no `process.env`). Omit in
+   * local scripts to fall back to `getVoyageApiKey()`. Threaded straight through to
+   * `embedRequest`; never logged.
+   */
+  apiKey?: string;
 }
 
 export interface EmbedResult {
@@ -48,7 +54,7 @@ export async function embed(texts: string[], params: EmbedParams = {}): Promise<
   const embeddings: number[][] = [];
   let totalTokens = 0;
   for (const chunk of chunkByLimits(texts, limits)) {
-    const res = await embedRequest(chunk, inputType);
+    const res = await embedRequest(chunk, inputType, params.apiKey);
     embeddings.push(...res.embeddings);
     totalTokens += res.totalTokens;
   }

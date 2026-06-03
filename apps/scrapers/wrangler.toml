@@ -1,0 +1,39 @@
+name = "opusfinder-scrapers"
+main = "src/index.ts"
+compatibility_date = "2026-06-03"
+# No compatibility_flags: the Worker imports only fetch-based libraries (neon-http, the ATS adapters,
+# discovery) — no Node-targeted package enters the bundle, so nodejs_compat is not needed. Enabling
+# inline embedding later re-introduces @opusfinder/embeddings' dotenv env-module and would need
+# `compatibility_flags = ["nodejs_compat"]` — see src/index.ts.
+
+[observability]
+enabled = true
+
+[triggers]
+# SCHEDULING TOGGLE — pause/resume the deployed cron (see README "Pause / resume the schedule").
+#   PAUSED  : crons = []         + `wrangler deploy`  -> removes the deployed triggers; nothing fires.
+#   RUNNING : restore the array  + `wrangler deploy`  -> re-registers the triggers.
+# An idle Worker costs nothing and never touches Neon. `crons = []` is the documented way to REMOVE
+# triggers; omitting [triggers] entirely would instead LEAVE the deployed ones untouched.
+#
+# >>> Currently PAUSED until the backend is finalized. <<<  To RESUME: delete `crons = []`, uncomment
+# the array below, and `wrangler deploy`. (UTC; CF weekdays are 1=Sun..7=Sat — Sunday is "SUN", never
+# "0"; the strings MUST match the `case` literals in src/index.ts character-for-character.)
+crons = []
+# crons = [
+#   "*/30 * * * *", # ingestion — every 30 minutes
+#   "0 3 * * SUN",  # discovery — Sunday 03:00 (REQUIRES Workers Paid; see PHASE_8_PLAN.md §6)
+# ]
+
+[vars]
+# Non-secret config only. The secret (DATABASE_URL) is set with `wrangler secret put` and arrives as
+# env.DATABASE_URL.
+INGEST_LIMIT = "150" # boards processed per ingestion tick (the wall/subrequest budget)
+
+# Chunk-cursor store for the Option-A chunked-cron ingestion lane. The binding is DECLARED so
+# `wrangler dev` simulates a local KV for it (no id needed) and the ingestion tick can read/write the
+# cursor locally. A real `wrangler deploy` needs the id — USER step (PHASE_8_PLAN.md §9):
+#   wrangler kv namespace create INGEST_CURSOR   # then uncomment `id` below and paste the value
+[[kv_namespaces]]
+binding = "INGEST_CURSOR"
+id = "512214e0882d4816bc397cf092956a66"

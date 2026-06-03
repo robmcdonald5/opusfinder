@@ -1,0 +1,15 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // Workers runtime globals (ScheduledController, ExecutionContext, ExportedHandler, KVNamespace,
+    // fetch/Response/URL/setTimeout/console) come from the wrangler-generated worker-configuration.d.ts.
+    // No "node": the Worker's bundle imports only fetch-based libraries (no node: builtins, no
+    // process.env), so @types/node is not needed — its presence is what previously collided the Node
+    // URL type with the Workers global URL.
+    "types": ["./worker-configuration.d.ts"],
+    "lib": ["ES2022"],
+    "noEmit": true
+  },
+  "include": ["src/**/*.ts", "worker-configuration.d.ts"],
+  "exclude": ["node_modules", ".wrangler", "dist"]
+}
