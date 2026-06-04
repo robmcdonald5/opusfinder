@@ -1,0 +1,26 @@
+{
+  "name": "@opusfinder/profiles",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "types": "./src/index.ts",
+  "scripts": {
+    "ingest-cv": "tsx scripts/ingest-cv.ts",
+    "profiles:reembed": "tsx scripts/profiles-reembed.ts",
+    "profiles:restructure": "tsx scripts/profiles-restructure.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@opusfinder/db": "workspace:*",
+    "@opusfinder/embeddings": "workspace:*",
+    "@opusfinder/llm": "workspace:*",
+    "@opusfinder/shared": "workspace:*",
+    "@opusfinder/storage": "workspace:*"
+  },
+  "devDependencies": {
+    "tsx": "^4"
+  }
+}

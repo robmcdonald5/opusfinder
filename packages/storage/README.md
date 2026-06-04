@@ -24,8 +24,9 @@ script reads it from the environment and passes it in.
 
 ## Object keys
 
-`originalKey(userId, fileId)` → `originals/{userId}/{fileId}.pdf`;
-`textKey(userId, fileId)` → `text/{userId}/{fileId}.txt`. One definition of the R2 layout.
+`originalKey(userId, id)` → `originals/{userId}/{id}.pdf`;
+`textKey(userId, id)` → `text/{userId}/{id}.txt` (where `id` is an opaque per-upload UUID, not the
+serial cv_file PK). One definition of the R2 layout.
 
 ## Env (`@opusfinder/shared/env` discipline)
 
