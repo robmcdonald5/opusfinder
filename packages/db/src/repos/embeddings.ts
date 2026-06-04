@@ -12,12 +12,8 @@ import { composeEmbeddingText } from "@opusfinder/shared";
 import { and, eq, isNull, sql } from "drizzle-orm";
 
 import type { Db } from "../client";
-import { EMBEDDING_DIMENSIONS, jobs } from "../schema";
-
-// The `::vector(N)` cast used by every embedding write/query, built once from the single
-// dimension constant (schema.ts) so a dimension change can't leave a stray literal behind.
-// sql.raw is safe here: EMBEDDING_DIMENSIONS is an in-code numeric constant, never input.
-const VECTOR_CAST = sql.raw(`::vector(${EMBEDDING_DIMENSIONS})`);
+import { jobs } from "../schema";
+import { VECTOR_CAST, vectorLiteral } from "./sql";
 
 // Cap rows per UPDATE so a large caller can't exceed Postgres's 65535 bind-param ceiling
 // (2 params/row). The default backfill batch (64) is far under; this guards future bulk
@@ -200,11 +196,6 @@ export async function nearestJobs(
  */
 export function jobEmbeddingText(job: { title: string; descriptionText: string }): string {
   return composeEmbeddingText([job.title, job.descriptionText]);
-}
-
-/** pgvector text literal: a JS number[] -> `[a,b,c]`. */
-function vectorLiteral(vec: number[]): string {
-  return `[${vec.join(",")}]`;
 }
 
 /**

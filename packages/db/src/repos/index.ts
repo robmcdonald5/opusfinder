@@ -22,3 +22,13 @@ export {
   jobEmbeddingText,
 } from "./embeddings";
 export type { JobNeedingEmbedding, JobNeighbor } from "./embeddings";
+export {
+  insertCvFile,
+  patchCvFileExtracted,
+  markCvFileFailed,
+  upsertUserProfile,
+  getProfileStructured,
+  getProfileTextKey,
+  writeProfileEmbedding,
+} from "./profiles";
+export type { NewCvFile, UpsertUserProfileInput, ProfileTextRef } from "./profiles";

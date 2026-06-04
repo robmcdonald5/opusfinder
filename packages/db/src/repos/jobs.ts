@@ -12,6 +12,7 @@ import type { CompanySlug, NormalizedJob, SourceName } from "@opusfinder/shared"
 
 import type { Db } from "../client";
 import { companies, jobs } from "../schema";
+import { NUL, stripNul } from "./sql";
 
 /** One row of the companies table, as the ingestion driver needs it (id + identity). */
 export interface CompanyRow {
@@ -45,29 +46,6 @@ export function listCompanies(
     .where(conditions.length ? and(...conditions) : undefined)
     .orderBy(companies.id);
   return opts.limit !== undefined ? query.limit(opts.limit) : query;
-}
-
-/** The NUL code point (U+0000), constructed at runtime so this source file never
- * contains an actual NUL byte. */
-const NUL = String.fromCharCode(0);
-
-/**
- * Recursively strip U+0000 (NUL) from every string in a JSON-origin value.
- * Postgres `text` and `jsonb` cannot store a NUL byte, so an unsanitized NUL in
- * any field — or anywhere inside the `raw` payload — would abort the whole
- * insert. Safe to recurse over `raw` because it came from `JSON.parse` (only
- * objects/arrays/strings/numbers/bools/null — no Dates or branded values to
- * mangle).
- */
-function stripNul(value: unknown): unknown {
-  if (typeof value === "string") return value.replaceAll(NUL, "");
-  if (Array.isArray(value)) return value.map(stripNul);
-  if (value !== null && typeof value === "object") {
-    return Object.fromEntries(
-      Object.entries(value).map(([k, v]) => [k.replaceAll(NUL, ""), stripNul(v)]),
-    );
-  }
-  return value;
 }
 
 /**

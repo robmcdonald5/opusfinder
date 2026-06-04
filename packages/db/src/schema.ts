@@ -22,10 +22,11 @@ import {
   text,
   timestamp,
   uniqueIndex,
+  uuid,
   vector,
 } from "drizzle-orm/pg-core";
 
-import type { CompanySlug, JobId, SourceName } from "@opusfinder/shared";
+import type { CompanySlug, JobId, SourceName, StructuredProfile, UserId } from "@opusfinder/shared";
 
 /**
  * Embedding vector width (Voyage voyage-3-large default). The single source of truth for
@@ -179,4 +180,82 @@ export const sourceRuns = pgTable(
     errorSample: text("error_sample"),
   },
   (t) => [index("source_runs_pipeline_started_idx").on(t.pipeline, t.startedAt)],
+);
+
+/** A CV upload's status. TS union on a plain `text` column (NOT a pgEnum — same idempotent-migration
+ * rule as {@link LifecycleState} / {@link RunStatus}). Only two terminal values; `failed` doubles as
+ * the PROVISIONAL value inserted before transcription succeeds, so a row left behind by a crash
+ * mid-ingest correctly reads as not-extracted. It flips to `extracted` only once the text is stored. */
+export type CvFileStatus = "extracted" | "failed";
+
+/**
+ * Hard-ish user preferences (remote / locations / salary). Phase 9 leaves this NULL; the Phase-12
+ * onboarding form fills it. Feeds the Phase-10 deterministic filter, NOT the embedding. Mirrors
+ * `EvalProfile.preferences`; Phase 12 may unify the two in @opusfinder/shared when the form lands.
+ */
+export interface ProfilePreferences {
+  remote?: boolean;
+  locations?: string[];
+  minSalary?: number;
+}
+
+/**
+ * Append-only history of CV uploads + their R2 object references (Phase 9 CV ingestion). One row per
+ * upload; never updated in place except (a) the provisional `failed` → `extracted` status flip and
+ * (b) patching `r2_text_key` once the transcript is cached. The durable original PDF and the cached
+ * transcribed text both live in R2 — this table holds only the keys, not the bytes.
+ */
+export const userCvFiles = pgTable("user_cv_files", {
+  id: serial("id").primaryKey(),
+  // Hand-minted UUIDv5 from email in Phase 9 (mintUserId); an FK to a real users table lands later.
+  userId: uuid("user_id").$type<UserId>().notNull(),
+  // R2 object keys. The original is written before transcription; the text key is NULL until the
+  // transcript is cached (and the status flips to 'extracted').
+  r2OriginalKey: text("r2_original_key").notNull(),
+  r2TextKey: text("r2_text_key"),
+  filename: text("filename").notNull(),
+  contentType: text("content_type").notNull(),
+  byteSize: integer("byte_size").notNull(),
+  status: text("status").$type<CvFileStatus>().notNull().default("failed"),
+  // Truncated, SECRET- and PII-free first error (same discipline as source_runs.error_sample). A
+  // CV's contact details ARE PII, so this must never echo file content.
+  errorSample: text("error_sample"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/**
+ * The current semantic profile — ONE row per user (the `user_id` unique index is the upsert target;
+ * latest CV wins). `structured` is the embeddable `{ summary, skills, targetRoles }`
+ * (StructuredProfile); `embedding` is its Voyage vector — the QUERY side of retrieval, HNSW-cosine-
+ * indexed for the Phase-10 nearest-jobs query (mirrors `jobs.embedding` on the document side, same
+ * EMBEDDING_DIMENSIONS constant). `source_cv_file_id` points at the upload currently backing it.
+ */
+export const userProfiles = pgTable(
+  "user_profiles",
+  {
+    id: serial("id").primaryKey(),
+    userId: uuid("user_id").$type<UserId>().notNull(),
+    structured: jsonb("structured").$type<StructuredProfile>().notNull(),
+    preferences: jsonb("preferences").$type<ProfilePreferences>(),
+    embedding: vector("embedding", { dimensions: EMBEDDING_DIMENSIONS }),
+    sourceCvFileId: integer("source_cv_file_id").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    // One profile per user — the onConflict target for upsertUserProfile.
+    uniqueIndex("user_profiles_user_id_uq").on(t.userId),
+    // HNSW approximate-NN over the profile vectors (cosine `<=>`), mirroring jobs_embedding_hnsw_idx.
+    // The 0004 migration hand-adds IF NOT EXISTS (drizzle-kit emits a bare CREATE INDEX; neon-http
+    // migrations aren't transactional).
+    index("user_profiles_embedding_hnsw_idx").using("hnsw", t.embedding.op("vector_cosine_ops")),
+    // FK to the backing upload, explicit stable name. drizzle-kit emits a standalone ADD CONSTRAINT
+    // and Postgres has no ADD CONSTRAINT IF NOT EXISTS, so the 0004 migration wraps it in a
+    // DO/EXCEPTION duplicate_object block (same discipline as jobs' FK in 0001).
+    foreignKey({
+      columns: [t.sourceCvFileId],
+      foreignColumns: [userCvFiles.id],
+      name: "user_profiles_source_cv_file_id_user_cv_files_id_fk",
+    }),
+  ],
 );
