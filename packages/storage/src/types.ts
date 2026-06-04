@@ -18,7 +18,12 @@ export interface StorageClient {
   /** The object's bytes, or null if the key does not exist (NOT a throw). */
   getObject(key: string): Promise<Uint8Array | null>;
   deleteObject(key: string): Promise<void>;
-  /** Release underlying resources (HTTP sockets). No-op for a Workers R2 binding. */
+  /**
+   * Release underlying resources (HTTP sockets). The SCRIPT that constructs the client owns its
+   * lifecycle: create once, pass it into the pipeline, and call `close()` in a `finally`; the
+   * injected pipeline (packages/profiles) must NOT close a client it didn't create. No-op for a
+   * Workers R2 binding.
+   */
   close(): void;
 }
 

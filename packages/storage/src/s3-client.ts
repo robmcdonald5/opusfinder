@@ -25,6 +25,9 @@ export function createS3StorageClient(config: R2Config): StorageClient {
     credentials: { accessKeyId: config.accessKeyId, secretAccessKey: config.secretAccessKey },
     requestChecksumCalculation: "WHEN_REQUIRED",
     responseChecksumValidation: "WHEN_REQUIRED",
+    // Bound each request so a hung R2 socket fails (and retries) instead of hanging the pipeline
+    // indefinitely — the node handler's default requestTimeout is 0 (unbounded).
+    requestHandler: { requestTimeout: 60_000, connectionTimeout: 10_000 },
   });
   const { bucket } = config;
 
@@ -39,8 +42,11 @@ export function createS3StorageClient(config: R2Config): StorageClient {
         const res = await client.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
         return res.Body ? await res.Body.transformToByteArray() : null;
       } catch (err) {
-        // R2 returns a typed NoSuchKey for a missing object; some paths surface a bare 404.
-        if (err instanceof NoSuchKey || httpStatus(err) === 404) return null;
+        // Only a genuinely-missing object returns null. R2 reliably raises the typed NoSuchKey for
+        // that; any other error — e.g. a 404 NoSuchBucket from a mistyped R2_BUCKET_NAME — must throw
+        // loudly rather than masquerade as "object absent", or a misconfig would read as a
+        // permanently-empty cache and the pipeline would silently re-transcribe forever.
+        if (err instanceof NoSuchKey) return null;
         throw err;
       }
     },
@@ -51,12 +57,4 @@ export function createS3StorageClient(config: R2Config): StorageClient {
       client.destroy();
     },
   };
-}
-
-/** The HTTP status of an AWS SDK error, if present. */
-function httpStatus(err: unknown): number | undefined {
-  if (typeof err === "object" && err !== null) {
-    return (err as { $metadata?: { httpStatusCode?: number } }).$metadata?.httpStatusCode;
-  }
-  return undefined;
 }

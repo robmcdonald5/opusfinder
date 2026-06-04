@@ -23,7 +23,20 @@ async function main(): Promise<void> {
     assert((await storage.getObject("_roundtrip/missing.txt")) === null, "missing key returns null");
     await storage.deleteObject(key);
     assert((await storage.getObject(key)) === null, "deleted key returns null");
-    console.log("PASS: R2 put/get/delete round-trip (checksum config OK).");
+
+    // Binary path: the real PDF write is a Uint8Array, which goes through a different SDK body-
+    // serialization branch than a string — prove bytes round-trip identically (incl. NUL + high bytes).
+    const binKey = `_roundtrip/bin-${Date.now()}.bin`;
+    const bytes = new Uint8Array([0, 1, 2, 200, 254, 255, 0, 42]);
+    await storage.putObject({ key: binKey, body: bytes, contentType: "application/octet-stream" });
+    const gotBin = await storage.getObject(binKey);
+    assert(
+      gotBin !== null && gotBin.length === bytes.length && gotBin.every((b, i) => b === bytes[i]),
+      "binary (Uint8Array) round-trip bytes match",
+    );
+    await storage.deleteObject(binKey);
+
+    console.log("PASS: R2 put/get/delete round-trip — string + binary (checksum config OK).");
   } finally {
     storage.close();
   }

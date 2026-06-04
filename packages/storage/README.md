@@ -8,7 +8,9 @@ live in Cloudflare R2; this package is the thin client over them.
 `StorageClient` (`putObject` / `getObject` / `deleteObject` / `close`) is the contract the CV pipeline
 (`packages/profiles`) depends on, NOT a concrete client — so Phase 12 can drop in a Workers
 R2-binding implementation behind the same interface with no pipeline change. `getObject` returns
-`null` for a missing key (not a throw).
+`null` only for a genuinely missing key (a typed `NoSuchKey`); other errors — including a
+`NoSuchBucket` from a mistyped bucket — throw. The script that constructs the client owns `close()`
+(call it in a `finally`); the injected pipeline never closes a client it didn't create.
 
 ## S3-compatible R2 client
 

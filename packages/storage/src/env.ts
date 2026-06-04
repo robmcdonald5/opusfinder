@@ -32,9 +32,10 @@ const getR2AccountId = requireEnv({
  * default endpoint from `R2_ACCOUNT_ID`.
  */
 export function getR2Config(): R2Config {
+  // `?.trim()` yields a non-empty string, "" (whitespace-only), or undefined — the last two are falsy,
+  // so a bare truthiness check routes them to the derived endpoint.
   const explicit = process.env.S3_ENDPOINT_URL?.trim();
-  const endpoint =
-    explicit && explicit.length > 0 ? explicit : `https://${getR2AccountId()}.r2.cloudflarestorage.com`;
+  const endpoint = explicit ? explicit : `https://${getR2AccountId()}.r2.cloudflarestorage.com`;
   return {
     endpoint,
     accessKeyId: getR2AccessKeyId(),
