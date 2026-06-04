@@ -119,6 +119,9 @@ importers:
       '@opusfinder/embeddings':
         specifier: workspace:*
         version: link:../embeddings
+      '@opusfinder/llm':
+        specifier: workspace:*
+        version: link:../llm
       '@opusfinder/shared':
         specifier: workspace:*
         version: link:../shared

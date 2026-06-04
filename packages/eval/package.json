@@ -11,6 +11,7 @@
     "eval": "tsx scripts/eval.ts",
     "eval:compare": "tsx scripts/compare.ts",
     "export:candidates": "tsx scripts/export-candidates.ts",
+    "extract-profile": "tsx scripts/extract-profile.ts",
     "build:dataset": "tsx scripts/build-dataset.ts",
     "test:metrics": "tsx scripts/test-metrics.ts",
     "typecheck": "tsc --noEmit"
@@ -18,6 +19,7 @@
   "dependencies": {
     "@opusfinder/db": "workspace:*",
     "@opusfinder/embeddings": "workspace:*",
+    "@opusfinder/llm": "workspace:*",
     "@opusfinder/shared": "workspace:*",
     "dotenv": "^17"
   },
