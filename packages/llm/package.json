@@ -10,6 +10,7 @@
   "types": "./src/index.ts",
   "scripts": {
     "test:llm": "tsx scripts/test-llm.ts",
+    "test:generate-object": "tsx scripts/test-generate-object.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
