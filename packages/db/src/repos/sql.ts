@@ -29,8 +29,16 @@ export function stripNul(value: unknown): unknown {
   return value;
 }
 
-/** pgvector text literal: a JS number[] -> `[a,b,c]`. */
+/**
+ * pgvector text literal: a JS number[] -> `[a,b,c]`. Asserts the width matches EMBEDDING_DIMENSIONS
+ * up front so a wrong-length vector (an embedder model swap, a partial/empty response) fails with a
+ * clear message here instead of as an opaque pgvector dimension-mismatch deep in Neon. Every vector
+ * write/query (jobs + profiles) routes through this, so the guard lives in one place.
+ */
 export function vectorLiteral(vec: number[]): string {
+  if (vec.length !== EMBEDDING_DIMENSIONS) {
+    throw new Error(`vectorLiteral: expected ${EMBEDDING_DIMENSIONS} dimensions, got ${vec.length}`);
+  }
   return `[${vec.join(",")}]`;
 }
 

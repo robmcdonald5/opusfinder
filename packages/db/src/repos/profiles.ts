@@ -7,7 +7,7 @@
  * intentional refresh). Vectors are written via the shared pgvector literal + cast (see ./sql),
  * the same way the jobs embeddings are written.
  */
-import { eq, sql } from "drizzle-orm";
+import { and, eq, ne, sql } from "drizzle-orm";
 
 import type { StructuredProfile, UserId } from "@opusfinder/shared";
 
@@ -38,7 +38,7 @@ export async function insertCvFile(db: Db, file: NewCvFile): Promise<{ id: numbe
     .insert(userCvFiles)
     .values({
       userId: file.userId,
-      r2OriginalKey: file.r2OriginalKey,
+      r2OriginalKey: file.r2OriginalKey.replaceAll(NUL, ""),
       filename: file.filename.replaceAll(NUL, ""),
       contentType: file.contentType.replaceAll(NUL, ""),
       byteSize: file.byteSize,
@@ -50,17 +50,28 @@ export async function insertCvFile(db: Db, file: NewCvFile): Promise<{ id: numbe
   return row;
 }
 
+// NOTE (ownership): patchCvFileExtracted / markCvFileFailed key on the file `id` ALONE. In Phase 9
+// that id is generated internally by insertCvFile and threaded through ingestCv — never client-
+// supplied — so there is no cross-user exposure. When the Phase-12 HTTP upload route accepts an id
+// from a request, it MUST verify the row's user_id before calling these (or grow a userId predicate
+// here) to avoid an IDOR.
+
 /** Mark a CV file successfully transcribed: record its R2 text key and flip status to `extracted`. */
 export async function patchCvFileExtracted(db: Db, id: number, r2TextKey: string): Promise<void> {
   await db.update(userCvFiles).set({ r2TextKey, status: "extracted" }).where(eq(userCvFiles.id, id));
 }
 
 /** Mark a CV file failed (the default state for the provisional row), optionally recording a
- * truncated, non-PII error sample. No profile is written for a failed file. */
+ * truncated, non-PII error sample. No profile is written for a failed file. The `status <> 'extracted'`
+ * guard means a late/duplicate error path (e.g. 9c's try/catch firing after the transcript was
+ * cached) can't regress an already-extracted row — which still holds a valid r2_text_key — to 'failed'. */
 export async function markCvFileFailed(db: Db, id: number, errorSample?: string): Promise<void> {
   const set: { status: CvFileStatus; errorSample?: string } = { status: "failed" };
   if (errorSample !== undefined) set.errorSample = truncateError(errorSample);
-  await db.update(userCvFiles).set(set).where(eq(userCvFiles.id, id));
+  await db
+    .update(userCvFiles)
+    .set(set)
+    .where(and(eq(userCvFiles.id, id), ne(userCvFiles.status, "extracted")));
 }
 
 export interface UpsertUserProfileInput {
