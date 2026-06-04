@@ -12,9 +12,9 @@ import type { StructuredProfile } from "@opusfinder/shared";
 export type TranscribeFn = (pdf: Uint8Array) => Promise<string>;
 
 /**
- * Layer 2: structure transcribed text into the FINAL profile to persist + embed. The impl owns BOTH
- * extraction AND the PII scrub (it returns the exact `StructuredProfile` to store), so the scrub
- * lives in the wiring — not in this Worker-portable module. The impl pulls @opusfinder/llm.
+ * Layer 2: structure transcribed text into a `StructuredProfile` (raw extraction). The pipeline runs
+ * the PII scrub itself (`scrubProfilePii` from @opusfinder/shared) before persisting + embedding, so
+ * the impl does NOT need to scrub — it just extracts. The impl pulls @opusfinder/llm.
  */
 export type StructureFn = (text: string) => Promise<StructuredProfile>;
 

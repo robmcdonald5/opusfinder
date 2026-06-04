@@ -6,7 +6,7 @@
 // vector for BOTH the eval harness and production ingest, so a silent format change shifts every
 // profile's retrieval. These frozen vectors lock both contracts so a regression fails loudly
 // instead of corrupting identities/metrics. If a DELIBERATE change moves them, update with intent.
-import { composeProfileText } from "../src/index";
+import { composeProfileText, scrubProfilePii } from "../src/index";
 import { runScript } from "../src/script";
 import { mintUserId } from "../src/userid";
 
@@ -66,6 +66,17 @@ async function main(): Promise<void> {
     "composeProfileText all-blank → empty",
     composeProfileText({ summary: "", skills: [], targetRoles: [] }) === "",
   );
+
+  // 8. scrubProfilePii redacts machine-detectable PII (email + >=10-digit phone), keeps the rest.
+  const scrubbed = scrubProfilePii({
+    summary: "Senior engineer; reach me at jane.doe@example.com or (682) 333-9323. Worked 2015-2019.",
+    skills: ["Go", "PostgreSQL"],
+    targetRoles: ["Staff Engineer"],
+  });
+  check("scrub redacts email", !/@example\.com/.test(scrubbed.summary), scrubbed.summary);
+  check("scrub redacts phone", !/333-9323/.test(scrubbed.summary));
+  check("scrub preserves a year range", /2015-2019/.test(scrubbed.summary));
+  check("scrub preserves non-PII fields", scrubbed.skills.length === 2 && scrubbed.targetRoles.length === 1);
 
   if (failures === 0) {
     console.log("\nPASS: userid + profile-text contracts hold.");

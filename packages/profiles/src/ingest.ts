@@ -5,7 +5,7 @@ import {
   patchCvFileExtracted,
   upsertUserProfile,
 } from "@opusfinder/db/repos";
-import { composeProfileText, type StructuredProfile, type UserId } from "@opusfinder/shared";
+import { composeProfileText, scrubProfilePii, type StructuredProfile, type UserId } from "@opusfinder/shared";
 import type { StorageClient } from "@opusfinder/storage";
 import { originalKey, textKey } from "@opusfinder/storage/keys";
 
@@ -38,9 +38,9 @@ export interface IngestCvResult {
 }
 
 /**
- * Ingest a CV: store the original PDF, transcribe → cache the text, structure → embed → upsert the
- * profile. Argv-free and fully injected (db + transcribe/structure/embed/storage), so it is
- * Worker-portable and unit-testable. ①→②→③ per the Phase-9 plan.
+ * Ingest a CV: store the original PDF, transcribe → cache the text, structure → scrub → embed →
+ * upsert the profile. Argv-free and fully injected (db + transcribe/structure/embed/storage), so it
+ * is Worker-portable and unit-testable. ①→②→③ per the Phase-9 plan.
  *
  * The cv_file row is inserted FIRST with a provisional `failed` status, so a failure before the
  * transcript is cached leaves a row that reads as not-extracted (and carries an error sample). Once
@@ -82,12 +82,15 @@ export async function ingestCv(db: Db, opts: IngestCvOptions): Promise<IngestCvR
     await storage.putObject({ key: r2Text, body: text, contentType: "text/plain; charset=utf-8" });
     await patchCvFileExtracted(db, fileId, r2Text);
 
-    const structured = await structure(text);
+    // Scrub PII in the pipeline (structure() returns RAW extraction) so the no-PII rule is a
+    // structural guarantee, not a seam contract — before anything is stored or embedded.
+    const structured = scrubProfilePii(await structure(text));
     const warnings = profileWarnings(structured);
     const embedText = composeProfileText(structured);
     if (embedText.length === 0) {
       // Extraction succeeded (text cached) but the profile has no embeddable content — don't send an
       // empty string to the embedder (Voyage rejects it). Leave the file `extracted`, write no profile.
+      // (restructure can still reach the cached transcript: getProfileTextKey reads cv_files directly.)
       return {
         fileId,
         status: "extracted",
@@ -98,7 +101,7 @@ export async function ingestCv(db: Db, opts: IngestCvOptions): Promise<IngestCvR
 
     const { embeddings, usage } = await embed([embedText], { inputType: "query" });
     const vector = embeddings[0];
-    if (!vector) throw new Error("embed() returned no vector for the profile text");
+    if (!vector || vector.length === 0) throw new Error("embed() returned no usable vector for the profile text");
 
     const { id: profileId } = await upsertUserProfile(db, {
       userId,
@@ -109,9 +112,13 @@ export async function ingestCv(db: Db, opts: IngestCvOptions): Promise<IngestCvR
     return { fileId, profileId, status: "extracted", embedTokens: usage.totalTokens, warnings };
   } catch (err) {
     // Record a secret-free error sample (markCvFileFailed truncates + strips NUL) and leave the row
-    // `failed` — unless it already flipped to `extracted` (the 9b guard won't regress it). Re-throw
-    // so the caller reports it.
-    await markCvFileFailed(db, fileId, err instanceof Error ? err.message : String(err));
+    // `failed` — unless it already flipped to `extracted` (the 9b guard won't regress it). Best-effort:
+    // a failing mark must NEVER mask the real cause, so swallow its error and always re-throw `err`.
+    try {
+      await markCvFileFailed(db, fileId, err instanceof Error ? err.message : String(err));
+    } catch {
+      // ignore — the original error (re-thrown below) is what matters.
+    }
     throw err;
   }
 }

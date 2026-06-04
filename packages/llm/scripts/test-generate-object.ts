@@ -1,7 +1,7 @@
-// Exercises generateObject end-to-end against Anthropic: (1) the PII scrub (deterministic, no API),
-// (2) extraction of a valid CvProfileSchema profile from sample CV text, (3) prompt-cache plumbing
-// (created on call 1, read on call 2), and (4) truncation surfaces as a StructuredOutputError (not an
-// opaque SDK throw). Requires ANTHROPIC_API_KEY in packages/llm/.env.
+// Exercises generateObject end-to-end against Anthropic: (1) extraction of a valid CvProfileSchema
+// profile from sample CV text, (2) prompt-cache plumbing (created on call 1, read on call 2), and
+// (3) truncation surfaces as a StructuredOutputError (not an opaque SDK throw). Requires
+// ANTHROPIC_API_KEY in packages/llm/.env. (The PII scrub now lives in @opusfinder/shared — see test:userid.)
 // Run: pnpm --filter @opusfinder/llm test:generate-object
 import { randomUUID } from "node:crypto";
 
@@ -9,7 +9,7 @@ import { runScript } from "@opusfinder/shared/script";
 import { z } from "zod";
 
 import { generateObject, StructuredOutputError } from "../src/generate-object";
-import { CV_STRUCTURE_SYSTEM, CvProfileSchema, scrubProfilePii } from "../src/prompts/cv-extract";
+import { CV_STRUCTURE_SYSTEM, CvProfileSchema } from "../src/prompts/cv-extract";
 
 function assert(cond: boolean, msg: string): void {
   if (!cond) throw new Error(`ASSERT FAILED: ${msg}`);
@@ -42,20 +42,6 @@ function buildLargeSystemPrompt(): string {
     );
   }
   return [intro, ...rules].join("\n");
-}
-
-function testScrub(): void {
-  const clean = scrubProfilePii({
-    summary: "Senior engineer; reach me at jane.doe@example.com or (682) 333-9323. Worked 2015-2019.",
-    skills: ["Go", "PostgreSQL"],
-    targetRoles: ["Staff Engineer"],
-  });
-  console.log("\n[scrub]");
-  console.log(`  ${clean.summary}`);
-  assert(!/@example\.com/.test(clean.summary), "email is redacted");
-  assert(!/333-9323/.test(clean.summary), "phone is redacted");
-  assert(/2015-2019/.test(clean.summary), "year range is preserved (not mistaken for a phone)");
-  assert(clean.skills.length === 2 && clean.targetRoles.length === 1, "non-PII fields preserved");
 }
 
 async function testExtraction(): Promise<void> {
@@ -118,11 +104,10 @@ async function testTruncation(): Promise<void> {
 }
 
 async function main(): Promise<void> {
-  testScrub();
   await testExtraction();
   await testCachePlumbing();
   await testTruncation();
-  console.log("\nPASS: scrub + extraction + caching + truncation-handling all verified.");
+  console.log("\nPASS: extraction + caching + truncation-handling all verified.");
 }
 
 await runScript("test-generate-object", main);

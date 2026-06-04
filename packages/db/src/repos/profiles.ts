@@ -7,7 +7,7 @@
  * intentional refresh). Vectors are written via the shared pgvector literal + cast (see ./sql),
  * the same way the jobs embeddings are written.
  */
-import { and, eq, ne, sql } from "drizzle-orm";
+import { and, desc, eq, ne, sql } from "drizzle-orm";
 
 import type { StructuredProfile, UserId } from "@opusfinder/shared";
 
@@ -128,19 +128,22 @@ export async function getProfileStructured(
   return rows[0]?.structured ?? null;
 }
 
-/** The backing file id + its cached R2 text key for a user's profile, or null if absent — read by
- * the `profiles:restructure` seam (re-structure from cached text, skip transcribe). Returns null
- * when there is no profile or the transcript was never cached. */
+/** The latest extracted upload's file id + cached R2 text key for a user, or null if none — read by
+ * the `profiles:restructure` seam (re-structure from cached text, skip transcribe). Queried off
+ * `user_cv_files` directly, so it does NOT require a `user_profiles` row. */
 export interface ProfileTextRef {
   sourceCvFileId: number;
   r2TextKey: string;
 }
 export async function getProfileTextKey(db: Db, userId: UserId): Promise<ProfileTextRef | null> {
+  // The user's LATEST successfully-extracted upload — queried straight off user_cv_files (not via the
+  // profile), so an all-blank structuring that left an extracted file with NO user_profiles row is
+  // still reachable by restructure (its cached transcript is the whole point of the re-run seam).
   const rows = await db
-    .select({ sourceCvFileId: userProfiles.sourceCvFileId, r2TextKey: userCvFiles.r2TextKey })
-    .from(userProfiles)
-    .innerJoin(userCvFiles, eq(userProfiles.sourceCvFileId, userCvFiles.id))
-    .where(eq(userProfiles.userId, userId))
+    .select({ sourceCvFileId: userCvFiles.id, r2TextKey: userCvFiles.r2TextKey })
+    .from(userCvFiles)
+    .where(and(eq(userCvFiles.userId, userId), eq(userCvFiles.status, "extracted")))
+    .orderBy(desc(userCvFiles.id))
     .limit(1);
   const row = rows[0];
   if (!row || row.r2TextKey === null) return null;

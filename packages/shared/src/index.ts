@@ -199,3 +199,33 @@ export function composeProfileText(profile: StructuredProfile): string {
     profile.targetRoles.length > 0 ? `Target roles: ${profile.targetRoles.join(", ")}` : "",
   ]);
 }
+
+const EMAIL_RE = /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g;
+// A phone-like run: optional + and (, then digits/separators. Redacted ONLY when it contains >=10
+// digits, so it never eats a year range like "2015-2019" (8 digits) or a metric like "p99".
+const PHONE_CANDIDATE_RE = /\+?\(?\d[\d\s().-]{8,}\d/g;
+
+function scrubText(text: string): string {
+  const noEmail = text.replace(EMAIL_RE, "[redacted]");
+  const noPhone = noEmail.replace(PHONE_CANDIDATE_RE, (m) =>
+    (m.match(/\d/g)?.length ?? 0) >= 10 ? "[redacted]" : m,
+  );
+  return noPhone.replace(/[ \t]{2,}/g, " ").trim();
+}
+
+/**
+ * Defense-in-depth PII scrub for a {@link StructuredProfile}. The CV extraction prompts already
+ * instruct the model to omit PII, but LLM instructions are not a hard guarantee on untrusted CV text
+ * and the profile is persisted + vectorized — so the Phase-9 pipeline ALWAYS runs this before storing
+ * and embedding. It lives here (node-free shared) so the Worker-portable pipeline (`@opusfinder/profiles`)
+ * can call it structurally rather than relying on a seam contract. It redacts the machine-detectable
+ * PII (email addresses + phone runs of >=10 digits); names are not regex-detectable and remain a
+ * prompt-only concern.
+ */
+export function scrubProfilePii(profile: StructuredProfile): StructuredProfile {
+  return {
+    summary: scrubText(profile.summary),
+    skills: profile.skills.map(scrubText).filter((s) => s.length > 0),
+    targetRoles: profile.targetRoles.map(scrubText).filter((s) => s.length > 0),
+  };
+}
