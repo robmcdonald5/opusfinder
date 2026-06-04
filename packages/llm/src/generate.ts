@@ -1,6 +1,12 @@
 import { generateText } from "ai";
 import type { FinishReason, ModelMessage } from "ai";
 
+import {
+  assertMaxOutputTokens,
+  assertSystemNotInMessages,
+  buildCacheableRequest,
+  readCacheCounters,
+} from "./cache-plumbing";
 import { resolveModel, type ModelAlias } from "./provider";
 
 export type { ModelAlias };
@@ -73,53 +79,21 @@ const DEFAULT_MAX_OUTPUT_TOKENS = 1024;
 export async function generate(params: GenerateParams): Promise<GenerateResult> {
   const { model, messages, system, cacheSystem, maxOutputTokens, temperature } = params;
 
-  // Contract guard: the system prompt belongs in `system`. A system message buried in
-  // `messages` would land after the cache breakpoint (silently shrinking the cached
-  // prefix) or, if non-leading, make the Anthropic converter throw deep in the SDK.
-  // Fail clearly at the boundary instead.
-  if (messages.some((m) => m.role === "system")) {
-    throw new Error(
-      'generate(): pass the system prompt via the `system` option, not as a role:"system" ' +
-        "entry in `messages` (mixing them misplaces the prompt-cache breakpoint).",
-    );
-  }
-  if (maxOutputTokens !== undefined && maxOutputTokens < 1) {
-    throw new Error(`generate(): maxOutputTokens must be >= 1 (got ${maxOutputTokens}).`);
-  }
+  // The system-in-`messages` guard, the cache-promotion trick, and the cache accounting are shared
+  // with generateObject — see ./cache-plumbing.
+  assertSystemNotInMessages("generate", messages);
+  assertMaxOutputTokens("generate", maxOutputTokens);
 
-  // A plain `system: string` can't carry a cache breakpoint. When caching the system
-  // prompt, promote it to a leading system message with the Anthropic ephemeral
-  // cacheControl marker; otherwise pass it through as the plain `system` field.
-  const cacheTheSystem = Boolean(cacheSystem && system);
-  const finalMessages: ModelMessage[] = cacheTheSystem
-    ? [
-        {
-          role: "system",
-          content: system as string,
-          providerOptions: { anthropic: { cacheControl: { type: "ephemeral" } } },
-        },
-        ...messages,
-      ]
-    : messages;
-
+  const req = buildCacheableRequest({ system, cacheSystem, messages });
   const result = await generateText({
     model: resolveModel(model),
-    system: cacheTheSystem ? undefined : system,
-    messages: finalMessages,
-    // The cache-marked system prompt rides as a (trusted, app-authored) system message
-    // — a plain `system` string can't hold a cacheControl breakpoint. This flag is a
-    // no-op on ai@5 (which allows system-in-messages by default); it's kept for
-    // forward-compat with ai@7, which rejects system-in-messages without this opt-in.
-    ...(cacheTheSystem ? { allowSystemInMessages: true } : {}),
+    system: req.system,
+    messages: req.messages,
+    ...req.extra,
     maxOutputTokens: maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
     ...(temperature === undefined ? {} : { temperature }),
   });
 
-  // Cache accounting is split across two places in AI SDK v5 + @ai-sdk/anthropic:
-  // writes are Anthropic-specific (providerMetadata.anthropic.cacheCreationInputTokens);
-  // reads use the normalized usage.cachedInputTokens (the provider exposes no
-  // cacheReadInputTokens field).
-  const anthropic = result.providerMetadata?.anthropic;
   return {
     text: result.text,
     finishReason: result.finishReason,
@@ -128,18 +102,6 @@ export async function generate(params: GenerateParams): Promise<GenerateResult> 
       outputTokens: result.usage.outputTokens,
       totalTokens: result.usage.totalTokens,
     },
-    cache: {
-      creationInputTokens: toCount(anthropic?.cacheCreationInputTokens),
-      readInputTokens: toCount(result.usage.cachedInputTokens),
-    },
+    cache: readCacheCounters(result),
   };
-}
-
-/**
- * providerMetadata / usage values are typed loosely (JSONValue, `number | undefined`);
- * coerce a cache counter to a finite number, defaulting to 0 when absent, null, NaN, or
- * otherwise non-numeric.
- */
-function toCount(value: unknown): number {
-  return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }

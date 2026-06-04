@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import type { StructuredProfile } from "@opusfinder/shared";
+
 /**
  * The two prompts for Phase 9 CV ingestion, exported so the eval harness (Phase 5) runs the SAME
  * prompts production does. Layer 1 (transcribe) and Layer 2 (structure) are deliberately separate
@@ -68,3 +70,37 @@ export const CvProfileSchema = z.object({
 
 /** The structured profile inferred from {@link CvProfileSchema}; matches `StructuredProfile`. */
 export type CvProfile = z.infer<typeof CvProfileSchema>;
+
+// Compile-time tripwire: CvProfileSchema must infer EXACTLY StructuredProfile (summary, skills[],
+// targetRoles[]). A drift in either fails `pnpm --filter @opusfinder/llm typecheck` NOW — not silently
+// until the 9e pipeline wires its `structure()` seam (which is typed to return StructuredProfile).
+type Equal<A, B> = [A] extends [B] ? ([B] extends [A] ? true : never) : never;
+const _cvProfileMatchesStructuredProfile: Equal<CvProfile, StructuredProfile> = true;
+
+const EMAIL_RE = /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g;
+// A phone-like run: optional + and (, then digits/separators. Redacted ONLY when it contains >=10
+// digits, so it never eats a year range like "2015-2019" (8 digits) or a metric like "p99".
+const PHONE_CANDIDATE_RE = /\+?\(?\d[\d\s().-]{8,}\d/g;
+
+function scrubText(text: string): string {
+  const noEmail = text.replace(EMAIL_RE, "[redacted]");
+  const noPhone = noEmail.replace(PHONE_CANDIDATE_RE, (m) =>
+    (m.match(/\d/g)?.length ?? 0) >= 10 ? "[redacted]" : m,
+  );
+  return noPhone.replace(/[ \t]{2,}/g, " ").trim();
+}
+
+/**
+ * Defense-in-depth PII scrub for a structured profile, applied before it is stored + embedded. The
+ * prompts already instruct the model to omit PII, but LLM instructions are not a hard guarantee on
+ * untrusted CV text and the profile is persisted + vectorized — so redact the machine-detectable PII
+ * (email addresses and phone-number runs of >=10 digits). Names are not regex-detectable and stay a
+ * prompt-only concern.
+ */
+export function scrubProfilePii(profile: StructuredProfile): StructuredProfile {
+  return {
+    summary: scrubText(profile.summary),
+    skills: profile.skills.map(scrubText).filter((s) => s.length > 0),
+    targetRoles: profile.targetRoles.map(scrubText).filter((s) => s.length > 0),
+  };
+}
