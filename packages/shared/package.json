@@ -7,13 +7,18 @@
     ".": "./src/index.ts",
     "./script": "./src/script.ts",
     "./env": "./src/env.ts",
-    "./async": "./src/async.ts"
+    "./async": "./src/async.ts",
+    "./userid": "./src/userid.ts"
   },
   "types": "./src/index.ts",
   "scripts": {
+    "test:userid": "tsx scripts/test-userid.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "dotenv": "^17"
+  },
+  "devDependencies": {
+    "tsx": "^4"
   }
 }

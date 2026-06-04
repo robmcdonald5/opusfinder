@@ -47,6 +47,18 @@ export const unsafeCompanySlug = (value: string): CompanySlug => value as Compan
 export const unsafeJobId = (value: string): JobId => value as JobId;
 
 /**
+ * A stable per-user identifier (a UUID string). Phase 9 hand-mints it deterministically from
+ * the user's email via `mintUserId` (in the dedicated `@opusfinder/shared/userid` entry point —
+ * it pulls `node:crypto`, kept off this module so the Worker bundle stays node-free, same
+ * discipline as `./env`); a real users table / auth supplies it later. Branded so a raw string
+ * can't be passed where a user id is expected.
+ */
+export type UserId = Brand<string, "UserId">;
+
+/** Escape hatch for already-trusted values (e.g. read back from the DB). */
+export const unsafeUserId = (value: string): UserId => value as UserId;
+
+/**
  * Which ATS produced a job. Grows one member per adapter as they land (Phase 6
  * adds Lever, Ashby, Workable, SmartRecruiters; Phase 6.5 Wave A adds Recruitee,
  * Pinpoint, Gem, Trakstar — all zero-hydrate public boards). Kept a union, NOT
@@ -145,7 +157,45 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
  * source of truth instead of a per-site copy of the trim/join logic. (The list of FIELDS each
  * composer feeds in necessarily stays at its call site.) Lives here, not in @opusfinder/embeddings,
  * so the dataset loader can reuse it without pulling the embeddings/db stack onto the load path.
+ *
+ * Used by the job composer (`jobEmbeddingText` in @opusfinder/db) and the profile composer
+ * (`composeProfileText`, below — the eval harness's `profileEmbeddingText` delegates to it).
  */
 export function composeEmbeddingText(parts: string[]): string {
   return parts.filter((s) => s.trim().length > 0).join("\n\n");
+}
+
+/**
+ * The semantic CV profile — the embeddable, PII-free representation produced by Phase 9 CV
+ * ingestion and stored in `user_profiles.structured`. Deliberately the `{ summary, skills,
+ * targetRoles }` subset that feeds the match vector: NO `id` (that is an eval-only handle on
+ * `EvalProfile`) and NO contact info / addresses (the extraction prompts drop them — they add no
+ * job-alignment signal and dilute the vector). `preferences` is intentionally NOT here: it comes
+ * from the Phase-12 onboarding form, not the CV, and feeds the deterministic filter (Phase 10),
+ * not the embedding.
+ */
+export interface StructuredProfile {
+  /** Free-text career summary — the bulk of the embedded "query" text. */
+  summary: string;
+  /** Skills / technologies. */
+  skills: string[];
+  /** Roles the person is targeting (e.g. "Senior Backend Engineer"). */
+  targetRoles: string[];
+}
+
+/**
+ * Compose the text embedded for a profile — the "query" side of retrieval — from a
+ * {@link StructuredProfile}. The SINGLE source of truth for what goes in the profile vector
+ * (mirrors `jobEmbeddingText`, the "document" side in @opusfinder/db): the summary carries the
+ * most signal; skills and target roles are appended as compact, labeled context. The eval
+ * harness's `profileEmbeddingText` delegates here, so the harness embeds profiles exactly the way
+ * the Phase-9 ingest + Phase-10 digest pipeline will. Empty iff every field is blank (per
+ * {@link composeEmbeddingText}).
+ */
+export function composeProfileText(profile: StructuredProfile): string {
+  return composeEmbeddingText([
+    profile.summary,
+    profile.skills.length > 0 ? `Skills: ${profile.skills.join(", ")}` : "",
+    profile.targetRoles.length > 0 ? `Target roles: ${profile.targetRoles.join(", ")}` : "",
+  ]);
 }

@@ -1,18 +1,15 @@
-import { composeEmbeddingText } from "@opusfinder/shared";
+import { composeProfileText } from "@opusfinder/shared";
 
 import type { EvalProfile } from "./types";
 
 /**
- * Compose the text embedded for a profile — the "query" side of retrieval. Mirrors
- * `jobEmbeddingText` (the "document" side, in @opusfinder/db) so the harness embeds profiles
- * the way the Phase-10 digest pipeline will. The summary carries the most signal; skills and
- * target roles are appended as compact, labeled context. PROVISIONAL alongside `EvalProfile` —
- * Phase 9 may refine exactly what goes into the profile vector.
+ * Compose the text embedded for a profile — the "query" side of retrieval. Thin eval-side
+ * wrapper over `composeProfileText` (@opusfinder/shared), the single source of truth for the
+ * profile vector (Phase 9), so the harness embeds profiles exactly the way production ingest does.
+ * `EvalProfile extends StructuredProfile`, so `profile` is passed straight through;
+ * `composeProfileText` reads only the `{ summary, skills, targetRoles }` subset and ignores the
+ * eval-only `id` / `preferences`.
  */
 export function profileEmbeddingText(profile: EvalProfile): string {
-  return composeEmbeddingText([
-    profile.summary,
-    profile.skills.length > 0 ? `Skills: ${profile.skills.join(", ")}` : "",
-    profile.targetRoles.length > 0 ? `Target roles: ${profile.targetRoles.join(", ")}` : "",
-  ]);
+  return composeProfileText(profile);
 }
