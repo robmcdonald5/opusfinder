@@ -9,7 +9,7 @@ import { restructureProfile } from "../src/index";
 import { embed, structure } from "./seams";
 
 async function main(): Promise<void> {
-  const [email] = process.argv.slice(2);
+  const email = process.argv[2]?.trim();
   if (!email) {
     console.error("Usage: pnpm profiles:restructure <email>");
     process.exitCode = 1;

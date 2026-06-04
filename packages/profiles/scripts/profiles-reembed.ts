@@ -9,7 +9,7 @@ import { reembedProfile } from "../src/index";
 // Re-embed from the stored structured JSON (no LLM, no storage), so this script imports embed
 // directly rather than the llm-pulling ./seams.
 async function main(): Promise<void> {
-  const [email] = process.argv.slice(2);
+  const email = process.argv[2]?.trim();
   if (!email) {
     console.error("Usage: pnpm profiles:reembed <email>");
     process.exitCode = 1;

@@ -13,7 +13,8 @@ import { ingestCv } from "../src/index";
 import { embed, structure, transcribe } from "./seams";
 
 async function main(): Promise<void> {
-  const [pdfPath, email] = process.argv.slice(2);
+  const pdfPath = process.argv[2]?.trim();
+  const email = process.argv[3]?.trim();
   if (!pdfPath || !email) {
     console.error("Usage: pnpm ingest-cv <cv.pdf> <email>");
     process.exitCode = 1;
