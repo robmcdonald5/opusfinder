@@ -1,5 +1,5 @@
 {
-  "name": "@opusfinder/eval",
+  "name": "@opusfinder/profiles",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -8,12 +8,9 @@
   },
   "types": "./src/index.ts",
   "scripts": {
-    "eval": "tsx scripts/eval.ts",
-    "eval:compare": "tsx scripts/compare.ts",
-    "export:candidates": "tsx scripts/export-candidates.ts",
-    "extract-profile": "tsx scripts/extract-profile.ts",
-    "build:dataset": "tsx scripts/build-dataset.ts",
-    "test:metrics": "tsx scripts/test-metrics.ts",
+    "ingest-cv": "tsx scripts/ingest-cv.ts",
+    "profiles:reembed": "tsx scripts/profiles-reembed.ts",
+    "profiles:restructure": "tsx scripts/profiles-restructure.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
@@ -21,7 +18,7 @@
     "@opusfinder/embeddings": "workspace:*",
     "@opusfinder/llm": "workspace:*",
     "@opusfinder/shared": "workspace:*",
-    "dotenv": "^17"
+    "@opusfinder/storage": "workspace:*"
   },
   "devDependencies": {
     "tsx": "^4"

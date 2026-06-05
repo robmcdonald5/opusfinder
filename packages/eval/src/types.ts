@@ -8,6 +8,8 @@
  * different `embed` functions, so it reuses the entire scoring path for free.
  */
 
+import type { StructuredProfile } from "@opusfinder/shared";
+
 /**
  * Eval-time stand-in for a user profile. PROVISIONAL: Phase 9 introduces the real
  * `user_profiles` row (PDF → structured JSONB + embedding); this mirrors that planned
@@ -16,15 +18,12 @@
  * format. Holds NO PII (no name / contact / employer) even when derived from a real CV —
  * see the package README.
  */
-export interface EvalProfile {
+export interface EvalProfile extends StructuredProfile {
   /** Stable, non-identifying handle for the example (e.g. "backend-ic-1"). */
   id: string;
-  /** Free-text career summary — the bulk of the embedded "query" text. */
-  summary: string;
-  /** Skills / technologies. Weighted into the embed text; used by the future LLM rerank. */
-  skills: string[];
-  /** Roles the person is targeting (e.g. "Senior Backend Engineer"). */
-  targetRoles: string[];
+  // summary / skills / targetRoles are inherited from StructuredProfile (@opusfinder/shared) — the
+  // SAME shape production `user_profiles.structured` uses — so the two can't drift. EvalProfile adds
+  // only the eval-local handle (`id`) and labeling `preferences`.
   /**
    * Hard-ish preferences. NOT enforced as filters in Phase 5 (the Phase 10 deterministic
    * filter will use them); kept here so labeled examples carry them forward unchanged.

@@ -3,8 +3,11 @@
 Cross-package types and validators, plus a few small cross-cutting runtime helpers.
 Exports the raw `src/index.ts` barrel (types + validators, dependency-free), a
 `@opusfinder/shared/script` subpath for the CLI runner (dependency-free), a
-`@opusfinder/shared/env` subpath for env loading (depends on `dotenv`), and a
-`@opusfinder/shared/async` subpath for the shared retry/backoff (dependency-free, Worker-forward).
+`@opusfinder/shared/env` subpath for env loading (depends on `dotenv`), a
+`@opusfinder/shared/async` subpath for the shared retry/backoff (dependency-free, Worker-forward),
+and a `@opusfinder/shared/userid` subpath for deterministic user-id minting (depends on
+`node:crypto`, Node-only — deliberately kept off the barrel so `src/index.ts` stays free of `node:`
+imports and bundles cleanly into the `nodejs_compat`-less scrapers Worker).
 
 ## Brand types
 
@@ -37,8 +40,8 @@ rules on the adapter, never here.
 
 ## Escape hatches
 
-`unsafeCompanySlug(value)` / `unsafeJobId(value)` brand a value **without
-validating** — only for already-trusted values, e.g. rows read back from the DB.
+`unsafeCompanySlug(value)` / `unsafeJobId(value)` / `unsafeUserId(value)` brand a value
+**without validating** — only for already-trusted values, e.g. rows read back from the DB.
 
 ## Normalized job shape
 
@@ -78,9 +81,18 @@ re-define it.
 `composeEmbeddingText(parts)` drops blank parts and joins the rest with a blank line.
 It is the single definition of how embedding input is composed and of what "no embeddable
 content" means (the result is `""` iff every part is blank). Shared by `jobEmbeddingText`
-(@opusfinder/db), `profileEmbeddingText` (eval), and the dataset validator, so the "empty"
+(@opusfinder/db), `composeProfileText` (below), and the dataset validator, so the "empty"
 notion has one source of truth. Lives here (not in @opusfinder/embeddings) so the dataset
 loader can reuse it without pulling the embeddings/db stack onto the load path.
+
+`StructuredProfile` (`{ summary, skills[], targetRoles[] }`) is the semantic CV profile — the
+PII-free shape Phase 9 CV ingestion stores in `user_profiles.structured` and the **same** shape
+`EvalProfile` extends, so the eval and production profiles can't drift. `composeProfileText(profile)`
+composes its embedding "query" text (summary, then `Skills: …`, then `Target roles: …`, via
+`composeEmbeddingText`) — the single source of truth for the profile vector, mirroring
+`jobEmbeddingText` on the document side. The eval harness's `profileEmbeddingText` delegates to it.
+Contact info / addresses are intentionally omitted (no job-alignment signal); `preferences` is not
+part of the vector (it comes from the Phase-12 form, feeds the deterministic filter).
 
 ## Script runner
 
@@ -137,3 +149,25 @@ export const getVoyageApiKey = requireEnv({
   prefix: "pa-",
 });
 ```
+
+## User identity
+
+`UserId` is a **branded string** (a UUID). Unlike `CompanySlug` / `JobId` it is not validated
+from arbitrary input — Phase 9 has no users table, so `mintUserId(email)` (from
+`@opusfinder/shared/userid`) hand-mints a stable id as a deterministic **UUIDv5** (RFC 4122 §4.3)
+over a fixed namespace and the normalized email (`trim().toLowerCase().normalize("NFC")`).
+Idempotent: the same email always mints the same id, so re-ingesting a CV upserts the one
+`user_profiles` row instead of forking an identity. `unsafeUserId(value)` brands a trusted value
+(e.g. read back from the DB) without minting.
+
+```ts
+import { mintUserId } from "@opusfinder/shared/userid";
+
+const userId = mintUserId("me@example.com");
+```
+
+It lives in its own `@opusfinder/shared/userid` subpath because it imports `node:crypto`: keeping
+it off the `src/index.ts` barrel means the barrel stays `node:`-free and bundles into the
+`nodejs_compat`-less scrapers Worker (same discipline as `@opusfinder/shared/env`). The namespace
+constant **must never change** — changing it shifts every minted id and orphans existing rows.
+A golden-vector check (`pnpm --filter @opusfinder/shared test:userid`) locks the contract.
