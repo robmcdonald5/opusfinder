@@ -27,7 +27,10 @@
     "eval": "pnpm --filter @opusfinder/eval run eval",
     "eval:compare": "pnpm --filter @opusfinder/eval run eval:compare",
     "ingest-cv": "pnpm --filter @opusfinder/profiles ingest-cv",
-    "profiles:restructure": "pnpm --filter @opusfinder/profiles profiles:restructure"
+    "profiles:restructure": "pnpm --filter @opusfinder/profiles profiles:restructure",
+    "user:create": "pnpm --filter @opusfinder/auth user:create",
+    "user:set-prefs": "pnpm --filter @opusfinder/auth user:set-prefs",
+    "user:list": "pnpm --filter @opusfinder/auth user:list"
   },
   "devDependencies": {
     "@eslint/js": "^10",

@@ -3,3 +3,5 @@
 // @opusfinder/storage. The service layer (createUserWithProfile / getOrCreateUserByEmail) lands in 9.5d.
 export { createAuth } from "./auth";
 export type { Auth } from "./auth";
+export { createUserWithProfile, getOrCreateUserByEmail, findUserByEmail } from "./service";
+export type { CreateUserInput } from "./service";
