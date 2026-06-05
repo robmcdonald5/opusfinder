@@ -15,6 +15,7 @@ import {
 import type { StorageClient } from "@opusfinder/storage";
 import { originalKey, textKey } from "@opusfinder/storage/keys";
 
+import { embedQuery } from "./embed";
 import type { ProfileEmbedFn, StructureFn, TranscribeFn } from "./types";
 
 export interface IngestCvOptions {
@@ -102,9 +103,7 @@ export async function ingestCv(db: Db, opts: IngestCvOptions): Promise<IngestCvR
       };
     }
 
-    const { embeddings, usage } = await embed([embedText], { inputType: "query" });
-    const vector = embeddings[0];
-    if (!vector || vector.length === 0) throw new Error("embed() returned no usable vector for the profile text");
+    const { vector, usage } = await embedQuery(embed, embedText);
 
     const { id: profileId } = await upsertUserProfile(db, {
       userId,

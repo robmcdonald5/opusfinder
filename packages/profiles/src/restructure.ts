@@ -3,6 +3,7 @@ import { getProfileTextKey, upsertUserProfile } from "@opusfinder/db/repos";
 import { composeProfileText, scrubProfilePii, type UserId } from "@opusfinder/shared";
 import type { StorageClient } from "@opusfinder/storage";
 
+import { embedQuery } from "./embed";
 import type { ProfileEmbedFn, StructureFn } from "./types";
 
 /**
@@ -29,9 +30,7 @@ export async function restructureProfile(
     throw new Error("restructureProfile: re-structured profile had no embeddable content");
   }
 
-  const { embeddings } = await deps.embed([embedText], { inputType: "query" });
-  const vector = embeddings[0];
-  if (!vector || vector.length === 0) throw new Error("embed() returned no usable vector");
+  const { vector } = await embedQuery(deps.embed, embedText);
 
   await upsertUserProfile(db, {
     userId,

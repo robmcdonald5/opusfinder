@@ -9,8 +9,8 @@
   "types": "./src/index.ts",
   "scripts": {
     "ingest-cv": "tsx scripts/ingest-cv.ts",
-    "profiles:reembed": "tsx scripts/profiles-reembed.ts",
     "profiles:restructure": "tsx scripts/profiles-restructure.ts",
+    "test:ingest": "tsx scripts/test-ingest.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

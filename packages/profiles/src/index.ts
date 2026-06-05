@@ -3,6 +3,5 @@
 // storage / db) INJECTED, so this module stays Worker-portable; the Node scripts/ wire the real impls.
 export { ingestCv } from "./ingest";
 export type { IngestCvOptions, IngestCvResult } from "./ingest";
-export { reembedProfile } from "./reembed";
 export { restructureProfile } from "./restructure";
 export type { ProfileEmbedFn, StructureFn, TranscribeFn } from "./types";

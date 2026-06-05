@@ -40,8 +40,8 @@ rules on the adapter, never here.
 
 ## Escape hatches
 
-`unsafeCompanySlug(value)` / `unsafeJobId(value)` / `unsafeUserId(value)` brand a value
-**without validating** — only for already-trusted values, e.g. rows read back from the DB.
+`unsafeCompanySlug(value)` / `unsafeJobId(value)` brand a value **without validating** — only for
+already-trusted values, e.g. rows read back from the DB.
 
 ## Normalized job shape
 
@@ -157,8 +157,7 @@ from arbitrary input — Phase 9 has no users table, so `mintUserId(email)` (fro
 `@opusfinder/shared/userid`) hand-mints a stable id as a deterministic **UUIDv5** (RFC 4122 §4.3)
 over a fixed namespace and the normalized email (`trim().toLowerCase().normalize("NFC")`).
 Idempotent: the same email always mints the same id, so re-ingesting a CV upserts the one
-`user_profiles` row instead of forking an identity. `unsafeUserId(value)` brands a trusted value
-(e.g. read back from the DB) without minting.
+`user_profiles` row instead of forking an identity.
 
 ```ts
 import { mintUserId } from "@opusfinder/shared/userid";

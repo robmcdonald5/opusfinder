@@ -55,9 +55,6 @@ export const unsafeJobId = (value: string): JobId => value as JobId;
  */
 export type UserId = Brand<string, "UserId">;
 
-/** Escape hatch for already-trusted values (e.g. read back from the DB). */
-export const unsafeUserId = (value: string): UserId => value as UserId;
-
 /**
  * Which ATS produced a job. Grows one member per adapter as they land (Phase 6
  * adds Lever, Ashby, Workable, SmartRecruiters; Phase 6.5 Wave A adds Recruitee,

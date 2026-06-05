@@ -27,7 +27,6 @@
     "eval": "pnpm --filter @opusfinder/eval run eval",
     "eval:compare": "pnpm --filter @opusfinder/eval run eval:compare",
     "ingest-cv": "pnpm --filter @opusfinder/profiles ingest-cv",
-    "profiles:reembed": "pnpm --filter @opusfinder/profiles profiles:reembed",
     "profiles:restructure": "pnpm --filter @opusfinder/profiles profiles:restructure"
   },
   "devDependencies": {
