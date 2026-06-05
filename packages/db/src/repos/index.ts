@@ -30,3 +30,5 @@ export {
   getProfileTextKey,
 } from "./profiles";
 export type { NewCvFile, UpsertUserProfileInput, ProfileTextRef } from "./profiles";
+export { getPreferences, getOrCreatePreferences, updatePreferences } from "./preferences";
+export type { UserPreferencesRow, CreatePreferencesInput } from "./preferences";

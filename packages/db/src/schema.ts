@@ -19,6 +19,7 @@ import {
   jsonb,
   pgTable,
   serial,
+  smallint,
   text,
   timestamp,
   uniqueIndex,
@@ -26,7 +27,14 @@ import {
   vector,
 } from "drizzle-orm/pg-core";
 
-import type { CompanySlug, JobId, SourceName, StructuredProfile, UserId } from "@opusfinder/shared";
+import type {
+  CompanySlug,
+  DigestCadence,
+  JobId,
+  SourceName,
+  StructuredProfile,
+  UserId,
+} from "@opusfinder/shared";
 
 /**
  * Embedding vector width (Voyage voyage-3-large default). The single source of truth for
@@ -205,23 +213,34 @@ export interface ProfilePreferences {
  * (b) patching `r2_text_key` once the transcript is cached. The durable original PDF and the cached
  * transcribed text both live in R2 — this table holds only the keys, not the bytes.
  */
-export const userCvFiles = pgTable("user_cv_files", {
-  id: serial("id").primaryKey(),
-  // Hand-minted UUIDv5 from email in Phase 9 (mintUserId); an FK to a real users table lands later.
-  userId: uuid("user_id").$type<UserId>().notNull(),
-  // R2 object keys. The original is written before transcription; the text key is NULL until the
-  // transcript is cached (and the status flips to 'extracted').
-  r2OriginalKey: text("r2_original_key").notNull(),
-  r2TextKey: text("r2_text_key"),
-  filename: text("filename").notNull(),
-  contentType: text("content_type").notNull(),
-  byteSize: integer("byte_size").notNull(),
-  status: text("status").$type<CvFileStatus>().notNull().default("failed"),
-  // Truncated, SECRET- and PII-free first error (same discipline as source_runs.error_sample). A
-  // CV's contact details ARE PII, so this must never echo file content.
-  errorSample: text("error_sample"),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-});
+export const userCvFiles = pgTable(
+  "user_cv_files",
+  {
+    id: serial("id").primaryKey(),
+    // Phase 9 hand-minted a UUIDv5 from email; Phase 9.5 re-keys this to a real `user.id` (the
+    // email-derived id is retired). The FK to `user.id` is added in a LATER migration, after the §7b
+    // re-key leaves only real-user rows here — adding it now would fail on the throwaway Phase-9
+    // placeholder ids that reference no `user` row.
+    userId: uuid("user_id").$type<UserId>().notNull(),
+    // R2 object keys. The original is written before transcription; the text key is NULL until the
+    // transcript is cached (and the status flips to 'extracted').
+    r2OriginalKey: text("r2_original_key").notNull(),
+    r2TextKey: text("r2_text_key"),
+    filename: text("filename").notNull(),
+    contentType: text("content_type").notNull(),
+    byteSize: integer("byte_size").notNull(),
+    status: text("status").$type<CvFileStatus>().notNull().default("failed"),
+    // Truncated, SECRET- and PII-free first error (same discipline as source_runs.error_sample). A
+    // CV's contact details ARE PII, so this must never echo file content.
+    errorSample: text("error_sample"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    // Backs getProfileTextKey's `WHERE user_id AND status='extracted'` (Phase 9 had no index here).
+    // NOT unique — append-only upload history, many rows per user.
+    index("user_cv_files_user_id_idx").on(t.userId),
+  ],
+);
 
 /**
  * The current semantic profile — ONE row per user (the `user_id` unique index is the upsert target;
@@ -257,5 +276,178 @@ export const userProfiles = pgTable(
       foreignColumns: [userCvFiles.id],
       name: "user_profiles_source_cv_file_id_user_cv_files_id_fk",
     }),
+  ],
+);
+
+// ─── Phase 9.5: real identity (Better Auth-owned) + per-user preferences ───────────────────────────
+//
+// `user`/`session`/`account`/`verification` are OWNED by Better Auth (email+password now; magic-link /
+// OAuth are future plugin enables). They were emitted by `pnpm dlx @better-auth/cli generate` (with
+// `advanced.database.generateId: "uuid"`, so ids are `uuid` not `text`) and merged here into the unified
+// schema in the repo's house style: snake_case columns; FKs as named `foreignKey({...}).onDelete(...)`
+// (so the migration can guard each `ADD CONSTRAINT` in a DO/EXCEPTION block); uniqueness as a UNIQUE
+// INDEX (idempotent `CREATE UNIQUE INDEX IF NOT EXISTS`, not an ADD CONSTRAINT). Two DELIBERATE
+// deviations from the generator: (1) `timestamptz` (the generator emits bare `timestamp`; the rest of
+// this schema is timezone-aware and the adapter binds `Date` either way), and (2) a `defaultNow()` on
+// every `updated_at` (the generator omits it on session/account, relying on the adapter to always send
+// it — the default is harmless insurance against a NOT NULL violation). These tables are server-only —
+// the scrapers Worker NEVER imports `@opusfinder/auth` and never reads them.
+
+/** The identity/account row (Better Auth `user`). Kept lean — product data lives in the app tables that
+ *  FK onto `user.id`. `image` is unused (no avatars yet); it comes free with the generated schema. */
+export const user = pgTable(
+  "user",
+  {
+    id: uuid("id")
+      .$type<UserId>()
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    name: text("name").notNull(),
+    email: text("email").notNull(),
+    emailVerified: boolean("email_verified").notNull().default(false),
+    image: text("image"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (t) => [uniqueIndex("user_email_uq").on(t.email)],
+);
+
+/** A logged-in session (Better Auth). Unused while there is no UI, but part of the lib's owned set. */
+export const session = pgTable(
+  "session",
+  {
+    id: uuid("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    token: text("token").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+    ipAddress: text("ip_address"),
+    userAgent: text("user_agent"),
+    userId: uuid("user_id").$type<UserId>().notNull(),
+  },
+  (t) => [
+    uniqueIndex("session_token_uq").on(t.token),
+    index("session_user_id_idx").on(t.userId),
+    foreignKey({
+      columns: [t.userId],
+      foreignColumns: [user.id],
+      name: "session_user_id_user_id_fk",
+    }).onDelete("cascade"),
+  ],
+);
+
+/** A credential/provider account (Better Auth). `providerId='credential'` for email+password; the
+ *  `password` column holds the scrypt hash — it is a SECRET and must NEVER be logged or echoed. The
+ *  OAuth token columns are unused now (future plugin enables). */
+export const account = pgTable(
+  "account",
+  {
+    id: uuid("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    accountId: text("account_id").notNull(),
+    providerId: text("provider_id").notNull(),
+    userId: uuid("user_id").$type<UserId>().notNull(),
+    accessToken: text("access_token"),
+    refreshToken: text("refresh_token"),
+    idToken: text("id_token"),
+    accessTokenExpiresAt: timestamp("access_token_expires_at", { withTimezone: true }),
+    refreshTokenExpiresAt: timestamp("refresh_token_expires_at", { withTimezone: true }),
+    scope: text("scope"),
+    password: text("password"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (t) => [
+    index("account_user_id_idx").on(t.userId),
+    foreignKey({
+      columns: [t.userId],
+      foreignColumns: [user.id],
+      name: "account_user_id_user_id_fk",
+    }).onDelete("cascade"),
+  ],
+);
+
+/** Email-verification / password-reset tokens (Better Auth). Unused until Phase 11 wires email. */
+export const verification = pgTable(
+  "verification",
+  {
+    id: uuid("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    identifier: text("identifier").notNull(),
+    value: text("value").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (t) => [index("verification_identifier_idx").on(t.identifier)],
+);
+
+/** Delivery-state bounce classification for the digest (Phase 11). A TS union on a plain text column
+ *  (no pgEnum — same idempotent-migration rule as {@link LifecycleState}). Pipeline-managed delivery
+ *  STATE, distinct from the user-settable `UserPreferences` (@opusfinder/shared). */
+export type DigestBounceStatus = "none" | "soft" | "hard";
+
+/**
+ * One preferences row per user (1:1, `user_id` UNIQUE — the upsert target), created with conservative
+ * defaults at user creation. First-class columns for everything a digest `WHERE` clause touches (so the
+ * planner can use them — JSONB keeps no statistics) plus the delivery/cadence/unsubscribe fields the
+ * Phase-11 email step reads. The user-SETTABLE subset mirrors `UserPreferences` in @opusfinder/shared;
+ * the delivery-STATE columns (`digest_suppressed_at`, `digest_bounce_status`, `last_digest_*`) are
+ * pipeline-written, not form-set. `unsubscribe_token` is cryptographically random (generateUnsubscribeToken),
+ * NEVER email-derived. Retires the never-populated `user_profiles.preferences` jsonb.
+ */
+export const userPreferences = pgTable(
+  "user_preferences",
+  {
+    id: serial("id").primaryKey(),
+    userId: uuid("user_id").$type<UserId>().notNull(),
+    // --- user-settable filter prefs (Phase 10 deterministic filter) ---
+    remoteOk: boolean("remote_ok").notNull().default(true),
+    locations: text("locations")
+      .array()
+      .notNull()
+      .default(sql`'{}'::text[]`),
+    minSalary: integer("min_salary"),
+    recencyDays: smallint("recency_days").notNull().default(14),
+    // The one sparse/free-form field — app-side post-query rules (shape firms up in Phase 10).
+    exclusions: jsonb("exclusions").$type<string[]>().notNull().default([]),
+    // --- delivery prefs + state (Phase 10/11) ---
+    digestCadence: text("digest_cadence").$type<DigestCadence>().notNull().default("weekly"),
+    digestEnabled: boolean("digest_enabled").notNull().default(true),
+    digestSuppressedAt: timestamp("digest_suppressed_at", { withTimezone: true }),
+    digestBounceStatus: text("digest_bounce_status")
+      .$type<DigestBounceStatus>()
+      .notNull()
+      .default("none"),
+    unsubscribeToken: text("unsubscribe_token").notNull(),
+    lastDigestSentAt: timestamp("last_digest_sent_at", { withTimezone: true }),
+    lastDigestEmailId: text("last_digest_email_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("user_preferences_user_id_uq").on(t.userId),
+    uniqueIndex("user_preferences_unsubscribe_token_uq").on(t.unsubscribeToken),
+    foreignKey({
+      columns: [t.userId],
+      foreignColumns: [user.id],
+      name: "user_preferences_user_id_user_id_fk",
+    }).onDelete("cascade"),
   ],
 );

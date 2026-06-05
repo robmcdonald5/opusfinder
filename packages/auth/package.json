@@ -1,0 +1,24 @@
+{
+  "name": "@opusfinder/auth",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./env": "./src/env.ts"
+  },
+  "types": "./src/index.ts",
+  "scripts": {
+    "test:auth": "tsx scripts/test-auth-db.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@opusfinder/db": "workspace:*",
+    "@opusfinder/shared": "workspace:*",
+    "better-auth": "^1.6.14",
+    "drizzle-orm": "^0.45.2"
+  },
+  "devDependencies": {
+    "tsx": "^4"
+  }
+}
