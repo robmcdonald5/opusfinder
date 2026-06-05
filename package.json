@@ -15,6 +15,7 @@
     "format:check": "prettier --check .",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "typecheck:scrapers": "pnpm --filter @opusfinder/scrapers typecheck",
+    "guard:worker": "node scripts/check-worker-isolation.mjs",
     "db:migrate": "pnpm --filter @opusfinder/db migrate",
     "db:ping": "pnpm --filter @opusfinder/db ping",
     "runs": "pnpm --filter @opusfinder/db runs",

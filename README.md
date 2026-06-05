@@ -7,20 +7,21 @@ pipeline, and delivers a personalized digest on a regular cadence. See
 
 ## Monorepo layout
 
-| Path                   | What                                                                                                                                                            |
-| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `apps/web/`            | SvelteKit frontend (placeholder until Phase 12)                                                                                                                 |
-| `apps/scrapers/`       | Cloudflare Workers cron runtime — scheduled ingestion + discovery against Neon (Phase 8) ([README](apps/scrapers/README.md))                                    |
-| `packages/db/`         | Drizzle ORM over Neon Postgres + pgvector ([README](packages/db/README.md))                                                                                     |
-| `packages/discovery/`  | Slug-discovery pipeline — seed → probe → upsert + staleness (Phase 7) ([README](packages/discovery/README.md))                                                  |
-| `packages/embeddings/` | Voyage `voyage-3-large` embeddings + HNSW retrieval ([README](packages/embeddings/README.md))                                                                   |
-| `packages/eval/`       | Matching-quality eval harness — metrics, rankers, reports ([README](packages/eval/README.md))                                                                   |
-| `packages/llm/`        | Vercel AI SDK + Anthropic wrapper, prompt caching, structured output ([README](packages/llm/README.md))                                                         |
-| `packages/profiles/`   | CV → semantic-profile pipeline — transcribe → structure → embed (Phase 9) ([README](packages/profiles/README.md))                                               |
-| `packages/shared/`     | Shared brand types + validators ([README](packages/shared/README.md))                                                                                           |
-| `packages/sources/`    | ATS adapters → `NormalizedJob` (Greenhouse, Lever, Ashby, Workable, SmartRecruiters, Recruitee, Pinpoint, Gem, Trakstar) ([README](packages/sources/README.md)) |
-| `packages/storage/`    | S3-compatible Cloudflare R2 client for CV artifacts (Phase 9) ([README](packages/storage/README.md))                                                            |
-| `research/`            | Specs + source-discovery catalog (local planning docs — see below)                                                                                              |
+| Path                   | What                                                                                                                                                                                              |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/web/`            | SvelteKit frontend (placeholder until Phase 12)                                                                                                                                                   |
+| `apps/scrapers/`       | Cloudflare Workers cron runtime — scheduled ingestion + discovery against Neon (Phase 8) ([README](apps/scrapers/README.md))                                                                      |
+| `packages/auth/`       | Better Auth (email+password) — `user`/`session`/`account` schema + user-creation service + management CLIs (Phase 9.5; node/server-only, never in the Worker) ([README](packages/auth/README.md)) |
+| `packages/db/`         | Drizzle ORM over Neon Postgres + pgvector ([README](packages/db/README.md))                                                                                                                       |
+| `packages/discovery/`  | Slug-discovery pipeline — seed → probe → upsert + staleness (Phase 7) ([README](packages/discovery/README.md))                                                                                    |
+| `packages/embeddings/` | Voyage `voyage-3-large` embeddings + HNSW retrieval ([README](packages/embeddings/README.md))                                                                                                     |
+| `packages/eval/`       | Matching-quality eval harness — metrics, rankers, reports ([README](packages/eval/README.md))                                                                                                     |
+| `packages/llm/`        | Vercel AI SDK + Anthropic wrapper, prompt caching, structured output ([README](packages/llm/README.md))                                                                                           |
+| `packages/profiles/`   | CV → semantic-profile pipeline — transcribe → structure → embed (Phase 9) ([README](packages/profiles/README.md))                                                                                 |
+| `packages/shared/`     | Shared brand types + validators ([README](packages/shared/README.md))                                                                                                                             |
+| `packages/sources/`    | ATS adapters → `NormalizedJob` (Greenhouse, Lever, Ashby, Workable, SmartRecruiters, Recruitee, Pinpoint, Gem, Trakstar) ([README](packages/sources/README.md))                                   |
+| `packages/storage/`    | S3-compatible Cloudflare R2 client for CV artifacts (Phase 9) ([README](packages/storage/README.md))                                                                                              |
+| `research/`            | Specs + source-discovery catalog (local planning docs — see below)                                                                                                                                |
 
 pnpm workspaces; the package manager is pinned to pnpm 11.3.0.
 
@@ -46,6 +47,9 @@ pnpm install
 #
 # For the storage package (Phase 9), put your Cloudflare R2 credentials in packages/storage/.env:
 #   R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY / R2_BUCKET_NAME + R2_ACCOUNT_ID (or S3_ENDPOINT_URL)
+#
+# For the auth package (Phase 9.5), put a self-generated signing secret in packages/auth/.env:
+#   BETTER_AUTH_SECRET=...   (openssl rand -base64 32)   [+ optional BETTER_AUTH_URL]
 
 pnpm db:migrate   # applies packages/db/drizzle (enables the pgvector extension)
 pnpm db:ping      # round-trips SELECT 1 against Neon
@@ -53,25 +57,29 @@ pnpm db:ping      # round-trips SELECT 1 against Neon
 
 ## Root scripts
 
-| Script                              | Does                                                                                                     |
-| ----------------------------------- | -------------------------------------------------------------------------------------------------------- |
-| `pnpm lint` / `lint:fix`            | ESLint over the repo                                                                                     |
-| `pnpm format` / `format:check`      | Prettier write / check                                                                                   |
-| `pnpm typecheck`                    | `tsc --noEmit` (covers `packages/*`; apps excluded until they gain code)                                 |
-| `pnpm typecheck:scrapers`           | `tsc --noEmit` for `apps/scrapers` (the root typecheck excludes `apps/*`)                                |
-| `pnpm db:migrate`                   | Run Neon migrations (`@opusfinder/db`)                                                                   |
-| `pnpm db:ping`                      | Connectivity check against Neon                                                                          |
-| `pnpm runs`                         | Print the most recent `source_runs` rows (pipeline health at a glance)                                   |
-| `pnpm ingest <source> <slug>`       | Fetch + normalize one ATS board, upsert to Neon, embed new postings (`--no-embed` to skip)               |
-| `pnpm ingest:all`                   | Ingest every seeded company across all sources (`[--no-embed] [--source=<name>]`)                        |
-| `pnpm discover`                     | Discover + validate + upsert company slugs from the seed (`[--source=<name>] [--limit=<n>] [--dry-run]`) |
-| `pnpm llm:test`                     | Call Haiku twice with a cached system prompt; assert cache write then read                               |
-| `pnpm embeddings:backfill`          | Embed every job whose `embedding` is still NULL (idempotent)                                             |
-| `pnpm embeddings:search "<q>"`      | Embed a query and print the nearest jobs by cosine distance (HNSW)                                       |
-| `pnpm eval`                         | Score a ranker over the labeled set; write a report + diff vs last run                                   |
-| `pnpm eval:compare`                 | Voyage vs OpenAI embedding retrieval, side-by-side                                                       |
-| `pnpm ingest-cv <cv.pdf> <email>`   | Ingest a CV PDF → R2 + `user_cv_files` + `user_profiles` (transcribe → structure → embed)                |
-| `pnpm profiles:restructure <email>` | Re-structure a profile from the cached R2 transcript (skips transcribe)                                  |
+| Script                                    | Does                                                                                                                                 |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `pnpm lint` / `lint:fix`                  | ESLint over the repo                                                                                                                 |
+| `pnpm format` / `format:check`            | Prettier write / check                                                                                                               |
+| `pnpm typecheck`                          | `tsc --noEmit` (covers `packages/*`; apps excluded until they gain code)                                                             |
+| `pnpm typecheck:scrapers`                 | `tsc --noEmit` for `apps/scrapers` (the root typecheck excludes `apps/*`)                                                            |
+| `pnpm db:migrate`                         | Run Neon migrations (`@opusfinder/db`)                                                                                               |
+| `pnpm db:ping`                            | Connectivity check against Neon                                                                                                      |
+| `pnpm runs`                               | Print the most recent `source_runs` rows (pipeline health at a glance)                                                               |
+| `pnpm ingest <source> <slug>`             | Fetch + normalize one ATS board, upsert to Neon, embed new postings (`--no-embed` to skip)                                           |
+| `pnpm ingest:all`                         | Ingest every seeded company across all sources (`[--no-embed] [--source=<name>]`)                                                    |
+| `pnpm discover`                           | Discover + validate + upsert company slugs from the seed (`[--source=<name>] [--limit=<n>] [--dry-run]`)                             |
+| `pnpm llm:test`                           | Call Haiku twice with a cached system prompt; assert cache write then read                                                           |
+| `pnpm embeddings:backfill`                | Embed every job whose `embedding` is still NULL (idempotent)                                                                         |
+| `pnpm embeddings:search "<q>"`            | Embed a query and print the nearest jobs by cosine distance (HNSW)                                                                   |
+| `pnpm eval`                               | Score a ranker over the labeled set; write a report + diff vs last run                                                               |
+| `pnpm eval:compare`                       | Voyage vs OpenAI embedding retrieval, side-by-side                                                                                   |
+| `pnpm ingest-cv <cv.pdf> <email>`         | Ingest a CV PDF → R2 + `user_cv_files` + `user_profiles` (transcribe → structure → embed)                                            |
+| `pnpm profiles:restructure <email>`       | Re-structure a profile from the cached R2 transcript (skips transcribe)                                                              |
+| `pnpm user:create --email … --password …` | Create a verified user + default prefs (`[--name] [--remote] [--locations] [--min-salary] [--recency-days] [--cadence] [--enabled]`) |
+| `pnpm user:set-prefs --email … [flags]`   | Patch a user's preferences (same pref flags)                                                                                         |
+| `pnpm user:list`                          | List users — masked email, verified, cadence, enabled, has-profile, id                                                               |
+| `pnpm guard:worker`                       | Assert Better Auth / neon-serverless never leak into the scrapers Worker (#6665)                                                     |
 
 ## Documentation (local planning docs — not committed)
 
@@ -83,10 +91,23 @@ but not in a fresh clone:
 - `research/specs/PHASE_7_PLAN.md` — the Phase 7 slug-discovery build plan
 - `research/specs/PHASE_8_PLAN.md` — the Phase 8 Cloudflare Worker cron build plan
 - `research/specs/PHASE_9_PLAN.md` — the Phase 9 CV-ingestion build plan
+- `research/specs/PHASE_9.5_PLAN.md` — the Phase 9.5 user-identity (Better Auth) build plan
 - `research/specs/OPEN_DECISIONS.md` — deferred, trigger-based decisions
 - `research/sources/README.md` — source-discovery catalog
 
 ## Status
+
+Phase 9.5 added the **user & identity foundation** (backend/CLI only — no UI). **Better Auth**
+(email+password) owns `user` / `session` / `account` / `verification` in Neon via the Drizzle adapter,
+alongside a typed **`user_preferences`** table (filter + digest/delivery settings) and FKs from
+`user_cv_files` / `user_profiles` onto `user.id`. A new **`@opusfinder/auth`** package exposes
+`createUserWithProfile` / `getOrCreateUserByEmail` — the one creation path the CLI now and the Phase-12
+signup form will both call — plus `pnpm user:create` / `user:set-prefs` / `user:list`. The throwaway
+email-derived `mintUserId` placeholder is retired from the live path (`ingest-cv` now resolves a real
+`user.id`), and a latent IDOR in the cv-file repo is closed. Better Auth needs a transaction-capable
+driver, so the auth adapter uses a neon-serverless client (`createAuthDb`) kept behind a subpath and
+**out of the scrapers Worker** (Better Auth crashes under `nodejs_compat`, #6665) — `pnpm guard:worker`
+enforces that invariant. Shipped on branch `feat/phase-9.5-user-identity`.
 
 Phase 9 added **CV ingestion**: a CV PDF becomes a semantic `user_profiles` row — structured
 `{ summary, skills, targetRoles }` JSON plus a Voyage query embedding — with the original PDF and a
