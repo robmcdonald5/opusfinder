@@ -90,7 +90,7 @@ PII-free shape Phase 9 CV ingestion stores in `user_profiles.structured` and the
 `EvalProfile` extends, so the eval and production profiles can't drift. `composeProfileText(profile)`
 composes its embedding "query" text (summary, then `Skills: …`, then `Target roles: …`, via
 `composeEmbeddingText`) — the single source of truth for the profile vector, mirroring
-`jobEmbeddingText` on the document side. The eval harness's `profileEmbeddingText` delegates to it.
+`jobEmbeddingText` on the document side. The eval harness calls it directly.
 Contact info / addresses are intentionally omitted (no job-alignment signal); `preferences` is not
 part of the vector (it comes from the Phase-12 form, feeds the deterministic filter).
 

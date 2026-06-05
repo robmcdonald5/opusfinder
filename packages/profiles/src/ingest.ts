@@ -5,14 +5,17 @@ import {
   patchCvFileExtracted,
   upsertUserProfile,
 } from "@opusfinder/db/repos";
-import { composeProfileText, scrubProfilePii, type StructuredProfile, type UserId } from "@opusfinder/shared";
+import {
+  composeProfileText,
+  MIN_TRANSCRIPT_CHARS,
+  profileWarnings,
+  scrubProfilePii,
+  type UserId,
+} from "@opusfinder/shared";
 import type { StorageClient } from "@opusfinder/storage";
 import { originalKey, textKey } from "@opusfinder/storage/keys";
 
 import type { ProfileEmbedFn, StructureFn, TranscribeFn } from "./types";
-
-/** A transcript shorter than this is treated as a failed extraction (corrupt / encrypted / image-only PDF). */
-const MIN_TRANSCRIPT_CHARS = 50;
 
 export interface IngestCvOptions {
   userId: UserId;
@@ -121,12 +124,4 @@ export async function ingestCv(db: Db, opts: IngestCvOptions): Promise<IngestCvR
     }
     throw err;
   }
-}
-
-function profileWarnings(p: StructuredProfile): string[] {
-  const w: string[] = [];
-  if (p.summary.trim().length === 0) w.push("empty summary");
-  if (p.skills.length === 0) w.push("no skills extracted");
-  if (p.targetRoles.length === 0) w.push("no target roles extracted");
-  return w;
 }

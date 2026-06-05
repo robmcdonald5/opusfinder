@@ -153,13 +153,10 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
  * parts and join the rest with a blank line. This is the SINGLE definition of how embedding
  * input is composed and of what "no embeddable content" means — the result is `""` iff every
  * part is blank. Shared by the job composer (`jobEmbeddingText` in @opusfinder/db), the profile
- * composer (`profileEmbeddingText` in eval), and the dataset validator, so that notion has one
+ * composer (`composeProfileText`, below), and the dataset validator, so that notion has one
  * source of truth instead of a per-site copy of the trim/join logic. (The list of FIELDS each
  * composer feeds in necessarily stays at its call site.) Lives here, not in @opusfinder/embeddings,
  * so the dataset loader can reuse it without pulling the embeddings/db stack onto the load path.
- *
- * Used by the job composer (`jobEmbeddingText` in @opusfinder/db) and the profile composer
- * (`composeProfileText`, below — the eval harness's `profileEmbeddingText` delegates to it).
  */
 export function composeEmbeddingText(parts: string[]): string {
   return parts.filter((s) => s.trim().length > 0).join("\n\n");
@@ -187,10 +184,9 @@ export interface StructuredProfile {
  * Compose the text embedded for a profile — the "query" side of retrieval — from a
  * {@link StructuredProfile}. The SINGLE source of truth for what goes in the profile vector
  * (mirrors `jobEmbeddingText`, the "document" side in @opusfinder/db): the summary carries the
- * most signal; skills and target roles are appended as compact, labeled context. The eval
- * harness's `profileEmbeddingText` delegates here, so the harness embeds profiles exactly the way
- * the Phase-9 ingest + Phase-10 digest pipeline will. Empty iff every field is blank (per
- * {@link composeEmbeddingText}).
+ * most signal; skills and target roles are appended as compact, labeled context. The eval harness
+ * calls this directly, so it embeds profiles exactly the way the Phase-9 ingest + Phase-10 digest
+ * pipeline will. Empty iff every field is blank (per {@link composeEmbeddingText}).
  */
 export function composeProfileText(profile: StructuredProfile): string {
   return composeEmbeddingText([
@@ -198,6 +194,27 @@ export function composeProfileText(profile: StructuredProfile): string {
     profile.skills.length > 0 ? `Skills: ${profile.skills.join(", ")}` : "",
     profile.targetRoles.length > 0 ? `Target roles: ${profile.targetRoles.join(", ")}` : "",
   ]);
+}
+
+/**
+ * Minimum transcript length (chars, after trim) below which a CV extraction is treated as a FAILED
+ * extraction — a shorter result means a corrupt, encrypted, or image-only PDF. The single definition
+ * shared by the production pipeline (`ingestCv`) and the eval generator (`extract-profile`), so the
+ * floor cannot silently drift between them (it previously lived as a copy in each).
+ */
+export const MIN_TRANSCRIPT_CHARS = 50;
+
+/**
+ * Non-fatal extraction warnings for a {@link StructuredProfile}: flags an empty summary / skills /
+ * target-roles so a caller can surface a thin profile rather than store it blindly. The single
+ * definition shared by `ingestCv` and the eval generator (both previously inlined the same checks).
+ */
+export function profileWarnings(profile: StructuredProfile): string[] {
+  const w: string[] = [];
+  if (profile.summary.trim().length === 0) w.push("empty summary");
+  if (profile.skills.length === 0) w.push("no skills extracted");
+  if (profile.targetRoles.length === 0) w.push("no target roles extracted");
+  return w;
 }
 
 const EMAIL_RE = /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g;

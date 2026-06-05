@@ -1,6 +1,6 @@
 // Exercises generateObject end-to-end against Anthropic: (1) extraction of a valid CvProfileSchema
 // profile from sample CV text, (2) prompt-cache plumbing (created on call 1, read on call 2), and
-// (3) truncation surfaces as a StructuredOutputError (not an opaque SDK throw). Requires
+// (3) truncation surfaces as an actionable Error (not an opaque SDK throw). Requires
 // ANTHROPIC_API_KEY in packages/llm/.env. (The PII scrub now lives in @opusfinder/shared — see test:userid.)
 // Run: pnpm --filter @opusfinder/llm test:generate-object
 import { randomUUID } from "node:crypto";
@@ -8,7 +8,7 @@ import { randomUUID } from "node:crypto";
 import { runScript } from "@opusfinder/shared/script";
 import { z } from "zod";
 
-import { generateObject, StructuredOutputError } from "../src/generate-object";
+import { generateObject } from "../src/generate-object";
 import { CV_STRUCTURE_SYSTEM, CvProfileSchema } from "../src/prompts/cv-extract";
 
 function assert(cond: boolean, msg: string): void {
@@ -56,7 +56,7 @@ async function testExtraction(): Promise<void> {
   console.log(`  skills:      ${r.object.skills.join(", ")}`);
   console.log(`  targetRoles: ${r.object.targetRoles.join(", ")}`);
   // Getting a result at all means the JSON parsed + validated (a truncated/invalid response would
-  // have thrown StructuredOutputError — see testTruncation), so just assert the shape is non-empty.
+  // have thrown — see testTruncation), so just assert the shape is non-empty.
   assert(r.object.summary.trim().length > 0, "summary is non-empty");
   assert(r.object.skills.length > 0, "skills is non-empty");
   assert(r.object.targetRoles.length > 0, "targetRoles is non-empty");
@@ -94,8 +94,8 @@ async function testTruncation(): Promise<void> {
   console.log("\n[truncation]");
   console.log(`  threw: ${threw instanceof Error ? `${threw.constructor.name}: ${threw.message}` : typeof threw}`);
   assert(
-    threw instanceof StructuredOutputError,
-    "truncation throws a StructuredOutputError, not an opaque SDK error",
+    threw instanceof Error && /^generateObject\(\):/.test(threw.message),
+    "truncation throws our actionable generateObject() Error, not an opaque SDK error",
   );
   assert(
     /(maxOutputTokens|schema-valid)/.test((threw as Error).message),
