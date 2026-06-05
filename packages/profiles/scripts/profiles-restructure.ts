@@ -1,7 +1,7 @@
+import { findUserByEmail } from "@opusfinder/auth";
 import { createDb } from "@opusfinder/db";
 import { getDatabaseUrl } from "@opusfinder/db/env";
 import { runScript } from "@opusfinder/shared/script";
-import { mintUserId } from "@opusfinder/shared/userid";
 import { createS3StorageClient } from "@opusfinder/storage";
 import { getR2Config } from "@opusfinder/storage/env";
 
@@ -18,7 +18,14 @@ async function main(): Promise<void> {
   const db = createDb(getDatabaseUrl());
   const storage = createS3StorageClient(getR2Config());
   try {
-    const userId = mintUserId(email);
+    // Resolve the EXISTING user by email (db-only lookup — restructure must not CREATE a user; a
+    // missing user means there is nothing to re-structure). Replaces the retired mintUserId.
+    const userId = await findUserByEmail(db, email);
+    if (!userId) {
+      console.error("No user found for that email — nothing to re-structure.");
+      process.exitCode = 1;
+      return;
+    }
     await restructureProfile(db, { structure, embed, storage }, userId);
     console.log(`Re-structured profile for ${userId}.`);
   } finally {

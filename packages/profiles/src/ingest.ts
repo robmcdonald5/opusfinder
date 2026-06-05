@@ -74,7 +74,12 @@ export async function ingestCv(db: Db, opts: IngestCvOptions): Promise<IngestCvR
 
     const text = await transcribe(bytes);
     if (text.trim().length < MIN_TRANSCRIPT_CHARS) {
-      await markCvFileFailed(db, fileId, `transcription returned too little text (${text.trim().length} chars)`);
+      await markCvFileFailed(
+        db,
+        fileId,
+        userId,
+        `transcription returned too little text (${text.trim().length} chars)`,
+      );
       return {
         fileId,
         status: "failed",
@@ -84,7 +89,7 @@ export async function ingestCv(db: Db, opts: IngestCvOptions): Promise<IngestCvR
     }
 
     await storage.putObject({ key: r2Text, body: text, contentType: "text/plain; charset=utf-8" });
-    await patchCvFileExtracted(db, fileId, r2Text);
+    await patchCvFileExtracted(db, fileId, userId, r2Text);
 
     // Scrub PII in the pipeline (structure() returns RAW extraction) so the no-PII rule is a
     // structural guarantee, not a seam contract — before anything is stored or embedded.
@@ -117,7 +122,7 @@ export async function ingestCv(db: Db, opts: IngestCvOptions): Promise<IngestCvR
     // `failed` — unless it already flipped to `extracted` (the 9b guard won't regress it). Best-effort:
     // a failing mark must NEVER mask the real cause, so swallow its error and always re-throw `err`.
     try {
-      await markCvFileFailed(db, fileId, err instanceof Error ? err.message : String(err));
+      await markCvFileFailed(db, fileId, userId, err instanceof Error ? err.message : String(err));
     } catch {
       // ignore — the original error (re-thrown below) is what matters.
     }

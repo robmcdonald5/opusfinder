@@ -176,6 +176,9 @@ importers:
 
   packages/profiles:
     dependencies:
+      '@opusfinder/auth':
+        specifier: workspace:*
+        version: link:../auth
       '@opusfinder/db':
         specifier: workspace:*
         version: link:../db

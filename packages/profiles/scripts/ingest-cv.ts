@@ -1,11 +1,13 @@
 import { readFile } from "node:fs/promises";
 import { basename } from "node:path";
 
+import { createAuth, getOrCreateUserByEmail } from "@opusfinder/auth";
+import { getAuthBaseURL, getAuthSecret } from "@opusfinder/auth/env";
 import { createDb } from "@opusfinder/db";
+import { createAuthDb } from "@opusfinder/db/auth-client";
 import { getDatabaseUrl } from "@opusfinder/db/env";
 import { formatEmbedCost } from "@opusfinder/embeddings";
 import { runScript } from "@opusfinder/shared/script";
-import { mintUserId } from "@opusfinder/shared/userid";
 import { createS3StorageClient } from "@opusfinder/storage";
 import { getR2Config } from "@opusfinder/storage/env";
 
@@ -22,10 +24,14 @@ async function main(): Promise<void> {
   }
 
   const db = createDb(getDatabaseUrl());
+  const authDb = createAuthDb(getDatabaseUrl());
+  const auth = createAuth(authDb, { secret: getAuthSecret(), baseURL: getAuthBaseURL() });
   const storage = createS3StorageClient(getR2Config());
   try {
     const bytes = await readFile(pdfPath);
-    const userId = mintUserId(email);
+    // Resolve a REAL user.id — creates a verified user + default prefs on first sight, idempotent on
+    // email (Phase 9.5; replaces the retired mintUserId placeholder). ingestCv's signature is unchanged.
+    const { userId } = await getOrCreateUserByEmail(db, auth, email);
     const result = await ingestCv(db, {
       userId,
       bytes,
@@ -47,6 +53,8 @@ async function main(): Promise<void> {
     if (result.warnings.length > 0) console.log(`warnings: ${result.warnings.join("; ")}`);
   } finally {
     storage.close();
+    // The neon-serverless Pool (auth) holds a socket open — close it or the process hangs.
+    await authDb.$client.end();
   }
 }
 
