@@ -4,13 +4,20 @@ Drizzle ORM over Neon Postgres, using the **neon-http** driver
 (`@neondatabase/serverless`). HTTP/fetch-based, no TCP sockets — so the same
 client runs in Node today and in Cloudflare Workers later (Phase 8). The package
 exports raw `.ts` (no build step / no `dist`): `createDb(connectionString)`
-returns a Drizzle client. Phase 2 added two subpath exports alongside it:
-`@opusfinder/db/repos` (`upsertCompany` / `upsertJobs` / `listCompanies`, the Phase-4 embedding repo —
+returns a Drizzle client. Phase 2 added subpath exports alongside it:
+`@opusfinder/db/repos` (`upsertCompany` / `upsertJobs` / `listCompanies`; the Phase-4 embedding repo —
 `backfillJobEmbeddings` / `nearestJobs` / `jobsNeedingEmbedding` / `writeJobEmbeddings` /
-`jobEmbeddingText` — and the Phase-7 discovery repo — `startRun` / `finishRun` / `failStaleRuns` /
-`listCompaniesForReprobe` / `listCompanyStates` / `markProbeResult` / `markProbed` /
-`deactivateStale`) and `@opusfinder/db/env`
-(`getDatabaseUrl`).
+`jobEmbeddingText`; the Phase-7 discovery repo — `startRun` / `finishRun` / `failStaleRuns` /
+`listCompaniesForReprobe` / `listCompanyStates` / `markProbeResult` / `markProbed` / `deactivateStale`;
+the Phase-9 profiles repo — `insertCvFile` / `patchCvFileExtracted` / `markCvFileFailed` /
+`upsertUserProfile` / `getProfileTextKey`; and the Phase-9.5 preferences repo — `getPreferences` /
+`getOrCreatePreferences` / `updatePreferences`) and `@opusfinder/db/env` (`getDatabaseUrl`).
+
+**Phase 9.5** added a second client behind `@opusfinder/db/auth-client`: `createAuthDb(connectionString)`,
+a **transaction-capable neon-serverless** (WebSocket) Drizzle client. Better Auth's `signUpEmail` wraps
+its `user`+`account` inserts in an interactive transaction the fetch-only neon-http `createDb` can't run
+(#4747), so the auth adapter uses this handle — kept on its own subpath so the default neon-http client
+is unaffected and the scrapers Worker never pulls neon-serverless/WebSocket into its bundle.
 
 ## Environment
 
@@ -62,6 +69,15 @@ Run from the repo root via the workspace filter so the cwd is `packages/db`:
   `status`/`pipeline` fields are TS unions on plain `text` (not `pgEnum`), same idempotent-migration
   reason as `lifecycle_state`. The Phase-7 schema lands in `drizzle/0003_lame_black_tom.sql`, with
   every `CREATE TABLE` / `ADD COLUMN` / `CREATE INDEX` hand-guarded `IF NOT EXISTS`.
+- **Schema (Phase 9 + 9.5).** Phase 9 added `user_cv_files` (append-only CV uploads + R2 keys) and
+  `user_profiles` (one semantic profile per user — structured JSON + a `vector(1024)` HNSW-indexed
+  embedding) in `drizzle/0004_curvy_shard.sql`. **Phase 9.5** added the Better Auth-owned identity
+  tables `user` / `session` / `account` / `verification` (uuid ids via the `generateId: "uuid"` config)
+  and the typed `user_preferences` table (filter + digest/delivery/unsubscribe settings; 1:1 FK →
+  `user.id`) plus `repos/preferences.ts`, in `drizzle/0005_clammy_talisman.sql` (additive). The FKs from
+  `user_cv_files.user_id` / `user_profiles.user_id` → `user.id` (ON DELETE CASCADE) were split into
+  `drizzle/0006_large_diamondback.sql`: they couldn't land in 0005 because the throwaway Phase-9
+  placeholder rows referenced no `user` row and would have failed FK validation until the §7b re-key wipe.
 - **neon-http migrations are NOT transactional.** The neon-http migrator applies
   a migration's statements without a wrapping transaction, so a multi-statement
   migration that fails partway leaves a partial apply with no rollback (and a

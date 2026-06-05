@@ -20,6 +20,12 @@ dispatch shell; the real work lives in the already-Worker-forward libraries it c
 Each handler builds `createDb(env.DATABASE_URL)` (the neon-http client — fetch-only, no `process.env`)
 and the library it calls owns its own `source_runs` row (`startRun`/`finishRun`).
 
+> **Worker-isolation invariant (Phase 9.5).** `@opusfinder/auth` (Better Auth) and the neon-serverless
+> `createAuthDb` (`@opusfinder/db/auth-client`) crash at import under `nodejs_compat` (#6665) and must
+> **never** enter this bundle — the Worker reads Neon directly as a trusted process and iterates the
+> `user` / `user_preferences` tables as data, never importing the auth lib. `pnpm guard:worker`
+> (`scripts/check-worker-isolation.mjs`) asserts it (source scan + dependency scan) and fails CI on a leak.
+
 - **Ingestion is chunked** (Option-A chunked cron): each tick processes the next `INGEST_LIMIT` boards
   using an id-keyset cursor stored in the `INGEST_CURSOR` KV namespace; the corpus drains across ticks.
   Inline embedding is **not wired** — the Voyage free tier throttles to 3 RPM, and importing the

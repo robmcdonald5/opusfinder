@@ -87,7 +87,7 @@ These live under `research/`, which is gitignored — present in the working tre
 but not in a fresh clone:
 
 - `research/specs/TECH_SPEC.md` — product + architecture
-- `research/specs/IMPLEMENTATION_PLAN_TENATIVE.md` — canonical phased roadmap
+- `research/specs/IMPLEMENTATION_PLAN.md` — canonical phased roadmap
 - `research/specs/PHASE_7_PLAN.md` — the Phase 7 slug-discovery build plan
 - `research/specs/PHASE_8_PLAN.md` — the Phase 8 Cloudflare Worker cron build plan
 - `research/specs/PHASE_9_PLAN.md` — the Phase 9 CV-ingestion build plan

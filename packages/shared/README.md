@@ -152,21 +152,27 @@ export const getVoyageApiKey = requireEnv({
 
 ## User identity
 
-`UserId` is a **branded string** (a UUID). Unlike `CompanySlug` / `JobId` it is not validated
-from arbitrary input — Phase 9 has no users table, so `mintUserId(email)` (from
-`@opusfinder/shared/userid`) hand-mints a stable id as a deterministic **UUIDv5** (RFC 4122 §4.3)
-over a fixed namespace and the normalized email (`trim().toLowerCase().normalize("NFC")`).
-Idempotent: the same email always mints the same id, so re-ingesting a CV upserts the one
-`user_profiles` row instead of forking an identity.
+`UserId` is a **branded string** (a UUID). As of **Phase 9.5**, real user ids come from the Better Auth
+`user` table (`@opusfinder/auth`) — a random `user.id`. The deterministic `mintUserId(email)` (UUIDv5
+over a fixed namespace + normalized email, in the node-only `@opusfinder/shared/userid` subpath) is
+**retired from the live path**: `ingest-cv` / `profiles-restructure` now resolve a real `user.id` via
+`getOrCreateUserByEmail` / `findUserByEmail`. `mintUserId` is kept ONLY as a deterministic id source for
+the offline `test-ingest` smoke and is locked by the golden-vector test
+(`pnpm --filter @opusfinder/shared test:userid`); email-derived ids are not reintroduced on the live
+path (email is PII → reversible ids are a debt being paid down). It stays on its own subpath because it
+imports `node:crypto` — keeping the `src/index.ts` barrel `node:`-free so it bundles into the
+`nodejs_compat`-less scrapers Worker (same discipline as `@opusfinder/shared/env`).
 
-```ts
-import { mintUserId } from "@opusfinder/shared/userid";
+## User preferences + unsubscribe token (Phase 9.5)
 
-const userId = mintUserId("me@example.com");
-```
+`UserPreferences` is the node-free, user-SETTABLE preferences contract — `{ remoteOk, locations[],
+minSalary, recencyDays, exclusions[], digestCadence, digestEnabled }` — the shape both the
+`user_preferences` repo (`@opusfinder/db`) and the `user:set-prefs` CLI write, and the future SvelteKit
+settings form will reuse. `DigestCadence` is the `"daily" | "weekly" | "monthly"` union. Pipeline-managed
+delivery STATE (unsubscribe token, bounce status, suppression, last-sent markers) is deliberately NOT in
+this contract.
 
-It lives in its own `@opusfinder/shared/userid` subpath because it imports `node:crypto`: keeping
-it off the `src/index.ts` barrel means the barrel stays `node:`-free and bundles into the
-`nodejs_compat`-less scrapers Worker (same discipline as `@opusfinder/shared/env`). The namespace
-constant **must never change** — changing it shifts every minted id and orphans existing rows.
-A golden-vector check (`pnpm --filter @opusfinder/shared test:userid`) locks the contract.
+`generateUnsubscribeToken()` returns a cryptographically-random, URL-safe token (64-hex / 256-bit) via
+Web Crypto — node-free, so it lives on the barrel, not in `./userid`. Generated once at user creation and
+stored on `user_preferences.unsubscribe_token` for the RFC 8058 one-click List-Unsubscribe header
+(Phase 11); never email-derived. Locked by `pnpm --filter @opusfinder/shared test:token`.
