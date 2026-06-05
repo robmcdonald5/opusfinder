@@ -1,1 +1,1 @@
-export type { EvalProfile, EvalJob, EvalExample, Ranker, SynthesisFn } from "./types";
+export type { EvalProfile, EvalJob, EvalExample, Ranker } from "./types";

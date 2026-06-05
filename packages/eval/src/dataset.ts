@@ -8,9 +8,8 @@
  */
 import { readFileSync } from "node:fs";
 
-import { composeEmbeddingText, isRecord } from "@opusfinder/shared";
+import { composeEmbeddingText, composeProfileText, isRecord } from "@opusfinder/shared";
 
-import { profileEmbeddingText } from "./profile";
 import type { EvalExample, EvalJob, EvalProfile } from "./types";
 
 /** Read a JSONL dataset file and return validated examples. */
@@ -109,10 +108,10 @@ function validateProfile(value: unknown, at: string): EvalProfile {
   };
 
   // Assert the ACTUAL composer's output is non-empty instead of re-deriving the "empty" rule:
-  // profileEmbeddingText is the query text the embedder sees, and it 400s on "". Checking its
-  // output keeps this guard correct if the composition (weighting, fields) ever changes.
-  // (profileEmbeddingText is eval-local and dependency-light, so this stays off the db path.)
-  if (profileEmbeddingText(profile).trim() === "") {
+  // composeProfileText is the query text the embedder sees (the single source of truth shared with
+  // production ingest), and it 400s on "". Checking its output keeps this guard correct if the
+  // composition (weighting, fields) ever changes.
+  if (composeProfileText(profile).trim() === "") {
     throw new Error(
       `${at}: profile has no embeddable content (summary, skills, and targetRoles compose to "").`,
     );

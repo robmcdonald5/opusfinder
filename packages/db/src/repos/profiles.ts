@@ -114,20 +114,6 @@ export async function upsertUserProfile(
   return row;
 }
 
-/** The stored structured profile for a user, or null if none — read by the `profiles:reembed` seam
- * (re-embed from stored JSON, no LLM). */
-export async function getProfileStructured(
-  db: Db,
-  userId: UserId,
-): Promise<StructuredProfile | null> {
-  const rows = await db
-    .select({ structured: userProfiles.structured })
-    .from(userProfiles)
-    .where(eq(userProfiles.userId, userId))
-    .limit(1);
-  return rows[0]?.structured ?? null;
-}
-
 /** The latest extracted upload's file id + cached R2 text key for a user, or null if none — read by
  * the `profiles:restructure` seam (re-structure from cached text, skip transcribe). Queried off
  * `user_cv_files` directly, so it does NOT require a `user_profiles` row. */
@@ -148,17 +134,4 @@ export async function getProfileTextKey(db: Db, userId: UserId): Promise<Profile
   const row = rows[0];
   if (!row || row.r2TextKey === null) return null;
   return { sourceCvFileId: row.sourceCvFileId, r2TextKey: row.r2TextKey };
-}
-
-/** Overwrite just the embedding vector for a user's profile (bumps `updated_at`) — the write side of
- * both re-run seams once a fresh vector is computed. */
-export async function writeProfileEmbedding(
-  db: Db,
-  userId: UserId,
-  embedding: number[],
-): Promise<void> {
-  await db
-    .update(userProfiles)
-    .set({ embedding: sql`${vectorLiteral(embedding)}${VECTOR_CAST}`, updatedAt: sql`now()` })
-    .where(eq(userProfiles.userId, userId));
 }

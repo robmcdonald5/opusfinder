@@ -8,7 +8,7 @@ import {
   generateObject,
   pdfPart,
 } from "@opusfinder/llm";
-import { composeProfileText, scrubProfilePii } from "@opusfinder/shared";
+import { composeProfileText, MIN_TRANSCRIPT_CHARS, profileWarnings, scrubProfilePii } from "@opusfinder/shared";
 import { runScript } from "@opusfinder/shared/script";
 
 import type { EvalProfile } from "../src/types";
@@ -26,9 +26,6 @@ import type { EvalProfile } from "../src/types";
  *
  *   pnpm --filter @opusfinder/eval extract-profile <cv.pdf> <profile-id>
  */
-
-/** Mirrors ingestCv's transcript floor (a shorter transcript means a corrupt / encrypted / image-only PDF). */
-const MIN_TRANSCRIPT_CHARS = 50;
 
 async function main(): Promise<void> {
   const pdfPath = process.argv[2]?.trim();
@@ -79,10 +76,7 @@ async function main(): Promise<void> {
     throw new Error("structured profile has no embeddable content (empty summary, skills, and target roles).");
   }
   // Surface partial extractions the way ingest-cv does, so a weak profile isn't pasted blindly.
-  const warnings: string[] = [];
-  if (profile.summary.trim().length === 0) warnings.push("empty summary");
-  if (profile.skills.length === 0) warnings.push("no skills extracted");
-  if (profile.targetRoles.length === 0) warnings.push("no target roles extracted");
+  const warnings = profileWarnings(profile);
 
   // Guidance + any warnings to stderr; the profile JSON to stdout (so it can be piped/inspected cleanly).
   if (warnings.length > 0) console.error(`// WARNING: ${warnings.join("; ")}`);

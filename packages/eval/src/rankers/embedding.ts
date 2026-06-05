@@ -1,8 +1,8 @@
 import { jobEmbeddingText } from "@opusfinder/db/repos";
+import { composeProfileText } from "@opusfinder/shared";
 
 import { cosineSimilarity } from "../cosine";
 import type { Embedder } from "../embedders/types";
-import { profileEmbeddingText } from "../profile";
 import type { Ranker } from "../types";
 
 /**
@@ -25,7 +25,9 @@ import type { Ranker } from "../types";
 export function embeddingRanker(embed: Embedder): Ranker {
   const docCache = new Map<string, number[]>();
   return async (profile, candidates) => {
-    const profileVecs = await embed([profileEmbeddingText(profile)], "query");
+    // composeProfileText (@opusfinder/shared) is the single source of truth for the profile query
+    // text — eval embeds profiles exactly as the Phase-9 ingest pipeline does.
+    const profileVecs = await embed([composeProfileText(profile)], "query");
     const queryVec = profileVecs[0];
     if (!queryVec) throw new Error("embedder returned no vector for the profile.");
 

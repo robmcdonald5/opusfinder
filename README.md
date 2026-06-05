@@ -71,7 +71,6 @@ pnpm db:ping      # round-trips SELECT 1 against Neon
 | `pnpm eval`                         | Score a ranker over the labeled set; write a report + diff vs last run                                   |
 | `pnpm eval:compare`                 | Voyage vs OpenAI embedding retrieval, side-by-side                                                       |
 | `pnpm ingest-cv <cv.pdf> <email>`   | Ingest a CV PDF → R2 + `user_cv_files` + `user_profiles` (transcribe → structure → embed)                |
-| `pnpm profiles:reembed <email>`     | Re-embed a profile from its stored structured JSON (no LLM)                                              |
 | `pnpm profiles:restructure <email>` | Re-structure a profile from the cached R2 transcript (skips transcribe)                                  |
 
 ## Documentation (local planning docs — not committed)
@@ -93,7 +92,7 @@ Phase 9 added **CV ingestion**: a CV PDF becomes a semantic `user_profiles` row 
 `{ summary, skills, targetRoles }` JSON plus a Voyage query embedding — with the original PDF and a
 cached transcript living in Cloudflare R2. Two new packages: **`@opusfinder/storage`** (an
 S3-compatible R2 client behind a `StorageClient` seam) and **`@opusfinder/profiles`** (the `ingestCv`
-pipeline + `reembed`/`restructure` re-run seams, all dependency-injected and Worker-portable), plus
+pipeline + the `restructure` re-run seam, all dependency-injected and Worker-portable), plus
 `packages/llm` gaining `generateObject` + PDF document-block input + the `cv-extract` prompts, and new
 `user_profiles` / `user_cv_files` tables. `pnpm ingest-cv <cv.pdf> <email>` runs the pipeline —
 transcribe (Haiku vision) → structure (Haiku + Zod, PII-scrubbed) → embed (Voyage) → upsert — and the

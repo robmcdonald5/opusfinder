@@ -51,7 +51,7 @@ export const structure: StructureFn = async (text) => {
     system: CV_STRUCTURE_SYSTEM,
     temperature: 0,
     // Above generateObject's 2048 default, to match the transcribe headroom — a skill-dense CV's
-    // profile JSON can exceed 2048 output tokens (which would throw StructuredOutputError).
+    // profile JSON can exceed 2048 output tokens (which would throw a truncation Error).
     maxOutputTokens: 4096,
     messages: [{ role: "user", content: text }],
   });

@@ -18,12 +18,12 @@ transcript is cached. A transcript shorter than 50 chars (corrupt / encrypted / 
 clean failure (no profile). A failure after the transcript is cached leaves the file `extracted` and
 re-throws — the cached text stands, only the profile write failed.
 
-## Re-run seams (the layered cache)
+## Re-run seam (the layered cache)
 
-- `reembedProfile(db, embed, userId)` — re-embed from the stored `structured` JSON. No LLM, no
-  storage. For an embedding-model swap.
 - `restructureProfile(db, { structure, embed, storage }, userId)` — re-structure from the cached R2
-  transcript (skips transcribe). For a structuring prompt/schema change.
+  transcript (skips the expensive transcribe). For a structuring prompt/schema change. Re-running a
+  whole pipeline (e.g. for an embedding-model swap) is done by re-running `ingest-cv` on the original
+  PDF until the corpus is large enough to warrant a dedicated re-embed path.
 
 ## Seams (and why)
 
@@ -40,7 +40,9 @@ guarantee**, not a seam contract — `src/` stays free of `@opusfinder/llm`.
 ## Scripts
 
 - `pnpm ingest-cv <cv.pdf> <email>` — ingest a local PDF (mints the user id from the email).
-- `pnpm profiles:reembed <email>` / `pnpm profiles:restructure <email>` — drive the re-run seams.
+- `pnpm profiles:restructure <email>` — re-structure a profile from its cached transcript.
+- `pnpm --filter @opusfinder/profiles test:ingest` — smoke-test `ingestCv` with stub seams + an
+  in-memory store (no LLM / Voyage / R2 spend); writes a few rows under a fixed test user.
 
 ## Known gaps
 

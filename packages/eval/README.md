@@ -68,8 +68,9 @@ examples via public CV datasets (Kaggle/HuggingFace) + more ATS boards as adapte
 
 ## Phase 10 hookup
 
-`src/types.ts` defines `Ranker` and `SynthesisFn`. The LLM rerank lands in Phase 10 as another
-`Ranker` and plugs straight into this harness; synthesis is structurally checked only until then.
+`src/types.ts` defines `Ranker`. The LLM rerank lands in Phase 10 as another `Ranker` and plugs
+straight into this harness; the synthesis ("why matched") contract is added then, when its real
+shape is known.
 
 ## Keys
 

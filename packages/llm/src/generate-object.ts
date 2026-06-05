@@ -43,31 +43,14 @@ export interface GenerateObjectResult<T> {
   object: T;
   /**
    * Why generation stopped, for a SUCCESSFUL parse. NOTE: unlike {@link generate}, a truncated or
-   * otherwise unparseable response does NOT arrive here — the AI SDK throws first (translated to a
-   * {@link StructuredOutputError}). So this is `"length"` only in the rare case a length-stopped output
-   * still parsed and validated.
+   * otherwise unparseable response does NOT arrive here — the AI SDK throws first (re-thrown as an
+   * `Error` with an actionable message). So this is `"length"` only in the rare case a length-stopped
+   * output still parsed and validated.
    */
   finishReason: FinishReason;
   usage: { inputTokens?: number; outputTokens?: number; totalTokens?: number };
   /** Anthropic prompt-cache accounting; both 0 when nothing was cached or for a non-Anthropic provider. */
   cache: { creationInputTokens: number; readInputTokens: number };
-}
-
-/**
- * Thrown when the model's output can't be parsed/validated into the schema — most often because it
- * was TRUNCATED at `maxOutputTokens` (the SDK fails to parse the partial JSON). Wraps the SDK's
- * `NoObjectGeneratedError` (kept as `cause`) with an actionable message + the `finishReason`, so a
- * caller (the 9e pipeline) can react ("raise maxOutputTokens") instead of seeing an opaque SDK throw.
- */
-export class StructuredOutputError extends Error {
-  constructor(
-    message: string,
-    readonly finishReason: FinishReason | undefined,
-    options?: { cause?: unknown },
-  ) {
-    super(message, options);
-    this.name = "StructuredOutputError";
-  }
 }
 
 const DEFAULT_MAX_OUTPUT_TOKENS = 2048;
@@ -82,8 +65,8 @@ const DEFAULT_MAX_OUTPUT_TOKENS = 2048;
  *
  * TRUNCATION: the SDK's generateObject THROWS `NoObjectGeneratedError` when the output can't be
  * parsed/validated (the usual symptom of hitting `maxOutputTokens` mid-JSON) — it does NOT return
- * `finishReason: "length"`. We translate that into a {@link StructuredOutputError} with an actionable
- * message; other provider errors propagate unwrapped (same posture as {@link generate}).
+ * `finishReason: "length"`. We re-throw it as a plain `Error` with an actionable message (the SDK
+ * error is kept as `cause`); other provider errors propagate unwrapped (same posture as {@link generate}).
  */
 export async function generateObject<T>(
   params: GenerateObjectParams<T>,
@@ -108,9 +91,9 @@ export async function generateObject<T>(
       const fr = err.finishReason;
       const why =
         fr === "length"
-          ? `output was truncated at maxOutputTokens=${effectiveMax}; raise maxOutputTokens`
+          ? `output was truncated at maxOutputTokens=${effectiveMax}; raise maxOutputTokens (set by the caller, e.g. scripts/seams.ts)`
           : `the model did not return schema-valid JSON (finishReason=${fr ?? "unknown"})`;
-      throw new StructuredOutputError(`generateObject(): ${why}.`, fr, { cause: err });
+      throw new Error(`generateObject(): ${why}.`, { cause: err });
     }
     throw err;
   });

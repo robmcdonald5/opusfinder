@@ -71,14 +71,3 @@ export interface EvalExample {
  * validates this so a buggy ranker can't silently inflate its score by dropping hard items.
  */
 export type Ranker = (profile: EvalProfile, candidates: EvalJob[]) => Promise<number[]>;
-
-/**
- * Produces a short per-job "why this matched" reason. Defined now so the Phase-10 digest
- * synthesis plugs into the harness; Phase 5 only structurally validates output (one
- * non-empty reason per ranked id), since judging synthesis QUALITY needs the Phase-10
- * Sonnet pipeline to exist first.
- */
-export type SynthesisFn = (
-  profile: EvalProfile,
-  ranked: EvalJob[],
-) => Promise<{ id: number; reason: string }[]>;

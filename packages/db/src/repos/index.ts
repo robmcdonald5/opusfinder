@@ -27,8 +27,6 @@ export {
   patchCvFileExtracted,
   markCvFileFailed,
   upsertUserProfile,
-  getProfileStructured,
   getProfileTextKey,
-  writeProfileEmbedding,
 } from "./profiles";
 export type { NewCvFile, UpsertUserProfileInput, ProfileTextRef } from "./profiles";
