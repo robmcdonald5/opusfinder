@@ -217,11 +217,13 @@ export const userCvFiles = pgTable(
   "user_cv_files",
   {
     id: serial("id").primaryKey(),
-    // Phase 9 hand-minted a UUIDv5 from email; Phase 9.5 re-keys this to a real `user.id` (the
-    // email-derived id is retired). The FK to `user.id` is added in a LATER migration, after the §7b
-    // re-key leaves only real-user rows here — adding it now would fail on the throwaway Phase-9
-    // placeholder ids that reference no `user` row.
-    userId: uuid("user_id").$type<UserId>().notNull(),
+    // Phase 9 hand-minted a UUIDv5 from email; Phase 9.5 re-keyed this to a real `user.id`. The FK
+    // (added in migration 0006, after the §7b wipe left only real-user rows) cascades on user delete.
+    // `.references(() => …)` uses a thunk so it can forward-reference `user` (defined later in the file).
+    userId: uuid("user_id")
+      .$type<UserId>()
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
     // R2 object keys. The original is written before transcription; the text key is NULL until the
     // transcript is cached (and the status flips to 'extracted').
     r2OriginalKey: text("r2_original_key").notNull(),
@@ -253,7 +255,11 @@ export const userProfiles = pgTable(
   "user_profiles",
   {
     id: serial("id").primaryKey(),
-    userId: uuid("user_id").$type<UserId>().notNull(),
+    // FK → user.id added in migration 0006 (cascade on user delete). Thunk forward-references `user`.
+    userId: uuid("user_id")
+      .$type<UserId>()
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
     structured: jsonb("structured").$type<StructuredProfile>().notNull(),
     preferences: jsonb("preferences").$type<ProfilePreferences>(),
     embedding: vector("embedding", { dimensions: EMBEDDING_DIMENSIONS }),

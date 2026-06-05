@@ -8,7 +8,7 @@
 // Run: pnpm --filter @opusfinder/profiles test:ingest
 import { createDb } from "@opusfinder/db";
 import { getDatabaseUrl } from "@opusfinder/db/env";
-import { EMBEDDING_DIMENSIONS } from "@opusfinder/db/schema";
+import { EMBEDDING_DIMENSIONS, user } from "@opusfinder/db/schema";
 import type { StructuredProfile } from "@opusfinder/shared";
 import { runScript } from "@opusfinder/shared/script";
 import { mintUserId } from "@opusfinder/shared/userid";
@@ -57,9 +57,18 @@ const PDF = new TextEncoder().encode("%PDF-1.4 fake bytes");
 const goodTranscribe: TranscribeFn = async () => "A".repeat(200); // > MIN_TRANSCRIPT_CHARS
 const goodStructure: StructureFn = async () => FULL_PROFILE;
 
+const TEST_EMAIL = "test-ingest@opusfinder.test";
+
 async function main(): Promise<void> {
   const db = createDb(getDatabaseUrl());
-  const userId = mintUserId("test-ingest@opusfinder.test");
+  const userId = mintUserId(TEST_EMAIL);
+  // The Phase-9.5 user_cv_files/user_profiles → user.id FK requires a real `user` row; seed one for
+  // the deterministic test id (idempotent) so this stub smoke stays self-contained + creds-light (no
+  // auth/secret — a direct insert, not signUpEmail). mintUserId is kept here purely as a stable id source.
+  await db
+    .insert(user)
+    .values({ id: userId, name: "test-ingest", email: TEST_EMAIL, emailVerified: true })
+    .onConflictDoNothing();
   const storage = memoryStorage();
   const base = { userId, bytes: PDF, filename: "cv.pdf", contentType: "application/pdf", storage };
 
@@ -103,7 +112,9 @@ async function main(): Promise<void> {
     "empty content -> warned, not embedded",
   );
 
-  console.log("\nPASS: ingestCv happy / failed-transcript / empty-content paths verified with stub seams.");
+  console.log(
+    "\nPASS: ingestCv happy / failed-transcript / empty-content paths verified with stub seams.",
+  );
 }
 
 await runScript("test-ingest", main);
