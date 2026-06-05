@@ -156,7 +156,7 @@ fallback). Unknown slug ⇒ 400; real-but-empty ⇒ `200 meta.total:0`.
 Structured facets (`workplaceType`/hybrid, salary, employment type, department) are NOT promoted
 to `NormalizedJob` columns — they're captured losslessly on `raw` and promoted later (Phase 9/10,
 eval-driven). EU Lever and Lever offset pagination are deferred
-(see `research/specs/IMPLEMENTATION_PLAN_TENATIVE.md`); `source_runs` run-tracking landed in Phase 7
+(see `research/specs/IMPLEMENTATION_PLAN.md`); `source_runs` run-tracking landed in Phase 7
 (see `@opusfinder/db`). **Wave B ATS** — Polymer, Workday,
 Eightfold, Rippling, Personio — are deferred too: each adds a new axis of variation (an N+1
 hydrate, POST/page pagination, or custom career domains beyond a clean slug). Polymer

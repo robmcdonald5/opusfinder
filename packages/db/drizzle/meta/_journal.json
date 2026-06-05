@@ -36,6 +36,20 @@
       "when": 1780598840556,
       "tag": "0004_curvy_shard",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1780688874686,
+      "tag": "0005_clammy_talisman",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1780691743338,
+      "tag": "0006_large_diamondback",
+      "breakpoints": true
     }
   ]
 }

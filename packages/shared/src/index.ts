@@ -56,6 +56,55 @@ export const unsafeJobId = (value: string): JobId => value as JobId;
 export type UserId = Brand<string, "UserId">;
 
 /**
+ * Digest delivery cadence — a TS union on a plain text column (no pgEnum, same idempotent-migration
+ * rule as the db's `LifecycleState`/`RunStatus`/`CvFileStatus`). Lives here as the one shared contract
+ * both the `user_preferences` repo (Phase 9.5) and the future settings form agree on.
+ */
+export type DigestCadence = "daily" | "weekly" | "monthly";
+
+/**
+ * The user-SETTABLE preferences (Phase 9.5) — the subset of the `user_preferences` row a settings
+ * form / the `user:set-prefs` CLI writes, and the conservative defaults applied at user creation.
+ * Deliberately NOT the full table row: system-managed delivery STATE (unsubscribe token, bounce
+ * status, suppression, last-sent markers) is owned by the pipeline, never set through this contract.
+ * The filter fields (`remoteOk`/`locations`/`minSalary`/`recencyDays`/`exclusions`) feed the Phase-10
+ * deterministic filter; `digestCadence`/`digestEnabled` gate delivery (Phase 10/11). Node-free shared
+ * (no db dep) so the CLI now and a future SvelteKit action later share one shape.
+ */
+export interface UserPreferences {
+  /** Include remote roles in the filter. */
+  remoteOk: boolean;
+  /** Location strings the filter matches against; empty = no location constraint. */
+  locations: string[];
+  /** Salary floor in whole currency units; `null` = no floor. */
+  minSalary: number | null;
+  /** Max posting age (days) the digest considers. */
+  recencyDays: number;
+  /** Free-form, app-side post-query exclusion rules — the one sparse field; shape firms up in Phase 10. */
+  exclusions: string[];
+  /** Delivery cadence. */
+  digestCadence: DigestCadence;
+  /** Master on/off for digest delivery. */
+  digestEnabled: boolean;
+}
+
+/**
+ * A cryptographically-random, URL-safe unsubscribe token for the RFC 8058 one-click List-Unsubscribe
+ * header (Phase 11). 32 bytes (256 bits) of Web Crypto randomness, lowercase-hex-encoded — node-free
+ * (the `crypto` global is present in both Node and the Worker, same as the `crypto.randomUUID()`
+ * already used in the ingest pipeline), so this stays out of `./userid`'s `node:crypto` and the main
+ * entry remains Worker-safe. Generated ONCE at user creation and stored on
+ * `user_preferences.unsubscribe_token`; NEVER derived from email (that would be guessable).
+ */
+export function generateUnsubscribeToken(): string {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  let hex = "";
+  for (const b of bytes) hex += b.toString(16).padStart(2, "0");
+  return hex;
+}
+
+/**
  * Which ATS produced a job. Grows one member per adapter as they land (Phase 6
  * adds Lever, Ashby, Workable, SmartRecruiters; Phase 6.5 Wave A adds Recruitee,
  * Pinpoint, Gem, Trakstar — all zero-hydrate public boards). Kept a union, NOT

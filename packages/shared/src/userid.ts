@@ -7,10 +7,15 @@ import { createHash } from "node:crypto";
 import type { UserId } from "./index";
 
 /**
- * Fixed UUID namespace for opusfinder user ids. Generated ONCE (`crypto.randomUUID()`) and
- * hardcoded — it MUST NEVER change. The minted id is `UUIDv5(namespace, email)`; changing the
- * namespace would shift every user's id and orphan all existing `user_profiles` rows. When a
- * real users table / auth lands (Phase 12), ids stay stable as long as this constant is preserved.
+ * Fixed UUID namespace for opusfinder user ids. The minted id is `UUIDv5(namespace, email)`.
+ *
+ * RETIRED from the live path in Phase 9.5: real identity now lives in the Better Auth `user` table
+ * (a random `user.id`), and `ingest-cv` / `profiles-restructure` resolve a real id via
+ * `getOrCreateUserByEmail` / `findUserByEmail` (@opusfinder/auth). `mintUserId` is kept ONLY as a
+ * deterministic helper for the stub smoke (`test-ingest.ts`) and the golden test (`test-userid.ts`),
+ * and as a potential backfill key for a §7a re-key migration — so this constant is preserved (a re-key
+ * would need it), but it is no longer the source of any live user id, and email-derived ids are NOT
+ * reintroduced on the live path (email is PII → reversible ids are a debt being paid down, not perpetuated).
  */
 const OPUSFINDER_USER_NS = "dddeb344-c4fe-4ba0-9dd5-0d721702193c";
 
