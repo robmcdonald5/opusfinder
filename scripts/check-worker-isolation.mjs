@@ -1,8 +1,10 @@
-// Standing guard for the Phase-9.5 invariant: Better Auth (and the neon-serverless auth client) must
-// NEVER enter the apps/scrapers Cloudflare Worker bundle — Better Auth crashes at import under
-// `nodejs_compat` (#6665). Fails (exit 1) if a forbidden import appears in the Worker source, OR if the
-// Worker's package.json depends on a package that transitively pulls Better Auth. Cross-platform
-// (plain node + fs, no shell `grep`). Run: pnpm guard:worker
+// Standing guard for the Worker-isolation invariant: server-only subsystems must NEVER enter the
+// apps/scrapers Cloudflare Worker bundle. Phase 9.5: Better Auth (+ the neon-serverless auth client)
+// crashes at import under `nodejs_compat` (#6665). Phase 10: the Inngest digest pipeline is Node-hosted
+// and drags in @anthropic-ai/sdk + the llm/db env loaders — it must stay out of the scraper Worker (and
+// the two concerns stay separate). Fails (exit 1) if a forbidden import appears in the Worker source, OR
+// if the Worker's package.json depends on one. Cross-platform (plain node + fs, no shell `grep`).
+// Run: pnpm guard:worker
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -11,10 +13,24 @@ const FORBIDDEN_IMPORTS = [
   "better-auth",
   "@opusfinder/auth",
   "@opusfinder/profiles",
+  "@opusfinder/inngest",
+  "@opusfinder/llm",
+  "@opusfinder/rerank",
+  "@anthropic-ai/sdk",
+  "inngest",
   "neon-serverless",
   "auth-client",
 ];
-const FORBIDDEN_DEPS = ["@opusfinder/auth", "@opusfinder/profiles", "better-auth"];
+const FORBIDDEN_DEPS = [
+  "@opusfinder/auth",
+  "@opusfinder/profiles",
+  "@opusfinder/inngest",
+  "@opusfinder/llm",
+  "@opusfinder/rerank",
+  "@anthropic-ai/sdk",
+  "better-auth",
+  "inngest",
+];
 
 let failures = 0;
 
@@ -44,11 +60,11 @@ for (const bad of FORBIDDEN_DEPS) {
 
 if (failures > 0) {
   console.error(
-    `\nWorker-isolation guard FAILED: ${failures} violation(s). Better Auth must stay out of the scrapers Worker (#6665).`,
+    `\nWorker-isolation guard FAILED: ${failures} violation(s). Auth (Better Auth, #6665) and the Inngest digest pipeline must stay out of the scrapers Worker.`,
   );
   process.exitCode = 1;
 } else {
   console.log(
-    `Worker-isolation guard OK — ${files.length} Worker source file(s) scanned; no Better Auth / neon-serverless leakage.`,
+    `Worker-isolation guard OK — ${files.length} Worker source file(s) scanned; no auth / neon-serverless / inngest leakage.`,
   );
 }

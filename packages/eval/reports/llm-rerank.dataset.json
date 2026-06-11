@@ -1,0 +1,41 @@
+{
+  "ranker": "llm-rerank",
+  "embedder": null,
+  "dataset": "data/dataset.jsonl",
+  "exampleCount": 2,
+  "metrics": [
+    {
+      "k": 3,
+      "precision": 0.16666666666666666,
+      "recall": 0.03333333333333333,
+      "ndcg": 0.11731968150568911,
+      "counts": {
+        "precision": 2,
+        "recall": 2,
+        "ndcg": 2
+      }
+    },
+    {
+      "k": 5,
+      "precision": 0.1,
+      "recall": 0.03333333333333333,
+      "ndcg": 0.08479005131840403,
+      "counts": {
+        "precision": 2,
+        "recall": 2,
+        "ndcg": 2
+      }
+    },
+    {
+      "k": 10,
+      "precision": 0.15,
+      "recall": 0.1,
+      "ndcg": 0.12642051359258868,
+      "counts": {
+        "precision": 2,
+        "recall": 2,
+        "ndcg": 2
+      }
+    }
+  ]
+}

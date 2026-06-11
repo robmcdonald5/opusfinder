@@ -18,6 +18,7 @@ import {
   integer,
   jsonb,
   pgTable,
+  real,
   serial,
   smallint,
   text,
@@ -30,6 +31,8 @@ import {
 import type {
   CompanySlug,
   DigestCadence,
+  DigestFeedback,
+  DigestTrigger,
   JobId,
   SourceName,
   StructuredProfile,
@@ -450,10 +453,141 @@ export const userPreferences = pgTable(
   (t) => [
     uniqueIndex("user_preferences_user_id_uq").on(t.userId),
     uniqueIndex("user_preferences_unsubscribe_token_uq").on(t.unsubscribeToken),
+    // Phase 10 recipient query (listDigestRecipients): a partial index over only the digest-eligible
+    // rows, keyed by user_id (the join + keyset column), so the planner enumerates eligible users
+    // without scanning the whole table. Mirrors companies_active_last_probed_idx's partial style. The
+    // user-table half of the gate (email_verified) is covered by the join to the user PK.
+    index("user_preferences_eligible_idx")
+      .on(t.userId)
+      .where(sql`${t.digestEnabled} AND ${t.digestSuppressedAt} IS NULL`),
     foreignKey({
       columns: [t.userId],
       foreignColumns: [user.id],
       name: "user_preferences_user_id_user_id_fk",
     }).onDelete("cascade"),
+  ],
+);
+
+// ─── Phase 10: per-user digest pipeline (digest_runs → digests → digest_items) ──────────────────────
+//
+// Three tables (the spec's literal "digests and digest_items" plus digest_runs, additively): a run-level
+// dispatch record mirroring {@link sourceRuns}, a per-user header, and the ranked items. The items table
+// doubles as the already-shown dedup source (the (user_id, job_id) anti-join feeds the next run's
+// excludeJobIds). Status/trigger/feedback are TS unions on plain `text` columns (NOT pgEnum — same
+// idempotent-migration rule as everything above). `user_id`/`digest_id`/`digest_run_id` FKs cascade on
+// parent delete; the `digest_items.job_id` FK deliberately does NOT (see its inline note). FKs are
+// declared as named `foreignKey({...})` so migration 0007 can guard each `ADD CONSTRAINT` in a
+// DO/EXCEPTION block (neon-http migrations aren't transactional). Email delivery is Phase 11; the digest
+// pipeline reads Neon via the neon-http `Db` (no transactions needed).
+
+/**
+ * One row per digest pipeline run (Phase 10) — the orchestrator/dispatch record, mirroring
+ * {@link sourceRuns}. `trigger` records how the run started (a manual CLI trigger now; the scheduled
+ * cadence cron in Phase 11). Because the per-user fan-out is fire-and-forget on Inngest, the orchestrator
+ * finalizes this row to a terminal state right after DISPATCH — it records how many recipients it
+ * dispatched (`counts`), not per-user completion; per-user outcomes live on {@link digests}. `started_at`
+ * IS the row's creation time (no separate created_at); `error_sample` is a truncated, SECRET-free first
+ * error (same discipline as `source_runs.error_sample`). No company FK, like source_runs.
+ */
+export const digestRuns = pgTable(
+  "digest_runs",
+  {
+    id: serial("id").primaryKey(),
+    trigger: text("trigger").$type<DigestTrigger>().notNull(),
+    status: text("status").$type<RunStatus>().notNull().default("running"),
+    startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+    counts: jsonb("counts").$type<RunCounts>().notNull().default({}),
+    errorSample: text("error_sample"),
+  },
+  (t) => [index("digest_runs_started_idx").on(t.startedAt)],
+);
+
+/**
+ * Per-user digest header (Phase 10) — one row per user per run. `counts` is the per-user metric bag
+ * (candidates retrieved, reranked, rerank cache read/creation tokens for the "cache hit rate >0" gate,
+ * synthesis ok/errored) — the home for that gate's logging. A row existing = the per-user run succeeded;
+ * failures stay in Inngest + {@link digestRuns}.error_sample. FKs → `user.id` and `digest_runs.id`.
+ *
+ * UNIQUE (user_id, digest_run_id): one digest per user per run. The unique index is the GUARD for that
+ * invariant; the Phase-10f persist step stays retry-idempotent (Inngest retries) by DELETING any prior
+ * digest for this (user, run) first — the digest→items FK cascade clears its items — then inserting
+ * fresh. (A header-only ON CONFLICT upsert is NOT enough: it would leave stale `digest_items` behind
+ * from a partially-failed prior attempt.) The `user_id`-leading column order also serves the per-user
+ * history lookup (no separate user_id index needed). Run-scoped lookups (all digests for a run) are a
+ * cold path here — left unindexed for now.
+ */
+export const digests = pgTable(
+  "digests",
+  {
+    id: serial("id").primaryKey(),
+    userId: uuid("user_id").$type<UserId>().notNull(),
+    digestRunId: integer("digest_run_id").notNull(),
+    itemCount: integer("item_count").notNull().default(0),
+    counts: jsonb("counts").$type<RunCounts>().notNull().default({}),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("digests_user_id_digest_run_id_uq").on(t.userId, t.digestRunId),
+    foreignKey({
+      columns: [t.userId],
+      foreignColumns: [user.id],
+      name: "digests_user_id_user_id_fk",
+    }).onDelete("cascade"),
+    // CASCADE HAZARD: deleting a digest_runs row cascades run → digests → digest_items, ERASING the
+    // (user_id, job_id) dedup history `alreadyShownJobIds` depends on — already-shown jobs would
+    // silently re-surface. No code deletes digest_runs today; any future retention/cleanup of run rows
+    // must first denormalize the shown-history (or switch this FK to NO ACTION).
+    foreignKey({
+      columns: [t.digestRunId],
+      foreignColumns: [digestRuns.id],
+      name: "digests_digest_run_id_digest_runs_id_fk",
+    }).onDelete("cascade"),
+  ],
+);
+
+/**
+ * The ranked items of a digest (Phase 10) — AND the already-shown dedup source: the composite
+ * (user_id, job_id) index backs the anti-join feeding the next run's `excludeJobIds`, with `user_id`
+ * denormalized so that anti-join needs no join through {@link digests}. `rank`/`score` come from the
+ * (synchronous, Haiku) rerank — synthesis writes `reason` and NEVER re-ranks. `feedback` is RESERVED
+ * for Phase 12 (the UI writes it; the rerank prompt folds it in later) — nullable, unused now.
+ */
+export const digestItems = pgTable(
+  "digest_items",
+  {
+    id: serial("id").primaryKey(),
+    digestId: integer("digest_id").notNull(),
+    userId: uuid("user_id").$type<UserId>().notNull(),
+    jobId: integer("job_id").notNull(),
+    rank: integer("rank").notNull(),
+    score: real("score").notNull(),
+    reason: text("reason").notNull(),
+    feedback: text("feedback").$type<DigestFeedback>(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    // The already-shown anti-join (next run's excludeJobIds) AND the per-(user, job) history record.
+    index("digest_items_user_id_job_id_idx").on(t.userId, t.jobId),
+    index("digest_items_digest_id_idx").on(t.digestId),
+    foreignKey({
+      columns: [t.digestId],
+      foreignColumns: [digests.id],
+      name: "digest_items_digest_id_digests_id_fk",
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [t.userId],
+      foreignColumns: [user.id],
+      name: "digest_items_user_id_user_id_fk",
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [t.jobId],
+      foreignColumns: [jobs.id],
+      name: "digest_items_job_id_jobs_id_fk",
+      // NO onDelete cascade (unlike the digest/user FKs above): digest_items is an append-only
+      // history + the already-shown dedup source, so a job row must NOT silently erase the dedup
+      // record (matches jobs.company_id's plain FK convention). Jobs are soft-closed, never hard-
+      // deleted; if a hard delete is ever added it must explicitly handle dependent digest_items.
+    }),
   ],
 );

@@ -11,10 +11,12 @@
   "scripts": {
     "test:llm": "tsx scripts/test-llm.ts",
     "test:generate-object": "tsx scripts/test-generate-object.ts",
+    "test:batch": "tsx scripts/test-batch.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^2",
+    "@anthropic-ai/sdk": "^0.102.0",
     "@opusfinder/shared": "workspace:*",
     "ai": "^5",
     "dotenv": "^17",

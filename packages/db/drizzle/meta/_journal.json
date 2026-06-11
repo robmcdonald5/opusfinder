@@ -50,6 +50,20 @@
       "when": 1780691743338,
       "tag": "0006_large_diamondback",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1781022167954,
+      "tag": "0007_fresh_wolfpack",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1781024200720,
+      "tag": "0008_awesome_marvel_zombies",
+      "breakpoints": true
     }
   ]
 }
