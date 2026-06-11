@@ -46,3 +46,10 @@ function getProvider(): ReturnType<typeof createAnthropic> {
 export function resolveModel(alias: ModelAlias) {
   return getProvider()(MODEL_IDS[alias]);
 }
+
+/** The raw Anthropic model-id string for a tier alias. The Vercel AI SDK path uses {@link
+ *  resolveModel}; the Message Batches path (batch.ts) talks to the raw `@anthropic-ai/sdk` and needs
+ *  the bare id. Single source of truth so the two paths can't disagree on which model a tier maps to. */
+export function modelId(alias: ModelAlias): string {
+  return MODEL_IDS[alias];
+}
