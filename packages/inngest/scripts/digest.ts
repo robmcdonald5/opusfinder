@@ -10,6 +10,10 @@
  *
  * NEEDS: DATABASE_URL + ANTHROPIC_API_KEY (the per-user fn calls Haiku rerank + the Sonnet synthesis
  * batch), and a CV-ingested, eligible user. Real, batch-discounted Anthropic spend; runs a few minutes.
+ * The SERVE process additionally needs RESEND_API_KEY / EMAIL_FROM / EMAIL_ALLOWLIST (packages/email/
+ * .env) for the Phase-11 send tail — without them the digest still persists, then the send step
+ * terminalizes to delivery_status='failed'. NOTE: this CLI's verdict prints when the digest ROW lands
+ * (persist); the send + bounded delivery poll run ~2–12 min longer — watch the dev dashboard.
  */
 import { parseArgs } from "node:util";
 

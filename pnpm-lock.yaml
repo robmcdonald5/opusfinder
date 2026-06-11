@@ -179,6 +179,9 @@ importers:
       '@opusfinder/db':
         specifier: workspace:*
         version: link:../db
+      '@opusfinder/email':
+        specifier: workspace:*
+        version: link:../email
       '@opusfinder/llm':
         specifier: workspace:*
         version: link:../llm

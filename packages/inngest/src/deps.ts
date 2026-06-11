@@ -1,5 +1,6 @@
 import { createDb } from "@opusfinder/db";
 import { getDatabaseUrl } from "@opusfinder/db/env";
+import { getEmailLastEvent, sendDigestEmail } from "@opusfinder/email";
 import {
   collectBatchResults,
   generateObject,
@@ -16,8 +17,11 @@ import type { DigestDeps, RerankOutcome } from "./digest";
 /**
  * Build the production digest deps: a neon-http db + the real synchronous Haiku rerank (the shared
  * `@opusfinder/rerank` core wired to `generateObject`) + the Anthropic Message Batches primitives for
- * synthesis. NODE/server-only — it reads env via the `/env` subpaths; the serve + CLI scripts call it.
- * Never reached from a Worker (`guard:worker` keeps `@opusfinder/inngest` out of the scraper bundle).
+ * synthesis + the Phase-11 Resend email send/last_event pair. NODE/server-only — it reads env via the
+ * `/env` subpaths; the serve + CLI scripts call it. Never reached from a Worker (`guard:worker` keeps
+ * `@opusfinder/inngest` out of the scraper bundle). Importing `@opusfinder/email` here pulls only its
+ * `loadPackageEnv` side effect — the Resend getters throw at CALL time, so the serve process still
+ * boots without email creds (an unconfigured send then terminalizes to `delivery_status='failed'`).
  */
 export function buildDigestDeps(): DigestDeps {
   const db = createDb(getDatabaseUrl());
@@ -28,6 +32,10 @@ export function buildDigestDeps(): DigestDeps {
       submit: (requests) => submitBatch(requests),
       poll: (batchId) => pollBatch(batchId),
       collect: (batchId) => collectBatchResults(batchId),
+    },
+    email: {
+      send: (payload) => sendDigestEmail(payload),
+      lastEvent: (emailId) => getEmailLastEvent(emailId),
     },
   };
 }
