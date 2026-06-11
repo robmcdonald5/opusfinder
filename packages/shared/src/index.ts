@@ -63,6 +63,20 @@ export type UserId = Brand<string, "UserId">;
 export type DigestCadence = "daily" | "weekly" | "monthly";
 
 /**
+ * How a digest run was started (Phase 10) — a manual CLI/trigger now vs the scheduled cadence cron that
+ * lands in Phase 11. A TS union on a plain text column (no pgEnum, same idempotent-migration rule as
+ * {@link DigestCadence}). Lives here so the db schema (`digest_runs.trigger`) and the trigger CLI agree.
+ */
+export type DigestTrigger = "manual" | "cron";
+
+/**
+ * Per-item feedback a user gives on a digested job. Phase 10 RESERVES the `digest_items.feedback` column;
+ * the Phase-12 UI writes it (saved/applied/dismissed/not-interested) and the rerank prompt later folds it
+ * into cached context. A TS union on a plain text column (same idempotent-migration rule as above).
+ */
+export type DigestFeedback = "saved" | "applied" | "dismissed" | "not_interested";
+
+/**
  * The user-SETTABLE preferences (Phase 9.5) — the subset of the `user_preferences` row a settings
  * form / the `user:set-prefs` CLI writes, and the conservative defaults applied at user creation.
  * Deliberately NOT the full table row: system-managed delivery STATE (unsubscribe token, bounce
