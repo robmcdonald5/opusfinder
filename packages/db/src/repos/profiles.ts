@@ -12,7 +12,7 @@ import { and, desc, eq, ne, sql } from "drizzle-orm";
 import type { StructuredProfile, UserId } from "@opusfinder/shared";
 
 import type { Db } from "../client";
-import { userCvFiles, userProfiles, type CvFileStatus } from "../schema";
+import { user, userCvFiles, userProfiles, type CvFileStatus } from "../schema";
 import { NUL, stripNul, VECTOR_CAST, vectorLiteral } from "./sql";
 
 /** Cap on a stored `error_sample` — truncated and NUL-stripped; callers must pass a non-PII message
@@ -154,4 +154,43 @@ export async function getProfileTextKey(db: Db, userId: UserId): Promise<Profile
   const row = rows[0];
   if (!row || row.r2TextKey === null) return null;
   return { sourceCvFileId: row.sourceCvFileId, r2TextKey: row.r2TextKey };
+}
+
+/**
+ * The user's semantic profile for the Phase-10 digest: the structured fields, the stored query-side
+ * embedding, and the backing file id — read from the one `user_profiles` row (null if the user has
+ * none, e.g. no CV ingested yet). The embedding may be null (a profile written when the CV had no
+ * embeddable content); the digest caller skips such users. Drizzle's typed `vector` column maps the
+ * stored value back to `number[]` on select, so the embedding is ready to pass to
+ * `retrieveCandidatesForProfile` (which re-asserts the dimension via `vectorLiteral`).
+ */
+export interface ProfileForDigest {
+  structured: StructuredProfile;
+  embedding: number[] | null;
+  sourceCvFileId: number;
+  /** `user.email_verified` — checked at GENERATION time too (not just the Phase-11 send gate), so a
+   *  manual single-user trigger can't spend tokens on, or pollute the shown-history of, an unverified
+   *  user the `--all` sweep (listDigestRecipients) would skip. */
+  emailVerified: boolean;
+}
+export async function getProfileForDigest(db: Db, userId: UserId): Promise<ProfileForDigest | null> {
+  const rows = await db
+    .select({
+      structured: userProfiles.structured,
+      embedding: userProfiles.embedding,
+      sourceCvFileId: userProfiles.sourceCvFileId,
+      emailVerified: user.emailVerified,
+    })
+    .from(userProfiles)
+    .innerJoin(user, eq(user.id, userProfiles.userId))
+    .where(eq(userProfiles.userId, userId))
+    .limit(1);
+  const row = rows[0];
+  if (!row) return null;
+  return {
+    structured: row.structured,
+    embedding: row.embedding,
+    sourceCvFileId: row.sourceCvFileId,
+    emailVerified: row.emailVerified,
+  };
 }

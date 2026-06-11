@@ -28,7 +28,28 @@ export {
   markCvFileFailed,
   upsertUserProfile,
   getProfileTextKey,
+  getProfileForDigest,
 } from "./profiles";
-export type { NewCvFile, UpsertUserProfileInput, ProfileTextRef } from "./profiles";
+export type {
+  NewCvFile,
+  UpsertUserProfileInput,
+  ProfileTextRef,
+  ProfileForDigest,
+} from "./profiles";
 export { getPreferences, getOrCreatePreferences, updatePreferences } from "./preferences";
 export type { UserPreferencesRow, CreatePreferencesInput } from "./preferences";
+// Phase 10 digest retrieval — the deterministic filter + cosine ranking over a profile vector.
+export { retrieveCandidatesForProfile } from "./retrieval";
+export type { RetrieveOpts, JobCandidate } from "./retrieval";
+// Phase 10 digest persistence — recipient list, already-shown anti-join, run/header/item writes.
+export {
+  listDigestRecipients,
+  alreadyShownJobIds,
+  startDigestRun,
+  finishDigestRun,
+  insertDigest,
+  insertDigestItems,
+  deleteUserDigestForRun,
+  getLatestDigestForUser,
+} from "./digests";
+export type { DigestRecipient, NewDigest, NewDigestItem, DigestView } from "./digests";
