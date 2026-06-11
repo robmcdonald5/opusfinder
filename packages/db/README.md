@@ -11,7 +11,11 @@ returns a Drizzle client. Phase 2 added subpath exports alongside it:
 `listCompaniesForReprobe` / `listCompanyStates` / `markProbeResult` / `markProbed` / `deactivateStale`;
 the Phase-9 profiles repo — `insertCvFile` / `patchCvFileExtracted` / `markCvFileFailed` /
 `upsertUserProfile` / `getProfileTextKey`; and the Phase-9.5 preferences repo — `getPreferences` /
-`getOrCreatePreferences` / `updatePreferences`) and `@opusfinder/db/env` (`getDatabaseUrl`).
+`getOrCreatePreferences` / `updatePreferences`; the Phase-10 retrieval repo —
+`retrieveCandidatesForProfile`; and the Phase-10 digests repo — `listDigestRecipients` /
+`alreadyShownJobIds` / `startDigestRun` / `finishDigestRun` / `insertDigest` / `insertDigestItems` /
+`deleteUserDigestForRun` / `getLatestDigestForUser` (plus `getProfileForDigest` on the profiles repo))
+and `@opusfinder/db/env` (`getDatabaseUrl`).
 
 **Phase 9.5** added a second client behind `@opusfinder/db/auth-client`: `createAuthDb(connectionString)`,
 a **transaction-capable neon-serverless** (WebSocket) Drizzle client. Better Auth's `signUpEmail` wraps
@@ -78,6 +82,18 @@ Run from the repo root via the workspace filter so the cwd is `packages/db`:
   `user_cv_files.user_id` / `user_profiles.user_id` → `user.id` (ON DELETE CASCADE) were split into
   `drizzle/0006_large_diamondback.sql`: they couldn't land in 0005 because the throwaway Phase-9
   placeholder rows referenced no `user` row and would have failed FK validation until the §7b re-key wipe.
+- **Schema (Phase 10).** Three additive digest tables in `drizzle/0007_fresh_wolfpack.sql` +
+  `drizzle/0008_awesome_marvel_zombies.sql`: `digest_runs` (orchestrator/dispatch audit — mirrors
+  `source_runs`, no company FK), `digests` (per-user header, UNIQUE `(user_id, digest_run_id)`, a
+  `counts` metric bag), and `digest_items` (ranked items — `rank` / `score` / `reason` + a nullable
+  Phase-12 `feedback` column). The composite `digest_items (user_id, job_id)` index backs the
+  already-shown anti-join (`alreadyShownJobIds`) that feeds the next run's `excludeJobIds`. `status` /
+  `trigger` / `feedback` are TS unions on plain `text` (same idempotent-migration rule as
+  `lifecycle_state`). FKs cascade onto `user.id` / `digests.id` / `digest_runs.id`, but
+  `digest_items.job_id` deliberately does **not** cascade — it's append-only dedup history, so a deleted
+  job must not erase the record. **CASCADE HAZARD:** deleting a `digest_runs` row cascades
+  run → digests → digest_items and erases that dedup history (no code deletes runs today; see the inline
+  note in `schema.ts`).
 - **neon-http migrations are NOT transactional.** The neon-http migrator applies
   a migration's statements without a wrapping transaction, so a multi-statement
   migration that fails partway leaves a partial apply with no rollback (and a
