@@ -177,8 +177,12 @@ function makeOrchestrator(deps: DigestDeps) {
  * never abandoned. (Lock retention across `step.sleep` is undocumented but VERIFIED on the dev server
  * 2026-06-10: a second same-user event fired while run A slept in its batch wait produced no second
  * run, no second batch, and no duplicate digest — re-verify against Inngest Cloud when Phase 12's
- * production serve lands.) Returns a small JSON summary; per-user failures surface to Inngest
- * (orchestrator failures additionally land on the run row's `error_sample`).
+ * production serve lands.) Phase 11 extends the held window PAST persist, through the delivery
+ * sleeps (~2–12 min): a same-user re-trigger inside that tail is SKIPPED — the intended dedup, but a
+ * `pnpm digest --user` retry fired inside it will time out waiting for a digest that never starts;
+ * re-trigger after the run finishes in the dashboard. Returns a small JSON summary; per-user
+ * failures surface to Inngest (orchestrator failures additionally land on the run row's
+ * `error_sample`).
  */
 function makePerUser(deps: DigestDeps) {
   return inngest.createFunction(
