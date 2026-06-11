@@ -1,0 +1,24 @@
+{
+  "name": "@opusfinder/email",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./env": "./src/env.ts"
+  },
+  "types": "./src/index.ts",
+  "scripts": {
+    "preview": "tsx scripts/preview-email.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@opusfinder/db": "workspace:*",
+    "@opusfinder/shared": "workspace:*",
+    "dotenv": "^17",
+    "resend": "^6.12.4"
+  },
+  "devDependencies": {
+    "tsx": "^4"
+  }
+}

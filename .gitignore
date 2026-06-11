@@ -23,6 +23,9 @@ packages/eval/data/cvs/
 packages/eval/data/*.json
 packages/eval/reports/*.fixture.json
 
+# generated render preview (pnpm email:preview output — a working artifact, never committed)
+packages/email/email-preview.html
+
 # build / cache
 dist/
 .svelte-kit/
