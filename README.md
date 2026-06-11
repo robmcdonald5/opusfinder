@@ -16,8 +16,10 @@ pipeline, and delivers a personalized digest on a regular cadence. See
 | `packages/discovery/`  | Slug-discovery pipeline — seed → probe → upsert + staleness (Phase 7) ([README](packages/discovery/README.md))                                                                                    |
 | `packages/embeddings/` | Voyage `voyage-3-large` embeddings + HNSW retrieval ([README](packages/embeddings/README.md))                                                                                                     |
 | `packages/eval/`       | Matching-quality eval harness — metrics, rankers, reports ([README](packages/eval/README.md))                                                                                                     |
-| `packages/llm/`        | Vercel AI SDK + Anthropic wrapper, prompt caching, structured output ([README](packages/llm/README.md))                                                                                           |
+| `packages/inngest/`    | Per-user digest pipeline on Inngest — orchestrator + per-user fn, local serve + trigger CLI (Phase 10; local-dev-only) ([README](packages/inngest/README.md))                                     |
+| `packages/llm/`        | Vercel AI SDK + Anthropic wrapper, prompt caching, structured output, Message Batches (Phase 10) ([README](packages/llm/README.md))                                                               |
 | `packages/profiles/`   | CV → semantic-profile pipeline — transcribe → structure → embed (Phase 9) ([README](packages/profiles/README.md))                                                                                 |
+| `packages/rerank/`     | Shared listwise LLM rerank core — `RerankCall` injection, runs in both the digest pipeline and eval (Phase 10) ([README](packages/rerank/README.md))                                              |
 | `packages/shared/`     | Shared brand types + validators ([README](packages/shared/README.md))                                                                                                                             |
 | `packages/sources/`    | ATS adapters → `NormalizedJob` (Greenhouse, Lever, Ashby, Workable, SmartRecruiters, Recruitee, Pinpoint, Gem, Trakstar) ([README](packages/sources/README.md))                                   |
 | `packages/storage/`    | S3-compatible Cloudflare R2 client for CV artifacts (Phase 9) ([README](packages/storage/README.md))                                                                                              |
@@ -57,29 +59,32 @@ pnpm db:ping      # round-trips SELECT 1 against Neon
 
 ## Root scripts
 
-| Script                                    | Does                                                                                                                                 |
-| ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `pnpm lint` / `lint:fix`                  | ESLint over the repo                                                                                                                 |
-| `pnpm format` / `format:check`            | Prettier write / check                                                                                                               |
-| `pnpm typecheck`                          | `tsc --noEmit` (covers `packages/*`; apps excluded until they gain code)                                                             |
-| `pnpm typecheck:scrapers`                 | `tsc --noEmit` for `apps/scrapers` (the root typecheck excludes `apps/*`)                                                            |
-| `pnpm db:migrate`                         | Run Neon migrations (`@opusfinder/db`)                                                                                               |
-| `pnpm db:ping`                            | Connectivity check against Neon                                                                                                      |
-| `pnpm runs`                               | Print the most recent `source_runs` rows (pipeline health at a glance)                                                               |
-| `pnpm ingest <source> <slug>`             | Fetch + normalize one ATS board, upsert to Neon, embed new postings (`--no-embed` to skip)                                           |
-| `pnpm ingest:all`                         | Ingest every seeded company across all sources (`[--no-embed] [--source=<name>]`)                                                    |
-| `pnpm discover`                           | Discover + validate + upsert company slugs from the seed (`[--source=<name>] [--limit=<n>] [--dry-run]`)                             |
-| `pnpm llm:test`                           | Call Haiku twice with a cached system prompt; assert cache write then read                                                           |
-| `pnpm embeddings:backfill`                | Embed every job whose `embedding` is still NULL (idempotent)                                                                         |
-| `pnpm embeddings:search "<q>"`            | Embed a query and print the nearest jobs by cosine distance (HNSW)                                                                   |
-| `pnpm eval`                               | Score a ranker over the labeled set; write a report + diff vs last run                                                               |
-| `pnpm eval:compare`                       | Voyage vs OpenAI embedding retrieval, side-by-side                                                                                   |
-| `pnpm ingest-cv <cv.pdf> <email>`         | Ingest a CV PDF → R2 + `user_cv_files` + `user_profiles` (transcribe → structure → embed)                                            |
-| `pnpm profiles:restructure <email>`       | Re-structure a profile from the cached R2 transcript (skips transcribe)                                                              |
-| `pnpm user:create --email … --password …` | Create a verified user + default prefs (`[--name] [--remote] [--locations] [--min-salary] [--recency-days] [--cadence] [--enabled]`) |
-| `pnpm user:set-prefs --email … [flags]`   | Patch a user's preferences (same pref flags)                                                                                         |
-| `pnpm user:list`                          | List users — masked email, verified, cadence, enabled, has-profile, id                                                               |
-| `pnpm guard:worker`                       | Assert Better Auth / neon-serverless never leak into the scrapers Worker (#6665)                                                     |
+| Script                                    | Does                                                                                                                                                                           |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `pnpm lint` / `lint:fix`                  | ESLint over the repo                                                                                                                                                           |
+| `pnpm format` / `format:check`            | Prettier write / check                                                                                                                                                         |
+| `pnpm typecheck`                          | `tsc --noEmit` (covers `packages/*`; apps excluded until they gain code)                                                                                                       |
+| `pnpm typecheck:scrapers`                 | `tsc --noEmit` for `apps/scrapers` (the root typecheck excludes `apps/*`)                                                                                                      |
+| `pnpm db:migrate`                         | Run Neon migrations (`@opusfinder/db`)                                                                                                                                         |
+| `pnpm db:ping`                            | Connectivity check against Neon                                                                                                                                                |
+| `pnpm runs`                               | Print the most recent `source_runs` rows (pipeline health at a glance)                                                                                                         |
+| `pnpm ingest <source> <slug>`             | Fetch + normalize one ATS board, upsert to Neon, embed new postings (`--no-embed` to skip)                                                                                     |
+| `pnpm ingest:all`                         | Ingest every seeded company across all sources (`[--no-embed] [--source=<name>]`)                                                                                              |
+| `pnpm discover`                           | Discover + validate + upsert company slugs from the seed (`[--source=<name>] [--limit=<n>] [--dry-run]`)                                                                       |
+| `pnpm llm:test`                           | Call Haiku twice with a cached system prompt; assert cache write then read                                                                                                     |
+| `pnpm embeddings:backfill`                | Embed every job whose `embedding` is still NULL (idempotent)                                                                                                                   |
+| `pnpm embeddings:search "<q>"`            | Embed a query and print the nearest jobs by cosine distance (HNSW)                                                                                                             |
+| `pnpm eval`                               | Score a ranker over the labeled set; write a report + diff vs last run                                                                                                         |
+| `pnpm eval:compare`                       | Voyage vs OpenAI embedding retrieval, side-by-side                                                                                                                             |
+| `pnpm ingest-cv <cv.pdf> <email>`         | Ingest a CV PDF → R2 + `user_cv_files` + `user_profiles` (transcribe → structure → embed)                                                                                      |
+| `pnpm profiles:restructure <email>`       | Re-structure a profile from the cached R2 transcript (skips transcribe)                                                                                                        |
+| `pnpm user:create --email … --password …` | Create a verified user + default prefs (`[--name] [--remote] [--locations] [--min-salary] [--recency-days] [--cadence] [--enabled]`)                                           |
+| `pnpm user:set-prefs --email … [flags]`   | Patch a user's preferences (same pref flags)                                                                                                                                   |
+| `pnpm user:list`                          | List users — masked email, verified, cadence, enabled, has-profile, id                                                                                                         |
+| `pnpm digest`                             | Trigger a per-user digest run + poll for the result (`--user <uuid>` or `--all`; `[--timeout-ms] [--poll-ms]`)                                                                 |
+| `pnpm inngest:serve`                      | Local Inngest serve endpoint for the digest functions (bare Node http, port 3000; dev-only)                                                                                    |
+| `pnpm inngest:dev`                        | Local Inngest dev server (keyless; registers the serve URL for discovery + invocation)                                                                                         |
+| `pnpm guard:worker`                       | Assert auth / neon-serverless / the Inngest digest stack (`inngest`, `@opusfinder/llm`, `@opusfinder/rerank`, `@anthropic-ai/sdk`) never leak into the scrapers Worker (#6665) |
 
 ## Documentation (local planning docs — not committed)
 
@@ -92,10 +97,26 @@ but not in a fresh clone:
 - `research/specs/PHASE_8_PLAN.md` — the Phase 8 Cloudflare Worker cron build plan
 - `research/specs/PHASE_9_PLAN.md` — the Phase 9 CV-ingestion build plan
 - `research/specs/PHASE_9.5_PLAN.md` — the Phase 9.5 user-identity (Better Auth) build plan
+- `research/specs/PHASE_10_PLAN.md` — the Phase 10 per-user digest pipeline (Inngest) build plan
 - `research/specs/OPEN_DECISIONS.md` — deferred, trigger-based decisions
 - `research/sources/README.md` — source-discovery catalog
 
 ## Status
+
+Phase 10 added the **per-user digest pipeline** on **Inngest** — generation only; sending and cadence
+are Phase 11. A run does deterministic filter → pgvector retrieval (top ~50 vs `user_profiles.embedding`)
+→ **synchronous** Haiku rerank (a prompt-cached rubric + profile) → **batched** Sonnet synthesis (Anthropic
+Message Batches API, 50% discount) → persisted `digests` / `digest_items` rows that double as the
+"never re-surface a job" dedup history (≈$0.03/user). Two new packages: **`@opusfinder/inngest`** (the
+durable orchestrator + per-user function + a `pnpm digest` trigger CLI) and **`@opusfinder/rerank`** (a
+pure, shared listwise rerank core whose `rerankCandidates` runs in BOTH the digest pipeline and the eval
+harness). `packages/llm` gained an Anthropic Message Batches lifecycle (`batch.ts`, on the raw
+`@anthropic-ai/sdk` — the Vercel AI SDK has no batch support) plus the digest/rerank prompts; `packages/db`
+added `digest_runs` / `digests` / `digest_items` (migrations 0007–0008) and the `retrieval` / `digests` /
+`runs` repos. **LOCAL-DEV-ONLY**: it runs against a local Inngest dev server (`pnpm inngest:dev`, keyless)
+with `INNGEST_DEV=1`; the deployed serve endpoint + Cloud keys are Phase 12. `pnpm guard:worker` now also
+keeps `@opusfinder/llm` / `@opusfinder/rerank` / `@anthropic-ai/sdk` / `inngest` out of the scrapers
+Worker. Shipped on branch `feat/inngest-digest-pipeline` (PR #15).
 
 Phase 9.5 added the **user & identity foundation** (backend/CLI only — no UI). **Better Auth**
 (email+password) owns `user` / `session` / `account` / `verification` in Neon via the Drizzle adapter,

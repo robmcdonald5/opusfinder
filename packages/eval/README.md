@@ -17,6 +17,7 @@ one-argument change.
 pnpm eval                                       # random baseline over the real dataset
 pnpm eval -- --ranker embedding --embedder voyage   # vector retrieval (Voyage)
 pnpm eval -- --ranker embedding --embedder openai   # vector retrieval (OpenAI)
+pnpm eval -- --ranker llm-rerank                 # shared LLM rerank core (deterministic stub)
 pnpm eval -- --dataset data/fixture.jsonl       # synthetic smoke test (no DB/network)
 pnpm eval:compare                               # Voyage vs OpenAI, side-by-side retrieval@k
 
@@ -66,11 +67,14 @@ examples via public CV datasets (Kaggle/HuggingFace) + more ATS boards as adapte
   providers in one argument. Verdict + caveats in `research/specs/OPEN_DECISIONS.md`; re-decide
   when the labeled set scales (~50 examples).
 
-## Phase 10 hookup
+## LLM rerank (Phase 10)
 
-`src/types.ts` defines `Ranker`. The LLM rerank lands in Phase 10 as another `Ranker` and plugs
-straight into this harness; the synthesis ("why matched") contract is added then, when its real
-shape is known.
+`src/types.ts` defines `Ranker`. The Phase-10 LLM rerank landed here as the `llm-rerank` ranker
+(`src/rankers/llm-rerank.ts`): it runs the **shared** `rerankCandidates` from `@opusfinder/rerank` —
+the SAME core the digest pipeline runs — through a deterministic stub call (seeded RNG in `src/rng.ts`,
+so the report is reproducible). `pnpm eval -- --ranker llm-rerank` writes
+`reports/llm-rerank.dataset.json`, so eval scores exactly what production reranks. (The synthesis
+"why matched" contract is exercised in the pipeline, not scored here.)
 
 ## Keys
 

@@ -1,7 +1,9 @@
 # @opusfinder/llm
 
 Thin wrapper over the [Vercel AI SDK](https://ai-sdk.dev) with the Anthropic provider.
-It makes Anthropic **prompt caching** first-class and sketches a **batch** helper.
+It makes Anthropic **prompt caching** first-class and (Phase 10) wires Anthropic's **Message Batches**
+lifecycle — the raw `@anthropic-ai/sdk` lives in ONE place (`src/batch.ts`), since the Vercel AI SDK has
+no batch support.
 Every downstream LLM step builds on it: CV extraction (Phase 9), digest rerank +
 synthesis (Phase 10).
 
@@ -57,9 +59,20 @@ the ~5-minute TTL **read** it (`cache.readInputTokens > 0`).
 
 ### Batch generation
 
-`batchGenerate()` is a typed stub until **Phase 10**, where the digest pipeline wires
-Anthropic's Message Batches API (50% token discount) via the raw `@anthropic-ai/sdk`.
-The signature and the create → poll → results flow are documented in `src/batch.ts`.
+`submitBatch()` / `pollBatch()` / `collectBatchResults()` (and the `batchGenerate()` convenience
+wrapper) drive Anthropic's **Message Batches API** (50% token discount) via the raw `@anthropic-ai/sdk` —
+the one place this package talks to the SDK directly, because the Vercel AI SDK has no batch support. The
+digest pipeline (`@opusfinder/inngest`) submits a batch, suspends on Inngest's durable sleep across the
+wait, then collects. The create → poll → results flow is in `src/batch.ts`; `pnpm --filter @opusfinder/llm
+test:batch` exercises the lifecycle end-to-end.
+
+### Digest prompts (Phase 10)
+
+`prompts/digest.ts` (`DIGEST_SYNTHESIS_SYSTEM` / `buildDigestSystem` / `renderDigestJob`) is the Sonnet
+"why matched" synthesis; `prompts/rerank.ts` (`RerankScoresSchema` / `renderRerankCandidates`) is the
+Haiku rerank output schema + candidate renderer. The rerank **scoring rubric** and orchestration live in
+`@opusfinder/rerank` (shared with the eval harness), not here — this package owns only the per-call
+prompt pieces.
 
 ### Swapping providers
 

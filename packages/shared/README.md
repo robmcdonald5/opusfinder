@@ -90,7 +90,9 @@ PII-free shape Phase 9 CV ingestion stores in `user_profiles.structured` and the
 `EvalProfile` extends, so the eval and production profiles can't drift. `composeProfileText(profile)`
 composes its embedding "query" text (summary, then `Skills: …`, then `Target roles: …`, via
 `composeEmbeddingText`) — the single source of truth for the profile vector, mirroring
-`jobEmbeddingText` on the document side. The eval harness calls it directly.
+`jobEmbeddingText` on the document side. Both the eval harness and the Phase-10 reranker
+(`@opusfinder/rerank`'s `buildRerankSystem`) call it directly, so the reranker reasons over the same
+profile representation retrieval uses.
 Contact info / addresses are intentionally omitted (no job-alignment signal); `preferences` is not
 part of the vector (it comes from the Phase-12 form, feeds the deterministic filter).
 
@@ -176,3 +178,11 @@ this contract.
 Web Crypto — node-free, so it lives on the barrel, not in `./userid`. Generated once at user creation and
 stored on `user_preferences.unsubscribe_token` for the RFC 8058 one-click List-Unsubscribe header
 (Phase 11); never email-derived. Locked by `pnpm --filter @opusfinder/shared test:token`.
+
+## Digest enums (Phase 10)
+
+`DigestTrigger` (`"manual" | "cron"`) and `DigestFeedback`
+(`"saved" | "applied" | "dismissed" | "not_interested"`) are the Phase-10 digest enums consumed by the
+db schema — `digest_runs.trigger` and the nullable `digest_items.feedback` column (`@opusfinder/db`).
+Kept here (with `DigestCadence`) so the schema, the trigger CLI, and the future Phase-12 feedback UI all
+agree on the literals.
