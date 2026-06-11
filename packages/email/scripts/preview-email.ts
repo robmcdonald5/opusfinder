@@ -44,7 +44,8 @@ const FIXTURE: DigestEmailPayload = {
     },
     {
       rank: 3,
-      reason: "Smaller team, broader ownership; matches your stated preference for early-stage work.",
+      reason:
+        "Smaller team, broader ownership; matches your stated preference for early-stage work.",
       title: "Founding Engineer, Platform",
       companySlug: "tiny-startup",
       applyUrl: "https://jobs.example.com/tiny-startup/founding-engineer",

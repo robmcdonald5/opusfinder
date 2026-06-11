@@ -120,7 +120,10 @@ await runScript("test-digest-email", async () => {
   // 1. Render determinism + escaping: byte-identical across renders; hostile input inert.
   const a = renderDigestEmail(FIXTURE);
   const b = renderDigestEmail(FIXTURE);
-  assert(a.subject === b.subject && a.html === b.html && a.text === b.text, "render not deterministic");
+  assert(
+    a.subject === b.subject && a.html === b.html && a.text === b.text,
+    "render not deterministic",
+  );
   assert(!a.html.includes("<script"), "raw <script survived escaping");
   assert(a.html.includes("&lt;script&gt;"), "escaped script tag missing from html");
   assert(!/href="javascript:/i.test(a.html), "javascript: URL became an href");
@@ -172,16 +175,24 @@ await runScript("test-digest-email", async () => {
     const { runs, sleeps, tools } = fakeStep();
     const db = stubDb([joinedPayloadRows(), []]); // payload read, then the failure write
     const err = await expectReject(
-      deliverDigestEmail(tools, db, {
-        send: async () => {
-          throw new Error("boom");
+      deliverDigestEmail(
+        tools,
+        db,
+        {
+          send: async () => {
+            throw new Error("boom");
+          },
+          lastEvent: async () => "delivered",
         },
-        lastEvent: async () => "delivered",
-      }, 7),
+        7,
+      ),
       "deliverDigestEmail with throwing send",
     );
     assert(err.message === "boom", `original error must rethrow, got: ${err.message}`);
-    assert(JSON.stringify(runs) === '["send-email","record-send-failure"]', `steps: ${runs.join(",")}`);
+    assert(
+      JSON.stringify(runs) === '["send-email","record-send-failure"]',
+      `steps: ${runs.join(",")}`,
+    );
     assert(sleeps.length === 0, "failure path must not sleep");
   }
   {
@@ -189,14 +200,22 @@ await runScript("test-digest-email", async () => {
     const { runs, tools } = fakeStep();
     const db = stubDb([[], []]); // empty join read, then the failure write
     const err = await expectReject(
-      deliverDigestEmail(tools, db, {
-        send: async () => ({ emailId: "re_x" }),
-        lastEvent: async () => "delivered",
-      }, 7),
+      deliverDigestEmail(
+        tools,
+        db,
+        {
+          send: async () => ({ emailId: "re_x" }),
+          lastEvent: async () => "delivered",
+        },
+        7,
+      ),
       "deliverDigestEmail with missing payload",
     );
     assert(err.message.includes("payload missing"), `unexpected error: ${err.message}`);
-    assert(JSON.stringify(runs) === '["send-email","record-send-failure"]', `steps: ${runs.join(",")}`);
+    assert(
+      JSON.stringify(runs) === '["send-email","record-send-failure"]',
+      `steps: ${runs.join(",")}`,
+    );
   }
   console.log("5. failure terminalization OK");
 
@@ -204,10 +223,15 @@ await runScript("test-digest-email", async () => {
   {
     const { runs, sleeps, tools } = fakeStep();
     const db = stubDb([joinedPayloadRows()]); // ONLY the payload read
-    const result = await deliverDigestEmail(tools, db, {
-      send: async () => ({ skipped: "allowlist" }),
-      lastEvent: async () => "delivered",
-    }, 7);
+    const result = await deliverDigestEmail(
+      tools,
+      db,
+      {
+        send: async () => ({ skipped: "allowlist" }),
+        lastEvent: async () => "delivered",
+      },
+      7,
+    );
     assert(result === "skipped-allowlist", `skip result: ${String(result)}`);
     assert(JSON.stringify(runs) === '["send-email"]', `steps: ${runs.join(",")}`);
     assert(sleeps.length === 0, "skip path must not sleep");
@@ -223,10 +247,15 @@ await runScript("test-digest-email", async () => {
       [], // recordDigestSent: user_preferences update
       [{ userId: FIXTURE.userId }], // recordDigestDeliveryOutcome: digests update RETURNING
     ]);
-    const result = await deliverDigestEmail(tools, db, {
-      send: async () => ({ emailId: "re_x" }),
-      lastEvent: async () => "delivered",
-    }, 7);
+    const result = await deliverDigestEmail(
+      tools,
+      db,
+      {
+        send: async () => ({ emailId: "re_x" }),
+        lastEvent: async () => "delivered",
+      },
+      7,
+    );
     assert(result === "delivered", `happy result: ${String(result)}`);
     assert(
       JSON.stringify(runs) === '["send-email","delivery-poll-0","record-delivery"]',
@@ -247,10 +276,15 @@ await runScript("test-digest-email", async () => {
       [{ userId: FIXTURE.userId }], // recordDigestDeliveryOutcome: digests RETURNING
       [], // recordDigestDeliveryOutcome: suppression update
     ]);
-    const result = await deliverDigestEmail(tools, db, {
-      send: async () => ({ emailId: "re_x" }),
-      lastEvent: async () => events.shift() ?? "bounced",
-    }, 7);
+    const result = await deliverDigestEmail(
+      tools,
+      db,
+      {
+        send: async () => ({ emailId: "re_x" }),
+        lastEvent: async () => events.shift() ?? "bounced",
+      },
+      7,
+    );
     assert(result === "bounced", `slow-poll result: ${String(result)}`);
     assert(
       JSON.stringify(runs) ===

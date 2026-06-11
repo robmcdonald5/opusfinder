@@ -41,7 +41,14 @@ export interface DeliveryStepTools {
 
 /** Resend `last_event` values the poll should STOP on. Everything else (`queued`, `sent`,
  *  `delivery_delayed`, `scheduled`, …) is still in flight — keep polling / stay 'sent'. */
-const TERMINAL_EVENTS = new Set(["delivered", "opened", "clicked", "bounced", "complained", "failed"]);
+const TERMINAL_EVENTS = new Set([
+  "delivered",
+  "opened",
+  "clicked",
+  "bounced",
+  "complained",
+  "failed",
+]);
 
 export function isTerminalEvent(lastEvent: string): boolean {
   return TERMINAL_EVENTS.has(lastEvent);

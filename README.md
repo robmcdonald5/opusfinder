@@ -98,13 +98,26 @@ but not in a fresh clone:
 - `research/specs/PHASE_9_PLAN.md` — the Phase 9 CV-ingestion build plan
 - `research/specs/PHASE_9.5_PLAN.md` — the Phase 9.5 user-identity (Better Auth) build plan
 - `research/specs/PHASE_10_PLAN.md` — the Phase 10 per-user digest pipeline (Inngest) build plan
+- `research/specs/PHASE_11_PLAN.md` — the Phase 11 email-delivery (Resend) build plan
 - `research/specs/OPEN_DECISIONS.md` — deferred, trigger-based decisions
 - `research/sources/README.md` — source-discovery catalog
 
 ## Status
 
-Phase 10 added the **per-user digest pipeline** on **Inngest** — generation only; sending is Phase 11
-(planned — `research/specs/PHASE_11_PLAN.md`); the cadence cron is Phase 12. A run does deterministic filter → pgvector retrieval (top ~50 vs `user_profiles.embedding`)
+Phase 11 adds **email delivery** on **Resend**: the per-user digest function now ends with a send →
+bounded-delivery-poll → record tail (`packages/inngest/src/delivery.ts`). A new **`@opusfinder/email`**
+package splits a PURE, byte-deterministic render (escaped HTML + text part — scraped titles/reasons are
+hostile input; `javascript:` apply URLs degrade to inert text) from the only `resend` import (send with
+`Idempotency-Key: digest/<digestId>` so step retries can't double-send, fail-closed `EMAIL_ALLOWLIST`).
+Delivery state lands per-send on `digests` (`email_id`/`delivery_status`/`sent_at`, migration 0009) and
+user-level on `user_preferences` (bounce → hard-suppress; complaint → suppress without a bounce write).
+**LOCAL-DEV-ONLY, manual trigger**: the cadence cron, Inngest Cloud keys, production serve, webhooks,
+and the unsubscribe endpoint are all Phase 12. Sending domain: `send.opusfinder.ai` (verified on Resend,
+SPF/DKIM/DMARC). Gates: `pnpm email:preview` (hostile-fixture render, no creds),
+`pnpm --filter @opusfinder/inngest test:digest-email` (stub smoke), and the live inbox gate.
+
+Phase 10 added the **per-user digest pipeline** on **Inngest** — generation only; the cadence cron is
+Phase 12. A run does deterministic filter → pgvector retrieval (top ~50 vs `user_profiles.embedding`)
 → **synchronous** Haiku rerank (a prompt-cached rubric + profile) → **batched** Sonnet synthesis (Anthropic
 Message Batches API, 50% discount) → persisted `digests` / `digest_items` rows that double as the
 "never re-surface a job" dedup history (≈$0.03/user). Two new packages: **`@opusfinder/inngest`** (the

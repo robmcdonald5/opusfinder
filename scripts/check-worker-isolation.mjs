@@ -2,9 +2,10 @@
 // apps/scrapers Cloudflare Worker bundle. Phase 9.5: Better Auth (+ the neon-serverless auth client)
 // crashes at import under `nodejs_compat` (#6665). Phase 10: the Inngest digest pipeline is Node-hosted
 // and drags in @anthropic-ai/sdk + the llm/db env loaders — it must stay out of the scraper Worker (and
-// the two concerns stay separate). Fails (exit 1) if a forbidden import appears in the Worker source, OR
-// if the Worker's package.json depends on one. Cross-platform (plain node + fs, no shell `grep`).
-// Run: pnpm guard:worker
+// the two concerns stay separate). Phase 11: email (@opusfinder/email + the resend SDK) is a trusted
+// server-runtime concern, same posture. Fails (exit 1) if a forbidden import appears in the Worker
+// source, OR if the Worker's package.json depends on one. Cross-platform (plain node + fs, no shell
+// `grep`). Run: pnpm guard:worker
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -16,7 +17,9 @@ const FORBIDDEN_IMPORTS = [
   "@opusfinder/inngest",
   "@opusfinder/llm",
   "@opusfinder/rerank",
+  "@opusfinder/email",
   "@anthropic-ai/sdk",
+  "resend",
   "inngest",
   "neon-serverless",
   "auth-client",
@@ -27,7 +30,9 @@ const FORBIDDEN_DEPS = [
   "@opusfinder/inngest",
   "@opusfinder/llm",
   "@opusfinder/rerank",
+  "@opusfinder/email",
   "@anthropic-ai/sdk",
+  "resend",
   "better-auth",
   "inngest",
 ];
@@ -60,11 +65,11 @@ for (const bad of FORBIDDEN_DEPS) {
 
 if (failures > 0) {
   console.error(
-    `\nWorker-isolation guard FAILED: ${failures} violation(s). Auth (Better Auth, #6665) and the Inngest digest pipeline must stay out of the scrapers Worker.`,
+    `\nWorker-isolation guard FAILED: ${failures} violation(s). Auth (Better Auth, #6665), the Inngest digest pipeline, and email (resend) must stay out of the scrapers Worker.`,
   );
   process.exitCode = 1;
 } else {
   console.log(
-    `Worker-isolation guard OK — ${files.length} Worker source file(s) scanned; no auth / neon-serverless / inngest leakage.`,
+    `Worker-isolation guard OK — ${files.length} Worker source file(s) scanned; no auth / neon-serverless / inngest / email leakage.`,
   );
 }
