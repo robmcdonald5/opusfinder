@@ -4,18 +4,22 @@
  * Drizzle client is injected, every mutation is a single neon-http round-trip, and time math is
  * SQL-side (`now()`). The run helpers mirror ./discovery's `startRun`/`finishRun` against `digest_runs`.
  */
-import { and, desc, eq, gt, isNotNull, isNull, type SQL } from "drizzle-orm";
+import { and, desc, eq, gt, isNotNull, isNull, sql, type SQL } from "drizzle-orm";
 
 import type { DigestTrigger, UserId } from "@opusfinder/shared";
 
 import type { Db } from "../client";
 import {
+  companies,
   digestItems,
   digestRuns,
   digests,
+  jobs,
   user,
   userPreferences,
   userProfiles,
+  type DigestBounceStatus,
+  type DigestDeliveryStatus,
   type RunCounts,
   type RunStatus,
 } from "../schema";
@@ -214,4 +218,147 @@ export async function getLatestDigestForUser(db: Db, userId: UserId): Promise<Di
     createdAt: d.createdAt,
     items,
   };
+}
+
+// --- Phase 11 email delivery: the render read + the per-send / user-level state writes -----------
+
+/**
+ * Everything the email render needs for one digest — ONE round trip:
+ * `digests ⋈ user ⋈ digest_items ⋈ jobs ⋈ companies`, ORDER BY rank. INNER JOINs are safe: the
+ * persist step throws on zero kept items, so an existing digest always has ≥1 item row here.
+ * `companySlug` is `companies.slug` — there is NO name column (metadata jsonb is unpopulated).
+ */
+export interface DigestEmailPayload {
+  digestId: number;
+  userId: UserId;
+  recipient: { email: string; name: string };
+  /** The ONLY date the template may render — the rendered payload must be deterministic per digest
+   *  (Resend Idempotency-Key replays reject a changed payload with 409), so no `new Date()`. */
+  createdAt: Date;
+  items: {
+    rank: number;
+    reason: string;
+    title: string;
+    companySlug: string;
+    applyUrl: string;
+    locations: string[];
+    remote: boolean;
+  }[];
+}
+
+/**
+ * The email payload for one digest, recipient resolved from `user` (the row is the truth — never
+ * event data). `null` for an unknown digest id; the send step treats that as an invariant break and
+ * throws (same posture as the rerank-permutation check).
+ */
+export async function getDigestEmailPayload(
+  db: Db,
+  digestId: number,
+): Promise<DigestEmailPayload | null> {
+  const rows = await db
+    .select({
+      userId: digests.userId,
+      createdAt: digests.createdAt,
+      email: user.email,
+      name: user.name,
+      rank: digestItems.rank,
+      reason: digestItems.reason,
+      title: jobs.title,
+      companySlug: companies.slug,
+      applyUrl: jobs.applyUrl,
+      locations: jobs.locations,
+      remote: jobs.remote,
+    })
+    .from(digests)
+    .innerJoin(user, eq(user.id, digests.userId))
+    .innerJoin(digestItems, eq(digestItems.digestId, digests.id))
+    .innerJoin(jobs, eq(jobs.id, digestItems.jobId))
+    .innerJoin(companies, eq(companies.id, jobs.companyId))
+    .where(eq(digests.id, digestId))
+    .orderBy(digestItems.rank);
+  const first = rows[0];
+  if (!first) return null;
+  return {
+    digestId,
+    userId: first.userId,
+    recipient: { email: first.email, name: first.name },
+    createdAt: first.createdAt,
+    items: rows.map((r) => ({
+      rank: r.rank,
+      reason: r.reason,
+      title: r.title,
+      companySlug: r.companySlug,
+      applyUrl: r.applyUrl,
+      locations: r.locations,
+      remote: r.remote,
+    })),
+  };
+}
+
+/**
+ * Send accepted by Resend: `digests.email_id` + `delivery_status='sent'` + `sent_at=now()`, THEN the
+ * user-level `last_digest_sent_at`/`last_digest_email_id`. Two writes, digests first — neon-http is
+ * non-transactional, but both are idempotent, so a crash between them is healed by the Inngest step
+ * retry re-running both (with the SAME emailId, via the Resend idempotency replay).
+ */
+export async function recordDigestSent(db: Db, digestId: number, emailId: string): Promise<void> {
+  const rows = await db
+    .update(digests)
+    .set({ emailId, deliveryStatus: "sent", sentAt: sql`now()` })
+    .where(eq(digests.id, digestId))
+    .returning({ userId: digests.userId });
+  const row = rows[0];
+  if (!row) throw new Error(`recordDigestSent matched no digest (id ${digestId})`);
+  await db
+    .update(userPreferences)
+    .set({ lastDigestSentAt: sql`now()`, lastDigestEmailId: emailId, updatedAt: sql`now()` })
+    .where(eq(userPreferences.userId, row.userId));
+}
+
+/**
+ * The delivery poll's mapped outcome (the event→status policy lives in @opusfinder/inngest).
+ * `suppress` present = stop sending to this user (`digest_suppressed_at`); `suppress.bounce` is
+ * OPTIONAL so a spam complaint can suppress WITHOUT touching `digest_bounce_status` (a complaint is
+ * not a bounce — forcing a value here could reset a previously recorded hard bounce).
+ */
+export interface DigestDeliveryOutcome {
+  status: DigestDeliveryStatus;
+  suppress?: { bounce?: DigestBounceStatus };
+}
+
+/**
+ * Record what the bounded delivery poll observed: upgrade `digests.delivery_status`, and on a
+ * suppressing outcome write the user-level suppression. `COALESCE` keeps a re-run (the record step is
+ * retry-idempotent) from moving an already-set suppression timestamp.
+ */
+export async function recordDigestDeliveryOutcome(
+  db: Db,
+  digestId: number,
+  outcome: DigestDeliveryOutcome,
+): Promise<void> {
+  const rows = await db
+    .update(digests)
+    .set({ deliveryStatus: outcome.status })
+    .where(eq(digests.id, digestId))
+    .returning({ userId: digests.userId });
+  const row = rows[0];
+  if (!row) throw new Error(`recordDigestDeliveryOutcome matched no digest (id ${digestId})`);
+  if (!outcome.suppress) return;
+  await db
+    .update(userPreferences)
+    .set({
+      digestSuppressedAt: sql`COALESCE(${userPreferences.digestSuppressedAt}, now())`,
+      ...(outcome.suppress.bounce ? { digestBounceStatus: outcome.suppress.bounce } : {}),
+      updatedAt: sql`now()`,
+    })
+    .where(eq(userPreferences.userId, row.userId));
+}
+
+/**
+ * Terminal send failure (the send step exhausted its retries): `delivery_status='failed'`;
+ * `email_id`/`sent_at` stay NULL. Deliberately does NOT throw on a missing digest row — this runs in
+ * the failure path (a missing row may be the very cause), and a second error would mask the original.
+ */
+export async function recordDigestSendFailure(db: Db, digestId: number): Promise<void> {
+  await db.update(digests).set({ deliveryStatus: "failed" }).where(eq(digests.id, digestId));
 }
