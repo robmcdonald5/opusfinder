@@ -1,0 +1,25 @@
+{
+  "name": "@opusfinder/inngest",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "types": "./src/index.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "inngest:serve": "tsx scripts/serve.ts",
+    "digest": "tsx scripts/digest.ts"
+  },
+  "dependencies": {
+    "@opusfinder/db": "workspace:*",
+    "@opusfinder/llm": "workspace:*",
+    "@opusfinder/rerank": "workspace:*",
+    "@opusfinder/shared": "workspace:*",
+    "inngest": "^3.54.2"
+  },
+  "devDependencies": {
+    "tsx": "^4"
+  }
+}
