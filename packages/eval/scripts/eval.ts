@@ -69,7 +69,17 @@ async function resolveRanker(
     const { embeddingRanker } = await import("../src/rankers/embedding");
     return { ranker: embeddingRanker(chosen), label: "embedding", embedderLabel: embedderName };
   }
-  throw new Error(`unknown ranker "${name}" (expected: random | embedding).`);
+  if (name === "llm-rerank") {
+    // --embedder doesn't apply to the rerank ranker; warn so it isn't silently ignored.
+    if (embedder !== undefined) {
+      console.warn(`Note: --embedder "${embedder}" is ignored by the llm-rerank ranker.`);
+    }
+    // Dynamic import keeps @opusfinder/rerank off the plain `pnpm eval` path. Uses the deterministic
+    // stub call (no API key); the real Haiku call is wired by the Phase-10 digest pipeline.
+    const { llmRerankRanker } = await import("../src/rankers/llm-rerank");
+    return { ranker: llmRerankRanker(), label: "llm-rerank", embedderLabel: null };
+  }
+  throw new Error(`unknown ranker "${name}" (expected: random | embedding | llm-rerank).`);
 }
 
 async function main(): Promise<void> {
