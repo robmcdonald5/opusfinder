@@ -13,7 +13,7 @@ import { and, eq, isNull, sql } from "drizzle-orm";
 
 import type { Db } from "../client";
 import { jobs } from "../schema";
-import { VECTOR_CAST, vectorLiteral } from "./sql";
+import { resultRows, VECTOR_CAST, vectorLiteral } from "./sql";
 
 // Cap rows per UPDATE so a large caller can't exceed Postgres's 65535 bind-param ceiling
 // (2 params/row). The default backfill batch (64) is far under; this guards future bulk
@@ -196,17 +196,4 @@ export async function nearestJobs(
  */
 export function jobEmbeddingText(job: { title: string; descriptionText: string }): string {
   return composeEmbeddingText([job.title, job.descriptionText]);
-}
-
-/**
- * Extract the rows array from a neon-http result without depending on its exact shape
- * (drizzle has returned either the raw rows array or a `{ rows }` object across versions).
- */
-function resultRows(result: unknown): unknown[] {
-  if (Array.isArray(result)) return result;
-  if (result !== null && typeof result === "object") {
-    const rows = (result as { rows?: unknown }).rows;
-    if (Array.isArray(rows)) return rows;
-  }
-  return [];
 }

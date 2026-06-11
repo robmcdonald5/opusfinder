@@ -48,3 +48,18 @@ export function vectorLiteral(vec: number[]): string {
  * here: EMBEDDING_DIMENSIONS is an in-code numeric constant, never input.
  */
 export const VECTOR_CAST = sql.raw(`::vector(${EMBEDDING_DIMENSIONS})`);
+
+/**
+ * Extract the rows array from a neon-http `db.execute` result without depending on its exact shape
+ * (drizzle has returned either the raw rows array or a `{ rows }` object across versions). Shared by
+ * the raw-SQL query paths that can't use the typed query builder (the `<=>` cosine queries in
+ * embeddings.ts and retrieval.ts).
+ */
+export function resultRows(result: unknown): unknown[] {
+  if (Array.isArray(result)) return result;
+  if (result !== null && typeof result === "object") {
+    const rows = (result as { rows?: unknown }).rows;
+    if (Array.isArray(rows)) return rows;
+  }
+  return [];
+}

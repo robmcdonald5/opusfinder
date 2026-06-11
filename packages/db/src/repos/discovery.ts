@@ -13,6 +13,7 @@ import type { CompanySlug, SourceName } from "@opusfinder/shared";
 import type { Db } from "../client";
 import { companies, sourceRuns, type RunCounts, type RunPipeline, type RunStatus } from "../schema";
 import type { CompanyRow } from "./jobs";
+import { finishRunRow } from "./runs";
 
 // Stale-`running` window. A run never legitimately exceeds the Cloudflare Worker wall limit (15 min)
 // — a tick is ~30s — so anything still `running` after this is a zombie from a killed/timed-out
@@ -83,15 +84,7 @@ export async function finishRun(
   runId: number,
   result: { status: Exclude<RunStatus, "running">; counts: RunCounts; errorSample?: string },
 ): Promise<void> {
-  await db
-    .update(sourceRuns)
-    .set({
-      status: result.status,
-      finishedAt: sql`now()`,
-      counts: result.counts,
-      errorSample: result.errorSample ?? null,
-    })
-    .where(and(eq(sourceRuns.id, runId), eq(sourceRuns.status, "running")));
+  await finishRunRow(db, sourceRuns, runId, result);
 }
 
 /**
