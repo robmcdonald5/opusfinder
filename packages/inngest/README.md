@@ -21,13 +21,14 @@ batches finish in under an hour but the SLA is a 24h hard cap. Inngest's durable
 `step.run` suspend across that wait at **zero compute cost**, which a vanilla Cloudflare cron tick
 cannot (hard 15-min wall, no cross-invocation suspend). That durability is the decisive reason the
 digest runs on Inngest rather than extending `apps/scrapers`. Phase 10 only needs the local dev server
-to prove the pipeline end-to-end; the deployed runtime + keys land with email (Phase 11/12).
+to prove the pipeline end-to-end; the deployed runtime + keys land in Phase 12 (email ships in
+Phase 11 on the local dev runtime — locked at Phase-11 planning, 2026-06-11).
 
 ## What's here
 
 - `src/inngest.ts` — the `inngest` client (`id: "opusfinder"`) + the typed event surface
   (`EventSchemas().fromRecord`): `digest/run.requested` (kicks the orchestrator — manual CLI now, a
-  cadence cron in Phase 11; optional `userId` scopes it to one user) and `digest/user.requested` (one
+  cadence cron in Phase 12; optional `userId` scopes it to one user) and `digest/user.requested` (one
   per recipient, fanned out by the orchestrator).
 - `src/digest.ts` — `createDigestFunctions(deps)` → `[orchestrator, perUser]`, plus the `DigestDeps`
   injection seam (`db` + a `rerank` closure + the `batch` submit/poll/collect lifecycle) so the
@@ -107,4 +108,4 @@ Per CLAUDE.md (external-platform integration), the work splits cleanly:
 | All package code, the local dev server (`pnpm inngest:dev` — keyless), the end-to-end gate | **Agent** |
 | Provide `DATABASE_URL` + `ANTHROPIC_API_KEY` (already in place since Phase 9) | **User** |
 | **Inngest Cloud account + `INNGEST_SIGNING_KEY`/`INNGEST_EVENT_KEY` + a deployed serve endpoint + app sync** | **User (Phase 12)** |
-| Decide the production serve host (SvelteKit-on-Vercel) + the cadence cron schedule/timezone | **User (Phase 11/12)** |
+| Decide the production serve host (SvelteKit-on-Vercel) + the cadence cron schedule/timezone | **User (Phase 12)** |

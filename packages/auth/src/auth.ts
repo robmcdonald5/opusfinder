@@ -21,7 +21,8 @@ export function createAuth(authDb: AuthDb, opts: { secret: string; baseURL: stri
     database: drizzleAdapter(authDb, { provider: "pg" }),
     emailAndPassword: {
       enabled: true,
-      // No email infra until Phase 11 — verification email is not wired yet (real signups verify then).
+      // No verification email until Phase 12's real signup flow (Phase 11 ships digest-send infra
+      // only — locked at Phase-11 planning); flips true when sendVerificationEmail is wired there.
       requireEmailVerification: false,
       // Headless CLI seeds: don't mint a throwaway `session` row + cookies on every create. The
       // service flips emailVerified=true directly (signUpEmail hardcodes false; no admin session here).

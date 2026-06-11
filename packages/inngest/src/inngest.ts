@@ -5,7 +5,8 @@ import type { DigestTrigger } from "@opusfinder/shared";
 /**
  * The Inngest client + the typed event surface for the Phase-10 digest pipeline. Two events:
  *  - `digest/run.requested` — kicks the orchestrator (a manual CLI trigger now; a cadence cron in
- *    Phase 11). `userId` optionally scopes the run to a single user (the gate path).
+ *    Phase 12, with the deployed runtime). `userId` optionally scopes the run to a single user (the
+ *    gate path).
  *  - `digest/user.requested` — one per recipient, fanned out by the orchestrator; drives the per-user
  *    digest function.
  *

@@ -94,7 +94,7 @@ function toFilterPrefs(prefs: UserPreferencesRow): FilterPrefs {
  * Inngest fan-out is fire-and-forget, the run row records DISPATCH, not per-user completion (those land
  * on `digests`). A step that exhausts its retries is caught and terminalized onto the run row
  * (`status: 'error'` + `error_sample`) before the failure is rethrown to Inngest — so a dead run never
- * sits `running` forever. A cadence cron trigger is added in Phase 11.
+ * sits `running` forever. A cadence cron trigger is added in Phase 12 (with the deployed runtime).
  */
 function makeOrchestrator(deps: DigestDeps) {
   return inngest.createFunction(

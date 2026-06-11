@@ -33,7 +33,7 @@ export interface DigestRecipient {
  * verified email (`user.email_verified` — the send gate), not suppressed (`digest_suppressed_at IS
  * NULL`), AND a usable profile vector (INNER JOIN `user_profiles` + `embedding IS NOT NULL`, so a user
  * with no CV / no embedding is skipped — they can't be matched). Cadence is deliberately NOT filtered
- * here (Phase 10 triggers manually; the Phase-11 cadence cron adds a `digest_cadence` predicate). The
+ * here (Phase 10/11 trigger manually; the Phase-12 cadence cron adds a `digest_cadence` predicate). The
  * keyset orders by `user.id` (uuid) — an arbitrary but total, stable order, all that chunked iteration
  * needs.
  */
@@ -77,8 +77,8 @@ export async function alreadyShownJobIds(db: Db, userId: UserId): Promise<number
  * id. Mirrors ./discovery `startRun`. Call BEFORE fan-out so a crash leaves a visible `running` row;
  * `finishDigestRun` patches it to a terminal state — the orchestrator calls it on success AND from its
  * catch (status 'error' + `error_sample`) when a step exhausts its retries. (A stale-`running` sweep
- * like `failStaleRuns` — covering a serve process killed outside a step — is deferred to Phase 11 with
- * the cadence cron.)
+ * like `failStaleRuns` — covering a serve process killed outside a step — is deferred to Phase 12 with
+ * the cadence cron: an unattended-runtime problem, not a watched-manual-run one.)
  */
 export async function startDigestRun(db: Db, trigger: DigestTrigger): Promise<number> {
   const rows = await db.insert(digestRuns).values({ trigger }).returning({ id: digestRuns.id });

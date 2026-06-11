@@ -388,7 +388,8 @@ export const account = pgTable(
   ],
 );
 
-/** Email-verification / password-reset tokens (Better Auth). Unused until Phase 11 wires email. */
+/** Email-verification / password-reset tokens (Better Auth). Unused until Phase 12 wires verification
+ *  email to the real signup flow (Phase 11's lean send is digest delivery only). */
 export const verification = pgTable(
   "verification",
   {
@@ -483,7 +484,7 @@ export const userPreferences = pgTable(
 /**
  * One row per digest pipeline run (Phase 10) — the orchestrator/dispatch record, mirroring
  * {@link sourceRuns}. `trigger` records how the run started (a manual CLI trigger now; the scheduled
- * cadence cron in Phase 11). Because the per-user fan-out is fire-and-forget on Inngest, the orchestrator
+ * cadence cron in Phase 12). Because the per-user fan-out is fire-and-forget on Inngest, the orchestrator
  * finalizes this row to a terminal state right after DISPATCH — it records how many recipients it
  * dispatched (`counts`), not per-user completion; per-user outcomes live on {@link digests}. `started_at`
  * IS the row's creation time (no separate created_at); `error_sample` is a truncated, SECRET-free first

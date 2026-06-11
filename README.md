@@ -103,8 +103,8 @@ but not in a fresh clone:
 
 ## Status
 
-Phase 10 added the **per-user digest pipeline** on **Inngest** — generation only; sending and cadence
-are Phase 11. A run does deterministic filter → pgvector retrieval (top ~50 vs `user_profiles.embedding`)
+Phase 10 added the **per-user digest pipeline** on **Inngest** — generation only; sending is Phase 11
+(planned — `research/specs/PHASE_11_PLAN.md`); the cadence cron is Phase 12. A run does deterministic filter → pgvector retrieval (top ~50 vs `user_profiles.embedding`)
 → **synchronous** Haiku rerank (a prompt-cached rubric + profile) → **batched** Sonnet synthesis (Anthropic
 Message Batches API, 50% discount) → persisted `digests` / `digest_items` rows that double as the
 "never re-surface a job" dedup history (≈$0.03/user). Two new packages: **`@opusfinder/inngest`** (the
