@@ -413,6 +413,13 @@ export const verification = pgTable(
  *  STATE, distinct from the user-settable `UserPreferences` (@opusfinder/shared). */
 export type DigestBounceStatus = "none" | "soft" | "hard";
 
+/** Pipeline-managed delivery state for ONE digest's send (Phase 11; same no-pgEnum rule as
+ *  {@link DigestBounceStatus}). 'none' = not attempted (or allowlist-skipped); 'sent' = accepted by
+ *  Resend; 'delivered'/'bounced'/'failed' = observed by the post-send poll. Deliberately NO
+ *  'complained' member — a spam complaint records 'delivered' (it WAS delivered) plus user-level
+ *  suppression on {@link userPreferences}. */
+export type DigestDeliveryStatus = "none" | "sent" | "delivered" | "bounced" | "failed";
+
 /**
  * One preferences row per user (1:1, `user_id` UNIQUE — the upsert target), created with conservative
  * defaults at user creation. First-class columns for everything a digest `WHERE` clause touches (so the
@@ -526,6 +533,16 @@ export const digests = pgTable(
     digestRunId: integer("digest_run_id").notNull(),
     itemCount: integer("item_count").notNull().default(0),
     counts: jsonb("counts").$type<RunCounts>().notNull().default({}),
+    // --- per-send delivery state (Phase 11, migration 0009). Written ONLY by the send/poll steps:
+    // send sets email_id + 'sent' + sent_at; the bounded poll upgrades delivery_status; the failure
+    // catch writes 'failed'. User-level aggregates (last_digest_*, suppression) live on
+    // user_preferences — this is the per-send history the gate's bounce/failure logging needs.
+    emailId: text("email_id"), // Resend email id; NULL until a send is accepted
+    deliveryStatus: text("delivery_status")
+      .$type<DigestDeliveryStatus>()
+      .notNull()
+      .default("none"),
+    sentAt: timestamp("sent_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
