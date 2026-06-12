@@ -94,6 +94,14 @@ Run from the repo root via the workspace filter so the cwd is `packages/db`:
   job must not erase the record. **CASCADE HAZARD:** deleting a `digest_runs` row cascades
   run → digests → digest_items and erases that dedup history (no code deletes runs today; see the inline
   note in `schema.ts`).
+- **Schema (Phase 11).** `drizzle/0009_aspiring_chameleon.sql` adds per-send delivery state ON
+  `digests`: `email_id` (Resend id, NULL until accepted), `delivery_status`
+  (`none|sent|delivered|bounced|failed` — a TS union, `DigestDeliveryStatus`), `sent_at`. Written only
+  by the pipeline's send/poll/failure steps; the user-level aggregates (`last_digest_*`,
+  `digest_bounce_status`, `digest_suppressed_at`) stay on `user_preferences`. The email repo surface
+  (`repos/digests.ts`): `getDigestEmailPayload` (the render read — digests ⋈ user ⋈ digest_items ⋈
+  jobs ⋈ companies in one round trip) + `recordDigestSent` / `recordDigestDeliveryOutcome` /
+  `recordDigestSendFailure`, smoke-checked by `pnpm --filter @opusfinder/db test:digest-payload`.
 - **neon-http migrations are NOT transactional.** The neon-http migrator applies
   a migration's statements without a wrapping transaction, so a multi-statement
   migration that fails partway leaves a partial apply with no rollback (and a

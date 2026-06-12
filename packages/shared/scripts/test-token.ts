@@ -1,5 +1,6 @@
 // Smoke check for generateUnsubscribeToken (Phase 9.5a). The unsubscribe token gates one-click
-// List-Unsubscribe (RFC 8058, Phase 11), so it must be URL-safe (droppable into a header URL with no
+// List-Unsubscribe (RFC 8058, Phase 12 — dormant through Phase 11's lean send), so it must be
+// URL-safe (droppable into a header URL with no
 // escaping), unguessable (random — NOT email-derived), and collision-free. These checks lock those
 // properties so a regression fails loudly. Run: pnpm --filter @opusfinder/shared test:token
 import { generateUnsubscribeToken } from "../src/index";

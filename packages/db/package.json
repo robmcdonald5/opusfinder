@@ -17,6 +17,8 @@
     "studio": "drizzle-kit studio",
     "ping": "tsx scripts/ping.ts",
     "runs": "tsx scripts/show-runs.ts",
+    "delivery": "tsx scripts/show-digest-delivery.ts",
+    "test:digest-payload": "tsx scripts/test-digest-payload.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

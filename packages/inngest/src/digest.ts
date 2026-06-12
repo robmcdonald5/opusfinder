@@ -18,6 +18,7 @@ import type { RerankCandidate } from "@opusfinder/rerank";
 import type { StructuredProfile, UserId } from "@opusfinder/shared";
 import { NonRetriableError } from "inngest";
 
+import { deliverDigestEmail, type EmailSeam } from "./delivery";
 import { inngest } from "./inngest";
 
 // --- Tunables (per-digest knobs) ---------------------------------------------------------------
@@ -56,7 +57,8 @@ export interface RerankOutcome {
  * Injected seams for the digest functions — so the pipeline is testable with stubs and the heavy
  * `@opusfinder/llm` wiring stays out of this module. `buildDigestDeps()` (./deps) wires the real ones.
  * `rerank` runs the shared `@opusfinder/rerank` core (sync Haiku, prompt-cached); `batch` is the
- * Anthropic Message Batches lifecycle for synthesis.
+ * Anthropic Message Batches lifecycle for synthesis; `email` is the Phase-11 Resend send +
+ * delivery-state read (./delivery).
  */
 export interface DigestDeps {
   db: Db;
@@ -66,6 +68,7 @@ export interface DigestDeps {
     poll: (batchId: string) => Promise<BatchPoll>;
     collect: (batchId: string) => Promise<Map<string, BatchResult>>;
   };
+  email: EmailSeam;
 }
 
 interface FilterPrefs {
@@ -94,7 +97,7 @@ function toFilterPrefs(prefs: UserPreferencesRow): FilterPrefs {
  * Inngest fan-out is fire-and-forget, the run row records DISPATCH, not per-user completion (those land
  * on `digests`). A step that exhausts its retries is caught and terminalized onto the run row
  * (`status: 'error'` + `error_sample`) before the failure is rethrown to Inngest — so a dead run never
- * sits `running` forever. A cadence cron trigger is added in Phase 11.
+ * sits `running` forever. A cadence cron trigger is added in Phase 12 (with the deployed runtime).
  */
 function makeOrchestrator(deps: DigestDeps) {
   return inngest.createFunction(
@@ -166,15 +169,20 @@ function makeOrchestrator(deps: DigestDeps) {
 
 /**
  * The per-user digest. Steps (each memoized; the synthesis batch wait is the durable part):
- * load → retrieve → rerank (sync Haiku) → submit synthesis batch → sleep → poll → collect → persist.
+ * load → retrieve → rerank (sync Haiku) → submit synthesis batch → sleep → poll → collect → persist
+ * → send email → bounded delivery poll → record delivery (the Phase-11 tail, ./delivery).
  * `singleton` keyed on userId (mode `skip`) prevents overlapping runs for one user — `concurrency`
  * cannot: a run sleeping through the batch wait holds no concurrency slot, so a second run could read
  * the already-shown ids before the first persists. `skip` (not `cancel`) so an in-flight paid batch is
  * never abandoned. (Lock retention across `step.sleep` is undocumented but VERIFIED on the dev server
  * 2026-06-10: a second same-user event fired while run A slept in its batch wait produced no second
  * run, no second batch, and no duplicate digest — re-verify against Inngest Cloud when Phase 12's
- * production serve lands.) Returns a small JSON summary; per-user failures surface to Inngest
- * (orchestrator failures additionally land on the run row's `error_sample`).
+ * production serve lands.) Phase 11 extends the held window PAST persist, through the delivery
+ * sleeps (~2–12 min): a same-user re-trigger inside that tail is SKIPPED — the intended dedup, but a
+ * `pnpm digest --user` retry fired inside it will time out waiting for a digest that never starts;
+ * re-trigger after the run finishes in the dashboard. Returns a small JSON summary; per-user
+ * failures surface to Inngest (orchestrator failures additionally land on the run row's
+ * `error_sample`).
  */
 function makePerUser(deps: DigestDeps) {
   return inngest.createFunction(
@@ -318,7 +326,7 @@ function makePerUser(deps: DigestDeps) {
       // 7. Persist (retry-idempotent: delete any prior digest for this (user, run) — the FK cascade
       //    clears its items — then insert fresh). Drop items whose synthesis produced no usable reason
       //    (the gate requires non-empty reasons) and re-rank the survivors 1..N.
-      return step.run("persist", async () => {
+      const persisted = await step.run("persist", async () => {
         await deleteUserDigestForRun(deps.db, userId, digestRunId);
         const kept = reranked.items
           .map((it) => {
@@ -357,6 +365,22 @@ function makePerUser(deps: DigestDeps) {
         );
         return { userId, digestId, itemCount: kept.length };
       });
+
+      // 8. Email delivery (Phase 11): send (Idempotency-Key digest/<digestId>) → bounded delivery
+      //    poll → record. The step block lives in ./delivery so the stub smoke can drive it with a
+      //    fake step. The adapter below passes Inngest's tools through; the cast is sound — every
+      //    step return in that block (SendDigestResult, string, void) is a JSON fixed-point, so
+      //    Inngest's Jsonify memoization is the identity on them.
+      const delivery = await deliverDigestEmail(
+        {
+          run: async (id, fn) => (await step.run(id, fn)) as Awaited<ReturnType<typeof fn>>,
+          sleep: (id, duration) => step.sleep(id, duration),
+        },
+        deps.db,
+        deps.email,
+        persisted.digestId,
+      );
+      return { ...persisted, delivery };
     },
   );
 }

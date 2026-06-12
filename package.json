@@ -33,6 +33,7 @@
     "user:set-prefs": "pnpm --filter @opusfinder/auth user:set-prefs",
     "user:list": "pnpm --filter @opusfinder/auth user:list",
     "digest": "pnpm --filter @opusfinder/inngest digest",
+    "email:preview": "pnpm --filter @opusfinder/email preview",
     "inngest:serve": "pnpm --filter @opusfinder/inngest inngest:serve",
     "inngest:dev": "npx --yes inngest-cli@latest dev -u http://localhost:3000/api/inngest --no-discovery"
   },

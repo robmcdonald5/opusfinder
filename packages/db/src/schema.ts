@@ -388,7 +388,8 @@ export const account = pgTable(
   ],
 );
 
-/** Email-verification / password-reset tokens (Better Auth). Unused until Phase 11 wires email. */
+/** Email-verification / password-reset tokens (Better Auth). Unused until Phase 12 wires verification
+ *  email to the real signup flow (Phase 11's lean send is digest delivery only). */
 export const verification = pgTable(
   "verification",
   {
@@ -411,6 +412,13 @@ export const verification = pgTable(
  *  (no pgEnum — same idempotent-migration rule as {@link LifecycleState}). Pipeline-managed delivery
  *  STATE, distinct from the user-settable `UserPreferences` (@opusfinder/shared). */
 export type DigestBounceStatus = "none" | "soft" | "hard";
+
+/** Pipeline-managed delivery state for ONE digest's send (Phase 11; same no-pgEnum rule as
+ *  {@link DigestBounceStatus}). 'none' = not attempted (or allowlist-skipped); 'sent' = accepted by
+ *  Resend; 'delivered'/'bounced'/'failed' = observed by the post-send poll. Deliberately NO
+ *  'complained' member — a spam complaint records 'delivered' (it WAS delivered) plus user-level
+ *  suppression on {@link userPreferences}. */
+export type DigestDeliveryStatus = "none" | "sent" | "delivered" | "bounced" | "failed";
 
 /**
  * One preferences row per user (1:1, `user_id` UNIQUE — the upsert target), created with conservative
@@ -483,7 +491,7 @@ export const userPreferences = pgTable(
 /**
  * One row per digest pipeline run (Phase 10) — the orchestrator/dispatch record, mirroring
  * {@link sourceRuns}. `trigger` records how the run started (a manual CLI trigger now; the scheduled
- * cadence cron in Phase 11). Because the per-user fan-out is fire-and-forget on Inngest, the orchestrator
+ * cadence cron in Phase 12). Because the per-user fan-out is fire-and-forget on Inngest, the orchestrator
  * finalizes this row to a terminal state right after DISPATCH — it records how many recipients it
  * dispatched (`counts`), not per-user completion; per-user outcomes live on {@link digests}. `started_at`
  * IS the row's creation time (no separate created_at); `error_sample` is a truncated, SECRET-free first
@@ -525,6 +533,16 @@ export const digests = pgTable(
     digestRunId: integer("digest_run_id").notNull(),
     itemCount: integer("item_count").notNull().default(0),
     counts: jsonb("counts").$type<RunCounts>().notNull().default({}),
+    // --- per-send delivery state (Phase 11, migration 0009). Written ONLY by the send/poll steps:
+    // send sets email_id + 'sent' + sent_at; the bounded poll upgrades delivery_status; the failure
+    // catch writes 'failed'. User-level aggregates (last_digest_*, suppression) live on
+    // user_preferences — this is the per-send history the gate's bounce/failure logging needs.
+    emailId: text("email_id"), // Resend email id; NULL until a send is accepted
+    deliveryStatus: text("delivery_status")
+      .$type<DigestDeliveryStatus>()
+      .notNull()
+      .default("none"),
+    sentAt: timestamp("sent_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [

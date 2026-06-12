@@ -64,8 +64,9 @@ export type DigestCadence = "daily" | "weekly" | "monthly";
 
 /**
  * How a digest run was started (Phase 10) — a manual CLI/trigger now vs the scheduled cadence cron that
- * lands in Phase 11. A TS union on a plain text column (no pgEnum, same idempotent-migration rule as
- * {@link DigestCadence}). Lives here so the db schema (`digest_runs.trigger`) and the trigger CLI agree.
+ * lands in Phase 12 (with the deployed runtime). A TS union on a plain text column (no pgEnum, same
+ * idempotent-migration rule as {@link DigestCadence}). Lives here so the db schema
+ * (`digest_runs.trigger`) and the trigger CLI agree.
  */
 export type DigestTrigger = "manual" | "cron";
 
@@ -82,7 +83,8 @@ export type DigestFeedback = "saved" | "applied" | "dismissed" | "not_interested
  * Deliberately NOT the full table row: system-managed delivery STATE (unsubscribe token, bounce
  * status, suppression, last-sent markers) is owned by the pipeline, never set through this contract.
  * The filter fields (`remoteOk`/`locations`/`minSalary`/`recencyDays`/`exclusions`) feed the Phase-10
- * deterministic filter; `digestCadence`/`digestEnabled` gate delivery (Phase 10/11). Node-free shared
+ * deterministic filter; `digestEnabled` gates delivery (Phase 10/11) while `digestCadence` drives the
+ * Phase-12 cadence cron. Node-free shared
  * (no db dep) so the CLI now and a future SvelteKit action later share one shape.
  */
 export interface UserPreferences {
@@ -104,7 +106,8 @@ export interface UserPreferences {
 
 /**
  * A cryptographically-random, URL-safe unsubscribe token for the RFC 8058 one-click List-Unsubscribe
- * header (Phase 11). 32 bytes (256 bits) of Web Crypto randomness, lowercase-hex-encoded — node-free
+ * header (Phase 12 — dormant through Phase 11's lean send, which ships no unsubscribe link/headers).
+ * 32 bytes (256 bits) of Web Crypto randomness, lowercase-hex-encoded — node-free
  * (the `crypto` global is present in both Node and the Worker, same as the `crypto.randomUUID()`
  * already used in the ingest pipeline), so this stays out of `./userid`'s `node:crypto` and the main
  * entry remains Worker-safe. Generated ONCE at user creation and stored on

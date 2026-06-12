@@ -20,14 +20,16 @@ dispatch shell; the real work lives in the already-Worker-forward libraries it c
 Each handler builds `createDb(env.DATABASE_URL)` (the neon-http client — fetch-only, no `process.env`)
 and the library it calls owns its own `source_runs` row (`startRun`/`finishRun`).
 
-> **Worker-isolation invariant (Phase 9.5 + 10).** `@opusfinder/auth` (Better Auth) and the neon-serverless
+> **Worker-isolation invariant (Phase 9.5 + 10 + 11).** `@opusfinder/auth` (Better Auth) and the neon-serverless
 > `createAuthDb` (`@opusfinder/db/auth-client`) crash at import under `nodejs_compat` (#6665) and must
 > **never** enter this bundle — the Worker reads Neon directly as a trusted process and iterates the
 > `user` / `user_preferences` tables as data, never importing the auth lib. `pnpm guard:worker`
 > (`scripts/check-worker-isolation.mjs`) asserts it (source scan + dependency scan) and fails CI on a leak.
 > As of **Phase 10** the deny list also covers the digest pipeline's server-only stack —
 > `@opusfinder/inngest` / `inngest` / `@opusfinder/llm` / `@opusfinder/rerank` / `@anthropic-ai/sdk` —
-> keeping the Inngest-hosted digest generation out of this bundle.
+> keeping the Inngest-hosted digest generation out of this bundle. **Phase 11** adds `@opusfinder/email`
+> + the `resend` SDK (email delivery is a trusted Node/server-runtime concern — like Better Auth and
+> Inngest before it — never in the Worker).
 
 - **Ingestion is chunked** (Option-A chunked cron): each tick processes the next `INGEST_LIMIT` boards
   using an id-keyset cursor stored in the `INGEST_CURSOR` KV namespace; the corpus drains across ticks.

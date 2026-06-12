@@ -177,7 +177,8 @@ this contract.
 `generateUnsubscribeToken()` returns a cryptographically-random, URL-safe token (64-hex / 256-bit) via
 Web Crypto — node-free, so it lives on the barrel, not in `./userid`. Generated once at user creation and
 stored on `user_preferences.unsubscribe_token` for the RFC 8058 one-click List-Unsubscribe header
-(Phase 11); never email-derived. Locked by `pnpm --filter @opusfinder/shared test:token`.
+(Phase 12 — the token stays dormant through Phase 11's lean send, which ships no unsubscribe
+link/headers); never email-derived. Locked by `pnpm --filter @opusfinder/shared test:token`.
 
 ## Digest enums (Phase 10)
 
