@@ -41,11 +41,12 @@ discipline): importing the barrel never requires a key.
 
 ## Env (`./env` subpath — `packages/email/.env`, gitignored)
 
-| Var               | Required              | Notes                                                                                                                                             |
-| ----------------- | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `RESEND_API_KEY`  | yes (at send time)    | starts `re_`; soft prefix check, shape-only echoes                                                                                                |
-| `EMAIL_FROM`      | yes (at send time)    | verified sender, display-name form: `opusfinder digest <digest@send.opusfinder.ai>`                                                               |
-| `EMAIL_ALLOWLIST` | yes — **fail-closed** | comma-separated; missing/empty THROWS, unlisted recipient = recorded skip. The safety net for `--all` sweeps; removed with Phase 12's signup flow |
+| Var                   | Required              | Notes                                                                                                                                             |
+| --------------------- | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `RESEND_API_KEY`      | yes (at send time)    | the SEND key — a sending-only key suffices (least privilege); starts `re_`, soft prefix check, shape-only echoes                                  |
+| `RESEND_API_KEY_FULL` | yes (at poll time)    | the READ key for the delivery poll — must be FULL access (`GET /emails/:id` 401s `restricted_api_key` on a sending-only key); retires with P12 webhooks |
+| `EMAIL_FROM`          | yes (at send time)    | verified sender, display-name form: `opusfinder digest <digest@send.opusfinder.ai>`                                                               |
+| `EMAIL_ALLOWLIST`     | yes — **fail-closed** | comma-separated; missing/empty THROWS, unlisted recipient = recorded skip. The safety net for `--all` sweeps; removed with Phase 12's signup flow |
 
 ## Scripts
 

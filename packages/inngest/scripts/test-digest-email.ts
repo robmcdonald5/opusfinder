@@ -161,6 +161,7 @@ await runScript("test-digest-email", async () => {
   // 4. Allowlist fail-closed (no RESEND_API_KEY anywhere in this test — the skip/refuse paths must
   //    never construct the client).
   delete process.env.RESEND_API_KEY;
+  delete process.env.RESEND_API_KEY_FULL;
   delete process.env.EMAIL_FROM;
   delete process.env.EMAIL_ALLOWLIST;
   const noConfig = await expectReject(sendDigestEmail(FIXTURE), "send with EMAIL_ALLOWLIST unset");

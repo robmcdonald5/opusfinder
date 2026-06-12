@@ -117,8 +117,9 @@ $env:INNGEST_DEV=1; pnpm digest --user <uuid>     # or: pnpm digest --all
 ```
 
 Needs `DATABASE_URL` (packages/db/.env) + `ANTHROPIC_API_KEY` (packages/llm/.env) and a CV-ingested,
-digest-enabled user; the Phase-11 send tail additionally needs `RESEND_API_KEY` / `EMAIL_FROM` /
-`EMAIL_ALLOWLIST` (packages/email/.env) in the SERVE process. The dev server's dashboard
+digest-enabled user; the Phase-11 send tail additionally needs `RESEND_API_KEY` (send) /
+`RESEND_API_KEY_FULL` (the delivery poll's read — full access) / `EMAIL_FROM` / `EMAIL_ALLOWLIST`
+(packages/email/.env) in the SERVE process. The dev server's dashboard
 (http://localhost:8288) shows each step + the durable sleeps. Real, batch-discounted Anthropic spend;
 a run takes a few minutes — and the CLI's verdict prints at persist, ~2–12 min BEFORE the send/poll
 tail finishes (watch the dashboard before checking the delivery columns).

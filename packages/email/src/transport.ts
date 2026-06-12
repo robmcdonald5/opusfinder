@@ -2,22 +2,31 @@ import { Resend } from "resend";
 
 import type { DigestEmailPayload } from "@opusfinder/db/repos";
 
-import { getEmailAllowlist, getEmailFrom, getResendApiKey } from "./env";
+import { getEmailAllowlist, getEmailFrom, getResendApiKey, getResendApiKeyFull } from "./env";
 import { renderDigestEmail } from "./render";
 
 /**
  * The Resend transport — the ONLY file that imports the `resend` SDK, so the end-of-phase
  * "Resend vs alternative" evaluation swaps one file, not a package. Errors echo SHAPE only
  * (error name + status code) — Resend's `error.message` can quote the recipient address.
+ *
+ * TWO clients, least-privilege: sends go through RESEND_API_KEY (may be a sending-only key); the
+ * delivery-poll read goes through RESEND_API_KEY_FULL (`GET /emails/:id` 401s on a restricted key).
  */
 
 // Lazy + memoized — same discipline as packages/llm's provider: importing the barrel must not
-// require a key (the render preview + type-only consumers stay credential-free); the key is read on
-// the first real send/get.
-let client: Resend | undefined;
-function getClient(): Resend {
-  client ??= new Resend(getResendApiKey());
-  return client;
+// require a key (the render preview + type-only consumers stay credential-free); each key is read on
+// its first real use.
+let sendClient: Resend | undefined;
+function getSendClient(): Resend {
+  sendClient ??= new Resend(getResendApiKey());
+  return sendClient;
+}
+
+let readClient: Resend | undefined;
+function getReadClient(): Resend {
+  readClient ??= new Resend(getResendApiKeyFull());
+  return readClient;
 }
 
 /**
@@ -47,7 +56,7 @@ export async function sendDigestEmail(payload: DigestEmailPayload): Promise<Send
   }
 
   const rendered = renderDigestEmail(payload);
-  const { data, error } = await getClient().emails.send(
+  const { data, error } = await getSendClient().emails.send(
     {
       from: getEmailFrom(),
       to: payload.recipient.email,
@@ -76,7 +85,7 @@ export async function sendDigestEmail(payload: DigestEmailPayload): Promise<Send
  * @opusfinder/inngest; this is a pure passthrough.
  */
 export async function getEmailLastEvent(emailId: string): Promise<string> {
-  const { data, error } = await getClient().emails.get(emailId);
+  const { data, error } = await getReadClient().emails.get(emailId);
   if (error) {
     throw new Error(
       `resend get failed: ${error.name} (status ${String(error.statusCode ?? "network")})`,
