@@ -88,7 +88,11 @@ export function mapDeliveryEvent(lastEvent: string): DigestDeliveryOutcome {
  * (`digest/<digestId>`, 24h window) returns the SAME email id without a second send, and every
  * `record*` write is idempotent. The send step is deliberately NOT NonRetriableError-wrapped —
  * transient Resend 429/5xx SHOULD retry; only retry exhaustion reaches the catch, which terminalizes
- * `delivery_status='failed'` and rethrows (the orchestrator's fail-run discipline). Determinism
+ * `delivery_status='failed'` and rethrows (the orchestrator's fail-run discipline). A POLL-step
+ * failure (e.g. a read key that 401s — observed at the live gate) instead fails the RUN while
+ * `delivery_status` honestly stays `'sent'`: the send DID succeed, so writing 'failed' would claim a
+ * non-delivery that never happened — run-failed + status-'sent' is intended state, not a
+ * terminalize gap. Determinism
  * residual, accepted: the payload re-reads `jobs` per attempt, so a re-ingest BETWEEN retries could
  * alter it under the same key (409 → eventual 'failed') — dev ingestion is manual and retries are
  * minutes apart.

@@ -18,6 +18,15 @@ import { digests, userPreferences } from "../src/schema";
  */
 await runScript("show-digest-delivery", async () => {
   const { values } = parseArgs({ options: { digest: { type: "string" } } });
+
+  let digestId: number | undefined;
+  if (values.digest !== undefined) {
+    digestId = Number(values.digest);
+    if (!Number.isInteger(digestId) || digestId <= 0) {
+      throw new Error(`--digest expects a positive integer, got "${values.digest}"`);
+    }
+  }
+
   const db = createDb(getDatabaseUrl());
 
   const header = await db
@@ -31,7 +40,7 @@ await runScript("show-digest-delivery", async () => {
       createdAt: digests.createdAt,
     })
     .from(digests)
-    .where(values.digest !== undefined ? eq(digests.id, Number(values.digest)) : undefined)
+    .where(digestId !== undefined ? eq(digests.id, digestId) : undefined)
     .orderBy(desc(digests.id))
     .limit(1);
   const d = header[0];
@@ -42,8 +51,8 @@ await runScript("show-digest-delivery", async () => {
 
   console.log(
     `digest #${d.id}: items=${d.itemCount} delivery_status=${d.deliveryStatus} ` +
-      `email_id=${d.emailId ?? "(null)"} sent_at=${d.sentAt?.toISOString() ?? "(null)"} ` +
-      `created_at=${d.createdAt.toISOString()}`,
+      `email_id=${d.emailId ?? "(null)"} sent_at=${formatTs(d.sentAt)} ` +
+      `created_at=${formatTs(d.createdAt)}`,
   );
 
   const prefs = await db
@@ -62,8 +71,13 @@ await runScript("show-digest-delivery", async () => {
     return;
   }
   console.log(
-    `user prefs: last_digest_sent_at=${p.lastDigestSentAt?.toISOString() ?? "(null)"} ` +
+    `user prefs: last_digest_sent_at=${formatTs(p.lastDigestSentAt)} ` +
       `last_digest_email_id=${p.lastDigestEmailId ?? "(null)"} ` +
-      `bounce_status=${p.digestBounceStatus} suppressed_at=${p.digestSuppressedAt?.toISOString() ?? "(null)"}`,
+      `bounce_status=${p.digestBounceStatus} suppressed_at=${formatTs(p.digestSuppressedAt)}`,
   );
 });
+
+/** ISO timestamp for a Date column value; "(null)" for a NULL (show-runs.ts's formatTs shape). */
+function formatTs(value: Date | null): string {
+  return value === null ? "(null)" : value.toISOString();
+}
