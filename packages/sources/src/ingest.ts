@@ -15,6 +15,7 @@ import {
   finishRun,
   listCompanies,
   startRun,
+  sweepLifecycle,
   upsertCompany,
   upsertJobs,
 } from "@opusfinder/db/repos";
@@ -110,6 +111,13 @@ export interface IngestionCounts {
   embedded: number; // postings embedded inline (0 when `embed` omitted)
   embedTokens: number; // Voyage tokens used
   embedFailed: number; // boards whose embed step threw (jobs still persisted)
+  // F2 Arm A lifecycle sweep (per board, gated total>0). Count-only/shadow mode keeps `closed` at 0 and
+  // reports `wouldClose` as the standing "would close if enforced" population; F2-enforce flips the write on.
+  revived: number; // reappeared postings: active-streak resets + closed→active revivals
+  swept: number; // absent postings whose streak incremented but is still below the close threshold
+  closed: number; // postings flipped to 'closed' (enforce only; always 0 in shadow)
+  wouldClose: number; // absent postings at/over threshold NOT yet closed (shadow standing population)
+  sweepFailed: number; // boards whose sweep step threw (jobs still persisted; self-heals next cycle)
   lastId: number; // max company id seen — the next tick's `afterId` cursor (0 if none)
 }
 
@@ -152,6 +160,36 @@ export async function runIngestion(db: Db, opts: IngestionOptions = {}): Promise
         counts.jobs += total;
         counts.changed += changed;
         counts.ok += 1;
+
+        // F2 Arm A: soft-close postings absent from THIS board's fetch (streak hysteresis; revive on
+        // reappearance), in count-only/shadow mode (F2-SHADOW — tally `wouldClose`, write no 'closed' yet;
+        // F2-enforce flips it on). GATED on total > 0 (decision 4): an empty/ambiguous fetch (e.g.
+        // SmartRecruiters 200+totalFound:0 → []) must NEVER sweep — `<> ALL('{}')` would false-close the
+        // whole board. PER-COMPANY inside this per-board try — NEVER hoist to a run-level seen-set: the cron
+        // processes only an id-keyset chunk per tick, so a run-level sweep would close every company NOT in
+        // the chunk. `presentExternalIds` is the board's de-duplicated external_ids (== what upsertJobs just
+        // persisted; length === total). Isolated like the embed step: a sweep fault leaves jobs persisted and
+        // self-heals next cycle, so it must not fail the board.
+        if (total > 0) {
+          try {
+            const presentExternalIds = [...new Set(normalized.map((j) => j.externalId))];
+            // F2-ENFORCE FLIP SITE 1 of 3 (also discover.ts Arm B + digest.ts Arm C): pass { enforce: true }
+            // here AND at the other two together. There is no shared switch, so a partial flip silently
+            // leaves an arm in shadow with no compile/test signal — flip all three or none.
+            const sweep = await sweepLifecycle(db, companyId, presentExternalIds);
+            counts.revived += sweep.revived;
+            counts.swept += sweep.swept;
+            counts.closed += sweep.closed;
+            counts.wouldClose += sweep.wouldClose;
+          } catch (err) {
+            counts.sweepFailed += 1;
+            // Shape-only (no job text): the count feeds item-6 health; companyId is a non-secret int.
+            console.warn(
+              `sweepLifecycle failed for company ${companyId}: ` +
+                `${err instanceof Error ? err.message : String(err)}`.slice(0, 200),
+            );
+          }
+        }
 
         let boardEmbedded = 0;
         let boardTokens = 0;
@@ -227,6 +265,11 @@ function emptyCounts(): IngestionCounts {
     embedded: 0,
     embedTokens: 0,
     embedFailed: 0,
+    revived: 0,
+    swept: 0,
+    closed: 0,
+    wouldClose: 0,
+    sweepFailed: 0,
     lastId: 0,
   };
 }
@@ -241,6 +284,9 @@ function logSummary(counts: IngestionCounts, embedEnabled: boolean): void {
         ? `; embedded ${counts.embedded} (${counts.embedTokens} tok)` +
           (counts.embedFailed > 0 ? `, ${counts.embedFailed} embed-failed` : "")
         : "") +
+      `; lifecycle: ${counts.revived} revived, ${counts.swept} swept, ${counts.wouldClose} would-close, ` +
+      `${counts.closed} closed` +
+      (counts.sweepFailed > 0 ? `, ${counts.sweepFailed} sweep-failed` : "") +
       ".",
   );
 }
