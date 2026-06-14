@@ -17,6 +17,7 @@
     "typecheck:scrapers": "pnpm --filter @opusfinder/scrapers typecheck",
     "guard:worker": "node scripts/check-worker-isolation.mjs",
     "db:migrate": "pnpm --filter @opusfinder/db migrate",
+    "db:backfill-signatures": "pnpm --filter @opusfinder/db backfill-signatures",
     "db:ping": "pnpm --filter @opusfinder/db ping",
     "runs": "pnpm --filter @opusfinder/db runs",
     "ingest": "pnpm --filter @opusfinder/sources ingest",

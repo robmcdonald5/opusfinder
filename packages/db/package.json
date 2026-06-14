@@ -13,6 +13,8 @@
   "types": "./src/client.ts",
   "scripts": {
     "migrate": "tsx scripts/migrate.ts",
+    "backfill-signatures": "tsx scripts/backfill-content-signature.ts",
+    "test:signature": "tsx scripts/test-content-signature.ts",
     "generate": "drizzle-kit generate",
     "studio": "drizzle-kit studio",
     "ping": "tsx scripts/ping.ts",

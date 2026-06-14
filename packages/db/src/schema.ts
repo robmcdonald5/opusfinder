@@ -137,12 +137,31 @@ export const jobs = pgTable(
     // precedent column is `integer`; `smallint` is deliberate here — a streak that stops at the close
     // threshold never needs integer range.
     consecutiveAbsences: smallint("consecutive_absences").notNull().default(0),
+    // md5 hex over an aggressively-NORMALIZED title + description_text (lower + whitespace-collapse +
+    // btrim), written SQL-side in upsertJobs via signatureSql (repos/sql.ts) — the de-dup spine
+    // (Phase F1). NON-unique BY DESIGN: cross-posts and reposts are MEANT to share a signature, so it
+    // is the grouping key two read paths collide on (retrieval display-collapse + the shown-history
+    // anti-join), NEVER a UNIQUE constraint (the untouched jobs_source_external_id_uq stays the upsert
+    // conflict target). NULL until written/backfilled — the read paths treat NULL as "its own group",
+    // so un-backfilled rows are inert, not wrong. DISTINCT from `embedding`/jobEmbeddingText: that
+    // folds these same two fields into a SEMANTIC vector; this folds them into an EXACT-MATCH key —
+    // never merge the two. Item F4 (job-side enrichment) later appends structured fields to the
+    // signature INPUT with no new migration (already nullable text). NOT in upsertJobs setWhere — it
+    // is a pure function of the two fields setWhere already tests (see jobs.ts).
+    contentSignature: text("content_signature"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
     uniqueIndex("jobs_source_external_id_uq").on(t.source, t.externalId),
     index("jobs_company_id_idx").on(t.companyId),
+    // Plain btree over the de-dup signature (Phase F1). Backs the shown-history anti-join's
+    // `content_signature <> ALL(...)` filter and the DISTINCT-signature lookup. Bare column for v1;
+    // widen to a composite (content_signature, lifecycle_state, id) ONLY if an EXPLAIN on a real
+    // grouping query warrants it (the small table seq-scans regardless today). drizzle-kit emits this
+    // bare; the 0011 migration hand-adds IF NOT EXISTS (neon-http isn't transactional) — same
+    // discipline as the HNSW/FK guards below.
+    index("jobs_content_signature_idx").on(t.contentSignature),
     // HNSW approximate-NN index over the Voyage embeddings (Phase 4). vector_cosine_ops
     // because retrieval uses the `<=>` cosine operator. NOTE: drizzle-kit emits this as
     // a bare `CREATE INDEX` (no IF NOT EXISTS); the 0002 migration is hand-edited to add
