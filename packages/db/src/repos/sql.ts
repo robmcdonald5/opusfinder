@@ -50,6 +50,16 @@ export function vectorLiteral(vec: number[]): string {
 export const VECTOR_CAST = sql.raw(`::vector(${EMBEDDING_DIMENSIONS})`);
 
 /**
+ * Render a JS number[] as a Postgres array literal for a bound `::int[]` param — one bound text param cast
+ * to int[], which sidesteps the 65535 bind-param ceiling on a large `= ANY` / `<> ALL` list. Shared by the
+ * retrieval anti-join and the F2 bulk-by-id close writers so the idiom (and its defensive `Math.trunc`,
+ * which neutralizes a stray fractional id) lives in ONE place. Callers pass real integer row ids.
+ */
+export function intArrayLiteral(ids: number[]): string {
+  return `{${ids.map((id) => Math.trunc(id)).join(",")}}`;
+}
+
+/**
  * Extract the rows array from a neon-http `db.execute` result without depending on its exact shape
  * (drizzle has returned either the raw rows array or a `{ rows }` object across versions). Shared by
  * the raw-SQL query paths that can't use the typed query builder (the `<=>` cosine queries in

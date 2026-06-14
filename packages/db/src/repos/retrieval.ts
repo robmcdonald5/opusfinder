@@ -23,7 +23,7 @@ import { sql } from "drizzle-orm";
 
 import type { Db } from "../client";
 import { jobs } from "../schema";
-import { resultRows, VECTOR_CAST, vectorLiteral } from "./sql";
+import { intArrayLiteral, resultRows, VECTOR_CAST, vectorLiteral } from "./sql";
 
 export interface RetrieveOpts {
   /** Final candidate count returned (default 50). */
@@ -86,7 +86,7 @@ export async function retrieveCandidatesForProfile(
   ];
   if (excludeJobIds.length > 0) {
     // One bound text param cast to int[] — avoids the 65535 bind-param ceiling for a large anti-join.
-    const arrayLiteral = `{${excludeJobIds.join(",")}}`;
+    const arrayLiteral = intArrayLiteral(excludeJobIds);
     conditions.push(sql`id <> ALL(${arrayLiteral}::int[])`);
   }
   const whereClause = sql.join(conditions, sql` AND `);
