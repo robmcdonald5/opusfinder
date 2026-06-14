@@ -1,5 +1,6 @@
 import type { Db } from "@opusfinder/db";
 import {
+  closeJobsForCompanies,
   deactivateStale,
   finishRun,
   listCompaniesForReprobe,
@@ -71,6 +72,9 @@ export interface DiscoveryCounts {
   reprobeInconclusive: number;
   // Staleness sweep.
   deactivated: number;
+  // F2 Arm B board-death close (count-only/shadow → wouldCloseOnDeactivation; F2-enforce writes closed).
+  jobsClosedOnDeactivation: number; // active jobs of deactivated boards flipped to 'closed' (enforce; 0 in shadow)
+  wouldCloseOnDeactivation: number; // active jobs of deactivated boards that WOULD close (shadow; 0 in enforce)
 }
 
 /**
@@ -126,7 +130,16 @@ export async function runDiscovery(db: Db, opts: DiscoveryOptions = {}): Promise
         opts.probe,
         upsertedIds,
       );
-      counts.deactivated = await deactivateStale(db, olderThanDays, { source: opts.source });
+      const deactivatedIds = await deactivateStale(db, olderThanDays, { source: opts.source });
+      counts.deactivated = deactivatedIds.length;
+      // F2 Arm B: soft-close every still-active job of a just-deactivated (board-death) company — the
+      // orphan Arm A is blind to (activeOnly:true never re-fetches a dead board). Count-only first
+      // (F2-SHADOW: tally wouldCloseOnDeactivation, write no 'closed' yet); F2-enforce flips it on.
+      // F2-ENFORCE FLIP SITE 2 of 3 (also ingest.ts Arm A + digest.ts Arm C): pass { enforce: true } here AND
+      // at the other two together — no shared switch, so a partial flip silently leaves an arm in shadow.
+      const boardClose = await closeJobsForCompanies(db, deactivatedIds);
+      counts.jobsClosedOnDeactivation = boardClose.closed;
+      counts.wouldCloseOnDeactivation = boardClose.wouldClose;
     }
 
     if (runId !== null) await finishRun(db, runId, { status: "ok", counts });
@@ -256,6 +269,8 @@ function emptyCounts(): DiscoveryCounts {
     markedFailed: 0,
     reprobeInconclusive: 0,
     deactivated: 0,
+    jobsClosedOnDeactivation: 0,
+    wouldCloseOnDeactivation: 0,
   };
 }
 
@@ -269,6 +284,7 @@ function logSummary(counts: DiscoveryCounts, dryRun: boolean): void {
       `Probed ${counts.probed}: live ${counts.live}, empty ${counts.liveEmpty}, absent ${counts.absent}, ` +
       `indet ${counts.indeterminate}, transient ${counts.transientFailed}; upserted ${counts.upserted}, ` +
       `reprobed ${counts.reprobed}, refreshed ${counts.refreshedLive}, marked-failed ${counts.markedFailed}, ` +
-      `inconclusive ${counts.reprobeInconclusive}, deactivated ${counts.deactivated}.`,
+      `inconclusive ${counts.reprobeInconclusive}, deactivated ${counts.deactivated} ` +
+      `(board-close: ${counts.jobsClosedOnDeactivation} closed, ${counts.wouldCloseOnDeactivation} would-close).`,
   );
 }
