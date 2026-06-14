@@ -20,6 +20,7 @@ import { NonRetriableError } from "inngest";
 
 import { deliverDigestEmail, type EmailSeam } from "./delivery";
 import { inngest } from "./inngest";
+import { probeDigestLiveness, type LivenessProbe } from "./probe";
 
 // --- Tunables (per-digest knobs) ---------------------------------------------------------------
 const RETRIEVE_LIMIT = 50; // vector candidates pulled per user
@@ -69,6 +70,9 @@ export interface DigestDeps {
     collect: (batchId: string) => Promise<Map<string, BatchResult>>;
   };
   email: EmailSeam;
+  /** F2 Arm C — the pre-send apply-URL liveness probe (one URL → verdict); the per-digest fan-out lives
+   *  in `probeDigestLiveness`. Injected so the stub smoke drives it with a fake. */
+  probe: LivenessProbe;
 }
 
 interface FilterPrefs {
@@ -365,6 +369,28 @@ function makePerUser(deps: DigestDeps) {
         );
         return { userId, digestId, itemCount: kept.length };
       });
+
+      // 7.5 F2 Arm C: liveness-probe the persisted items' apply URLs before send. DROP dead links (404/410)
+      //     so the user never clicks Apply into a 404; soft-close on explicit 410 (count-only/shadow first —
+      //     F2-enforce flips it on); KEEP ambiguous (2xx/3xx/5xx/timeout — never lose a possibly-live match
+      //     over a blip). Re-reads applyUrl by digest id (not via step state). If EVERY item is dead, drop
+      //     the whole digest and skip the send — the graceful no-send success, not an empty email.
+      // F2-ENFORCE FLIP SITE 3 of 3 (also ingest.ts Arm A + discover.ts Arm B): add { enforce: true } as the
+      // 5th arg here AND flip the other two together — no shared switch, so a partial flip silently leaves an
+      // arm in shadow. (Arm C's DROP is already live in shadow; only its 410-CLOSE is gated by this flag.)
+      const liveness = await probeDigestLiveness(
+        { run: async (id, fn) => (await step.run(id, fn)) as Awaited<ReturnType<typeof fn>> },
+        deps.db,
+        deps.probe,
+        persisted.digestId,
+      );
+      if (liveness.survivors === 0) {
+        // Every apply URL was dead (404/410). The probe step already emptied digest_items, set item_count=0,
+        // and folded the probe counts into digests.counts — so the 0-item digest row stays as audit (and keeps
+        // the all-dead case visible to the shadow analysis); we just send no email. This is the graceful
+        // no-send success, distinct from the persist step's throw for an empty SYNTHESIS.
+        return { userId, digestId: persisted.digestId, itemCount: 0, skipped: "all-items-dead" as const };
+      }
 
       // 8. Email delivery (Phase 11): send (Idempotency-Key digest/<digestId>) → bounded delivery
       //    poll → record. The step block lives in ./delivery so the stub smoke can drive it with a

@@ -13,6 +13,7 @@ import { rerankCandidates, type RerankCall, type RerankCandidate } from "@opusfi
 import type { StructuredProfile } from "@opusfinder/shared";
 
 import type { DigestDeps, RerankOutcome } from "./digest";
+import { probeLiveness } from "./probe";
 
 /**
  * Build the production digest deps: a neon-http db + the real synchronous Haiku rerank (the shared
@@ -37,6 +38,7 @@ export function buildDigestDeps(): DigestDeps {
       send: (payload) => sendDigestEmail(payload),
       lastEvent: (emailId) => getEmailLastEvent(emailId),
     },
+    probe: probeLiveness,
   };
 }
 
