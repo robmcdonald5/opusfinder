@@ -91,7 +91,7 @@ export async function sweepLifecycle(
   // closes because the close branch reads the un-capped `consecutive_absences + 1` and the WHERE has no
   // `< threshold` guard, so a capped row still matches and flips to 'closed' on the first enforced sweep.
   const closeBranch = enforce
-    ? sql`WHEN consecutive_absences + 1 >= ${threshold} THEN 'closed' `
+    ? sql`WHEN jobs.consecutive_absences + 1 >= ${threshold} THEN 'closed' `
     : sql``;
 
   const result: unknown = await db.execute(sql`
@@ -102,23 +102,24 @@ export async function sweepLifecycle(
     swept AS (
       UPDATE ${jobs} SET
         consecutive_absences = CASE
-          WHEN external_id = ANY((SELECT ids FROM present_set)) THEN 0
-          ELSE LEAST(consecutive_absences + 1, ${threshold})
+          WHEN jobs.external_id = ANY(present_set.ids) THEN 0
+          ELSE LEAST(jobs.consecutive_absences + 1, ${threshold})
         END,
         lifecycle_state = CASE
-          WHEN external_id = ANY((SELECT ids FROM present_set)) THEN 'active'
-          ${closeBranch}ELSE lifecycle_state
+          WHEN jobs.external_id = ANY(present_set.ids) THEN 'active'
+          ${closeBranch}ELSE jobs.lifecycle_state
         END,
         updated_at = now()
-      WHERE company_id = ${companyId} AND (
-        (external_id = ANY((SELECT ids FROM present_set))
-          AND (lifecycle_state <> 'active' OR consecutive_absences <> 0))
-        OR (external_id <> ALL((SELECT ids FROM present_set)) AND lifecycle_state = 'active')
+      FROM present_set
+      WHERE jobs.company_id = ${companyId} AND (
+        (jobs.external_id = ANY(present_set.ids)
+          AND (jobs.lifecycle_state <> 'active' OR jobs.consecutive_absences <> 0))
+        OR (jobs.external_id <> ALL(present_set.ids) AND jobs.lifecycle_state = 'active')
       )
       RETURNING
-        (external_id = ANY((SELECT ids FROM present_set))) AS present,
-        lifecycle_state AS new_state,
-        consecutive_absences AS new_streak
+        (jobs.external_id = ANY(present_set.ids)) AS present,
+        jobs.lifecycle_state AS new_state,
+        jobs.consecutive_absences AS new_streak
     )
     SELECT
       count(*) FILTER (WHERE present)                                            AS revived,
