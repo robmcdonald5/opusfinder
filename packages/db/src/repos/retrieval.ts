@@ -21,6 +21,8 @@
  */
 import { sql } from "drizzle-orm";
 
+import type { LocationMode } from "@opusfinder/shared";
+
 import type { Db } from "../client";
 import { jobs } from "../schema";
 import { intArrayLiteral, resultRows, textArrayLiteral, VECTOR_CAST, vectorLiteral } from "./sql";
@@ -32,8 +34,10 @@ export interface RetrieveOpts {
    *  (default 3). Guards against those filters — and pgvector's filtered-ANN post-filtering —
    *  under-filling the result. */
   overFetch?: number;
-  /** From user_preferences: accept remote jobs (default true). When false, remote jobs are excluded. */
-  remoteOk?: boolean;
+  /** From user_preferences: Indeed/LinkedIn-style location mode (default "any"). `remote_only` keeps only
+   *  remote jobs; `onsite_only` keeps only on-site jobs (subject to `locations`); `any` keeps both. Applied
+   *  app-side in geoMatches. SUBSUMES the former `remoteOk` boolean. */
+  locationMode?: LocationMode;
   /** From user_preferences: preferred location strings; empty = no location constraint. */
   locations?: string[];
   /** From user_preferences: max posting age in days, measured on COALESCE(posted_at, created_at) (default 14). */
@@ -76,7 +80,7 @@ export async function retrieveCandidatesForProfile(
   const limit = opts.limit ?? 50;
   // Floor at 1 so an explicit overFetch=0/negative can't produce LIMIT 0 (silently returning []).
   const overFetch = Math.max(1, opts.overFetch ?? 3);
-  const remoteOk = opts.remoteOk ?? true;
+  const locationMode = opts.locationMode ?? "any";
   const locations = opts.locations ?? [];
   const recencyDays = opts.recencyDays ?? 14;
   const exclusions = compileExclusions(opts.exclusions ?? []);
@@ -136,7 +140,7 @@ export async function retrieveCandidatesForProfile(
   // `limit` (see the file header for why app-side). Running the collapse on the over-fetch buffer means
   // a dropped cross-post frees a slot the trim back-fills from the remaining buffer.
   const displayable = candidates.filter(
-    (c) => geoMatches(c, remoteOk, locations) && !isExcluded(c, exclusions),
+    (c) => geoMatches(c, locationMode, locations) && !isExcluded(c, exclusions),
   );
   return collapseBySignature(displayable).slice(0, limit);
 }
@@ -186,14 +190,24 @@ function isExcluded(job: JobCandidate, exclusions: RegExp[]): boolean {
 }
 
 /**
- * v1 geo match: a remote job passes iff the user accepts remote; an on-site job passes iff the user set
- * no location constraint, OR the job has no location data (unknown ≠ mismatch — ATS feeds often leave
- * locations empty, putting it in the description; dropping these would silently tank recall, so include
- * and let rerank/synthesis judge), OR one of the user's locations overlaps a job location. A
- * heuristic — the exact rule firms up with the Phase-12 onboarding form.
+ * Indeed/LinkedIn-style geo match (Phase F3), branching on the user's {@link LocationMode}:
+ * - a REMOTE job passes unless the mode is `onsite_only` (so `any`/`remote_only` keep it);
+ * - an ON-SITE job is dropped under `remote_only`; otherwise (`any`/`onsite_only`) it passes iff the user
+ *   set no location constraint, OR the job has no location data (unknown ≠ mismatch — ATS feeds often
+ *   leave locations empty, putting it in the description; dropping these would silently tank recall, so
+ *   include and let rerank/synthesis judge), OR one of the user's locations overlaps a job location.
+ * SUBSUMES the former boolean: `remote_ok=true`→`any`, `false`→`onsite_only`. The exact on-site rule still
+ * firms up with the Phase-12 onboarding form. `onsite_only` is the only mode that drops jobs the prior
+ * filter kept (all remote) — it inherits the unknown-location-passes rule above. Generic + exported so the
+ * smoke can drive the truth table with minimal `{remote, locations}` objects.
  */
-function geoMatches(job: JobCandidate, remoteOk: boolean, locations: string[]): boolean {
-  if (job.remote) return remoteOk;
+export function geoMatches<T extends { remote: boolean; locations: string[] }>(
+  job: T,
+  mode: LocationMode,
+  locations: string[],
+): boolean {
+  if (job.remote) return mode !== "onsite_only";
+  if (mode === "remote_only") return false; // on-site job, remote-only user
   const wanted = locations.map((l) => l.toLowerCase().trim()).filter((l) => l.length > 0);
   if (wanted.length === 0) return true;
   const have = job.locations.map((l) => l.toLowerCase().trim());

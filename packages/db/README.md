@@ -136,6 +136,17 @@ Run from the repo root via the workspace filter so the cwd is `packages/db`:
   `pnpm --filter @opusfinder/db test:signature`. **NOT YET LIVE** — migration 0011 is unapplied and rows are
   unsigned, so the read paths are INERT by design until the owner-gated F1d backfill; the cosine near-dup layer
   (F1e/F1f) is DEFERRED.
+- **Schema (Phase F3).** `drizzle/0012_dazzling_layla_miller.sql` (additive, hand-guarded `IF NOT EXISTS` — same
+  neon-http discipline as 0002/0010/0011) adds five `user_preferences` columns — `max_salary`, `yoe_min`,
+  `yoe_max`, `dealbreakers`, `location_mode` — and backfills `location_mode` from the now soft-deprecated (kept
+  but unread) `remote_ok` (`true`→`'any'`, `false`→`'onsite_only'`). `location_mode` is a TS union
+  (`LocationMode` = `'any' | 'remote_only' | 'onsite_only'`, same idempotent-migration rule as `lifecycle_state`);
+  `repos/preferences.ts` `toRow` maps the new fields. Retrieval's `geoMatches` was REWRITTEN to branch on
+  `LocationMode` (`remote_only` excludes on-site; `onsite_only` excludes remote — subsumes the old `remoteOk`
+  boolean), and `RetrieveOpts.remoteOk` → `locationMode`. LOCATION is the only working hard filter in F3; salary +
+  YoE are stored + soft-prompt-only (hard filters land in F4). No-creds smokes:
+  `pnpm --filter @opusfinder/db test:prefs` (preferences round-trip) + `pnpm --filter @opusfinder/db test:location`
+  (`geoMatches` LocationMode branches). **APPLIED to prod** (unlike F1's unapplied 0011).
 - **neon-http migrations are NOT transactional.** The neon-http migrator applies
   a migration's statements without a wrapping transaction, so a multi-statement
   migration that fails partway leaves a partial apply with no rollback (and a
