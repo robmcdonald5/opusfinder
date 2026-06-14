@@ -47,7 +47,9 @@ Phase 11 on the local dev runtime — locked at Phase-11 planning, 2026-06-11).
     release its slot during the batch-wait sleeps and let runs overlap): load + **eligibility gate**
     (skip if no profile/embedding, unverified email, `!digestEnabled`, or suppressed — so even a manual
     single-user trigger respects an opt-out and matches the `--all` sweep's gate) → retrieve (geo +
-    exclusion keywords applied inside retrieval's post-filter, before its over-fetch trim) → sync
+    exclusion keywords applied inside retrieval's post-filter, plus the Phase-F1 repost anti-join —
+    `excludeSignatures` from `alreadyShownSignatures`, threaded alongside the id anti-join — and a
+    same-signature display-collapse, all before its over-fetch trim) → sync
     rerank (top-K, with the prompt-cache counters for the gate) → submit the synthesis batch
     (`custom_id = d{runId}-{jobId}`; the batch id is logged before the step memoizes, so a crash in the
     create→memoize window leaves a traceable orphan) → durable `step.sleep` + a **bounded poll loop**

@@ -17,7 +17,9 @@ the Phase-9 profiles repo — `insertCvFile` / `patchCvFileExtracted` / `markCvF
 `deleteUserDigestForRun` / `getLatestDigestForUser` (plus `getProfileForDigest` on the profiles repo); and the Phase-F2 lifecycle repo —
 `sweepLifecycle` / `closeJobsForCompanies` / `closeJobsByIds` / `ABSENCE_CLOSE_THRESHOLD` (the first writers of
 `lifecycle_state='closed'`), plus `getDigestApplyTargets` / `dropDigestItemsAndRecount` on the digests repo
-(Arm C apply-URL read + dead-link drop))
+(Arm C apply-URL read + dead-link drop); and the Phase-F1 de-dup spine — `alreadyShownSignatures` on the digests
+repo (the signature sibling of `alreadyShownJobIds`) + `collapseBySignature` on the retrieval repo (the exported
+same-signature display-collapse), with `retrieveCandidatesForProfile` gaining an `excludeSignatures` clause)
 and `@opusfinder/db/env` (`getDatabaseUrl`).
 
 **Phase 9.5** added a second client behind `@opusfinder/db/auth-client`: `createAuthDb(connectionString)`,
@@ -118,6 +120,22 @@ Run from the repo root via the workspace filter so the cwd is `packages/db`:
   `digest_items.job_id` is `ON DELETE NO ACTION`). Smoke: `pnpm --filter @opusfinder/db test:lifecycle` (no
   creds). **Shipped SHADOW / count-only** — the `'closed'` flip is currently suppressed and tallied as
   `wouldClose` pending the F2-enforce sub-phase.
+- **Schema (Phase F1).** `drizzle/0011_cool_silvermane.sql` (additive, hand-guarded `IF NOT EXISTS` — same
+  neon-http discipline as 0002/0010) adds nullable, NON-unique `jobs.content_signature` (md5 over a normalized
+  `title + chr(10) + description_text`: `lower` → `[[:space:]]+`-collapse → `btrim`) + the
+  `jobs_content_signature_idx` btree — the read-time de-dup spine. The ONE normalization lives in `repos/sql.ts`
+  `signatureSql` (with a smoke-only JS mirror `normalizeSignatureText` + a `textArrayLiteral` array-literal helper);
+  it is written SQL-side in `upsertJobs` at all three call sites (INSERT VALUES, ON CONFLICT SET, the backfill) —
+  unconditional, and DELIBERATELY NOT in `setWhere` (it is a pure function of title+description, which `setWhere`
+  already tests). Two read paths collide on it: `collapseBySignature` (a retrieval display-collapse — a cross-post
+  takes ONE digest slot) and `alreadyShownSignatures` → retrieval's additive `excludeSignatures` repost anti-join
+  (`content_signature IS NULL OR <> ALL(...)`); NULL signatures are each their own group, never collapsed or
+  excluded, so un-backfilled rows are inert, not wrong. `alreadyShownSignatures` carries NO `lifecycle_state`
+  filter (a soft-closed predecessor's signature still suppresses its repost). Re-runnable backfill:
+  `pnpm db:backfill-signatures` (`scripts/backfill-content-signature.ts`); no-creds smoke
+  `pnpm --filter @opusfinder/db test:signature`. **NOT YET LIVE** — migration 0011 is unapplied and rows are
+  unsigned, so the read paths are INERT by design until the owner-gated F1d backfill; the cosine near-dup layer
+  (F1e/F1f) is DEFERRED.
 - **neon-http migrations are NOT transactional.** The neon-http migrator applies
   a migration's statements without a wrapping transaction, so a multi-statement
   migration that fails partway leaves a partial apply with no rollback (and a
