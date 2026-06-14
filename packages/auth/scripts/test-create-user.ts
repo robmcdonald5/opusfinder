@@ -39,7 +39,7 @@ async function main(): Promise<void> {
       password: generateUnsubscribeToken(),
       name: "Smoke",
       markVerified: true,
-      prefs: { remoteOk: false, recencyDays: 7, digestCadence: "daily" },
+      prefs: { locationMode: "onsite_only", recencyDays: 7, digestCadence: "daily" },
     });
     check("returns a userId", typeof userId === "string" && userId.length > 0, String(userId));
 
@@ -57,7 +57,7 @@ async function main(): Promise<void> {
     )[0];
     check("preferences row created", !!prefs);
     check("unsubscribe_token (64-hex) set", /^[0-9a-f]{64}$/.test(prefs?.unsubscribeToken ?? ""));
-    check("override applied: remoteOk=false", prefs?.remoteOk === false);
+    check("override applied: locationMode=onsite_only", prefs?.locationMode === "onsite_only");
     check("override applied: recencyDays=7", prefs?.recencyDays === 7);
     check("override applied: cadence=daily", prefs?.digestCadence === "daily");
     check("default kept: digestEnabled=true", prefs?.digestEnabled === true);

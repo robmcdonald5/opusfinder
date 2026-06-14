@@ -92,11 +92,15 @@ export async function updatePreferences(
 function toRow(prefs?: Partial<UserPreferences>): Partial<typeof userPreferences.$inferInsert> {
   const row: Partial<typeof userPreferences.$inferInsert> = {};
   if (!prefs) return row;
-  if (prefs.remoteOk !== undefined) row.remoteOk = prefs.remoteOk;
+  if (prefs.locationMode !== undefined) row.locationMode = prefs.locationMode;
   if (prefs.locations !== undefined) row.locations = prefs.locations;
   if (prefs.minSalary !== undefined) row.minSalary = prefs.minSalary;
+  if (prefs.maxSalary !== undefined) row.maxSalary = prefs.maxSalary;
+  if (prefs.yoeMin !== undefined) row.yoeMin = prefs.yoeMin;
+  if (prefs.yoeMax !== undefined) row.yoeMax = prefs.yoeMax;
   if (prefs.recencyDays !== undefined) row.recencyDays = prefs.recencyDays;
   if (prefs.exclusions !== undefined) row.exclusions = prefs.exclusions;
+  if (prefs.dealbreakers !== undefined) row.dealbreakers = prefs.dealbreakers;
   if (prefs.digestCadence !== undefined) row.digestCadence = prefs.digestCadence;
   if (prefs.digestEnabled !== undefined) row.digestEnabled = prefs.digestEnabled;
   return row;

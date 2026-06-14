@@ -34,6 +34,7 @@ import type {
   DigestFeedback,
   DigestTrigger,
   JobId,
+  LocationMode,
   SourceName,
   StructuredProfile,
   UserId,
@@ -464,15 +465,40 @@ export const userPreferences = pgTable(
     id: serial("id").primaryKey(),
     userId: uuid("user_id").$type<UserId>().notNull(),
     // --- user-settable filter prefs (Phase 10 deterministic filter) ---
+    // @deprecated Phase F3 subsumes this into `locationMode`; kept (soft-deprecated, unread) during the
+    // F3 build so each sub-block typechecks green. A follow-up migration may DROP the column once verified.
     remoteOk: boolean("remote_ok").notNull().default(true),
     locations: text("locations")
       .array()
       .notNull()
       .default(sql`'{}'::text[]`),
     minSalary: integer("min_salary"),
+    // Salary ceiling (Phase F3). Nullable-no-default (null = "no cap"), the exact posture of min_salary
+    // above — a 0 default would read as a real "stated $0", not "absent". Stored + soft-prompt in F3; a
+    // hard retrieval filter in Phase F4 (once jobs gains salary columns).
+    maxSalary: integer("max_salary"),
     recencyDays: smallint("recency_days").notNull().default(14),
     // The one sparse/free-form field — app-side post-query rules (shape firms up in Phase 10).
     exclusions: jsonb("exclusions").$type<string[]>().notNull().default([]),
+    // --- F3 prefs (Phase F3) ---
+    // Target years-of-experience band. NULLABLE-no-default (null = "no bound"; 0 is a real value, never a
+    // default). Soft prompt signal ONLY — no job-side YoE column exists on any roadmap, so this never
+    // becomes a hard filter. smallint mirrors recency_days/consecutive_absences (ample for years).
+    yoeMin: smallint("yoe_min"),
+    yoeMax: smallint("yoe_max"),
+    // Hard "never show" keywords (Phase F3): merged into the `exclusions` post-filter at toFilterPrefs (a
+    // real drop via the whole-word compileExclusions matcher) AND rendered as a prompt "avoid" line.
+    // Atomic-backfill template, mirrors `locations`/`exclusions` (which it also routes through). Free text
+    // is CLI-set in F3 (low-risk); a Phase-12 form would sanitize it uniformly with `exclusions`.
+    dealbreakers: text("dealbreakers")
+      .array()
+      .notNull()
+      .default(sql`'{}'::text[]`),
+    // Indeed/LinkedIn-style location filter (Phase F3) — a TS string-union on plain text (no pgEnum).
+    // SUBSUMES the soft-deprecated `remote_ok` boolean above; geoMatches branches on it. Default 'any' =
+    // byte-identical to remote_ok=true; migration 0012 backfills existing rows from remote_ok
+    // (true→'any', false→'onsite_only') so no current user's recall shifts.
+    locationMode: text("location_mode").$type<LocationMode>().notNull().default("any"),
     // --- delivery prefs + state (Phase 10/11) ---
     digestCadence: text("digest_cadence").$type<DigestCadence>().notNull().default("weekly"),
     digestEnabled: boolean("digest_enabled").notNull().default(true),

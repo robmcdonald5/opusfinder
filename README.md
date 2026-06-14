@@ -79,7 +79,7 @@ pnpm db:ping      # round-trips SELECT 1 against Neon
 | `pnpm eval:compare`                       | Voyage vs OpenAI embedding retrieval, side-by-side                                                                                                                             |
 | `pnpm ingest-cv <cv.pdf> <email>`         | Ingest a CV PDF → R2 + `user_cv_files` + `user_profiles` (transcribe → structure → embed)                                                                                      |
 | `pnpm profiles:restructure <email>`       | Re-structure a profile from the cached R2 transcript (skips transcribe)                                                                                                        |
-| `pnpm user:create --email … --password …` | Create a verified user + default prefs (`[--name] [--remote] [--locations] [--min-salary] [--recency-days] [--cadence] [--enabled]`)                                           |
+| `pnpm user:create --email … --password …` | Create a verified user + default prefs (`[--name] [--location-mode] [--locations] [--min-salary] [--max-salary] [--min-yoe] [--max-yoe] [--dealbreakers] [--exclusions] [--recency-days] [--cadence] [--enabled]`) |
 | `pnpm user:set-prefs --email … [flags]`   | Patch a user's preferences (same pref flags)                                                                                                                                   |
 | `pnpm user:list`                          | List users — masked email, verified, cadence, enabled, has-profile, id                                                                                                         |
 | `pnpm digest`                             | Trigger a per-user digest run + poll for the result (`--user <uuid>` or `--all`; `[--timeout-ms] [--poll-ms]`)                                                                 |
@@ -104,6 +104,15 @@ but not in a fresh clone:
 - `research/sources/README.md` — source-discovery catalog
 
 ## Status
+
+Phase F3 added **user preferences** as a hard-filter + soft-prompt layer. A new `location_mode`
+(`any` / `remote_only` / `onsite_only`) hard filter subsumes the old `remote_ok` boolean in retrieval;
+min/max salary and a YoE band (`yoe_min` / `yoe_max`) are stored and fed to rerank/synthesis as a
+**soft prompt signal only** (hard salary/YoE filters deferred to F4), and `dealbreakers` merge into the
+exclusions list. A digest **quality floor** (`MIN_SCORE=0.5`) drops sub-floor reranked items before the
+top-K cut and skips synthesis/send entirely when none clear. `target_level` was dropped — the YoE band
+is the sole declared-level signal. Migration 0012 applied; backend-only; live self-send passed. Uncommitted
+on branch `feat/user-preferences`.
 
 Phase 11 adds **email delivery** on **Resend**: the per-user digest function now ends with a send →
 bounded-delivery-poll → record tail (`packages/inngest/src/delivery.ts`). A new **`@opusfinder/email`**
