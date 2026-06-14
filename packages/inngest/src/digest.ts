@@ -1,6 +1,7 @@
 import type { Db } from "@opusfinder/db";
 import {
   alreadyShownJobIds,
+  alreadyShownSignatures,
   deleteUserDigestForRun,
   finishDigestRun,
   getPreferences,
@@ -196,7 +197,7 @@ function makePerUser(deps: DigestDeps) {
       const userId = event.data.userId as UserId;
       const digestRunId = event.data.digestRunId;
 
-      // 1. Load + gate eligibility (three independent userId-keyed reads → one Promise.all round).
+      // 1. Load + gate eligibility (four independent userId-keyed reads → one Promise.all round).
       //    The gate runs HERE so BOTH the --all sweep (already filtered by listDigestRecipients) and
       //    the single-user/manual path skip a user who is unverified, disabled digests, or is
       //    suppressed (bounce/unsubscribe) — otherwise a manual trigger would spend tokens on, and
@@ -204,10 +205,11 @@ function makePerUser(deps: DigestDeps) {
       //    deliberately not returned: it is consumed once, in retrieve — a 1024-dim vector is dead
       //    weight in memoized step state that every poll-loop replay re-ships.
       const loaded = await step.run("load", async () => {
-        const [profile, prefs, excludeJobIds] = await Promise.all([
+        const [profile, prefs, excludeJobIds, excludeSignatures] = await Promise.all([
           getProfileForDigest(deps.db, userId),
           getPreferences(deps.db, userId),
           alreadyShownJobIds(deps.db, userId),
+          alreadyShownSignatures(deps.db, userId),
         ]);
         if (!profile || !profile.embedding) return { skip: "no-profile-or-embedding" as const };
         if (
@@ -218,7 +220,12 @@ function makePerUser(deps: DigestDeps) {
         ) {
           return { skip: "ineligible" as const };
         }
-        return { structured: profile.structured, prefs: toFilterPrefs(prefs), excludeJobIds };
+        return {
+          structured: profile.structured,
+          prefs: toFilterPrefs(prefs),
+          excludeJobIds,
+          excludeSignatures,
+        };
       });
       if ("skip" in loaded) return { userId, skipped: loaded.skip };
 
@@ -239,6 +246,7 @@ function makePerUser(deps: DigestDeps) {
           recencyDays: loaded.prefs.recencyDays,
           exclusions: loaded.prefs.exclusions,
           excludeJobIds: loaded.excludeJobIds,
+          excludeSignatures: loaded.excludeSignatures,
         });
         return raw.map((c) => ({
           id: c.id,

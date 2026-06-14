@@ -53,6 +53,7 @@ export type { SweepResult, SweepOptions, CloseResult } from "./lifecycle";
 export {
   listDigestRecipients,
   alreadyShownJobIds,
+  alreadyShownSignatures,
   startDigestRun,
   finishDigestRun,
   insertDigest,

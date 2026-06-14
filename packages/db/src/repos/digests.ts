@@ -77,6 +77,30 @@ export async function alreadyShownJobIds(db: Db, userId: UserId): Promise<number
 }
 
 /**
+ * The distinct content signatures of every job already shown to a user — the signature sibling of
+ * `alreadyShownJobIds`, fed to retrieval's `excludeSignatures` so a RE-LISTED role (fresh external_id →
+ * a new job_id the id anti-join can't see, but the SAME content_signature) is suppressed. Joins
+ * `digest_items → jobs` and keeps only non-NULL signatures. NO `lifecycle_state` filter on the jobs side
+ * (decision 5): F2 soft-closes a repost's predecessor (`lifecycle_state='closed'`, never deleted —
+ * `digest_items.job_id` is ON DELETE NO ACTION, 0007:53), and the closed original's signature is the
+ * proof the user already saw the role. Empty for a first-time recipient.
+ *
+ * KNOWN GAP (accepted, owner-ratified 2026-06-13): F2 Arm C's `dropDigestItemsAndRecount` DIRECT-deletes
+ * a `digest_items` row for a probe-time 404 (NO ACTION blocks only parent-delete CASCADES, not a direct
+ * child delete), so a 404-dropped-but-still-active job loses its shown record here and its repost can
+ * re-surface. Narrow (probe-time 404s only); a same-signature repost on a NEW row is still caught. See
+ * `dropDigestItemsAndRecount` below for the matching F2-side note.
+ */
+export async function alreadyShownSignatures(db: Db, userId: UserId): Promise<string[]> {
+  const rows = await db
+    .selectDistinct({ contentSignature: jobs.contentSignature })
+    .from(digestItems)
+    .innerJoin(jobs, eq(jobs.id, digestItems.jobId))
+    .where(and(eq(digestItems.userId, userId), isNotNull(jobs.contentSignature)));
+  return rows.map((r) => r.contentSignature).filter((s): s is string => s !== null);
+}
+
+/**
  * Open a digest run: insert a `running` row (status + started_at from column defaults) and return its
  * id. Mirrors ./discovery `startRun`. Call BEFORE fan-out so a crash leaves a visible `running` row;
  * `finishDigestRun` patches it to a terminal state — the orchestrator calls it on success AND from its

@@ -78,6 +78,13 @@
       "when": 1781387826722,
       "tag": "0010_curly_drax",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1781404521667,
+      "tag": "0011_cool_silvermane",
+      "breakpoints": true
     }
   ]
 }

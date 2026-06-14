@@ -23,7 +23,7 @@ import { sql } from "drizzle-orm";
 
 import type { Db } from "../client";
 import { jobs } from "../schema";
-import { intArrayLiteral, resultRows, VECTOR_CAST, vectorLiteral } from "./sql";
+import { intArrayLiteral, resultRows, textArrayLiteral, VECTOR_CAST, vectorLiteral } from "./sql";
 
 export interface RetrieveOpts {
   /** Final candidate count returned (default 50). */
@@ -44,6 +44,10 @@ export interface RetrieveOpts {
   exclusions?: string[];
   /** Already-shown job ids to exclude (the digest_items anti-join feeds this). */
   excludeJobIds?: number[];
+  /** Already-shown content signatures to exclude — the F1 repost anti-join (alreadyShownSignatures feeds
+   *  this). A re-listed role gets a fresh external_id → a new job_id the id anti-join can't see, but the
+   *  SAME content_signature; this suppresses it. A NULL-signature candidate is never excluded by it. */
+  excludeSignatures?: string[];
 }
 
 export interface JobCandidate {
@@ -52,6 +56,10 @@ export interface JobCandidate {
   descriptionText: string;
   locations: string[];
   remote: boolean;
+  /** The F1 content-dedup signature (md5 of normalized title+desc), or NULL until backfilled. Drives the
+   *  same-signature display collapse. NOT forwarded into Inngest step state — the retrieve step
+   *  deliberately returns only id/title/description (decision 4); this stays a local retrieval field. */
+  contentSignature: string | null;
   /** Cosine distance from the profile vector (`<=>`); smaller is closer. */
   distance: number;
 }
@@ -73,6 +81,7 @@ export async function retrieveCandidatesForProfile(
   const recencyDays = opts.recencyDays ?? 14;
   const exclusions = compileExclusions(opts.exclusions ?? []);
   const excludeJobIds = opts.excludeJobIds ?? [];
+  const excludeSignatures = opts.excludeSignatures ?? [];
   const fetchLimit = limit * overFetch;
 
   const literal = vectorLiteral(embedding); // asserts the 1024-dim width up front
@@ -89,11 +98,18 @@ export async function retrieveCandidatesForProfile(
     const arrayLiteral = intArrayLiteral(excludeJobIds);
     conditions.push(sql`id <> ALL(${arrayLiteral}::int[])`);
   }
+  if (excludeSignatures.length > 0) {
+    // Additive repost anti-join (F1c): drop a candidate whose content_signature the user has already
+    // seen, but KEEP NULL-signature (un-backfilled) candidates — they behave exactly as pre-F1. One
+    // bound text param cast to text[] (md5 hex is brace/comma/NUL-free), mirroring the int[] idiom.
+    const sigLiteral = textArrayLiteral(excludeSignatures);
+    conditions.push(sql`(content_signature IS NULL OR content_signature <> ALL(${sigLiteral}::text[]))`);
+  }
   const whereClause = sql.join(conditions, sql` AND `);
 
   // Bind the query vector once (the distance alias keeps the HNSW sort pathkey — see nearestJobs).
   const result: unknown = await db.execute(sql`
-    SELECT id, title, description_text, locations, remote,
+    SELECT id, title, description_text, locations, remote, content_signature,
            embedding <=> ${literal}${VECTOR_CAST} AS distance
     FROM ${jobs}
     WHERE ${whereClause}
@@ -111,14 +127,38 @@ export async function retrieveCandidatesForProfile(
       locations: parseLocations(r.locations),
       // neon-http returns a bool column as a JS boolean.
       remote: r.remote === true,
+      contentSignature: typeof r.content_signature === "string" ? r.content_signature : null,
       distance: Number(r.distance),
     } satisfies JobCandidate;
   });
 
-  // App-side geo + exclusion filters, then trim to `limit` (see the file header for why app-side).
-  return candidates
-    .filter((c) => geoMatches(c, remoteOk, locations) && !isExcluded(c, exclusions))
-    .slice(0, limit);
+  // App-side geo + exclusion filters, then the same-signature display collapse (F1b), then trim to
+  // `limit` (see the file header for why app-side). Running the collapse on the over-fetch buffer means
+  // a dropped cross-post frees a slot the trim back-fills from the remaining buffer.
+  const displayable = candidates.filter(
+    (c) => geoMatches(c, remoteOk, locations) && !isExcluded(c, exclusions),
+  );
+  return collapseBySignature(displayable).slice(0, limit);
+}
+
+/**
+ * Same-signature display collapse (F1b): from a DISTANCE-SORTED candidate list, keep the first member of
+ * each content_signature group and drop later same-signature members, so a cross-posted role occupies
+ * ONE digest slot (the closest-to-profile member wins). NULL signatures are each their own group — an
+ * un-backfilled row is never collapsed. Pure + order-preserving; the `Set` is declared OUTSIDE the
+ * predicate so state persists across the scan. Generic + exported so the smoke can drive it with minimal
+ * `{contentSignature}` objects.
+ */
+export function collapseBySignature<T extends { contentSignature: string | null }>(
+  candidates: T[],
+): T[] {
+  const seen = new Set<string>();
+  return candidates.filter((c) => {
+    if (c.contentSignature === null) return true;
+    if (seen.has(c.contentSignature)) return false;
+    seen.add(c.contentSignature);
+    return true;
+  });
 }
 
 /**
