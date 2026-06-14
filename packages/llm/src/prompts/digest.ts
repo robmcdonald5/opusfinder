@@ -1,4 +1,9 @@
-import { composeProfileText, type StructuredProfile } from "@opusfinder/shared";
+import {
+  composeProfileText,
+  composePromptPrefs,
+  type PromptPreferences,
+  type StructuredProfile,
+} from "@opusfinder/shared";
 
 /**
  * The Phase-10 digest SYNTHESIS prompt — one short "why this matches you" note per ranked job. Run via
@@ -16,6 +21,8 @@ Write the match note:
 - 1–2 sentences, addressed to the candidate in the second person ("You…", "Your…").
 - Ground it ONLY in the provided candidate profile and job posting. Name the specific overlap that makes this a fit — the skills, target role, seniority, or domain they share. Do NOT invent skills, experience, requirements, or facts not present in the text.
 - Be specific, not generic. "This matches your interest in distributed systems and your Go experience" — not "This looks like a great opportunity for you."
+- If the candidate's stated preferences (below the profile) name a target years-of-experience band, you MAY ground a seniority-fit remark in that declared experience level (e.g. "fits the ~2-5 years of experience you're targeting"); never contradict it. Salary and location stay off-limits regardless (next rule).
+- If the candidate listed dealbreakers, NEVER frame the note around anything they want to avoid; ground it only in genuine positive overlap.
 - Do NOT restate the whole job or list its requirements. Do NOT mention salary, location, or how to apply (the digest shows those separately). Do NOT use the company's marketing language.
 - If the fit is weak or you cannot find a concrete, grounded overlap, say so plainly in one sentence rather than overselling.
 
@@ -28,8 +35,14 @@ Output ONLY the note text — no preamble, no heading, no quotation marks, no ma
  * minimum a thin rubric+profile may not engage caching (synthesis caching is best-effort regardless);
  * the 50% batch discount is the load-bearing saving, not the cache.
  */
-export function buildDigestSystem(profile: StructuredProfile): string {
-  return `${DIGEST_SYNTHESIS_SYSTEM}\n\n=== Candidate profile ===\n${composeProfileText(profile)}`;
+export function buildDigestSystem(profile: StructuredProfile, prefs?: PromptPreferences): string {
+  const base = `${DIGEST_SYNTHESIS_SYSTEM}\n\n=== Candidate profile ===\n${composeProfileText(profile)}`;
+  // Same prefs block as the rerank system (Phase F3) so the note can ground level-fit honestly. The salary
+  // line, if present, is INERT here — the system rule above forbids mentioning salary in the note; it rides
+  // along only because composePromptPrefs is the one shared renderer. Empty/unset → "" → byte-identical to
+  // the no-prefs system (no per-user cache bust).
+  const ctx = composePromptPrefs(prefs);
+  return ctx ? `${base}\n\n=== Candidate stated preferences ===\n${ctx}` : base;
 }
 
 /** Render one job into the synthesis user message. Description truncated (the note needs the gist, not

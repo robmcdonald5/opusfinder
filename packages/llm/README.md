@@ -69,7 +69,9 @@ test:batch` exercises the lifecycle end-to-end.
 ### Digest prompts (Phase 10)
 
 `prompts/digest.ts` (`DIGEST_SYNTHESIS_SYSTEM` / `buildDigestSystem` / `renderDigestJob`) is the Sonnet
-"why matched" synthesis; `prompts/rerank.ts` (`RerankScoresSchema` / `renderRerankCandidates`) is the
+"why matched" synthesis; `buildDigestSystem(profile, prefs?: PromptPreferences)` now appends the shared
+`composePromptPrefs` block, and (F3) `DIGEST_SYNTHESIS_SYSTEM` grounds level-fit in the declared YoE band,
+never frames the note around a dealbreaker, and keeps salary/location off-limits; `prompts/rerank.ts` (`RerankScoresSchema` / `renderRerankCandidates`) is the
 Haiku rerank output schema + candidate renderer. The rerank **scoring rubric** and orchestration live in
 `@opusfinder/rerank` (shared with the eval harness), not here — this package owns only the per-call
 prompt pieces.
