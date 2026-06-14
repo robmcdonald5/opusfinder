@@ -47,10 +47,13 @@ Phase 11 on the local dev runtime — locked at Phase-11 planning, 2026-06-11).
     release its slot during the batch-wait sleeps and let runs overlap): load + **eligibility gate**
     (skip if no profile/embedding, unverified email, `!digestEnabled`, or suppressed — so even a manual
     single-user trigger respects an opt-out and matches the `--all` sweep's gate) → retrieve (geo +
-    exclusion keywords applied inside retrieval's post-filter, plus the Phase-F1 repost anti-join —
-    `excludeSignatures` from `alreadyShownSignatures`, threaded alongside the id anti-join — and a
+    exclusion keywords applied inside retrieval's post-filter — Phase-F3 merges `dealbreakers` into that
+    exclusions filter, and `locationMode` replaces the old `remoteOk` boolean — plus the Phase-F1 repost
+    anti-join — `excludeSignatures` from `alreadyShownSignatures`, threaded alongside the id anti-join — and a
     same-signature display-collapse, all before its over-fetch trim) → sync
-    rerank (top-K, with the prompt-cache counters for the gate) → submit the synthesis batch
+    rerank (top-K, with the prompt-cache counters for the gate) — Phase-F3 applies a `MIN_SCORE=0.5`
+    quality floor that drops sub-floor reranked items BEFORE the top-K cut (a short/empty digest over
+    padding with weak fits), with a no-send skip (`'no-strong-matches'`) when none clear → submit the synthesis batch
     (`custom_id = d{runId}-{jobId}`; the batch id is logged before the step memoizes, so a crash in the
     create→memoize window leaves a traceable orphan) → durable `step.sleep` + a **bounded poll loop**
     on a fast→slow schedule (2m for the first hour, then 10m) that spans the API's 24h batch SLA in one
@@ -83,7 +86,9 @@ Phase 11 on the local dev runtime — locked at Phase-11 planning, 2026-06-11).
   the cache counters across chunks) + the Anthropic batch primitives from `@opusfinder/llm` + the
   `@opusfinder/email` send/lastEvent pair (the serve process still boots without Resend creds — the
   email getters throw at call time, and an unconfigured send terminalizes to `'failed'`). Phase F2 added the `probe` seam (`DigestDeps.probe`) — the
-  real `probeLiveness` (HEAD/GET apply-URL check) in production, a fake in the stub smoke.
+  real `probeLiveness` (HEAD/GET apply-URL check) in production, a fake in the stub smoke. Phase F3
+  threads the judgment-context prefs (`PromptPreferences` via `toPromptPrefs`) into rerank + synthesis —
+  `DigestDeps.rerank` gained a `prefs?` arg and `deps.ts` forwards it.
 - `scripts/test-digest-email.ts` (`pnpm --filter @opusfinder/inngest test:digest-email`) — the
   stub-seam smoke for the email tail: render determinism + escaping, the idempotency-key shape, the
   full event→status mapping, allowlist fail-closed, and the failure/skip/happy/slow-poll step

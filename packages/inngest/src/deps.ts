@@ -10,7 +10,7 @@ import {
   submitBatch,
 } from "@opusfinder/llm";
 import { rerankCandidates, type RerankCall, type RerankCandidate } from "@opusfinder/rerank";
-import type { StructuredProfile } from "@opusfinder/shared";
+import type { PromptPreferences, StructuredProfile } from "@opusfinder/shared";
 
 import type { DigestDeps, RerankOutcome } from "./digest";
 import { probeLiveness } from "./probe";
@@ -48,6 +48,7 @@ function buildRerank(): DigestDeps["rerank"] {
   return async (
     profile: StructuredProfile,
     candidates: RerankCandidate[],
+    prefs?: PromptPreferences,
   ): Promise<RerankOutcome> => {
     let creationInputTokens = 0;
     let readInputTokens = 0;
@@ -64,7 +65,7 @@ function buildRerank(): DigestDeps["rerank"] {
       readInputTokens += cache.readInputTokens;
       return object.scores;
     };
-    const { orderedIds, scores } = await rerankCandidates(profile, candidates, call);
+    const { orderedIds, scores } = await rerankCandidates(profile, candidates, call, { prefs });
     return { orderedIds, scores, cache: { creationInputTokens, readInputTokens } };
   };
 }

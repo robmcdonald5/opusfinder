@@ -16,7 +16,7 @@ import {
 import { buildDigestSystem, renderDigestJob } from "@opusfinder/llm";
 import type { BatchPoll, BatchRequest, BatchResult } from "@opusfinder/llm";
 import type { RerankCandidate } from "@opusfinder/rerank";
-import type { StructuredProfile, UserId } from "@opusfinder/shared";
+import type { LocationMode, PromptPreferences, StructuredProfile, UserId } from "@opusfinder/shared";
 import { NonRetriableError } from "inngest";
 
 import { deliverDigestEmail, type EmailSeam } from "./delivery";
@@ -26,6 +26,13 @@ import { probeDigestLiveness, type LivenessProbe } from "./probe";
 // --- Tunables (per-digest knobs) ---------------------------------------------------------------
 const RETRIEVE_LIMIT = 50; // vector candidates pulled per user
 const TOP_K = 12; // items reranked into the digest
+/** Quality floor (Phase F3 follow-up): drop reranked items scored below this BEFORE taking the top-K, so a
+ *  thin/weak match set yields a SHORTER (or empty) digest instead of padding to TOP_K with roles the
+ *  synthesis note only flags as bad fits (the trust problem). 0.5 = the rerank rubric's "moderate fit" band
+ *  floor — below it is "weak/poor". A SILENT-DROP tunable (too high quietly empties digests), so it ships
+ *  ENFORCE at a conservative 0.5 but should be tuned against real digests; a shadow `would-drop` tally is
+ *  the proper follow-up (see FEATURE_TODO — "digest quality floor"). */
+const MIN_SCORE = 0.5;
 const RECIPIENT_CHUNK = 200; // keyset page for the --all recipient sweep
 /** Step-state cap on a candidate's description. Keep ≥ the synthesis renderer's `descriptionChars`
  *  default (2000; rerank's 1500 cut is below both) so this pre-trim is the only lossy one. */
@@ -64,7 +71,11 @@ export interface RerankOutcome {
  */
 export interface DigestDeps {
   db: Db;
-  rerank: (profile: StructuredProfile, candidates: RerankCandidate[]) => Promise<RerankOutcome>;
+  rerank: (
+    profile: StructuredProfile,
+    candidates: RerankCandidate[],
+    prefs?: PromptPreferences,
+  ) => Promise<RerankOutcome>;
   batch: {
     submit: (requests: BatchRequest[]) => Promise<string>;
     poll: (batchId: string) => Promise<BatchPoll>;
@@ -77,21 +88,39 @@ export interface DigestDeps {
 }
 
 interface FilterPrefs {
-  remoteOk: boolean;
+  locationMode: LocationMode;
   locations: string[];
   recencyDays: number;
   exclusions: string[];
 }
 
-/** The digest's filter inputs off a preferences row (all four columns are NOT NULL with schema
- *  defaults — the defaults live in ONE place, the schema). minSalary is intentionally omitted (no
- *  job-side salary column — Phase-10 decision). */
+/** The digest's filter inputs off a preferences row (the filter columns are NOT NULL with schema
+ *  defaults — the defaults live in ONE place, the schema). `dealbreakers` (Phase F3) are MERGED into the
+ *  `exclusions` list here — they ride the same whole-word compileExclusions matcher in retrieval, so this
+ *  is the single row→filter mapper and retrieval.ts needs no new predicate. minSalary/maxSalary are
+ *  intentionally omitted (no job-side salary column until Phase F4 — they are stored + soft-prompt only). */
 function toFilterPrefs(prefs: UserPreferencesRow): FilterPrefs {
   return {
-    remoteOk: prefs.remoteOk,
+    locationMode: prefs.locationMode,
     locations: prefs.locations,
     recencyDays: prefs.recencyDays,
-    exclusions: prefs.exclusions,
+    exclusions: [...prefs.exclusions, ...prefs.dealbreakers],
+  };
+}
+
+/** The judgment-context subset (Phase F3) injected into the rerank + synthesis PROMPT — the YoE band /
+ *  salary range / dealbreakers. Slim strings + numbers, so it is safe to carry in the memoized `load` step
+ *  state (unlike the 1024-dim embedding, which is deliberately dropped). NEVER enters `RerankOutcome`
+ *  (decision 8). `dealbreakers` ride BOTH this (a prompt "avoid" line, governed by the rubric/synthesis
+ *  clauses) AND the `toFilterPrefs` exclusions drop. The YoE band is the declared-level signal (the
+ *  too-senior fix) — a categorical target_level was dropped as redundant/ambiguous. */
+function toPromptPrefs(prefs: UserPreferencesRow): PromptPreferences {
+  return {
+    yoeMin: prefs.yoeMin,
+    yoeMax: prefs.yoeMax,
+    minSalary: prefs.minSalary,
+    maxSalary: prefs.maxSalary,
+    dealbreakers: prefs.dealbreakers,
   };
 }
 
@@ -223,6 +252,7 @@ function makePerUser(deps: DigestDeps) {
         return {
           structured: profile.structured,
           prefs: toFilterPrefs(prefs),
+          promptPrefs: toPromptPrefs(prefs),
           excludeJobIds,
           excludeSignatures,
         };
@@ -241,7 +271,7 @@ function makePerUser(deps: DigestDeps) {
         }
         const raw = await retrieveCandidatesForProfile(deps.db, profile.embedding, {
           limit: RETRIEVE_LIMIT,
-          remoteOk: loaded.prefs.remoteOk,
+          locationMode: loaded.prefs.locationMode,
           locations: loaded.prefs.locations,
           recencyDays: loaded.prefs.recencyDays,
           exclusions: loaded.prefs.exclusions,
@@ -262,13 +292,21 @@ function makePerUser(deps: DigestDeps) {
       //    field here — persist re-ranks the reason-filtered survivors 1..N, and a rank in this shape
       //    would go stale the moment synthesis drops an item.
       const reranked = await step.run("rerank", async () => {
-        const rr = await deps.rerank(loaded.structured, candidates);
-        const topIds = rr.orderedIds.slice(0, TOP_K);
+        const rr = await deps.rerank(loaded.structured, candidates, loaded.promptPrefs);
+        // Apply the MIN_SCORE quality floor BEFORE the top-K cut: keep only items the reranker rated at
+        // least "moderate", then take up to TOP_K. Fewer than TOP_K (or zero) is intended — a short honest
+        // digest beats 12 padded with weak roles the note would disown. orderedIds is score-desc.
+        const topIds = rr.orderedIds
+          .filter((id) => (rr.scores.get(id) ?? 0) >= MIN_SCORE)
+          .slice(0, TOP_K);
         return {
           items: topIds.map((id) => ({ jobId: id, score: rr.scores.get(id) ?? 0 })),
           cache: rr.cache,
         };
       });
+      // No candidate cleared the quality floor — skip rather than send a digest of weak/bad-fit roles (or
+      // an empty email). Distinct from "no-candidates": jobs matched here, but none scored well enough.
+      if (reranked.items.length === 0) return { userId, skipped: "no-strong-matches" as const };
 
       // 4. Submit the synthesis batch (Sonnet, 50% discount): one request per kept item, cached
       //    rubric+profile system, custom_id = synthId(jobId) — the ONE key definition shared with the
@@ -276,7 +314,7 @@ function makePerUser(deps: DigestDeps) {
       const synthId = (jobId: number) => `d${digestRunId}-${jobId}`;
       const byId = new Map(candidates.map((c) => [c.id, c]));
       const batchId = await step.run("submit-synthesis", async () => {
-        const system = buildDigestSystem(loaded.structured); // identical per item — build once
+        const system = buildDigestSystem(loaded.structured, loaded.promptPrefs); // identical per item — build once
         const requests: BatchRequest[] = reranked.items.map((it) => {
           const job = byId.get(it.jobId);
           if (!job) {
