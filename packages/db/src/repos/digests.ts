@@ -24,7 +24,7 @@ import {
   type RunStatus,
 } from "../schema";
 import { finishRunRow } from "./runs";
-import { NUL } from "./sql";
+import { intArrayLiteral, NUL } from "./sql";
 
 /** A user eligible to receive a digest (just the id — the per-user function reads the rest). */
 export interface DigestRecipient {
@@ -218,6 +218,66 @@ export async function getLatestDigestForUser(db: Db, userId: UserId): Promise<Di
     createdAt: d.createdAt,
     items,
   };
+}
+
+// --- Phase F2 Arm C: the pre-send liveness probe's apply-URL read + the drop-dead-items write -----
+
+/** One persisted digest item's job id + apply URL — the liveness probe's input (re-read by digest id,
+ *  not threaded through Inngest step state, mirroring the embedding-re-read discipline). */
+export interface DigestApplyTarget {
+  jobId: number;
+  applyUrl: string;
+}
+
+/**
+ * The (jobId, applyUrl) of every item in one digest — Arm C HEAD/GET-probes these before send. INNER JOIN
+ * is safe (persist throws on zero kept items, so an existing digest has ≥1 item). Ordered by rank for a
+ * stable probe order.
+ */
+export function getDigestApplyTargets(db: Db, digestId: number): Promise<DigestApplyTarget[]> {
+  return db
+    .select({ jobId: digestItems.jobId, applyUrl: jobs.applyUrl })
+    .from(digestItems)
+    .innerJoin(jobs, eq(jobs.id, digestItems.jobId))
+    .where(eq(digestItems.digestId, digestId))
+    .orderBy(digestItems.rank);
+}
+
+/**
+ * Drop the dead-link items (Arm C: a 404/410 apply URL) from a digest and fold the probe tallies into its
+ * `counts`, in ONE statement: a data-modifying CTE deletes the dropped `digest_items` (always runs, even
+ * when none are dropped — Postgres executes an unreferenced data-modifying CTE to completion), then the
+ * UPDATE sets `item_count` to the survivor count (passed in, since the CTE's delete is not visible to a
+ * same-statement `count(*)`) and merges the probe counts via jsonb `||`. This keeps the persisted
+ * `digest_items` equal to what the user is actually SENT (the email render reads only the survivors).
+ *
+ * CAVEAT — Arm C / shown-history coupling: `alreadyShownJobIds` derives the next run's dedup anti-join from
+ * `digest_items`, so a DROPPED job is also removed from shown-history. For a 410 that is fine (the job is
+ * also soft-closed, so retrieval excludes it anyway). For a 404 — dropped but NOT closed (it may be a CDN
+ * blip) — the job stays retrieval-eligible AND loses its shown record, so it can re-surface and re-pay
+ * synthesis on a later digest until Arm A's streak or recency clears it. Bounded (≤TOP_K, ~daily cadence)
+ * and accepted for v1; if `probed404Dropped` trends high on the same jobs at the F2f live gate, switch to a
+ * tombstone (keep the row with a `dropped` flag, exclude only at render) so the anti-join stays intact.
+ * Empty `droppedJobIds` still records the counts; ranks are left with gaps (the email orders by rank — inert).
+ */
+export async function dropDigestItemsAndRecount(
+  db: Db,
+  digestId: number,
+  droppedJobIds: number[],
+  survivorCount: number,
+  probeCounts: Record<string, number>,
+): Promise<void> {
+  const idList = intArrayLiteral(droppedJobIds);
+  await db.execute(sql`
+    WITH dropped AS (
+      DELETE FROM ${digestItems}
+      WHERE digest_id = ${digestId} AND job_id = ANY(${idList}::int[])
+      RETURNING 1
+    )
+    UPDATE ${digests}
+    SET item_count = ${survivorCount}, counts = counts || ${JSON.stringify(probeCounts)}::jsonb
+    WHERE id = ${digestId}
+  `);
 }
 
 // --- Phase 11 email delivery: the render read + the per-send / user-level state writes -----------

@@ -14,7 +14,10 @@ the Phase-9 profiles repo — `insertCvFile` / `patchCvFileExtracted` / `markCvF
 `getOrCreatePreferences` / `updatePreferences`; the Phase-10 retrieval repo —
 `retrieveCandidatesForProfile`; and the Phase-10 digests repo — `listDigestRecipients` /
 `alreadyShownJobIds` / `startDigestRun` / `finishDigestRun` / `insertDigest` / `insertDigestItems` /
-`deleteUserDigestForRun` / `getLatestDigestForUser` (plus `getProfileForDigest` on the profiles repo))
+`deleteUserDigestForRun` / `getLatestDigestForUser` (plus `getProfileForDigest` on the profiles repo); and the Phase-F2 lifecycle repo —
+`sweepLifecycle` / `closeJobsForCompanies` / `closeJobsByIds` / `ABSENCE_CLOSE_THRESHOLD` (the first writers of
+`lifecycle_state='closed'`), plus `getDigestApplyTargets` / `dropDigestItemsAndRecount` on the digests repo
+(Arm C apply-URL read + dead-link drop))
 and `@opusfinder/db/env` (`getDatabaseUrl`).
 
 **Phase 9.5** added a second client behind `@opusfinder/db/auth-client`: `createAuthDb(connectionString)`,
@@ -102,6 +105,19 @@ Run from the repo root via the workspace filter so the cwd is `packages/db`:
   (`repos/digests.ts`): `getDigestEmailPayload` (the render read — digests ⋈ user ⋈ digest_items ⋈
   jobs ⋈ companies in one round trip) + `recordDigestSent` / `recordDigestDeliveryOutcome` /
   `recordDigestSendFailure`, smoke-checked by `pnpm --filter @opusfinder/db test:digest-payload`.
+- **Schema (Phase F2).** `drizzle/0010_curly_drax.sql` adds `jobs.consecutive_absences`
+  (`smallint NOT NULL DEFAULT 0`) — a pure-streak counter of consecutive trusted fetches in which an `active`
+  job was absent; `lifecycle_state` flips to `'closed'` at the threshold (`ABSENCE_CLOSE_THRESHOLD`), and the
+  streak resets + the job revives to `'active'` on reappearance. Mirrors `companies.consecutive_probe_failures`
+  but is a pure streak (no 30-day window). F2 is the FIRST writer of `lifecycle_state='closed'` (retrieval
+  already filtered on it). The lifecycle writers live in `repos/lifecycle.ts`: `sweepLifecycle` (Arm A —
+  per-board feed-absence sweep, one race-safe SQL-side-increment UPDATE) + `closeJobsForCompanies` /
+  `closeJobsByIds` (Arm B/C — bulk-close a dead board's still-active jobs / the explicit-410 digest items).
+  `repos/discovery.ts`'s `deactivateStale` was widened to RETURN the deactivated ids (was a bare count) so
+  Arm B can close their jobs. Soft-close only — never a row DELETE (F1 reads the closed row's signature;
+  `digest_items.job_id` is `ON DELETE NO ACTION`). Smoke: `pnpm --filter @opusfinder/db test:lifecycle` (no
+  creds). **Shipped SHADOW / count-only** — the `'closed'` flip is currently suppressed and tallied as
+  `wouldClose` pending the F2-enforce sub-phase.
 - **neon-http migrations are NOT transactional.** The neon-http migrator applies
   a migration's statements without a wrapping transaction, so a multi-statement
   migration that fails partway leaves a partial apply with no rollback (and a

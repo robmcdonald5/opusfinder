@@ -81,6 +81,12 @@ each board in a try/catch — one dead slug doesn't halt the run.
 `ingest:all` is now a thin CLI shell over the shared `runIngestion(db, opts)` library
 (`src/ingest.ts`), which the Phase-8 Worker cron also calls — the CLI commands are unchanged.
 
+Since Phase F2, `runIngestion` also runs a per-board **feed-absence lifecycle sweep** (`sweepLifecycle`, gated
+on a `total > 0` upsert) after each successful board: postings absent from a healthy fetch accrue a
+`consecutive_absences` streak and soft-close at the threshold, reviving on reappearance — tallied onto
+`IngestionCounts` (`revived` / `swept` / `closed` / `wouldClose` / `sweepFailed`) and the `logSummary` line.
+Shipped SHADOW (count-only): the close is tallied as `wouldClose`, not yet written, until F2-enforce.
+
 ## Per-adapter quirks (institutional memory)
 
 **Greenhouse** — `boards-api.greenhouse.io/v1/boards/{slug}/jobs?content=true`. Unpaginated

@@ -127,6 +127,16 @@ export const jobs = pgTable(
     // upsertJobs) so the backfill re-embeds it. HNSW-indexed below for retrieval.
     embedding: vector("embedding", { dimensions: EMBEDDING_DIMENSIONS }),
     lifecycleState: text("lifecycle_state").$type<LifecycleState>().notNull().default("active"),
+    // Consecutive trusted-fetch absences for this job — the streak hysteresis behind lifecycle closing
+    // (sweepLifecycle / Arm A, Phase F2). Incremented when an active job is absent from a complete board
+    // fetch, reset to 0 + revived to 'active' on reappearance, and lifecycle_state flips to 'closed' at
+    // ABSENCE_CLOSE_THRESHOLD. Mirrors companies.consecutive_probe_failures (schema.ts:87) in BEHAVIOR only
+    // but is a PURE streak — NO 30-day time window and NO first_failed_at clock (a job's absence from a
+    // fully-fetched board is a stronger, more local signal than a company probe streak; see
+    // PHASE_F2_PLAN.md §2.3). Do NOT add a time-window second stage to "restore parity". Type note: the
+    // precedent column is `integer`; `smallint` is deliberate here — a streak that stops at the close
+    // threshold never needs integer range.
+    consecutiveAbsences: smallint("consecutive_absences").notNull().default(0),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },

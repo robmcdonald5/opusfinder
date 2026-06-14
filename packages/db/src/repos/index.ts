@@ -41,6 +41,14 @@ export type { UserPreferencesRow, CreatePreferencesInput } from "./preferences";
 // Phase 10 digest retrieval — the deterministic filter + cosine ranking over a profile vector.
 export { retrieveCandidatesForProfile } from "./retrieval";
 export type { RetrieveOpts, JobCandidate } from "./retrieval";
+// Phase F2 lifecycle closing — the first writers of lifecycle_state='closed' (feed-absence sweep + board-death + Arm C 410).
+export {
+  sweepLifecycle,
+  closeJobsForCompanies,
+  closeJobsByIds,
+  ABSENCE_CLOSE_THRESHOLD,
+} from "./lifecycle";
+export type { SweepResult, SweepOptions, CloseResult } from "./lifecycle";
 // Phase 10 digest persistence — recipient list, already-shown anti-join, run/header/item writes.
 export {
   listDigestRecipients,
@@ -61,3 +69,6 @@ export {
   recordDigestSendFailure,
 } from "./digests";
 export type { DigestEmailPayload, DigestDeliveryOutcome } from "./digests";
+// Phase F2 Arm C — the pre-send liveness probe's apply-URL read + dead-link drop.
+export { getDigestApplyTargets, dropDigestItemsAndRecount } from "./digests";
+export type { DigestApplyTarget } from "./digests";

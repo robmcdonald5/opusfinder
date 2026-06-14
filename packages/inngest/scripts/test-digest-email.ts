@@ -7,18 +7,13 @@
  *
  *   pnpm --filter @opusfinder/inngest test:digest-email
  */
-import type { Db } from "@opusfinder/db";
 import type { DigestEmailPayload } from "@opusfinder/db/repos";
 import { emailIdempotencyKey, renderDigestEmail, sendDigestEmail } from "@opusfinder/email";
 import { runScript } from "@opusfinder/shared/script";
 import type { UserId } from "@opusfinder/shared";
 
-import {
-  deliverDigestEmail,
-  isTerminalEvent,
-  mapDeliveryEvent,
-  type DeliveryStepTools,
-} from "../src/delivery.ts";
+import { recordingStep, stubDb } from "./_stub.ts";
+import { deliverDigestEmail, isTerminalEvent, mapDeliveryEvent } from "../src/delivery.ts";
 
 function assert(cond: boolean, msg: string): asserts cond {
   if (!cond) throw new Error(`assertion failed: ${msg}`);
@@ -60,50 +55,6 @@ const FIXTURE: DigestEmailPayload = {
     },
   ],
 };
-
-/** A fake DeliveryStepTools that records step/sleep ids and runs fns inline. */
-function fakeStep(): { runs: string[]; sleeps: string[]; tools: DeliveryStepTools } {
-  const runs: string[] = [];
-  const sleeps: string[] = [];
-  return {
-    runs,
-    sleeps,
-    tools: {
-      run: async <T>(id: string, fn: () => Promise<T>): Promise<T> => {
-        runs.push(id);
-        return fn();
-      },
-      sleep: async (id: string): Promise<void> => {
-        sleeps.push(id);
-      },
-    },
-  };
-}
-
-/**
- * A chainable-thenable Db stub: every property access / call returns the chain; `await` pops the
- * next queued value. The repo functions under test run their REAL code (drizzle just builds query
- * ASTs) — only the final await is faked. One queued entry per awaited db call, in call order. The
- * real SQL round-trip is exercised by `pnpm --filter @opusfinder/db test:digest-payload`, not here.
- */
-function stubDb(queued: unknown[]): Db {
-  const target = (): void => undefined;
-  const chain: unknown = new Proxy(target, {
-    get(_t, prop) {
-      if (prop === "then") {
-        return (resolve: (v: unknown) => void, reject: (e: unknown) => void) => {
-          if (queued.length === 0) reject(new Error("stubDb: no queued result left"));
-          else resolve(queued.shift());
-        };
-      }
-      return () => chain;
-    },
-    apply() {
-      return chain;
-    },
-  });
-  return chain as Db;
-}
 
 /** Rows shaped like getDigestEmailPayload's joined select projection (2 items). */
 function joinedPayloadRows(): unknown[] {
@@ -173,7 +124,7 @@ await runScript("test-digest-email", async () => {
 
   // 5. Failure terminalization: send throws → record-send-failure runs, original error rethrown.
   {
-    const { runs, sleeps, tools } = fakeStep();
+    const { runs, sleeps, tools } = recordingStep();
     const db = stubDb([joinedPayloadRows(), []]); // payload read, then the failure write
     const err = await expectReject(
       deliverDigestEmail(
@@ -198,7 +149,7 @@ await runScript("test-digest-email", async () => {
   }
   {
     // Null payload (digest row vanished) takes the same terminalize path.
-    const { runs, tools } = fakeStep();
+    const { runs, tools } = recordingStep();
     const db = stubDb([[], []]); // empty join read, then the failure write
     const err = await expectReject(
       deliverDigestEmail(
@@ -222,7 +173,7 @@ await runScript("test-digest-email", async () => {
 
   // 6. Allowlist-skip path: one step, zero sleeps, no state writes.
   {
-    const { runs, sleeps, tools } = fakeStep();
+    const { runs, sleeps, tools } = recordingStep();
     const db = stubDb([joinedPayloadRows()]); // ONLY the payload read
     const result = await deliverDigestEmail(
       tools,
@@ -241,7 +192,7 @@ await runScript("test-digest-email", async () => {
 
   // 7. Happy path: send → first poll terminal (delivered) → record; one sleep, no second poll.
   {
-    const { runs, sleeps, tools } = fakeStep();
+    const { runs, sleeps, tools } = recordingStep();
     const db = stubDb([
       joinedPayloadRows(), // payload read
       [{ userId: FIXTURE.userId }], // recordDigestSent: digests update RETURNING
@@ -268,7 +219,7 @@ await runScript("test-digest-email", async () => {
 
   // 8. Slow-poll + bounce: first poll in-flight → second sleep/poll → bounced → suppression write.
   {
-    const { runs, sleeps, tools } = fakeStep();
+    const { runs, sleeps, tools } = recordingStep();
     const events = ["sent", "bounced"];
     const db = stubDb([
       joinedPayloadRows(), // payload read

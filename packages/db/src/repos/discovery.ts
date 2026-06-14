@@ -193,13 +193,14 @@ export async function markProbed(db: Db, companyId: number): Promise<void> {
  * deactivates.
  * `opts.source` scopes the sweep to one source so a `--source` run doesn't deactivate rows of an
  * unrelated source it never re-probed; omit it (the broader pass) to sweep all sources. Returns the
- * number of rows flipped. `days` is the trunc of an in-code number, never user input.
+ * ids of the rows flipped (the caller derives the count via `.length`, and F2 Arm B closes their jobs via
+ * `closeJobsForCompanies`). `days` is the trunc of an in-code number, never user input.
  */
 export async function deactivateStale(
   db: Db,
   olderThanDays = 30,
   opts: { source?: SourceName } = {},
-): Promise<number> {
+): Promise<number[]> {
   const days = Math.trunc(olderThanDays);
   const conditions = [
     sql`${companies.active} = true`,
@@ -213,5 +214,5 @@ export async function deactivateStale(
     .where(and(...conditions))
     .returning({ id: companies.id });
 
-  return rows.length;
+  return rows.map((r) => r.id);
 }

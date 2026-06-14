@@ -29,7 +29,12 @@ null)` through a NON-throwing, per-host-throttled fetcher (a 404/400/200-empty i
    `indeterminate` / transient (network-exhausted) ⇒ left for a later run.
 6. **Reprobe** — `listCompaniesForReprobe` re-checks the oldest-probed ACTIVE companies; live refreshes
    them, a confirmed `absent` increments the failure streak (`markProbeResult(live=false)`).
-7. **Sweep** — `deactivateStale(30)` flips `active=false` for any row failing past the window.
+7. **Sweep** — `deactivateStale(30)` flips `active=false` for any row failing past the window, and (Phase F2,
+   Arm B) bulk-closes those just-deactivated boards' still-active jobs via `closeJobsForCompanies` — the orphan
+   class the ingest-time feed-absence sweep is blind to, since a deactivated board is never re-fetched.
+   `deactivateStale` was widened to RETURN the deactivated company ids; the close is tallied onto the run's
+   `source_runs.counts` (`jobsClosedOnDeactivation` / `wouldCloseOnDeactivation`). Shipped SHADOW (count-only)
+   until F2-enforce.
 
 ## Usage
 

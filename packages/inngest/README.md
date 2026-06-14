@@ -55,7 +55,16 @@ Phase 11 on the local dev runtime — locked at Phase-11 planning, 2026-06-11).
     attempt — step ids depend only on the loop index, never `ctx.attempt` (which also increments on
     STEP retries) → collect → persist (retry-idempotent: delete this `(user, run)` digest, then insert
     fresh; drop items with no usable reason, and **throw** if none survive — an all-errored synthesis
-    is a failure, not an empty digest) → the Phase-11 email tail (below).
+    is a failure, not an empty digest) → the Phase-F2 pre-send liveness probe (Arm C, below) → the Phase-11 email tail (below).
+- `src/probe.ts` (Phase F2, Arm C) — the **pre-send liveness probe**: HEAD (GET-fallback on 405/501) the
+  ≤`TOP_K` persisted items' apply URLs with a short timeout, then split DROP from CLOSE (locked decision 7) —
+  a `404` or `410` DROPs the dead link from this digest (`dropDigestItemsAndRecount`), but only an explicit
+  `410 Gone` ALSO soft-closes the job (`closeJobsByIds`, enforce-gated); a bare `404` drops without closing,
+  and 2xx/3xx/5xx/timeout/network are KEPT (ambiguous — never lose a possibly-live match over a blip, never
+  close). ONE memoized step (no synthesis-poll re-probe), over an injected probe seam (`DigestDeps.probe`,
+  `deps.ts`); tallies onto `digests.counts` (`probedOk` / `probed404Dropped` / `probed410` / `probedErrorKept`
+  …). An all-dropped set → 0 survivors → the caller keeps the 0-item audit row and sends no email. Shipped
+  SHADOW: the `410` close is tallied as `probed410WouldClose`, not yet written, until F2-enforce.
 - `src/delivery.ts` (Phase 11) — `deliverDigestEmail(step, db, email, digestId)`, the post-persist
   step block: ONE `send-email` step (payload read → allowlist-gated Resend send with
   `Idempotency-Key: digest/<digestId>` → `recordDigestSent`) wrapped in the fail-run discipline (retry
@@ -71,11 +80,16 @@ Phase 11 on the local dev runtime — locked at Phase-11 planning, 2026-06-11).
   rerank (the shared `@opusfinder/rerank` core wired to `generateObject` with `cacheSystem`, summing
   the cache counters across chunks) + the Anthropic batch primitives from `@opusfinder/llm` + the
   `@opusfinder/email` send/lastEvent pair (the serve process still boots without Resend creds — the
-  email getters throw at call time, and an unconfigured send terminalizes to `'failed'`).
+  email getters throw at call time, and an unconfigured send terminalizes to `'failed'`). Phase F2 added the `probe` seam (`DigestDeps.probe`) — the
+  real `probeLiveness` (HEAD/GET apply-URL check) in production, a fake in the stub smoke.
 - `scripts/test-digest-email.ts` (`pnpm --filter @opusfinder/inngest test:digest-email`) — the
   stub-seam smoke for the email tail: render determinism + escaping, the idempotency-key shape, the
   full event→status mapping, allowlist fail-closed, and the failure/skip/happy/slow-poll step
   sequences. NO creds, NO network, NO real DB.
+- `scripts/test-digest-probe.ts` (`pnpm --filter @opusfinder/inngest test:probe`) — the stub-seam smoke for
+  Arm C: `410` drops + closes, a single `404` drops but does NOT close, timeout/5xx/2xx keep, and an
+  all-dropped set takes the empty-digest path. NO creds, NO network. Shares `scripts/_stub.ts` (the fake
+  `step`/db/email harness deduped from the email smoke).
 - `scripts/serve.ts` (`pnpm inngest:serve`) — the local serve endpoint over a bare Node `http` server
   (`inngest/node`) on port 3000 (pinned — the root `inngest:dev` registers exactly that URL), so the
   dev server can discover + invoke the functions. Dev-only. The Phase-12 production serve will need
