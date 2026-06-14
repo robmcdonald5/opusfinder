@@ -21,7 +21,7 @@ email)` (the CV-ingest path — creates a verified user with a throwaway random 
 - `src/env.ts` — node-only `getAuthSecret()` / `getAuthBaseURL()` behind the `./env` subpath (never
   bundled into the Worker, same discipline as `@opusfinder/storage/env`).
 - `scripts/` — `user:create` / `user:set-prefs` / `user:list` CLIs, plus `test:auth` (driver/B1 probe)
-  and `test:create-user` (end-to-end, self-cleaning) smokes.
+  `test:create-user` (end-to-end, self-cleaning), and `test:prefs-flags` (prefs flag-parsing) smokes.
 - `better-auth.ts` — the entrypoint `pnpm dlx @better-auth/cli generate` introspects to emit the schema.
 
 The `user` / `session` / `account` / `verification` + `user_preferences` tables live in the unified
@@ -39,7 +39,7 @@ Put a self-generated signing secret in `packages/auth/.env` (gitignored — neve
 ## CLIs
 
 ```sh
-pnpm user:create --email me@example.com --password "<pw>" --remote false --cadence daily
-pnpm user:set-prefs --email me@example.com --min-salary 120000 --cadence weekly
+pnpm user:create --email me@example.com --password "<pw>" --location-mode remote_only --min-yoe 2 --max-yoe 5 --cadence daily
+pnpm user:set-prefs --email me@example.com --max-salary 180000 --dealbreakers crypto,gambling --min-salary clear
 pnpm user:list
 ```

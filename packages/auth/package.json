@@ -10,6 +10,7 @@
   "types": "./src/index.ts",
   "scripts": {
     "test:auth": "tsx scripts/test-auth-db.ts",
+    "test:prefs-flags": "tsx scripts/test-prefs-flags.ts",
     "test:create-user": "tsx scripts/test-create-user.ts",
     "user:create": "tsx scripts/user-create.ts",
     "user:set-prefs": "tsx scripts/user-set-prefs.ts",

@@ -9,17 +9,23 @@ import { findUserByEmail } from "../src/index";
 import { maskEmail, prefsFromFlags } from "./cli-utils";
 
 const USAGE =
-  "Usage: pnpm user:set-prefs --email <email> [--remote true|false] [--locations a,b] [--min-salary 120000] " +
-  "[--recency-days 14] [--cadence daily|weekly|monthly] [--enabled true|false]";
+  "Usage: pnpm user:set-prefs --email <email> [--location-mode any|remote_only|onsite_only] [--locations a,b] " +
+  "[--min-salary N|clear] [--max-salary N|clear] [--min-yoe N|clear] [--max-yoe N|clear] " +
+  "[--dealbreakers a,b] [--exclusions a,b] [--recency-days 14] [--cadence daily|weekly|monthly] [--enabled true|false]";
 
 async function main(): Promise<void> {
   const { values } = parseArgs({
     args: process.argv.slice(2),
     options: {
       email: { type: "string" },
-      remote: { type: "string" },
+      "location-mode": { type: "string" },
       locations: { type: "string" },
       "min-salary": { type: "string" },
+      "max-salary": { type: "string" },
+      "min-yoe": { type: "string" },
+      "max-yoe": { type: "string" },
+      dealbreakers: { type: "string" },
+      exclusions: { type: "string" },
       "recency-days": { type: "string" },
       cadence: { type: "string" },
       enabled: { type: "string" },
@@ -50,9 +56,13 @@ async function main(): Promise<void> {
 
   const row = await updatePreferences(db, userId, patch);
   console.log(`updated prefs for ${maskEmail(email)} (${userId})`);
+  // Free-text arrays (dealbreakers/exclusions) may carry company names — echo COUNTS, not contents (PII).
   console.log(
-    `  remote_ok=${row.remoteOk} locations=[${row.locations.join(",")}] min_salary=${row.minSalary ?? "—"} ` +
-      `recency_days=${row.recencyDays} cadence=${row.digestCadence} enabled=${row.digestEnabled}`,
+    `  location_mode=${row.locationMode} locations=[${row.locations.join(",")}] ` +
+      `salary=[${row.minSalary ?? "—"}..${row.maxSalary ?? "—"}] yoe=[${row.yoeMin ?? "—"}..${row.yoeMax ?? "—"}] ` +
+      `recency_days=${row.recencyDays} ` +
+      `dealbreakers=${row.dealbreakers.length} exclusions=${row.exclusions.length} ` +
+      `cadence=${row.digestCadence} enabled=${row.digestEnabled}`,
   );
 }
 
