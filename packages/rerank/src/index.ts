@@ -15,7 +15,12 @@
  * digest and a real-LLM eval run by construction. Only the candidate LIST (the variable tail) is the
  * injected call's concern — keeping the cached prefix stable AND the core free of any LLM dependency.
  */
-import { composeProfileText, type StructuredProfile } from "@opusfinder/shared";
+import {
+  composeProfileText,
+  composePromptPrefs,
+  type PromptPreferences,
+  type StructuredProfile,
+} from "@opusfinder/shared";
 
 /** A candidate job as the reranker sees it — the subset of fields the prompt needs. The digest's
  *  `JobCandidate` (@opusfinder/db/repos) and the eval `EvalJob` are both structurally assignable. */
@@ -79,11 +84,11 @@ Score each job on its absolute fit for THIS candidate, not relative to the other
 HOW TO WEIGH SIGNALS (most to least important)
 1. Skills overlap (most important). Compare the role's required and used technologies, tools, languages, frameworks, and competencies against the candidate's skills. Distinguish: (a) EXACT matches on the role's core/required skills — the strongest signal; (b) TRANSFERABLE skills — the candidate has closely-related experience (e.g. one cloud provider when the role uses another, one statically-typed language when the role uses a different one) — credit these but a notch below exact; (c) ADJACENT skills — same broad area, different specialization — partial credit; (d) MISSING core skills — the role's central requirement is absent from the profile — a strong negative. Weight a skill by how central it is to the role: a missing "nice to have" barely matters; a missing core requirement caps the score in the lower bands. Reward depth on the role's primary stack over breadth of loosely-related keywords. Do not reward mere keyword co-occurrence — a passing mention of a technology is not the same as the role being about it.
 2. Target-role alignment. Does the job title and function match a role the candidate is targeting (or a clear synonym/variant of it)? A backend engineer targeting "Staff Backend Engineer" matches "Senior Backend Engineer", "Backend Software Engineer", and "Platform Engineer" well; matches "Full-Stack Engineer" moderately; matches "Frontend Engineer", "Data Scientist", or "Product Manager" weakly-to-poorly unless the skills strongly say otherwise. Treat the candidate's targetRoles as their intent — a role outside that set should score lower even if some skills overlap.
-3. Seniority. Judge the role's level from its title and language (years required, scope, leadership, "own", "lead", "mentor", "set strategy") and compare it to the candidate's apparent level (from their summary: years, scope, titles, whether they lead). Penalize a large mismatch in EITHER direction: a senior/staff candidate matched to an entry/junior role is a poor fit (under-leveled, unlikely to want it); a mid-level candidate matched to a principal/director role is a stretch. A one-step difference (senior↔staff, mid↔senior) is a minor penalty; a two-or-more-step gap is a major one. An individual-contributor candidate matched to a people-management role (or vice versa) is a significant mismatch unless their profile shows both tracks.
+3. Seniority. Judge the role's level from its title and language (years required, scope, leadership, "own", "lead", "mentor", "set strategy") and compare it to the candidate's apparent level (from their summary: years, scope, titles, whether they lead). Penalize a large mismatch in EITHER direction: a senior/staff candidate matched to an entry/junior role is a poor fit (under-leveled, unlikely to want it); a mid-level candidate matched to a principal/director role is a stretch. A one-step difference (senior↔staff, mid↔senior) is a minor penalty; a two-or-more-step gap is a major one. An individual-contributor candidate matched to a people-management role (or vice versa) is a significant mismatch unless their profile shows both tracks. If the candidate's stated preferences (below the profile) specify a target years-of-experience band, treat THAT as the authoritative statement of the level they are seeking — prefer it over the level you would infer from the summary, and penalize a role whose stated required-years (or the level implied by its scope and language) falls outside that band in EITHER direction (per the one-step/two-step penalties above). If no band is given, infer level from the summary as before.
 4. Domain / industry relevance (least important, but a tiebreaker and sometimes load-bearing). Shared problem space (fintech, healthcare, devtools, e-commerce, ML/AI, infra) or transferable domain experience. For most software roles, domain is secondary to skills + function. But when a role's value is domain-specific (e.g. "Quantitative Developer", "Bioinformatics Engineer", "Compiler Engineer", "Security Researcher"), treat the domain as a near-core requirement.
 
 THE SENIORITY LADDER (for calibrating signal 3)
-Individual-contributor track, junior → senior: Intern / New Grad → Junior (0–2 yrs) → Mid-level (2–5 yrs, owns features) → Senior (5–8+ yrs, owns systems, mentors) → Staff (cross-team technical leadership, ambiguous problems) → Principal / Distinguished (org-wide technical strategy). Management track: Engineering Manager (leads a team) → Senior/Group Manager → Director → VP. Map fuzzy titles sensibly ("Software Engineer II" ≈ mid, "SDE III"/"Senior SWE" ≈ senior, "Member of Technical Staff" varies by company so lean on the description's scope language, "Lead" usually means senior-IC-with-leadership or a small-team lead). Infer the candidate's level from years of experience, the scope they describe (a feature vs a system vs a platform vs an org), and whether they lead or mentor — not from a single title alone.
+Individual-contributor track, junior → senior: Intern / New Grad → Junior (0–2 yrs) → Mid-level (2–5 yrs, owns features) → Senior (5–8+ yrs, owns systems, mentors) → Staff (cross-team technical leadership, ambiguous problems) → Principal / Distinguished (org-wide technical strategy). Management track: Engineering Manager (leads a team) → Senior/Group Manager → Director → VP. Map fuzzy titles sensibly ("Software Engineer II" ≈ mid, "SDE III"/"Senior SWE" ≈ senior, "Member of Technical Staff" varies by company so lean on the description's scope language, "Lead" usually means senior-IC-with-leadership or a small-team lead). Infer the candidate's level from years of experience, the scope they describe (a feature vs a system vs a platform vs an org), and whether they lead or mentor — not from a single title alone. (If the candidate states a target years-of-experience band in their preferences below, that DECLARED band overrides this inference — see signal 3.)
 
 EDGE CASES
 - Sparse job descriptions: if a description is thin, score conservatively from the title and whatever is given. Do not assume unstated requirements either for or against the candidate. A bare title that clearly matches a target role can still earn a moderate-to-strong score; a bare title that's ambiguous should stay mid-or-lower.
@@ -91,7 +96,8 @@ EDGE CASES
 - Entry-level / students: if the profile reads as early-career, score senior/staff roles low (over-leveled) and credit internships, new-grad, and junior roles that match the skills.
 - Generalists vs specialists: a generalist (broad skills, no deep specialization) fits broad roles well and narrow specialist roles weakly; a deep specialist fits roles in their specialty strongly and unrelated roles weakly even if titles overlap.
 - Adjacent functions: software engineering ↔ ML engineering, backend ↔ platform/infra, data engineering ↔ analytics engineering, SRE ↔ backend — these are partial matches; credit shared skills but discount for the change of focus unless the candidate's skills clearly span both.
-- Do NOT score on location, remote/on-site, salary, or company prestige. Those are filtered or presented separately; a prestigious company is not a better match, and a role's location has no bearing on your score. Judge fit only.
+- Do NOT score on location, remote/on-site, or company prestige. Those are filtered or presented separately; a prestigious company is not a better match, and a role's location has no bearing on your score. SALARY is the ONE deliberate exception to "judge fit only": by default ignore it, but ONLY if the candidate's stated preferences (below the profile) include a salary range AND the job description explicitly states pay, you MAY apply a SMALL tiebreaker — favor a role whose stated pay falls within the candidate's stated range, mildly disfavor one clearly outside it (below a stated floor or above a stated ceiling). Never infer pay that is not stated; when the job is silent on pay (the common case), ignore salary entirely. This is a minor tiebreaker only — skills, function, and seniority always dominate, and this is the only place salary touches the score. Otherwise, judge fit only.
+- Dealbreakers: if the candidate's stated preferences (below the profile) list dealbreakers, a role CLEARLY CENTERED on one — it defines the role's core domain, stack, or model, not a passing mention — is a strong negative that caps the score low. Do NOT penalize a role that only references a dealbreaker incidentally; exact-keyword matches are already filtered out before you see the list, so weigh only the semantic "this role is fundamentally about something they want to avoid" case, and weigh it once.
 
 CALIBRATION EXAMPLES (illustrative; reason the same way for the actual profile)
 - Profile: "Senior backend engineer, ~8 yrs, Go/PostgreSQL/Kafka/Kubernetes, distributed systems"; targets "Staff Backend Engineer". Job: "Senior Backend Engineer — build high-throughput Go services on Kubernetes, Postgres, event streaming." → ~0.92 (exact core-skill + function + level match).
@@ -152,8 +158,15 @@ RULES (must follow)
  * over the representation retrieval used). The candidate LIST is deliberately NOT here — it is the
  * variable per-chunk tail the injected call adds, keeping this prefix stable and cacheable.
  */
-export function buildRerankSystem(profile: StructuredProfile): string {
-  return `${RERANK_RUBRIC}\n\n=== Candidate profile ===\n${composeProfileText(profile)}`;
+export function buildRerankSystem(profile: StructuredProfile, prefs?: PromptPreferences): string {
+  const base = `${RERANK_RUBRIC}\n\n=== Candidate profile ===\n${composeProfileText(profile)}`;
+  // The judgment-context preferences (YoE band / salary range / dealbreakers) ride a labeled block AFTER
+  // the profile, inside the SAME cached system string (Phase F3). composePromptPrefs
+  // returns "" for an unset/all-empty PromptPreferences, so an un-answered user's prefix is byte-identical
+  // to the no-prefs path — no per-user prompt-cache bust on deploy. NEVER fed through composeProfileText
+  // (that is the embedding text, which must stay prefs-free).
+  const ctx = composePromptPrefs(prefs);
+  return ctx ? `${base}\n\n=== Candidate stated preferences ===\n${ctx}` : base;
 }
 
 /**
@@ -168,10 +181,13 @@ export async function rerankCandidates(
   profile: StructuredProfile,
   candidates: RerankCandidate[],
   call: RerankCall,
-  opts: { chunkSize?: number } = {},
+  opts: { chunkSize?: number; prefs?: PromptPreferences } = {},
 ): Promise<RerankResult> {
   const chunkSize = Math.max(1, opts.chunkSize ?? DEFAULT_CHUNK_SIZE);
-  const system = buildRerankSystem(profile);
+  // Built ONCE (prefs included) and reused across every chunk — so a caching call still hits the cache on
+  // chunks 2..N, and the per-user prefs block does not introduce a new cache-miss axis. `prefs` is OPTIONAL
+  // so the eval's 3-arg `rerankCandidates(profile, input, call)` still compiles (no prefs fixture there).
+  const system = buildRerankSystem(profile, opts.prefs);
   const scores = new Map<number, number>();
 
   for (let i = 0; i < candidates.length; i += chunkSize) {

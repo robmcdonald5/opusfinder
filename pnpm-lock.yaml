@@ -254,6 +254,10 @@ importers:
       '@opusfinder/shared':
         specifier: workspace:*
         version: link:../shared
+    devDependencies:
+      tsx:
+        specifier: ^4
+        version: 4.22.3
 
   packages/shared:
     dependencies:

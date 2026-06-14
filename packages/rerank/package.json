@@ -8,9 +8,13 @@
   },
   "types": "./src/index.ts",
   "scripts": {
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:prefs": "tsx scripts/test-rerank-prefs.ts"
   },
   "dependencies": {
     "@opusfinder/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "tsx": "^4"
   }
 }
