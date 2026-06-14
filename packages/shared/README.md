@@ -165,14 +165,20 @@ path (email is PII → reversible ids are a debt being paid down). It stays on i
 imports `node:crypto` — keeping the `src/index.ts` barrel `node:`-free so it bundles into the
 `nodejs_compat`-less scrapers Worker (same discipline as `@opusfinder/shared/env`).
 
-## User preferences + unsubscribe token (Phase 9.5)
+## User preferences + unsubscribe token (Phase 9.5, extended in F3)
 
-`UserPreferences` is the node-free, user-SETTABLE preferences contract — `{ remoteOk, locations[],
-minSalary, recencyDays, exclusions[], digestCadence, digestEnabled }` — the shape both the
-`user_preferences` repo (`@opusfinder/db`) and the `user:set-prefs` CLI write, and the future SvelteKit
-settings form will reuse. `DigestCadence` is the `"daily" | "weekly" | "monthly"` union. Pipeline-managed
-delivery STATE (unsubscribe token, bounce status, suppression, last-sent markers) is deliberately NOT in
-this contract.
+`UserPreferences` is the node-free, user-SETTABLE preferences contract — `{ locationMode, locations[],
+minSalary, maxSalary, yoeMin, yoeMax, recencyDays, exclusions[], dealbreakers[], digestCadence,
+digestEnabled }` — the shape both the `user_preferences` repo (`@opusfinder/db`) and the `user:set-prefs` CLI
+write, and the future SvelteKit settings form will reuse. The deterministic-filter fields
+(`locationMode`/`locations`/`recencyDays`/`exclusions`/`dealbreakers`) feed digest retrieval; the
+judgment-context fields (`yoeMin`/`yoeMax`/`minSalary`/`maxSalary`/`dealbreakers`) feed the rerank + synthesis
+prompt via `composePromptPrefs` (Phase F3 — salary/YoE are stored + soft-prompt now, salary becomes a hard
+filter in F4). The YoE band is the declared-level signal (the too-senior fix); a categorical `TargetLevel`
+was considered and dropped as redundant/ambiguous (YoE is the cleaner objective gate). `DigestCadence` is
+`"daily" | "weekly" | "monthly"`; `LocationMode` is `"any" | "remote_only" | "onsite_only"` (F3 — subsumes
+the former `remoteOk` boolean). Pipeline-managed delivery STATE (unsubscribe token, bounce status,
+suppression, last-sent markers) is deliberately NOT in this contract.
 
 `generateUnsubscribeToken()` returns a cryptographically-random, URL-safe token (64-hex / 256-bit) via
 Web Crypto — node-free, so it lives on the barrel, not in `./userid`. Generated once at user creation and

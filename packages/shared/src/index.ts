@@ -78,26 +78,54 @@ export type DigestTrigger = "manual" | "cron";
 export type DigestFeedback = "saved" | "applied" | "dismissed" | "not_interested";
 
 /**
+ * Indeed/LinkedIn-style location preference — a TS union on a plain text column (no pgEnum, same rule as
+ * {@link DigestCadence}). Phase F3 stores it on `user_preferences.location_mode`; the digest retrieval
+ * `geoMatches` filter branches on it. SUBSUMES the former `remote_ok` boolean (`remote_ok=true → 'any'`,
+ * `false → 'onsite_only'`). NO `hybrid` member: {@link NormalizedJob.remote} is a best-effort boolean
+ * ("Hybrid → false"), so a hybrid mode could not be honestly distinguished from `any`.
+ * - `any` — remote roles pass; on-site roles pass when they match `locations` (or have no location data).
+ * - `remote_only` — only remote roles pass (excludes all on-site).
+ * - `onsite_only` — only on-site roles pass (excludes all remote), still subject to `locations`.
+ */
+export type LocationMode = "any" | "remote_only" | "onsite_only";
+
+/**
  * The user-SETTABLE preferences (Phase 9.5) — the subset of the `user_preferences` row a settings
  * form / the `user:set-prefs` CLI writes, and the conservative defaults applied at user creation.
  * Deliberately NOT the full table row: system-managed delivery STATE (unsubscribe token, bounce
  * status, suppression, last-sent markers) is owned by the pipeline, never set through this contract.
- * The filter fields (`remoteOk`/`locations`/`minSalary`/`recencyDays`/`exclusions`) feed the Phase-10
- * deterministic filter; `digestEnabled` gates delivery (Phase 10/11) while `digestCadence` drives the
- * Phase-12 cadence cron. Node-free shared
- * (no db dep) so the CLI now and a future SvelteKit action later share one shape.
+ * The deterministic-filter fields (`locationMode`/`locations`/`recencyDays`/`exclusions`/`dealbreakers`)
+ * feed the digest retrieval filter; the judgment-context fields (`yoeMin`/`yoeMax`/`minSalary`/`maxSalary`/
+ * `dealbreakers`) feed the rerank + synthesis prompt via {@link composePromptPrefs} (Phase F3 — salary/YoE
+ * are stored + soft-prompt now, and salary becomes a hard retrieval filter in Phase F4).
+ * `digestEnabled` gates delivery (Phase 10/11) while `digestCadence` drives the Phase-12 cadence cron.
+ * Node-free shared (no db dep) so the CLI now and a future SvelteKit action later share one shape.
  */
 export interface UserPreferences {
-  /** Include remote roles in the filter. */
-  remoteOk: boolean;
+  /** Indeed/LinkedIn-style location filter (Phase F3) — a hard retrieval filter via geoMatches. SUBSUMES
+   *  the former `remoteOk` boolean. */
+  locationMode: LocationMode;
   /** Location strings the filter matches against; empty = no location constraint. */
   locations: string[];
-  /** Salary floor in whole currency units; `null` = no floor. */
+  /** Salary floor in whole currency units; `null` = no floor. Stored + soft prompt signal in F3; a hard
+   *  retrieval filter in Phase F4 (once job-side salary columns land). */
   minSalary: number | null;
+  /** Salary ceiling in whole currency units; `null` = no cap (Phase F3). Independent of `minSalary`. */
+  maxSalary: number | null;
+  /** Target years-of-experience floor; `null` = no floor (Phase F3). Soft prompt signal only — no job-side
+   *  YoE column exists on any roadmap, so this never becomes a hard filter. */
+  yoeMin: number | null;
+  /** Target years-of-experience ceiling; `null` = no ceiling (Phase F3). The YoE band is the SOLE declared
+   *  level signal (the too-senior fix) — a categorical `targetLevel` was considered and dropped as
+   *  redundant/ambiguous; YoE is the cleaner objective gate. */
+  yoeMax: number | null;
   /** Max posting age (days) the digest considers. */
   recencyDays: number;
   /** Free-form, app-side post-query exclusion rules — the one sparse field; shape firms up in Phase 10. */
   exclusions: string[];
+  /** Hard "never show" keywords (Phase F3): merged into the `exclusions` post-filter (a real drop) AND
+   *  rendered as a prompt "avoid" line. */
+  dealbreakers: string[];
   /** Delivery cadence. */
   digestCadence: DigestCadence;
   /** Master on/off for digest delivery. */
@@ -257,6 +285,53 @@ export function composeProfileText(profile: StructuredProfile): string {
     profile.skills.length > 0 ? `Skills: ${profile.skills.join(", ")}` : "",
     profile.targetRoles.length > 0 ? `Target roles: ${profile.targetRoles.join(", ")}` : "",
   ]);
+}
+
+/**
+ * The JUDGMENT-CONTEXT subset of {@link UserPreferences} that the rerank + synthesis prompt renders via
+ * {@link composePromptPrefs} (Phase F3). Deliberately NOT part of {@link StructuredProfile} (which feeds the
+ * embedding) — preferences are a prompt-boundary-only sibling block, never the match vector. `locationMode`
+ * is excluded: it is a hard retrieval filter, and the rubric must not also SCORE location. A `Pick` of the
+ * source contract (not a hand-copy) so the field types stay locked to {@link UserPreferences}.
+ */
+export type PromptPreferences = Pick<
+  UserPreferences,
+  "yoeMin" | "yoeMax" | "minSalary" | "maxSalary" | "dealbreakers"
+>;
+
+/**
+ * Render the judgment-context preferences ({@link PromptPreferences}) into a compact labeled block for the
+ * rerank + synthesis system prompt (Phase F3). Returns `""` when nothing is set, so an un-answered user
+ * yields a byte-identical empty system prefix — their per-user prompt-cache prefix does not bust on deploy.
+ * A small inline helper, deliberately NOT a {@link composeProfileText}-tier abstraction. NEVER fed into the
+ * embedding (that is {@link composeProfileText}, which must stay prefs-free — see {@link StructuredProfile}).
+ * Both nullable bounds independent: only-min, only-max, and both each render gracefully. `locationMode` is
+ * intentionally absent — it is a hard filter, scored by neither prompt.
+ */
+export function composePromptPrefs(prefs?: PromptPreferences): string {
+  if (!prefs) return "";
+  const lines: string[] = [];
+  const yoe = formatBoundedRange(prefs.yoeMin, prefs.yoeMax, "at least", "at most");
+  if (yoe) lines.push(`Target years of experience: ${yoe}`);
+  const salary = formatBoundedRange(prefs.minSalary, prefs.maxSalary, "from", "up to");
+  if (salary) lines.push(`Salary preference: ${salary}`);
+  if (prefs.dealbreakers.length > 0) lines.push(`Dealbreakers (avoid): ${prefs.dealbreakers.join(", ")}`);
+  return lines.join("\n");
+}
+
+/** Render a min/max pair where either bound may be null (unbounded): both → "5-8"; only-min → "from 5" /
+ *  "at least 5"; only-max → "up to 8" / "at most 8"; neither → "". The min/max words differ per field
+ *  (salary reads "from … / up to …"; years read "at least … / at most …"). */
+function formatBoundedRange(
+  min: number | null,
+  max: number | null,
+  minWord: string,
+  maxWord: string,
+): string {
+  if (min != null && max != null) return `${min}-${max}`;
+  if (min != null) return `${minWord} ${min}`;
+  if (max != null) return `${maxWord} ${max}`;
+  return "";
 }
 
 /**
