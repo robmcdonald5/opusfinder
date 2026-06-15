@@ -75,8 +75,10 @@ pnpm db:ping      # round-trips SELECT 1 against Neon
 | `pnpm llm:test`                           | Call Haiku twice with a cached system prompt; assert cache write then read                                                                                                     |
 | `pnpm embeddings:backfill`                | Embed every job whose `embedding` is still NULL (idempotent)                                                                                                                   |
 | `pnpm embeddings:search "<q>"`            | Embed a query and print the nearest jobs by cosine distance (HNSW)                                                                                                             |
+| `pnpm enrich:backfill`                    | Extract a structured YoE/salary band into `jobs` for un-enriched rows via Haiku (idempotent; Phase F4)                                                                         |
 | `pnpm eval`                               | Score a ranker over the labeled set; write a report + diff vs last run                                                                                                         |
 | `pnpm eval:compare`                       | Voyage vs OpenAI embedding retrieval, side-by-side                                                                                                                             |
+| `pnpm eval:extraction`                    | Per-field extraction-accuracy eval (confusion matrix; keyless stub default, `-- --live` for real Haiku; Phase F4)                                                             |
 | `pnpm ingest-cv <cv.pdf> <email>`         | Ingest a CV PDF → R2 + `user_cv_files` + `user_profiles` (transcribe → structure → embed)                                                                                      |
 | `pnpm profiles:restructure <email>`       | Re-structure a profile from the cached R2 transcript (skips transcribe)                                                                                                        |
 | `pnpm user:create --email … --password …` | Create a verified user + default prefs (`[--name] [--location-mode] [--locations] [--min-salary] [--max-salary] [--min-yoe] [--max-yoe] [--dealbreakers] [--exclusions] [--recency-days] [--cadence] [--enabled]`) |
@@ -104,6 +106,23 @@ but not in a fresh clone:
 - `research/sources/README.md` — source-discovery catalog
 
 ## Status
+
+Phase F4 added **job-side structured enrichment at ingest**: an async Haiku pass extracts a numeric **YoE
+band** (`yoe_min` / `yoe_max`) and a structured **salary band** (`salary_min` / `salary_max` +
+`salary_currency` / `salary_period`) from each posting's own title + description into seven new nullable
+`jobs` columns, gated by an **`enriched_at` SENTINEL** (NULL = not-yet-extracted — distinct from a successful
+"found nothing", where the data columns are legitimately all-NULL). The lifecycle mirrors the embedding
+backfill (`packages/db/src/repos/enrichment.ts` — `jobsNeedingEnrichment` / `writeJobEnrichment` /
+`backfillJobEnrichment` over an injected `ExtractFn` + a keyset cursor), and `upsertJobs` resets enrichment
+alongside the embedding on a title/description change. The extractor is `@opusfinder/llm`'s `JOB_ENRICH_SYSTEM`
++ `JobEnrichmentSchema` (strict null-when-absent, per-field `.catch(null)` bounds, Haiku temp 0), with a new
+per-field confusion-matrix accuracy eval (`pnpm eval:extraction`, distinct from the permutation-locked Ranker).
+**Path A**: a numeric YoE band, NO categorical `seniority_band` — F3 dropped `target_level`, so the YoE band is
+the sole declared-level signal on both sides. Live: 1472 jobs enriched (880 YoE / 385 salary / 542
+found-nothing); eval — salary 0% hallucination / 100% accuracy, YoE ~94% (haiku beat Sonnet on YoE, so
+F4-MODEL locks to haiku). Migration 0013 applied to prod. **SCOPE: DATA + extraction + eval only — the
+salary/YoE retrieval `WHERE` clauses are the deferred, twice-gated F4-FILTER follow-on.** Uncommitted on branch
+`feat/job-enrichment`.
 
 Phase F3 added **user preferences** as a hard-filter + soft-prompt layer. A new `location_mode`
 (`any` / `remote_only` / `onsite_only`) hard filter subsumes the old `remote_ok` boolean in retrieval;

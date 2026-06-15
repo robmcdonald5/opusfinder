@@ -22,8 +22,10 @@
     "ping": "tsx scripts/ping.ts",
     "runs": "tsx scripts/show-runs.ts",
     "delivery": "tsx scripts/show-digest-delivery.ts",
+    "enrichment": "tsx scripts/show-enrichment.ts",
     "test:digest-payload": "tsx scripts/test-digest-payload.ts",
     "test:lifecycle": "tsx scripts/test-lifecycle-sweep.ts",
+    "test:enrichment": "tsx scripts/test-enrichment-lifecycle.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

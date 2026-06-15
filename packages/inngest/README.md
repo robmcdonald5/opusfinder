@@ -104,6 +104,11 @@ Phase 11 on the local dev runtime — locked at Phase-11 planning, 2026-06-11).
 - `scripts/digest.ts` (`pnpm digest`) — the manual trigger CLI: send `digest/run.requested`, then poll
   the DB until each targeted recipient has a NEW digest, and print it (item count, the rerank
   cache-read/create counters, and the top reasons). `process.exitCode` only (never `process.exit`).
+- `scripts/enrich-backfill.ts` (`pnpm enrich:backfill`) — a standalone **Phase-F4** CLI (NOT part of the
+  digest function graph): wire the real Haiku enrichment extractor (`makeJobEnrichmentExtractor`) and run
+  `backfillJobEnrichment` over `jobs` rows whose `enriched_at` is NULL. Lives here only because it needs both
+  `@opusfinder/db` and `@opusfinder/llm` — and inngest is the one package already allowed to depend on both
+  (the scrapers Worker forbids `@opusfinder/llm`). `process.exitCode` only.
 
 The `digest_runs` / `digests` / `digest_items` tables live in the unified `@opusfinder/db` schema +
 migrations (`0007`/`0008`; `0009` adds the per-send `email_id`/`delivery_status`/`sent_at` columns);

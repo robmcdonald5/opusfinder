@@ -6,7 +6,7 @@
  * dedupes the batch, then only advances `updated_at` when a job's content
  * actually changed, so re-ingesting an unchanged board is a no-op.
  */
-import { and, eq, gt, sql, type SQL } from "drizzle-orm";
+import { and, type AnyColumn, eq, gt, sql, type SQL } from "drizzle-orm";
 
 import type { CompanySlug, NormalizedJob, SourceName } from "@opusfinder/shared";
 
@@ -132,6 +132,21 @@ export async function upsertJobs(
     };
   });
 
+  // The content-derived columns — the Phase-4 `embedding` and the Phase-F4 enrichment band (yoe_*/salary_*) +
+  // the enriched_at SENTINEL — all reset to NULL when (and only when) title/description_text change, so the
+  // backfill re-derives them next pass; any other (setWhere) churn KEEPS the existing value (re-embedding /
+  // re-extracting identical prose is wasted work + tokens). One helper so every branch is provably identical
+  // and reads ${jobs.<col>} (the EXISTING row), NEVER excluded.<col>: the INSERT VALUES omits these derived
+  // columns, so excluded.* is the column DEFAULT (NULL) and an `ELSE excluded.<col>` would silently NULL every
+  // already-derived row on every non-content churn. (content_signature is the exception — it is RECOMPUTED,
+  // not preserved, so it stays an unconditional rewrite rather than this preserve-or-null CASE.)
+  const nullIfContentChanged = (col: AnyColumn): SQL => sql`CASE
+          WHEN ${jobs.title} IS DISTINCT FROM excluded.title
+            OR ${jobs.descriptionText} IS DISTINCT FROM excluded.description_text
+          THEN NULL
+          ELSE ${col}
+        END`;
+
   const updated = await db
     .insert(jobs)
     .values(values)
@@ -151,22 +166,23 @@ export async function upsertJobs(
         applyUrl: sql`excluded.apply_url`,
         postedAt: sql`excluded.posted_at`,
         raw: sql`excluded.raw`,
-        // The embedding is derived from title + description_text ONLY, so invalidate it
-        // (NULL → the backfill / inline-embed step re-embeds next pass) only when one of
-        // those two actually changed. The setWhere below also fires on apply_url /
-        // locations / remote / company_id changes; on those this CASE keeps the existing
-        // vector rather than paying to re-embed identical text. (An unchanged re-ingest
-        // never runs the set at all.)
-        embedding: sql`CASE
-          WHEN ${jobs.title} IS DISTINCT FROM excluded.title
-            OR ${jobs.descriptionText} IS DISTINCT FROM excluded.description_text
-          THEN NULL
-          ELSE ${jobs.embedding}
-        END`,
+        // The embedding is derived from title + description_text ONLY (see nullIfContentChanged above): reset
+        // it on a content change so the backfill / inline-embed step re-embeds, keep it on any other churn.
+        embedding: nullIfContentChanged(jobs.embedding),
         // content_signature (Phase F1): rewritten unconditionally from excluded title+desc via the
         // ONE signatureSql definition (the setWhere note below explains why it is written but NOT
         // also tested). Byte-identical to the INSERT VALUES above and the F1d backfill.
         contentSignature: signatureSql(sql`excluded.title`, sql`excluded.description_text`),
+        // Phase F4 enrichment (yoe_*/salary_*) + the enriched_at sentinel: reset on the title/description
+        // trigger (NOT the broader setWhere), written but NOT tested in setWhere — derived fields, exactly
+        // like content_signature/embedding. See nullIfContentChanged above.
+        yoeMin: nullIfContentChanged(jobs.yoeMin),
+        yoeMax: nullIfContentChanged(jobs.yoeMax),
+        salaryMin: nullIfContentChanged(jobs.salaryMin),
+        salaryMax: nullIfContentChanged(jobs.salaryMax),
+        salaryCurrency: nullIfContentChanged(jobs.salaryCurrency),
+        salaryPeriod: nullIfContentChanged(jobs.salaryPeriod),
+        enrichedAt: nullIfContentChanged(jobs.enrichedAt),
         updatedAt: sql`now()`,
       },
       // Advance the row only when a real change differs. Two fields are written
@@ -187,6 +203,10 @@ export async function upsertJobs(
       //    add it to this test (redundant), and do NOT drop the title/description clauses
       //    thinking the signature subsumes them (that would silently defeat idempotency +
       //    re-embedding). See repos/sql.ts signatureSql + PHASE_F1_PLAN.md §4.2.
+      //  - `yoe_*` / `salary_*` / `enriched_at` (Phase F4): reset by nullIfContentChanged in the
+      //    set block above on the SAME title/description trigger, and likewise EXCLUDED from this test — they
+      //    are derived from those two fields, so the rule is identical to content_signature (written here,
+      //    not tested here). The async extraction writer (repos/enrichment.ts) is what re-populates them.
       // OTHER-PHASE WRITERS, note:
       //  - `lifecycle_state` is NOT written here (this set leaves it at its existing
       //    value). Phase F2's closing/revival is a SEPARATE writer (repos/lifecycle.ts

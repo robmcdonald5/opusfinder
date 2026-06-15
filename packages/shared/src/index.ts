@@ -97,7 +97,8 @@ export type LocationMode = "any" | "remote_only" | "onsite_only";
  * The deterministic-filter fields (`locationMode`/`locations`/`recencyDays`/`exclusions`/`dealbreakers`)
  * feed the digest retrieval filter; the judgment-context fields (`yoeMin`/`yoeMax`/`minSalary`/`maxSalary`/
  * `dealbreakers`) feed the rerank + synthesis prompt via {@link composePromptPrefs} (Phase F3 — salary/YoE
- * are stored + soft-prompt now, and salary becomes a hard retrieval filter in Phase F4).
+ * are stored + soft-prompt now; BOTH become hard retrieval filters in Phase F4, which adds the job-side
+ * `salary_*` + `yoe_min`/`yoe_max` columns — see {@link JobEnrichment}).
  * `digestEnabled` gates delivery (Phase 10/11) while `digestCadence` drives the Phase-12 cadence cron.
  * Node-free shared (no db dep) so the CLI now and a future SvelteKit action later share one shape.
  */
@@ -112,8 +113,10 @@ export interface UserPreferences {
   minSalary: number | null;
   /** Salary ceiling in whole currency units; `null` = no cap (Phase F3). Independent of `minSalary`. */
   maxSalary: number | null;
-  /** Target years-of-experience floor; `null` = no floor (Phase F3). Soft prompt signal only — no job-side
-   *  YoE column exists on any roadmap, so this never becomes a hard filter. */
+  /** Target years-of-experience floor; `null` = no floor (Phase F3). Soft prompt signal in F3; Phase F4 adds
+   *  the job-side `jobs.yoe_min`/`yoe_max` band ({@link JobEnrichment}), so the deferred F4-FILTER can
+   *  range-overlap this band as a HARD retrieval filter (Path A — supersedes the earlier "YoE stays soft, no
+   *  job-side column" stance). */
   yoeMin: number | null;
   /** Target years-of-experience ceiling; `null` = no ceiling (Phase F3). The YoE band is the SOLE declared
    *  level signal (the too-senior fix) — a categorical `targetLevel` was considered and dropped as
@@ -285,6 +288,53 @@ export function composeProfileText(profile: StructuredProfile): string {
     profile.skills.length > 0 ? `Skills: ${profile.skills.join(", ")}` : "",
     profile.targetRoles.length > 0 ? `Target roles: ${profile.targetRoles.join(", ")}` : "",
   ]);
+}
+
+/**
+ * Salary pay period (Phase F4 job-side enrichment) — the unit of an extracted `jobs.salary_min/max`. A TS
+ * string-union on a plain `text` column (no pgEnum — same idempotent-migration rule as {@link LocationMode});
+ * `null` (absent from this union, modeled on {@link JobEnrichment.salaryPeriod}) = no period stated in prose.
+ */
+export const SALARY_PERIODS = ["year", "month", "week", "day", "hour"] as const;
+export type SalaryPeriod = (typeof SALARY_PERIODS)[number];
+
+/**
+ * Structured fields EXTRACTED from a job's own title + description prose by the Phase F4 Haiku pass — the
+ * `jobs.{yoe_min,yoe_max,salary_min,salary_max,salary_currency,salary_period}` columns. Every field is
+ * INDEPENDENTLY nullable and **`null` means "absent / not stated in the prose," never a guess**: the
+ * extraction contract is null-when-absent because a hallucinated value would silently poison the deferred
+ * deterministic filter (F4-FILTER), where a soft prompt best-guess only nudges scoring. The level signal is
+ * the NUMERIC required-years band (Path A — dimensionally identical to {@link UserPreferences.yoeMin}/`yoeMax`,
+ * so the deferred filter is a clean range-overlap), NOT a categorical seniority band: F3 dropped `target_level`,
+ * making YoE the sole level signal on both sides. Node-free shared so the db columns, the @opusfinder/llm
+ * extractor schema, and the eval all infer ONE shape (a compile-time tripwire in `prompts/job-enrich.ts`
+ * pins the Zod schema to this type).
+ */
+export interface JobEnrichment {
+  /** Role's required-years FLOOR; `null` = no stated/inferrable minimum. */
+  yoeMin: number | null;
+  /** Role's required-years CEILING; `null` = no stated/inferrable maximum. A one-sided band is legal. */
+  yoeMax: number | null;
+  /** Stated base-pay floor in whole `salaryCurrency` units; `null` = no floor in the prose. */
+  salaryMin: number | null;
+  /** Stated base-pay ceiling in whole `salaryCurrency` units; `null` = no ceiling in the prose. */
+  salaryMax: number | null;
+  /** ISO-4217 currency of the salary range (e.g. "USD"); `null` = not stated / ambiguous. */
+  salaryCurrency: string | null;
+  /** Pay period of the salary range; `null` = not stated. */
+  salaryPeriod: SalaryPeriod | null;
+}
+
+/**
+ * Compose the text the Phase F4 enrichment extractor reads — title + description, the SAME two fields the job
+ * embedding uses (mirrors `jobEmbeddingText` in @opusfinder/db) and the SAME two the `jobsNeedingEnrichment`
+ * non-whitespace eligibility guard tests, so "has extractable content" has ONE notion: the result is `""` iff
+ * BOTH title and description are blank (a title-only job — `description_text` is `''` not NULL — still
+ * composes, via {@link composeEmbeddingText}). Lives here (node-free) so the llm extractor core and the eval
+ * reuse it without pulling the db/embeddings stack.
+ */
+export function jobEnrichmentText(job: { title: string; descriptionText: string }): string {
+  return composeEmbeddingText([job.title, job.descriptionText]);
 }
 
 /**
