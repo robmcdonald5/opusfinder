@@ -14,8 +14,10 @@ dispatch shell; the real work lives in the already-Worker-forward libraries it c
 | `0 3 * * SUN` | discovery | `runDiscovery(db, …)` from `@opusfinder/discovery` |
 
 > **Ingestion is RESUMED, hourly** as of Phase F6 — it is the liveness driver for the health checker +
-> watchdog heartbeat (dialed back from the original `*/30`). **Discovery stays paused** (commented in
-> `wrangler.toml`): it requires Workers Paid. See "Pause / resume the schedule" below for the toggle.
+> watchdog heartbeat (dialed back from the original `*/30`). **Discovery is RESUMED, weekly**
+> (`0 3 * * SUN`) as of Phase F5 (Workers Paid is now active). The Worker calls
+> `runDiscovery({ workerOnly: true })`, so only `workerSafe` lanes (`outscal` + `hn`) run; a future
+> Node-only lane (F5-LANES-2) is filtered out. See "Pause / resume the schedule" below for the toggle.
 
 Each handler builds `createDb(env.DATABASE_URL)` (the neon-http client — fetch-only, no `process.env`)
 and the library it calls owns its own `source_runs` row (`startRun`/`finishRun`).
@@ -37,7 +39,9 @@ and the library it calls owns its own `source_runs` row (`startRun`/`finishRun`)
   embeddings package would pull a Node env-module into the Worker (and require `nodejs_compat`). Jobs
   are upserted regardless; the still-NULL vectors are filled by `pnpm embeddings:backfill`. See the
   enable steps in `src/index.ts`.
-- **Discovery** runs `runDiscovery` bounded by `limit`/`reprobeLimit` to stay under the subrequest budget.
+- **Discovery** runs `runDiscovery({ ..., workerOnly: true })` bounded by `limit`/`reprobeLimit` to stay
+  under the subrequest budget. `workerOnly` restricts the run to fetch-only `workerSafe` lanes (the
+  F5-LANES-2 guard that keeps a future Node-only lane out of the isolate).
 
 > **Health & liveness (Phase F6).** On each successful ingestion tick the Worker fires a content-free
 > heartbeat to an external watchdog (`env.HEALTH_PING_URL`, an optional `wrangler secret`); the watchdog
@@ -87,16 +91,16 @@ pnpm --filter @opusfinder/scrapers deploy     # registers/updates the Worker + a
 wrangler tail opusfinder-scrapers             # stream live cron invocations
 ```
 
-- **Workers Paid is required for the weekly discovery cron** — the Free plan caps at 50 subrequests per
-  invocation, which the seed fetch + a handful of probes exhaust. Ingestion's `INGEST_LIMIT` keeps a tick
-  under budget either way.
+- **Workers Paid is required for the weekly discovery cron** (now **active** as of Phase F5) — the Free
+  plan caps at 50 subrequests per invocation, which the seed fetch + a handful of probes exhaust.
+  Ingestion's `INGEST_LIMIT` keeps a tick under budget either way.
 
 ## Pause / resume the schedule
 
-As of Phase F6 the **ingestion** cron is **active** (hourly); **discovery** stays commented (Workers
-Paid). An idle/paused Worker costs nothing and never touches Neon — it only does anything when a cron
-fires. The toggle lives in `wrangler.toml` under `[triggers]`, and a change takes effect on the **next
-deploy**:
+As of Phase F6 the **ingestion** cron is **active** (hourly); as of Phase F5 **discovery** is **active**
+weekly on Sunday (`0 3 * * SUN`, Workers Paid). Both live in `wrangler.toml` under `[triggers]`. An
+idle/paused Worker costs nothing and never touches Neon — it only does anything when a cron fires. A
+change to the toggle takes effect on the **next deploy**:
 
 - **Pause** (stop all scheduled runs): set `crons = []`, then
   `pnpm --filter @opusfinder/scrapers deploy`. Deploying with `crons = []` is the documented way to

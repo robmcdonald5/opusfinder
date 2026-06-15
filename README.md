@@ -13,7 +13,7 @@ pipeline, and delivers a personalized digest on a regular cadence. See
 | `apps/scrapers/`       | Cloudflare Workers cron runtime — scheduled ingestion + discovery against Neon (Phase 8) ([README](apps/scrapers/README.md))                                                                      |
 | `packages/auth/`       | Better Auth (email+password) — `user`/`session`/`account` schema + user-creation service + management CLIs (Phase 9.5; node/server-only, never in the Worker) ([README](packages/auth/README.md)) |
 | `packages/db/`         | Drizzle ORM over Neon Postgres + pgvector ([README](packages/db/README.md))                                                                                                                       |
-| `packages/discovery/`  | Slug-discovery pipeline — seed → probe → upsert + staleness (Phase 7) ([README](packages/discovery/README.md))                                                                                    |
+| `packages/discovery/`  | Slug-discovery pipeline — seed lanes (outscal + HN) → probe → upsert + staleness (Phase 7; F5 lane registry) ([README](packages/discovery/README.md))                                                                                    |
 | `packages/embeddings/` | Voyage `voyage-3-large` embeddings + HNSW retrieval ([README](packages/embeddings/README.md))                                                                                                     |
 | `packages/eval/`       | Matching-quality eval harness — metrics, rankers, reports ([README](packages/eval/README.md))                                                                                                     |
 | `packages/inngest/`    | Per-user digest pipeline on Inngest — orchestrator + per-user fn, local serve + trigger CLI (Phase 10; local-dev-only) ([README](packages/inngest/README.md))                                     |
@@ -69,10 +69,10 @@ pnpm db:ping      # round-trips SELECT 1 against Neon
 | `pnpm db:backfill-signatures`             | Backfill `jobs.content_signature` for unsigned rows (idempotent; Phase F1d)                                                                                                    |
 | `pnpm db:ping`                            | Connectivity check against Neon                                                                                                                                                |
 | `pnpm runs`                               | Print the most recent `source_runs` rows (pipeline health at a glance)                                                                                                         |
-| `pnpm health`                             | Run the pipeline health checker over Neon — print 7 checks + a cost rollup; on an enforce-mode firing email `ALERT_TO` + exit non-zero (Phase F6)                              |
+| `pnpm health`                             | Run the pipeline health checker over Neon — print 8 checks + a cost rollup; on an enforce-mode firing email `ALERT_TO` + exit non-zero (Phase F6)                              |
 | `pnpm ingest <source> <slug>`             | Fetch + normalize one ATS board, upsert to Neon, embed new postings (`--no-embed` to skip)                                                                                     |
 | `pnpm ingest:all`                         | Ingest every seeded company across all sources (`[--no-embed] [--source=<name>]`)                                                                                              |
-| `pnpm discover`                           | Discover + validate + upsert company slugs from the seed (`[--source=<name>] [--limit=<n>] [--dry-run]`)                                                                       |
+| `pnpm discover`                           | Discover + validate + upsert company slugs from the seed lanes (`[--source=<name>] [--lanes=<a,b>] [--limit=<n>] [--dry-run]`)                                                  |
 | `pnpm llm:test`                           | Call Haiku twice with a cached system prompt; assert cache write then read                                                                                                     |
 | `pnpm embeddings:backfill`                | Embed every job whose `embedding` is still NULL (idempotent)                                                                                                                   |
 | `pnpm embeddings:search "<q>"`            | Embed a query and print the nearest jobs by cosine distance (HNSW)                                                                                                             |
@@ -109,14 +109,26 @@ but not in a fresh clone:
 ## Status
 
 Phase F6 added **pipeline health & alerting** — the watcher for health data that was recorded everywhere but
-read nowhere. A new pure, serverless-safe checker (`@opusfinder/db/health`, **NO migration**) computes seven
+read nowhere. A new pure, serverless-safe checker (`@opusfinder/db/health`, **NO migration**) computes eight
 liveness checks (ingestion staleness, board fail-ratio, discovery window, embedding + enrichment backlogs, digest
-errors, bounce/suppression) + a rerank-cache cost rollup from existing columns, behind `off|shadow|enforce` modes
-(shadow-first). `pnpm health` (in `@opusfinder/inngest`, reusing both db + email) prints the report and emails the
+errors, bounce/suppression, discovery lane-errors) + a rerank-cache cost rollup from existing columns, behind
+`off|shadow|enforce` modes (shadow-first). `pnpm health` (in `@opusfinder/inngest`, reusing both db + email) prints the report and emails the
 operator (a new `sendHealthAlert` in `@opusfinder/email` → a dedicated `ALERT_TO`) on an enforce-firing check. The
 scrapers Worker fires a content-free watchdog heartbeat (`HEALTH_PING_URL`) on each successful ingestion tick to
 catch the cron's own death, and **ingestion is resumed hourly** (`0 * * * *`, dialed back from `*/30`; deployed
-live 2026-06-15). Uncommitted on `main`.
+live 2026-06-15); F5 also **resumed the weekly discovery cron** (`0 3 * * SUN`). Uncommitted on `main`.
+
+Phase F5 added **discovery scale-out** — a `SeedLane` registry (`SEED_LANES`) replaces the single
+`loadSeed()` call with a per-lane loop (`selectLanes` / `resolveLanes`; isolated non-`failLoud` lanes
+tally `lane_<name>_error` and continue; counts accumulate field-wise; candidates cross-lane-dedupe by
+`(source, slug)`). A NEW **`hn` lane** (`lanes/hn.ts`) mines the monthly HN "Who is hiring?" thread via
+fetch-only Algolia calls + a regex over covered ATS board URLs (Worker-safe, reusing
+`@opusfinder/sources` `cleanHtml(["decode"])` to decode `&#x2F;`-encoded URLs). `pnpm discover` gains
+`--lanes`; the weekly Worker discovery cron is **RESUMED** (`0 3 * * SUN`, Workers Paid) via
+`runDiscovery({ workerOnly: true })`; the health checker gains an 8th check (`discovery_lane_errors`);
+`discoveryMaxAgeD` 8→13; `@opusfinder/sources` now exports `cleanHtml` / `htmlToText` / `CleanStep`.
+**Scope: registry + HN only** (passive DNS + Common Crawl → F5-LANES-2); **NO migration**. Uncommitted
+on `main`.
 
 Phase F4 added **job-side structured enrichment at ingest**: an async Haiku pass extracts a numeric **YoE
 band** (`yoe_min` / `yoe_max`) and a structured **salary band** (`salary_min` / `salary_max` +
