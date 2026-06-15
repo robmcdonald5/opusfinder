@@ -23,7 +23,10 @@ same-signature display-collapse), with `retrieveCandidatesForProfile` gaining an
 and the Phase-F4 enrichment repo — `jobsNeedingEnrichment` / `writeJobEnrichment` / `backfillJobEnrichment` /
 `drainEnrichment` over an injected `ExtractFn` (mirrors the embedding backfill; keyed off the `enriched_at`
 sentinel + a keyset cursor))
-and `@opusfinder/db/env` (`getDatabaseUrl`).
+and `@opusfinder/db/env` (`getDatabaseUrl`); and the Phase-F6 health subpath `@opusfinder/db/health`
+(`checkHealth(db, opts?)` → `HealthReport` — the PURE, serverless-safe pipeline-health core, composed from the
+impure `gatherHealthSignals` + the pure `evaluateHealth`; plus `healthOptionsFromEnv` and the `isEnforceFiring`
+predicate — callable verbatim from the `pnpm health` CLI and a future Phase-12 dev panel).
 
 **Phase 9.5** added a second client behind `@opusfinder/db/auth-client`: `createAuthDb(connectionString)`,
 a **transaction-capable neon-serverless** (WebSocket) Drizzle client. Better Auth's `signUpEmail` wraps
@@ -55,6 +58,7 @@ Run from the repo root via the workspace filter so the cwd is `packages/db`:
 | `pnpm --filter @opusfinder/db runs`      | Print the most recent `source_runs` rows (pipeline health) |
 | `pnpm --filter @opusfinder/db enrichment` | Print job-enrichment coverage (enriched / found-nothing / pending; Phase F4) |
 | `pnpm --filter @opusfinder/db test:enrichment` | Enrichment lifecycle smoke — keyset loop + write SQL (no creds; Phase F4) |
+| `pnpm --filter @opusfinder/db test:health` | Health-checker smoke — pure `evaluateHealth` over canned signals (no creds; Phase F6) |
 | `pnpm --filter @opusfinder/db typecheck` | `tsc --noEmit`                                             |
 
 `migrate` and `ping` are also exposed at the root as `pnpm db:migrate` / `pnpm db:ping`.
@@ -170,6 +174,16 @@ Run from the repo root via the workspace filter so the cwd is `packages/db`:
   `pnpm --filter @opusfinder/db enrichment`. **APPLIED to prod**; 1472 rows enriched (880 yoe / 385 salary /
   542 found-nothing). F4 ships DATA + extraction only — the salary/YoE retrieval filters are the deferred,
   twice-gated F4-FILTER follow-on.
+- **Health checker (Phase F6) — NO migration.** `src/health.ts` (subpath `@opusfinder/db/health`) computes seven
+  liveness checks (`ingestion_staleness`, `board_fail_ratio`, `discovery_window`, `embedding_backlog`,
+  `enrichment_backlog`, `digest_health` [error-runs only], `bounce_suppression`) + a rerank-cache cost rollup from
+  EXISTING columns across `source_runs` / `jobs` / `digest_runs` / `digests` / `user_preferences` — pure Neon
+  reads, ZERO schema change. Split into `gatherHealthSignals` (the only impure fn — the seven reads issued
+  concurrently, ages computed SQL-side so the evaluator needs no clock) + the PURE `evaluateHealth` (thresholds +
+  `off|shadow|enforce` modes, shadow-first: validate on real traffic before flipping a check to enforce). Window
+  sizes clamp to ≥1 so a `0` can't silently disarm the check it sizes. Read-only; shape-only (every metric is a
+  count/age/ratio, no PII). The verdict layer is `pnpm health` (in `@opusfinder/inngest`); no-creds smoke
+  `test:health`.
 - **neon-http migrations are NOT transactional.** The neon-http migrator applies
   a migration's statements without a wrapping transaction, so a multi-statement
   migration that fails partway leaves a partial apply with no rollback (and a
