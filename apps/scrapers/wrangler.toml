@@ -16,14 +16,18 @@ enabled = true
 # An idle Worker costs nothing and never touches Neon. `crons = []` is the documented way to REMOVE
 # triggers; omitting [triggers] entirely would instead LEAVE the deployed ones untouched.
 #
-# >>> Currently PAUSED until the backend is finalized. <<<  To RESUME: delete `crons = []`, uncomment
-# the array below, and `wrangler deploy`. (UTC; CF weekdays are 1=Sun..7=Sat — Sunday is "SUN", never
-# "0"; the strings MUST match the `case` literals in src/index.ts character-for-character.)
-crons = []
-# crons = [
-#   "*/30 * * * *", # ingestion — every 30 minutes
-#   "0 3 * * SUN",  # discovery — Sunday 03:00 (REQUIRES Workers Paid; see PHASE_8_PLAN.md §6)
-# ]
+# >>> RESUMED in Phase F6 (the liveness DRIVER for the F6 health checker + the watchdog heartbeat). <<<
+# Ingestion runs HOURLY — dialed back from the original */30. The tick is chunked (INGEST_LIMIT boards
+# per fire, KV cursor), and on the current board set one tick re-sweeps everything, so */30 meant ~48
+# full re-scrapes/day of a slowly-changing set; hourly is ample freshness for a daily/weekly digest,
+# halves the load, and still keeps full-sweep latency reasonable as the board set grows (see
+# PHASE_F6_PLAN.md). Discovery stays PAUSED — it REQUIRES Workers Paid (a user-side billing upgrade).
+# (UTC; CF weekdays are 1=Sun..7=Sat — Sunday is "SUN", never "0"; the strings MUST match the `case`
+# literals in src/index.ts character-for-character. USER: `wrangler deploy` to register the trigger.)
+crons = [
+  "0 * * * *", # ingestion — hourly
+  # "0 3 * * SUN", # discovery — Sunday 03:00 (REQUIRES Workers Paid; see PHASE_8_PLAN.md §6) — resume after the Workers-Paid upgrade
+]
 
 [vars]
 # Non-secret config only. The secret (DATABASE_URL) is set with `wrangler secret put` and arrives as

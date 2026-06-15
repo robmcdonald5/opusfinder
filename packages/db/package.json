@@ -8,7 +8,8 @@
     "./auth-client": "./src/auth-client.ts",
     "./schema": "./src/schema.ts",
     "./repos": "./src/repos/index.ts",
-    "./env": "./src/env.ts"
+    "./env": "./src/env.ts",
+    "./health": "./src/health.ts"
   },
   "types": "./src/client.ts",
   "scripts": {
@@ -26,6 +27,7 @@
     "test:digest-payload": "tsx scripts/test-digest-payload.ts",
     "test:lifecycle": "tsx scripts/test-lifecycle-sweep.ts",
     "test:enrichment": "tsx scripts/test-enrichment-lifecycle.ts",
+    "test:health": "tsx scripts/test-health.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

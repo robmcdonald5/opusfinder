@@ -21,9 +21,15 @@ import { runIngestion } from "@opusfinder/sources";
  *
  * The cron strings below MUST match wrangler.toml [triggers].crons CHARACTER-FOR-CHARACTER — in
  * particular the discovery weekday: Cloudflare numbers weekdays 1=Sun..7=Sat, so it is "SUN", never
- * "0". The handler AWAITS the dispatched work (not fire-and-forget `ctx.waitUntil`) in one try/catch,
- * so a failure in the KV cursor I/O or the pipeline is logged to `wrangler tail` and re-thrown so
- * Cloudflare records the invocation as errored.
+ * "0". The handler AWAITS the dispatched PIPELINE work (not fire-and-forget `ctx.waitUntil`) in one
+ * try/catch, so a failure in the KV cursor I/O or the pipeline is logged to `wrangler tail` and re-thrown
+ * so Cloudflare records the invocation as errored. The ONE `ctx.waitUntil` exception is the Phase-F6
+ * liveness heartbeat ({@link pingWatchdog}): a content-free ping to an external watchdog on a SUCCESSFUL
+ * tick, run non-blocking so a watchdog hiccup can never fail the tick. GUARD: `pnpm guard:worker`
+ * substring-scans this file (comments included, case-sensitive) for the forbidden server-only package
+ * imports — which the heartbeat trips none of (the ping target lives ONLY in `env.HEALTH_PING_URL`, a
+ * secret). The guard does NOT detect a provider/watchdog HOST literal, so by author discipline never
+ * write one (or any forbidden package name) anywhere in this file.
  */
 interface Env {
   /** Neon connection string (a `wrangler secret`). */
@@ -32,10 +38,15 @@ interface Env {
   INGEST_CURSOR: KVNamespace;
   /** Boards per ingestion tick (the wall/subrequest budget). Default 150. */
   INGEST_LIMIT?: string;
+  /** External-watchdog ping URL (a `wrangler secret`) — the Phase-F6 liveness heartbeat. OPTIONAL: when
+   *  unset the heartbeat is skipped silently (so the Worker can redeploy before the watchdog account
+   *  exists). See {@link pingWatchdog}. */
+  HEALTH_PING_URL?: string;
 }
 
-// Must equal the wrangler.toml cron strings exactly (esp. the weekday — "SUN", not "0").
-const INGEST_CRON = "*/30 * * * *";
+// Must equal the wrangler.toml cron strings exactly (esp. the weekday — "SUN", not "0"). Ingestion is
+// HOURLY (Phase F6 dialed it back from */30 — see wrangler.toml [triggers] for the rationale).
+const INGEST_CRON = "0 * * * *";
 const DISCOVERY_CRON = "0 3 * * SUN";
 
 const DEFAULT_INGEST_LIMIT = 150;
@@ -47,7 +58,7 @@ const DISCOVERY_LIMIT = 400;
 const DISCOVERY_REPROBE_LIMIT = 500;
 
 export default {
-  async scheduled(controller, env): Promise<void> {
+  async scheduled(controller, env, ctx): Promise<void> {
     // Fail fast + clearly on a missing connection string, rather than letting neon throw an opaque
     // connection error on the first query deep inside the pipeline.
     if (!env.DATABASE_URL) {
@@ -61,6 +72,9 @@ export default {
       switch (controller.cron) {
         case INGEST_CRON:
           await runIngestionTick(db, env);
+          // Heartbeat AFTER a successful tick (a thrown tick skips this and is recorded as errored,
+          // which the watchdog also surfaces as a missing ping). Non-blocking — see pingWatchdog.
+          pingWatchdog(env, ctx);
           break;
         case DISCOVERY_CRON:
           await runDiscovery(db, { limit: DISCOVERY_LIMIT, reprobeLimit: DISCOVERY_REPROBE_LIMIT });
@@ -85,6 +99,24 @@ export default {
     }
   },
 } satisfies ExportedHandler<Env>;
+
+/**
+ * Fire-and-forget liveness heartbeat (Phase F6) — a content-free ping to an external watchdog (a free
+ * dead-man's-switch) on each SUCCESSFUL ingestion tick. The watchdog emails the owner when the pings
+ * STOP after its grace window — the ONLY way to detect the cron's OWN death: a paused/dead cron emits
+ * nothing, so a co-located checker is silent exactly when the outage happens (PHASE_F6_PLAN.md §2.5).
+ * Detection is by ping ABSENCE, not a /fail ping.
+ *
+ * OPTIONAL: unset secret ⇒ skip silently (redeploy before the watchdog account exists). `ctx.waitUntil`
+ * so a watchdog hiccup never fails the tick; a default GET whose response body is left unconsumed (the
+ * `waitUntil`-bounded promise lets the runtime GC it — no leak).
+ * GUARD (author discipline — the import-scan guard won't catch a host literal): the target lives ONLY
+ * in `env.HEALTH_PING_URL` (a secret); keep every provider/watchdog host literal out of this file.
+ */
+function pingWatchdog(env: Env, ctx: ExecutionContext): void {
+  if (!env.HEALTH_PING_URL) return;
+  ctx.waitUntil(fetch(env.HEALTH_PING_URL).catch(() => {}));
+}
 
 /**
  * One ingestion tick: read the chunk cursor from KV, process the next `INGEST_LIMIT` boards via

@@ -8,14 +8,14 @@ dispatch shell; the real work lives in the already-Worker-forward libraries it c
 
 `src/index.ts` exports a `scheduled(controller, env, ctx)` handler that switches on `controller.cron`:
 
-| Cron (UTC)     | Handler   | Calls                                              |
-| -------------- | --------- | -------------------------------------------------- |
-| `*/30 * * * *` | ingestion | `runIngestion(db, …)` from `@opusfinder/sources`   |
-| `0 3 * * SUN`  | discovery | `runDiscovery(db, …)` from `@opusfinder/discovery` |
+| Cron (UTC)    | Handler   | Calls                                              |
+| ------------- | --------- | -------------------------------------------------- |
+| `0 * * * *`   | ingestion | `runIngestion(db, …)` from `@opusfinder/sources`   |
+| `0 3 * * SUN` | discovery | `runDiscovery(db, …)` from `@opusfinder/discovery` |
 
-> **Scheduling is PAUSED by default** (`crons = []` in `wrangler.toml`) so the Worker doesn't run
-> constantly during development — see "Pause / resume the schedule" below. The schedules above are what
-> runs once resumed.
+> **Ingestion is RESUMED, hourly** as of Phase F6 — it is the liveness driver for the health checker +
+> watchdog heartbeat (dialed back from the original `*/30`). **Discovery stays paused** (commented in
+> `wrangler.toml`): it requires Workers Paid. See "Pause / resume the schedule" below for the toggle.
 
 Each handler builds `createDb(env.DATABASE_URL)` (the neon-http client — fetch-only, no `process.env`)
 and the library it calls owns its own `source_runs` row (`startRun`/`finishRun`).
@@ -39,6 +39,12 @@ and the library it calls owns its own `source_runs` row (`startRun`/`finishRun`)
   enable steps in `src/index.ts`.
 - **Discovery** runs `runDiscovery` bounded by `limit`/`reprobeLimit` to stay under the subrequest budget.
 
+> **Health & liveness (Phase F6).** On each successful ingestion tick the Worker fires a content-free
+> heartbeat to an external watchdog (`env.HEALTH_PING_URL`, an optional `wrangler secret`); the watchdog
+> emails the owner if the pings STOP — the only way to catch the cron's own death (a dead cron emits
+> nothing). The rich in-DB signals (staleness, backlogs, digest/bounce health, cost) are computed
+> separately by `pnpm health` (the `@opusfinder/db` checker). See `research/specs/PHASE_F6_PLAN.md`.
+
 > **Cron weekday footgun:** Cloudflare numbers weekdays `1=Sun…7=Sat` (Quartz-style), so Sunday is
 > `SUN` (or `1`), **never `0`**. The cron strings in `wrangler.toml` and the `case` literals in
 > `src/index.ts` must match character-for-character or the branch silently never fires.
@@ -53,7 +59,7 @@ pnpm --filter @opusfinder/scrapers exec wrangler deploy --dry-run --outdir dist 
 # Run the scheduled handlers locally against real Neon (needs .dev.vars — see below):
 pnpm --filter @opusfinder/scrapers dev
 # In another terminal, trigger a cron via the canonical local endpoint (spaces -> + in the query):
-Invoke-WebRequest "http://localhost:8787/cdn-cgi/handler/scheduled?cron=*/30+*+*+*+*"   # ingestion
+Invoke-WebRequest "http://localhost:8787/cdn-cgi/handler/scheduled?cron=0+*+*+*+*"   # ingestion (hourly)
 Invoke-WebRequest "http://localhost:8787/cdn-cgi/handler/scheduled?cron=0+3+*+*+SUN"    # discovery
 ```
 
@@ -75,6 +81,7 @@ These require the Cloudflare account / real secrets / billing:
 wrangler login
 wrangler kv namespace create INGEST_CURSOR   # then uncomment the `id` line in wrangler.toml + paste it
 wrangler secret put DATABASE_URL
+wrangler secret put HEALTH_PING_URL           # Phase F6 liveness heartbeat — the watchdog ping URL (optional)
 # wrangler secret put VOYAGE_API_KEY          # ONLY if you enable inline embedding (see src/index.ts)
 pnpm --filter @opusfinder/scrapers deploy     # registers/updates the Worker + applies the current [triggers]
 wrangler tail opusfinder-scrapers             # stream live cron invocations
@@ -86,10 +93,10 @@ wrangler tail opusfinder-scrapers             # stream live cron invocations
 
 ## Pause / resume the schedule
 
-The Worker ships **scheduling-paused** (`crons = []` in `wrangler.toml`) so it doesn't run constantly
-during development. An idle deployed Worker costs nothing and never touches Neon — it only does anything
-when a cron fires. The toggle lives in `wrangler.toml` under `[triggers]`, and a change takes effect on
-the **next deploy**:
+As of Phase F6 the **ingestion** cron is **active** (hourly); **discovery** stays commented (Workers
+Paid). An idle/paused Worker costs nothing and never touches Neon — it only does anything when a cron
+fires. The toggle lives in `wrangler.toml` under `[triggers]`, and a change takes effect on the **next
+deploy**:
 
 - **Pause** (stop all scheduled runs): set `crons = []`, then
   `pnpm --filter @opusfinder/scrapers deploy`. Deploying with `crons = []` is the documented way to

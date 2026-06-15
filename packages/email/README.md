@@ -4,7 +4,8 @@ The Phase-11 **digest email**: a pure, deterministic render (escaped HTML + a pl
 thin **Resend** transport (idempotency-keyed send, fail-closed allowlist, delivery-state read). The
 digest pipeline (`@opusfinder/inngest`) calls it through the `DigestDeps.email` seam after `persist`;
 nothing else sends mail. **Node/server runtime only** — deny-listed from the scrapers Worker
-(`pnpm guard:worker`), like `better-auth` and `inngest` before it.
+(`pnpm guard:worker`), like `better-auth` and `inngest` before it. **Phase F6** adds one non-digest send —
+`sendHealthAlert` (operator health alerts to a dedicated `ALERT_TO`, decoupled from the digest allowlist).
 
 ## Why render is split from transport
 
@@ -38,6 +39,10 @@ discipline): importing the barrel never requires a key.
   POLICY lives in `@opusfinder/inngest` (`mapDeliveryEvent`), not here.
 - `emailIdempotencyKey(digestId)` — the ONE key definition (the `synthId` discipline), exported so
   the smoke locks its shape.
+- `sendHealthAlert(subject, text)` → `{ emailId }` (Phase F6) — a plain-text operator alert for the `pnpm health`
+  CLI. Reuses the lazy SEND client (`RESEND_API_KEY`) + `EMAIL_FROM`, but goes to a dedicated `ALERT_TO` operator
+  address — **decoupled from `EMAIL_ALLOWLIST`** so the alert can never be the silently-broken thing F6 exists to
+  kill. **No idempotency key** (each run's verdict is its own event), shape-only errors (name + status).
 
 ## Env (`./env` subpath — `packages/email/.env`, gitignored)
 
@@ -47,6 +52,7 @@ discipline): importing the barrel never requires a key.
 | `RESEND_API_KEY_FULL` | yes (at poll time)    | the READ key for the delivery poll — must be FULL access (`GET /emails/:id` 401s `restricted_api_key` on a sending-only key); retires with P12 webhooks |
 | `EMAIL_FROM`          | yes (at send time)    | verified sender, display-name form: `opusfinder digest <digest@send.opusfinder.ai>`                                                               |
 | `EMAIL_ALLOWLIST`     | yes — **fail-closed** | comma-separated; missing/empty THROWS, unlisted recipient = recorded skip. The safety net for `--all` sweeps; removed with Phase 12's signup flow |
+| `ALERT_TO`            | yes (at alert time)   | Phase-F6 operator alert recipient (`sendHealthAlert`) — DEDICATED, kept distinct from `EMAIL_ALLOWLIST` (operator, not product user); fail-loud (`requireEnv` throws if unset, so `pnpm health` exits non-zero rather than dropping an alert) |
 
 ## Scripts
 
