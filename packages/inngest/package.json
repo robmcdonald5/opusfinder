@@ -12,6 +12,7 @@
     "inngest:serve": "tsx scripts/serve.ts",
     "enrich:backfill": "tsx scripts/enrich-backfill.ts",
     "digest": "tsx scripts/digest.ts",
+    "health": "tsx scripts/show-health.ts",
     "test:digest-email": "tsx scripts/test-digest-email.ts",
     "test:probe": "tsx scripts/test-digest-probe.ts"
   },

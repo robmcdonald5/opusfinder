@@ -109,6 +109,13 @@ Phase 11 on the local dev runtime — locked at Phase-11 planning, 2026-06-11).
   `backfillJobEnrichment` over `jobs` rows whose `enriched_at` is NULL. Lives here only because it needs both
   `@opusfinder/db` and `@opusfinder/llm` — and inngest is the one package already allowed to depend on both
   (the scrapers Worker forbids `@opusfinder/llm`). `process.exitCode` only.
+- `scripts/show-health.ts` (`pnpm health`) — a standalone **Phase-F6** CLI (NOT part of the digest function
+  graph): runs `checkHealth` (the pure `@opusfinder/db/health` core) over live Neon, prints every check (ok /
+  shadow-firing / enforce-firing) + the cost rollup, and on any **enforce**-mode firing emails the operator via
+  `@opusfinder/email`'s `sendHealthAlert` then exits non-zero (shadow firings print but never page). Lives here —
+  not in `@opusfinder/db` — because it both READS (db) and SENDS (email): inngest is the one package already
+  depending on both, so it dodges a `db`⇄`email` workspace cycle (same rationale as `enrich:backfill`).
+  `process.exitCode` only; read-only on the DB; shape-only output.
 
 The `digest_runs` / `digests` / `digest_items` tables live in the unified `@opusfinder/db` schema +
 migrations (`0007`/`0008`; `0009` adds the per-send `email_id`/`delivery_status`/`sent_at` columns);
