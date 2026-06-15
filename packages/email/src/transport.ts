@@ -2,7 +2,7 @@ import { Resend } from "resend";
 
 import type { DigestEmailPayload } from "@opusfinder/db/repos";
 
-import { getEmailAllowlist, getEmailFrom, getResendApiKey, getResendApiKeyFull } from "./env";
+import { getAlertTo, getEmailAllowlist, getEmailFrom, getResendApiKey, getResendApiKeyFull } from "./env";
 import { renderDigestEmail } from "./render";
 
 /**
@@ -93,4 +93,29 @@ export async function getEmailLastEvent(emailId: string): Promise<string> {
   }
   if (!data) throw new Error("resend get returned no data and no error");
   return data.last_event;
+}
+
+/**
+ * Send a plain-text operator health alert (Phase F6) — the `pnpm health` CLI calls this when an
+ * enforce-mode check fires. Reuses the lazy send client (RESEND_API_KEY — the SEND key, never the FULL
+ * read key) + the verified EMAIL_FROM, and goes to the dedicated ALERT_TO operator address (NOT the
+ * digest allowlist — decoupled so the alert can never be the silently-broken thing). NO idempotency
+ * key: unlike a digest, an alert is not replay-idempotent — each run's verdict is its own event. The
+ * body is whatever the caller passes (shape-only by construction at the call site); errors echo SHAPE
+ * only (name + statusCode), never error.message.
+ */
+export async function sendHealthAlert(subject: string, text: string): Promise<{ emailId: string }> {
+  const { data, error } = await getSendClient().emails.send({
+    from: getEmailFrom(),
+    to: getAlertTo(),
+    subject,
+    text,
+  });
+  if (error) {
+    throw new Error(
+      `resend alert send failed: ${error.name} (status ${String(error.statusCode ?? "network")})`,
+    );
+  }
+  if (!data) throw new Error("resend alert send returned no data and no error");
+  return { emailId: data.id };
 }

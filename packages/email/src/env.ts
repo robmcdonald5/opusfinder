@@ -44,6 +44,20 @@ export const getEmailFrom = requireEnv({
     "e.g. EMAIL_FROM=opusfinder digest <digest@send.opusfinder.ai>.",
 });
 
+/**
+ * The operator address Phase-F6 health alerts go to ({@link import("./transport").sendHealthAlert}).
+ * DEDICATED + decoupled from the fail-closed digest {@link getEmailAllowlist} ON PURPOSE: the owner is
+ * an operator, not a product user, and routing the alert through the allowlist risks the alert itself
+ * being the silently-broken thing — the exact failure F6 exists to kill. FAIL-LOUD: requireEnv throws
+ * if unset, so `pnpm health` logs + exits non-zero rather than silently dropping an alert.
+ */
+export const getAlertTo = requireEnv({
+  name: "ALERT_TO",
+  notSet:
+    "ALERT_TO is not set — the operator address health alerts are sent to. Set ALERT_TO=you@example.com " +
+    "in packages/email/.env (a dedicated operator address, NOT the digest EMAIL_ALLOWLIST).",
+});
+
 const getEmailAllowlistRaw = requireEnv({
   name: "EMAIL_ALLOWLIST",
   notSet:
