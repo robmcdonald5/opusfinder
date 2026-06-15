@@ -29,7 +29,10 @@ The abstraction was **extracted** from concrete Greenhouse + Lever + SmartRecrui
 - **`cleanHtml(input, steps)` (`src/adapters/text.ts`)** — the shared HTML→text primitive. The
   decode/strip/collapse atoms are invariant; only their ORDER varies per source, so it takes
   an ordered step list (e.g. Greenhouse's asymmetric double-encoding needs
-  `["decode","strip","decode","collapse"]`).
+  `["decode","strip","decode","collapse"]`). As of Phase F5 `cleanHtml`, `htmlToText`, and the
+  `CleanStep` type are part of the package's **PUBLIC surface** (`src/index.ts`): the discovery
+  `hn` lane reuses `cleanHtml(text, ["decode"])` to decode `&#x2F;`-encoded board URLs rather than
+  hand-rolling a weaker copy.
 - **`htmlToText(value)` (`src/adapters/text.ts`)** — names the most common recipe once: the
   "raw tags + single-encoded entities" cleaner (`strip → decode → collapse`) used by
   Workable/SmartRecruiters/Pinpoint/Recruitee/Trakstar and the HTML fallback of Gem/Ashby.

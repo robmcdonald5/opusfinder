@@ -1,19 +1,29 @@
 # @opusfinder/discovery
 
 Slug-discovery pipeline (Phase 7): companies populate themselves from upstream sources instead of
-being hand-seeded. It pulls company/ATS pairs from one curated GitHub list (outscal/OpenJobs),
-HTTP-probes each candidate against its ATS endpoint **by reusing the Phase-6 `SourceAdapter`
-request-builders** in `@opusfinder/sources`, idempotently upserts the live subset into `companies`,
-and deactivates slugs after 30 days of consecutive failed probes. Every run is tracked in
-`source_runs`. `pnpm discover` runs it locally; the Phase-8 Worker's weekly cron (`0 3 * * SUN`)
-calls the same `runDiscovery(db, opts)` directly (`runDiscovery` is argv-free for that).
+being hand-seeded. It pulls company/ATS pairs from a registry of **seed lanes** (`SEED_LANES`) — the
+SHA-pinned outscal/OpenJobs list (`outscal`) plus the monthly Hacker News "Who is hiring?" thread via
+Algolia (`hn`, Phase F5) — cross-lane-deduped, then runs the existing spine: HTTP-probe each candidate
+against its ATS endpoint **by reusing the Phase-6 `SourceAdapter` request-builders** in
+`@opusfinder/sources`, idempotently upsert the live subset into `companies`, and deactivate slugs after
+30 days of consecutive failed probes. Every run is tracked in `source_runs`. `pnpm discover` runs it
+locally; the Phase-8 Worker's weekly cron (`0 3 * * SUN`, resumed Phase F5) calls the same
+`runDiscovery(db, opts)` directly with `{ workerOnly: true }` so only `workerSafe` lanes run in the
+isolate (`runDiscovery` is argv-free for that).
 
 ## Pipeline
 
 `runDiscovery(db, opts)` is a linear, source-agnostic flow under one `source_runs` row:
 
-1. **Seed** (`seed.ts`) — `loadSeed()` fetches `data/companies_v2.json` from outscal/OpenJobs, pinned
-   to a commit SHA (`SEED_URL`) for deterministic runs.
+1. **Seed** (lane registry) — `selectLanes(SEED_LANES, opts)` picks the lanes to run (all by default;
+   `opts.lanes` restricts by name, `opts.workerOnly` keeps only `workerSafe` lanes), then `resolveLanes`
+   fetches each: `outscal` = `loadSeed()` (SHA-pinned `data/companies_v2.json` from outscal/OpenJobs,
+   `SEED_URL`/`SEED_SHA`, for deterministic runs); `hn` = `fetchHnAlgoliaLane` (`lanes/hn.ts`). A
+   `failLoud` lane (outscal) re-throws on fetch failure (run-fatal); an isolated lane (hn) tallies
+   `lane_<name>_error` and continues. Counts accumulate field-wise; candidates are cross-lane-deduped
+   by `(source, slug)`; the per-lane `lane_<name>_candidates` / `lane_<name>_error` ride
+   `source_runs.counts`. (`loadSeed` / `SEED_URL` / `SEED_SHA` are unchanged — the outscal upstream has
+   been static since 2026-04-22 with no bump, so "SHA-pinned" stays accurate for the outscal lane.)
 2. **Resolve** (`resolve.ts`) — `resolveSeed()` turns each record's `ats_links[]` into deduped
    `Candidate`s. `resolveUrl()` walks `SOURCE_NAMES` and the first adapter whose `matchUrl` claims the
    URL wins (hosts are disjoint). Drops are tallied: `badUrl` (unparseable), `deferredNoAdapter` (an
@@ -41,6 +51,7 @@ null)` through a NON-throwing, per-host-throttled fetcher (a 404/400/200-empty i
 ```sh
 pnpm discover                       # BROADER pass: all covered sources, every resolved candidate
 pnpm discover --source=greenhouse   # scope to one source
+pnpm discover --lanes=outscal,hn    # restrict to named lanes (omit = all; rejects an empty value)
 pnpm discover --limit=50            # cap the NEW/INACTIVE probe worklist
 pnpm discover --dry-run             # read-only PREVIEW: probe + tally, write nothing
 ```
@@ -48,7 +59,9 @@ pnpm discover --dry-run             # read-only PREVIEW: probe + tally, write no
 Defaults: no `--limit` (probe every candidate), per-host `≤3` concurrent + `≥400ms` spacing (so the
 shared API hosts — all greenhouse boards hit `boards-api.greenhouse.io` — aren't hammered while unique
 subdomain tenants run in parallel), global concurrency `12`, reprobe limit `500`, 30-day staleness
-window. The live pinned seed resolves to **~1,677 candidates across 8 sources**.
+window. The live pinned seed (the `outscal` lane only) resolves to **~1,677 candidates across 8
+sources**; the `hn` lane adds the current month's covered boards on top (a recent live harvest yielded
+72 boards), cross-deduped against outscal by `(source, slug)`.
 
 ## Staleness model
 
@@ -76,17 +89,24 @@ refreshes `last_live_at`, and re-activates — so a revived slug un-deactivates 
 - **Unknown-slug 404 signals** for Greenhouse/Lever/Ashby/Workable were inferred, not documented;
   Greenhouse's `404` is now confirmed live. The status-first default + `locate`-in-try/catch contains
   any surprise to `indeterminate` (no write) until a one-line `classifyProbe` override is added.
+- **HN encodes `/` as `&#x2F;`**, so the `hn` lane entity-decodes via the shared
+  `cleanHtml(text, ["decode"])` (from `@opusfinder/sources`) before URL extraction; only covered-ATS
+  URLs an adapter's `matchUrl` claims are kept.
 
-## Deferred (later passes of Phase 7 / Phase 8)
+## Deferred (**F5-LANES-2** / later passes)
 
-HN "Who is hiring" / Algolia, passive DNS (RapidDNS) for subdomain tenants, Common Crawl URL mining,
-the Wave-B seed, and an optional `probeRequest?` descriptor member to drop hydration params on the
-bulk pass.
+Passive DNS (RapidDNS) for subdomain tenants and Common Crawl URL mining are deferred to
+**F5-LANES-2** (both Node-only — `workerSafe: false`), along with the Wave-B seed and an optional
+`probeRequest?` descriptor member to drop hydration params on the bulk pass. (HN "Who is hiring?" /
+Algolia shipped in Phase F5 as the `hn` lane.)
 
 ## Tests
 
 ```sh
 pnpm --filter @opusfinder/discovery test:probe              # probeFetch + probeCandidate(s) (stubbed fetch)
 pnpm --filter @opusfinder/discovery test:resolve            # resolveUrl + resolveSeed (offline)
+pnpm --filter @opusfinder/discovery test:lanes              # selectLanes/resolveLanes lane-loop (stub lanes, no network)
+pnpm --filter @opusfinder/discovery test:lane-hn           # parseHnThread over a captured payload (no network)
+pnpm --filter @opusfinder/discovery test:lane-hn --live    # opt-in: hits real HN Algolia
 pnpm --filter @opusfinder/discovery exec tsx scripts/test-resolve.ts --live  # resolve the real pinned seed
 ```

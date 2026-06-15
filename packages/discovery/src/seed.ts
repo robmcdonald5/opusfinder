@@ -1,3 +1,5 @@
+import { fetchHnAlgoliaLane } from "./lanes/hn";
+
 /**
  * The discovery seed: outscal/OpenJobs `data/companies_v2.json` — ~12k gaming/tech companies, each
  * with an `ats_links[]` of public job-board URLs (lane B1). Pinned to a commit SHA so a local
@@ -36,3 +38,33 @@ export async function loadSeed(url: string = SEED_URL): Promise<CompanyRecord[]>
   }
   return data as CompanyRecord[];
 }
+
+/**
+ * A discovery SEED LANE: a named source of `CompanyRecord[]` that plugs in BEFORE `resolveSeed`. Each lane
+ * OWNS mapping its raw fetch output into `{ name?, ats_links? }`; `resolveSeed` owns URL→(source, slug). The
+ * `name` is the `lane_<name>_*` counter prefix + log label (lowercase, no spaces); `workerSafe` gates the
+ * Worker loop — a fetch-only, bundle-safe lane is `true`, a Node-only lane (passive DNS / Common Crawl,
+ * F5-LANES-2) is `false` and runs CLI-only.
+ */
+export interface SeedLane {
+  name: string;
+  workerSafe: boolean;
+  /**
+   * true = a fetch failure is RUN-FATAL (re-thrown) — the core seed's fail-loud floor (decision 7): a
+   * broken outscal seed should fail the run loudly, not silently yield zero. Omit/false = ISOLATED (the
+   * failure is tallied as `lane_<name>_error` and the loop continues), so one flaky external lane can't
+   * zero a run a reliable lane would have fed. New external lanes (HN, …) default to isolated.
+   */
+  failLoud?: boolean;
+  fetch: () => Promise<CompanyRecord[]>;
+}
+
+/**
+ * The lane registry — discovery supply's single extension point. F5b ships `outscal` (the SHA-pinned seed
+ * above) as the sole lane; F5c adds `hn`. Node runs every lane; the Worker filters to `workerSafe` ones via
+ * `runDiscovery`'s `opts.workerOnly`. Grow supply by adding a lane HERE, not by touching the pipeline.
+ */
+export const SEED_LANES: SeedLane[] = [
+  { name: "outscal", workerSafe: true, failLoud: true, fetch: () => loadSeed() },
+  { name: "hn", workerSafe: true, fetch: fetchHnAlgoliaLane }, // isolated (no failLoud): an Algolia hiccup tallies lane_hn_error, never zeroes a run
+];

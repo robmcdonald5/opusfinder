@@ -13,7 +13,7 @@ import {
  * Exercises the PURE evaluator `evaluateHealth(signals, opts)` directly with canned signal shapes (the
  * point of the gather/evaluate split: no db stub needed), plus `healthOptionsFromEnv` parsing. Asserts:
  *   - a healthy signal set fires nothing and is not `unhealthy`;
- *   - each of the seven checks fires on its own breach shape (incl. the status='ok' all-board-failed
+ *   - each of the eight checks fires on its own breach shape (incl. the status='ok' all-board-failed
  *     trap and an errored ingestion run) and stays quiet otherwise;
  *   - `shadow` firings are reported but NEVER set `unhealthy`; `enforce` firings DO; `off` skips;
  *   - the board fail-ratio does not divide by zero on an empty (0-company) tick;
@@ -30,6 +30,7 @@ const HEALTHY: HealthSignals = {
   latestIngestFailed: 0,
   latestIngestCompanies: 11,
   discoveryAgeD: 1,
+  discoveryLaneErrors: 0,
   embeddingBacklog: 0,
   enrichmentBacklog: 0,
   digestErrors: 0,
@@ -48,6 +49,7 @@ const BREACHES: Array<{ id: HealthCheckId; over: Partial<HealthSignals> }> = [
   { id: "enrichment_backlog", over: { enrichmentBacklog: 5000 } },
   { id: "digest_health", over: { digestErrors: 2 } },
   { id: "bounce_suppression", over: { hardBounces: 1 } },
+  { id: "discovery_lane_errors", over: { discoveryLaneErrors: 2 } },
 ];
 
 const find = (r: HealthReport, id: HealthCheckId) => {
@@ -57,10 +59,10 @@ const find = (r: HealthReport, id: HealthCheckId) => {
 };
 
 await runScript("test-health", async () => {
-  // 1) Healthy signals: nothing fires, not unhealthy, all seven checks present.
+  // 1) Healthy signals: nothing fires, not unhealthy, all eight checks present.
   {
     const r = evaluateHealth(HEALTHY);
-    assert(r.checks.length === 7, `expected 7 checks, got ${r.checks.length}`);
+    assert(r.checks.length === 8, `expected 8 checks, got ${r.checks.length}`);
     assert(!r.unhealthy, "healthy signals must not be unhealthy");
     assert(r.checks.every((c) => c.state === "ok"), "healthy signals must leave every check ok");
   }
@@ -181,7 +183,7 @@ await runScript("test-health", async () => {
   }
 
   console.log(
-    "test-health OK — 7 checks, healthy=clean; each breach fires only itself; shadow!=unhealthy, " +
+    "test-health OK — 8 checks, healthy=clean; each breach fires only itself; shadow!=unhealthy, " +
       "enforce=unhealthy (single + multi-enforce), off=skipped; board_fail_ratio fires on an errored run " +
       "and at the 0.5 boundary, no div-by-zero on empty ticks; null ages fire; cost hit-rate/null + token " +
       "pass-through; healthOptionsFromEnv parses modes/thresholds, ignores invalid ids, rejects negatives, " +

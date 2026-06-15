@@ -13,8 +13,8 @@ import {
 import type { SourceName } from "@opusfinder/shared";
 
 import { probeCandidates, type ProbeOptions } from "./probe";
-import { resolveSeed } from "./resolve";
-import { loadSeed } from "./seed";
+import { resolveSeed, type ResolveCounts } from "./resolve";
+import { SEED_LANES, type CompanyRecord, type SeedLane } from "./seed";
 import type { Candidate, ProbeResult } from "./types";
 
 const DEFAULT_OLDER_THAN_DAYS = 30;
@@ -38,6 +38,10 @@ export interface DiscoveryOptions {
   reprobeLimit?: number;
   /** Prober tuning (concurrency / spacing / retries) — passed through to probeCandidates. */
   probe?: ProbeOptions;
+  /** Restrict to these lane names (omit = every registered lane). CLI: `--lanes=hn,outscal`. */
+  lanes?: string[];
+  /** Worker filter: when true, run only `workerSafe` (fetch-only, bundle-safe) lanes. */
+  workerOnly?: boolean;
 }
 
 /**
@@ -99,10 +103,18 @@ export async function runDiscovery(db: Db, opts: DiscoveryOptions = {}): Promise
 
   const runId = dryRun ? null : await startRun(db, "discovery", { source: opts.source });
   try {
-    // 1. SEED + 2. RESOLVE.
-    const records = await loadSeed();
-    const resolved = resolveSeed(records, { source: opts.source });
-    Object.assign(counts, resolved.counts);
+    // 1. SEED + 2. RESOLVE — per lane (the SEED_LANES registry), cross-lane-deduped, per-lane isolated +
+    // counted. resolveLanes mutates `counts` (drop tallies + lane_<name>_candidates/_error + candidates).
+    const lanes = selectLanes(SEED_LANES, opts);
+    if (lanes.length === 0) {
+      // opts.lanes named only unknown lanes, or workerOnly matched no workerSafe lane — a misconfig the
+      // CLI rejects but a programmatic caller may not. Surface it: seed/resolve is a no-op this run
+      // (reprobe + sweep still run on existing rows). An empty/omitted opts.lanes means ALL, not zero.
+      console.warn(
+        "[discovery] no lanes selected (opts.lanes / workerOnly matched none) — skipping seed/resolve.",
+      );
+    }
+    const resolved = { candidates: await resolveLanes(lanes, counts, { source: opts.source }) };
 
     // 3. PARTITION: NEW or KNOWN-INACTIVE → probe path (a live probe reactivates); KNOWN-ACTIVE → the
     // reprobe pass. Reading `active` (not plain listCompanies) is what closes the reactivation lock-out.
@@ -243,11 +255,92 @@ function tally(counts: DiscoveryCounts, r: ProbeResult): void {
   else counts.indeterminate += 1;
 }
 
+/**
+ * Select which registered lanes a run uses: `opts.lanes` restricts by name (an EMPTY or omitted list = no
+ * restriction → every lane; an empty array is NOT "zero lanes"); `opts.workerOnly` keeps only `workerSafe`
+ * (fetch-only, bundle-safe) lanes for the Worker. Pure → unit-testable.
+ */
+export function selectLanes(
+  registry: SeedLane[],
+  opts: { lanes?: string[]; workerOnly?: boolean },
+): SeedLane[] {
+  return registry.filter(
+    (l) =>
+      (opts.lanes && opts.lanes.length > 0 ? opts.lanes.includes(l.name) : true) &&
+      (!opts.workerOnly || l.workerSafe),
+  );
+}
+
+/**
+ * Step 1+2 for N lanes: fetch each lane (a `failLoud` lane — the core seed — re-throws to FAIL THE RUN;
+ * others isolate the failure as a `lane_<name>_error` tally so one flaky external lane can't zero a run),
+ * resolve its records to candidates,
+ * accumulate the drop-reason counts field-wise (NOT Object.assign — that clobbers across lanes), and
+ * cross-lane-dedupe by (source, slug) — resolveSeed's own `seen` is per-call (resolve.ts:66) and the
+ * partition only drops already-ACTIVE rows, so two lanes emitting the same pair would otherwise both enter
+ * the worklist and double-probe. Mutates `counts` (drop tallies + lane_<name>_candidates/_error +
+ * candidates); returns the merged, deduped candidates. Pure of db/probe → unit-testable with stub lanes.
+ */
+export async function resolveLanes(
+  lanes: SeedLane[],
+  counts: DiscoveryCounts,
+  opts: { source?: SourceName },
+): Promise<Candidate[]> {
+  const seen = new Set<string>(); // cross-lane key set (same idiom as resolve.ts:96 / keyOf below)
+  const candidates: Candidate[] = [];
+  for (const lane of lanes) {
+    let records: CompanyRecord[];
+    try {
+      records = await lane.fetch();
+    } catch (err) {
+      // F5-FAILMODE (decision 7): tally the error, then either FAIL LOUD (a failLoud lane — the core
+      // outscal seed — re-throws into runDiscovery's catch → finishRun status:error) or ISOLATE the new
+      // external lanes (continue, so one flaky third party can't zero a run). Echo name + message shape
+      // only (public URLs / status text, never a body or cred — see secrets-not-in-errors-or-logs).
+      counts[`lane_${lane.name}_error`] = (counts[`lane_${lane.name}_error`] ?? 0) + 1;
+      if (lane.failLoud) throw err;
+      console.error(
+        `[discovery] lane "${lane.name}" fetch failed (isolated): ` +
+          (err instanceof Error ? err.message : String(err)).slice(0, 200),
+      );
+      continue;
+    }
+    const r = resolveSeed(records, { source: opts.source });
+    accumulateCounts(counts, r.counts);
+    let laneNew = 0;
+    for (const c of r.candidates) {
+      const k = keyOf(c.source, c.slug);
+      if (seen.has(k)) continue;
+      seen.add(k);
+      candidates.push(c);
+      laneNew += 1;
+    }
+    counts[`lane_${lane.name}_candidates`] =
+      (counts[`lane_${lane.name}_candidates`] ?? 0) + laneNew;
+  }
+  counts.candidates = candidates.length;
+  return candidates;
+}
+
+/**
+ * Field-wise accumulate a lane's ResolveCounts drop tallies into the run counts bag — replacing the
+ * single-call Object.assign, which in an N-lane loop would CLOBBER (last-lane-wins) each prior lane's
+ * named totals. `candidates` is NOT summed here: it is set once, post cross-lane dedupe, to the merged
+ * length (summing would re-count a (source, slug) two lanes both emit).
+ */
+function accumulateCounts(counts: DiscoveryCounts, r: ResolveCounts): void {
+  counts.seedRecords += r.seedRecords;
+  counts.atsLinks += r.atsLinks;
+  counts.badUrl += r.badUrl;
+  counts.deferredNoAdapter += r.deferredNoAdapter;
+  counts.invalidSlug += r.invalidSlug;
+}
+
 function keyOf(source: SourceName, slug: string): string {
   return JSON.stringify([source, slug]);
 }
 
-function emptyCounts(): DiscoveryCounts {
+export function emptyCounts(): DiscoveryCounts {
   return {
     seedRecords: 0,
     atsLinks: 0,

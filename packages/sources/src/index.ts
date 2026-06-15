@@ -7,6 +7,10 @@ export { runIngestion } from "./ingest";
 export type { IngestionOptions, IngestionCounts, IngestEmbedFn } from "./ingest";
 export { runAdapter } from "./adapters/run-adapter";
 export type { RunAdapterOptions } from "./adapters/run-adapter";
+// Shared HTML→text primitive (pure string ops, Worker-safe) — reused by discovery lanes (e.g. the HN
+// lane decodes `&#x2F;` board URLs via cleanHtml(text, ["decode"])) so they don't hand-roll a weaker copy.
+export { cleanHtml, htmlToText } from "./adapters/text";
+export type { CleanStep } from "./adapters/text";
 export type {
   SourceAdapter,
   SourceContext,

@@ -174,11 +174,12 @@ Run from the repo root via the workspace filter so the cwd is `packages/db`:
   `pnpm --filter @opusfinder/db enrichment`. **APPLIED to prod**; 1472 rows enriched (880 yoe / 385 salary /
   542 found-nothing). F4 ships DATA + extraction only — the salary/YoE retrieval filters are the deferred,
   twice-gated F4-FILTER follow-on.
-- **Health checker (Phase F6) — NO migration.** `src/health.ts` (subpath `@opusfinder/db/health`) computes seven
+- **Health checker (Phase F6) — NO migration.** `src/health.ts` (subpath `@opusfinder/db/health`) computes eight
   liveness checks (`ingestion_staleness`, `board_fail_ratio`, `discovery_window`, `embedding_backlog`,
-  `enrichment_backlog`, `digest_health` [error-runs only], `bounce_suppression`) + a rerank-cache cost rollup from
+  `enrichment_backlog`, `digest_health` [error-runs only], `bounce_suppression`, `discovery_lane_errors` [F5f —
+  per-lane `lane_<name>_error` on the latest all-source discovery run]) + a rerank-cache cost rollup from
   EXISTING columns across `source_runs` / `jobs` / `digest_runs` / `digests` / `user_preferences` — pure Neon
-  reads, ZERO schema change. Split into `gatherHealthSignals` (the only impure fn — the seven reads issued
+  reads, ZERO schema change. Split into `gatherHealthSignals` (the only impure fn — the eight reads issued
   concurrently, ages computed SQL-side so the evaluator needs no clock) + the PURE `evaluateHealth` (thresholds +
   `off|shadow|enforce` modes, shadow-first: validate on real traffic before flipping a check to enforce). Window
   sizes clamp to ≥1 so a `0` can't silently disarm the check it sizes. Read-only; shape-only (every metric is a
