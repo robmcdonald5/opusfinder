@@ -10,6 +10,7 @@
   "scripts": {
     "eval": "tsx scripts/eval.ts",
     "eval:compare": "tsx scripts/compare.ts",
+    "eval:extraction": "tsx scripts/eval-extraction.ts",
     "export:candidates": "tsx scripts/export-candidates.ts",
     "extract-profile": "tsx scripts/extract-profile.ts",
     "build:dataset": "tsx scripts/build-dataset.ts",
