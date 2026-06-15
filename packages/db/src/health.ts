@@ -5,7 +5,7 @@ import { resultRows } from "./repos/sql";
 
 /**
  * Pipeline health checker (Phase F6) — "kill silent failure". Health data is recorded across five
- * tables but read by nobody on a schedule; this module is the watcher. It computes seven liveness
+ * tables but read by nobody on a schedule; this module is the watcher. It computes eight liveness
  * checks + a cost rollup from EXISTING columns (pure Neon reads, no migration) and returns a
  * shape-only {@link HealthReport} the `pnpm health` CLI prints/alerts on AND a future Phase-12 dev
  * panel renders.
@@ -24,15 +24,16 @@ import { resultRows } from "./repos/sql";
  * No secrets / no PII: every metric is a count / age / ratio; nothing here reads job or user text.
  */
 
-/** The seven F6 checks (stable ids — the panel + env modes key off these). */
+/** The eight F6 checks (stable ids — the panel + env modes key off these). */
 export type HealthCheckId =
   | "ingestion_staleness" // (a) last successful ingestion age
   | "board_fail_ratio" // (b) within-run failed/companies — the status='ok' trap
-  | "discovery_window" // (c) discovery last-run age (ships shadow while the discovery cron is paused)
+  | "discovery_window" // (c) discovery last-run age
   | "embedding_backlog" // (d) jobs WHERE embedding IS NULL
   | "enrichment_backlog" // (g) jobs WHERE enriched_at IS NULL (F4's second backlog)
   | "digest_health" // (e) any digest_runs with status='error' in the window
-  | "bounce_suppression"; // (f) hard-bounced / suppressed users
+  | "bounce_suppression" // (f) hard-bounced / suppressed users
+  | "discovery_lane_errors"; // (h) lane_<name>_error tallies on the latest discovery run (F5f)
 
 /** Per-check posture (`[[shadow-validate-tunable-filters]]`): `off` = don't compute; `shadow` =
  *  compute + log but never page (never sets `unhealthy`); `enforce` = a firing check sets `unhealthy`. */
@@ -47,7 +48,9 @@ export interface HealthThresholds {
   ingestMaxAgeH: number;
   /** (b) within-run `counts.failed / counts.companies` ratio that fires the board-failure check. */
   failRatio: number;
-  /** (c) days since the last discovery run before the discovery window fires. */
+  /** (c) days since the last successful discovery run before the window fires. Default 13 ≈ ~2× the weekly
+   *  Sunday cron period — tolerates a late/jittered run but still fires on a fully missed week (~14d).
+   *  (Was 8 while discovery was paused; F5f resumed the weekly cron, so 8d would flap on normal jitter.) */
   discoveryMaxAgeD: number;
   /** (d) un-embedded backlog (`jobs.embedding IS NULL`) watermark. */
   backlogMax: number;
@@ -62,7 +65,7 @@ export interface HealthThresholds {
 export const DEFAULT_HEALTH_THRESHOLDS: HealthThresholds = {
   ingestMaxAgeH: 3,
   failRatio: 0.5,
-  discoveryMaxAgeD: 8,
+  discoveryMaxAgeD: 13,
   backlogMax: 2000,
   enrichBacklogMax: 2000,
   digestWindowN: 10,
@@ -118,6 +121,10 @@ export interface HealthSignals {
    *  this is last-SUCCESS (finished_at), not last-attempt — a crash-looping discovery that keeps
    *  starting must not read fresh. */
   discoveryAgeD: number | null;
+  /** (h) sum of `lane_<name>_error` tallies on the latest all-source (source IS NULL) discovery run (any
+   *  status) — per-lane fetch failures the (c) age check can't see (an isolated lane fails while the run
+   *  still finishes status='ok'). 0 when no all-source discovery run exists yet. */
+  discoveryLaneErrors: number;
   /** (d) un-embedded backlog. */
   embeddingBacklog: number;
   /** (g) un-enriched backlog (F4). */
@@ -154,6 +161,7 @@ const CHECK_LABELS: Record<HealthCheckId, string> = {
   enrichment_backlog: "Enrichment backlog",
   digest_health: "Digest health",
   bounce_suppression: "Bounce / suppression",
+  discovery_lane_errors: "Discovery lane errors",
 };
 
 const num = (v: unknown): number => {
@@ -175,10 +183,10 @@ export async function gatherHealthSignals(
   const digestWindowN = Math.max(1, opts?.digestWindowN ?? DEFAULT_HEALTH_THRESHOLDS.digestWindowN);
   const costRollupN = Math.max(1, opts?.costRollupN ?? DEFAULT_HEALTH_THRESHOLDS.costRollupN);
 
-  // Issue all seven independent reads concurrently — each db.execute is a separate neon-http round-trip
+  // Issue all eight independent reads concurrently — each db.execute is a separate neon-http round-trip
   // and none depends on another's result, so Promise.all bounds total latency by the slowest single
   // query (matters for the serverless dev-panel caller under a function time budget), not their sum.
-  const [ingestAgeR, latestIngestR, discoveryAgeR, backlogsR, digestErrR, bounceR, costR] =
+  const [ingestAgeR, latestIngestR, discoveryAgeR, backlogsR, digestErrR, bounceR, costR, discoveryLaneR] =
     await Promise.all([
       // (a) last successful ingestion age (index source_runs_pipeline_started_idx).
       db.execute(sql`
@@ -226,6 +234,14 @@ export async function gatherHealthSignals(
       db.execute(sql`
         SELECT counts FROM digests ORDER BY created_at DESC LIMIT ${costRollupN}
       `),
+      // (h) latest discovery run's per-lane error tallies — read its counts bag, sum lane_*_error in JS
+      //     (dynamic keys). ANY status: an isolated lane failure leaves the run status='ok', so the age
+      //     check (c) can't see it. `source IS NULL` scopes to the unattended all-source weekly sweep (the
+      //     cron passes no source), so an ad-hoc `pnpm discover --source=X` run can't shadow it. Newest first.
+      db.execute(sql`
+        SELECT counts FROM source_runs
+        WHERE pipeline = 'discovery' AND source IS NULL ORDER BY started_at DESC LIMIT 1
+      `),
     ]);
 
   const ingestAge = resultRows(ingestAgeR)[0] as { age_h: unknown } | undefined;
@@ -247,12 +263,21 @@ export async function gatherHealthSignals(
     rerankCacheCreationTokens += num(r.counts?.rerankCacheCreationTokens);
   }
 
+  const discoveryCountsRow = resultRows(discoveryLaneR)[0] as
+    | { counts: Record<string, unknown> | null }
+    | undefined;
+  let discoveryLaneErrors = 0;
+  for (const [k, v] of Object.entries(discoveryCountsRow?.counts ?? {})) {
+    if (k.startsWith("lane_") && k.endsWith("_error")) discoveryLaneErrors += num(v);
+  }
+
   return {
     ingestionAgeH: ingestAge?.age_h == null ? null : num(ingestAge.age_h),
     latestIngestStatus: (latestIngest?.status as string | null | undefined) ?? null,
     latestIngestFailed: num(latestIngest?.failed),
     latestIngestCompanies: num(latestIngest?.companies),
     discoveryAgeD: discoveryAge?.age_d == null ? null : num(discoveryAge.age_d),
+    discoveryLaneErrors,
     embeddingBacklog: num(backlogs?.embedding_backlog),
     enrichmentBacklog: num(backlogs?.enrichment_backlog),
     digestErrors: num(digestErr?.errors),
@@ -302,7 +327,7 @@ export function evaluateHealth(signals: HealthSignals, opts?: HealthOptions): He
       signals.latestIngestStatus === "error" ||
         (signals.latestIngestCompanies > 0 && failRatio > t.failRatio),
     ),
-    // (c) null age (no discovery run) → firing; ships shadow while the discovery cron is paused.
+    // (c) null age (no discovery run) → firing.
     make(
       "discovery_window",
       signals.discoveryAgeD,
@@ -319,6 +344,8 @@ export function evaluateHealth(signals: HealthSignals, opts?: HealthOptions): He
     // (e)/(f) fire on any occurrence (threshold null = boolean condition).
     make("digest_health", signals.digestErrors, null, signals.digestErrors > 0),
     make("bounce_suppression", bounceTotal, null, bounceTotal > 0),
+    // (h) any per-lane discovery fetch error on the latest run (threshold null = boolean, fire on > 0).
+    make("discovery_lane_errors", signals.discoveryLaneErrors, null, signals.discoveryLaneErrors > 0),
   ];
 
   const { rerankCacheReadTokens, rerankCacheCreationTokens } = signals.cost;
