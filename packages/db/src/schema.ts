@@ -35,6 +35,7 @@ import type {
   DigestTrigger,
   JobId,
   LocationMode,
+  SalaryPeriod,
   SourceName,
   StructuredProfile,
   UserId,
@@ -150,6 +151,25 @@ export const jobs = pgTable(
     // signature INPUT with no new migration (already nullable text). NOT in upsertJobs setWhere — it
     // is a pure function of the two fields setWhere already tests (see jobs.ts).
     contentSignature: text("content_signature"),
+    // ─── Phase F4: job-side structured enrichment (extracted from this row's own title + description) ───
+    // NULLABLE-no-default (null = "absent in prose"; a 0/'' default would read as a REAL extracted value, not
+    // an absent one — cf. user_preferences.min_salary). yoe_min/yoe_max are the NUMERIC required-years band
+    // (Path A — F3 dropped target_level, so the YoE band is the sole level signal on both the job and user
+    // side); salary_period is a TS string-union on plain text (no pgEnum — same idempotent-migration rule as
+    // LifecycleState). All six DATA columns are extracted ASYNCHRONOUSLY by a later Haiku pass
+    // (repos/enrichment.ts) — NULL at upsert, exactly like `embedding`, and omitted from the INSERT VALUES.
+    yoeMin: smallint("yoe_min"),
+    yoeMax: smallint("yoe_max"),
+    salaryMin: integer("salary_min"),
+    salaryMax: integer("salary_max"),
+    salaryCurrency: text("salary_currency"),
+    salaryPeriod: text("salary_period").$type<SalaryPeriod>(),
+    // The SENTINEL (Phase F4). NULL = not-yet-extracted — the `jobsNeedingEnrichment` WHERE key, NOT the data
+    // columns (which are legitimately sometimes-all-NULL after a successful "found nothing" extraction, so
+    // "all data NULL" can't distinguish not-yet-done from done-found-nothing). Set = extraction ran. Reset to
+    // NULL by the upsertJobs CASE on title/description change (mirrors the embedding lifecycle). DELIBERATELY
+    // NOT in upsertJobs setWhere — a derived field, like content_signature/embedding (see jobs.ts).
+    enrichedAt: timestamp("enriched_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -482,8 +502,9 @@ export const userPreferences = pgTable(
     exclusions: jsonb("exclusions").$type<string[]>().notNull().default([]),
     // --- F3 prefs (Phase F3) ---
     // Target years-of-experience band. NULLABLE-no-default (null = "no bound"; 0 is a real value, never a
-    // default). Soft prompt signal ONLY — no job-side YoE column exists on any roadmap, so this never
-    // becomes a hard filter. smallint mirrors recency_days/consecutive_absences (ample for years).
+    // default). Soft prompt signal in F3; Phase F4 adds the job-side jobs.yoe_min/yoe_max band, so the
+    // deferred F4-FILTER can range-overlap this as a HARD filter (Path A — supersedes the earlier "YoE stays
+    // soft, no job-side column" stance). smallint mirrors recency_days/consecutive_absences (ample for years).
     yoeMin: smallint("yoe_min"),
     yoeMax: smallint("yoe_max"),
     // Hard "never show" keywords (Phase F3): merged into the `exclusions` post-filter at toFilterPrefs (a
