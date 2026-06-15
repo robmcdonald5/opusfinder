@@ -19,7 +19,10 @@ the Phase-9 profiles repo — `insertCvFile` / `patchCvFileExtracted` / `markCvF
 `lifecycle_state='closed'`), plus `getDigestApplyTargets` / `dropDigestItemsAndRecount` on the digests repo
 (Arm C apply-URL read + dead-link drop); and the Phase-F1 de-dup spine — `alreadyShownSignatures` on the digests
 repo (the signature sibling of `alreadyShownJobIds`) + `collapseBySignature` on the retrieval repo (the exported
-same-signature display-collapse), with `retrieveCandidatesForProfile` gaining an `excludeSignatures` clause)
+same-signature display-collapse), with `retrieveCandidatesForProfile` gaining an `excludeSignatures` clause;
+and the Phase-F4 enrichment repo — `jobsNeedingEnrichment` / `writeJobEnrichment` / `backfillJobEnrichment` /
+`drainEnrichment` over an injected `ExtractFn` (mirrors the embedding backfill; keyed off the `enriched_at`
+sentinel + a keyset cursor))
 and `@opusfinder/db/env` (`getDatabaseUrl`).
 
 **Phase 9.5** added a second client behind `@opusfinder/db/auth-client`: `createAuthDb(connectionString)`,
@@ -50,6 +53,8 @@ Run from the repo root via the workspace filter so the cwd is `packages/db`:
 | `pnpm --filter @opusfinder/db studio`    | Open Drizzle Studio                                        |
 | `pnpm --filter @opusfinder/db ping`      | Round-trip `SELECT 1` against Neon                         |
 | `pnpm --filter @opusfinder/db runs`      | Print the most recent `source_runs` rows (pipeline health) |
+| `pnpm --filter @opusfinder/db enrichment` | Print job-enrichment coverage (enriched / found-nothing / pending; Phase F4) |
+| `pnpm --filter @opusfinder/db test:enrichment` | Enrichment lifecycle smoke — keyset loop + write SQL (no creds; Phase F4) |
 | `pnpm --filter @opusfinder/db typecheck` | `tsc --noEmit`                                             |
 
 `migrate` and `ping` are also exposed at the root as `pnpm db:migrate` / `pnpm db:ping`.
@@ -147,6 +152,24 @@ Run from the repo root via the workspace filter so the cwd is `packages/db`:
   YoE are stored + soft-prompt-only (hard filters land in F4). No-creds smokes:
   `pnpm --filter @opusfinder/db test:prefs` (preferences round-trip) + `pnpm --filter @opusfinder/db test:location`
   (`geoMatches` LocationMode branches). **APPLIED to prod** (unlike F1's unapplied 0011).
+- **Schema (Phase F4).** `drizzle/0013_cloudy_polaris.sql` (additive, hand-guarded `IF NOT EXISTS` — same
+  neon-http discipline as 0002/0010/0011/0012) adds seven nullable `jobs` columns for job-side structured
+  enrichment, all extracted ASYNCHRONOUSLY (NULL at upsert, like `embedding`, omitted from INSERT VALUES):
+  `yoe_min`/`yoe_max` (`smallint` — the required-years band, the sole level signal now that F3 dropped
+  `target_level`; **Path A** = numeric YoE, NO categorical `seniority_band`), `salary_min`/`salary_max`
+  (`integer`), `salary_currency`/`salary_period` (`text`; `salary_period` is the `SalaryPeriod` TS union on
+  plain text, same idempotent-migration rule as `lifecycle_state`), and `enriched_at` (`timestamptz`
+  **SENTINEL** — NULL = not-yet-extracted, the `jobsNeedingEnrichment` WHERE key; it can't be inferred from the
+  data columns, which are legitimately all-NULL after a successful "found nothing"). The writers live in
+  `repos/enrichment.ts` — `jobsNeedingEnrichment` / `writeJobEnrichment` + the `backfillJobEnrichment` /
+  `drainEnrichment` extract→write loop over an injected `ExtractFn` + a keyset cursor (mirrors the Phase-4
+  embedding backfill, diverging only by the sentinel + keyset since extraction can throw or return all-NULL).
+  `upsertJobs` resets BOTH `embedding` and the enrichment columns on a `title`/`description_text` change (one
+  `nullIfContentChanged` CASE); `enriched_at` is DELIBERATELY NOT in `setWhere` (a derived field, like
+  `content_signature`/`embedding`). Smoke: `pnpm --filter @opusfinder/db test:enrichment` (no creds); status:
+  `pnpm --filter @opusfinder/db enrichment`. **APPLIED to prod**; 1472 rows enriched (880 yoe / 385 salary /
+  542 found-nothing). F4 ships DATA + extraction only — the salary/YoE retrieval filters are the deferred,
+  twice-gated F4-FILTER follow-on.
 - **neon-http migrations are NOT transactional.** The neon-http migrator applies
   a migration's statements without a wrapping transaction, so a multi-statement
   migration that fails partway leaves a partial apply with no rollback (and a
@@ -165,7 +188,8 @@ Run from the repo root via the workspace filter so the cwd is `packages/db`:
 - **Embedding invalidation on upsert (Phase 4).** `upsertJobs` resets `embedding` to
   `NULL` only when `title` OR `description_text` changed (a `CASE` in the conflict `set`);
   changes to other fields keep the existing vector, so re-embedding cost is paid only on
-  real content change.
+  real content change. **Phase F4** widened this same trigger into one `nullIfContentChanged` helper that also
+  resets the `enriched_at` sentinel + the enrichment columns on a title/description change.
 - **Canonical `locations` on upsert (Phase 6).** `upsertJobs` sorts each job's `locations`
   to a canonical order on write. `locations` is compared as an order-sensitive jsonb array in
   the change test, so a multi-location board that emits the same offices in a different order

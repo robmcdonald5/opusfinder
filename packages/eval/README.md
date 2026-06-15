@@ -20,6 +20,7 @@ pnpm eval -- --ranker embedding --embedder openai   # vector retrieval (OpenAI)
 pnpm eval -- --ranker llm-rerank                 # shared LLM rerank core (deterministic stub)
 pnpm eval -- --dataset data/fixture.jsonl       # synthetic smoke test (no DB/network)
 pnpm eval:compare                               # Voyage vs OpenAI, side-by-side retrieval@k
+pnpm eval:extraction                            # F4 per-field extraction-accuracy (keyless stub; -- --live for Haiku)
 
 pnpm --filter @opusfinder/eval test:metrics         # self-test of the metrics math + loader
 pnpm --filter @opusfinder/eval export:candidates    # dump real jobs from Neon (labeling aid)
@@ -75,6 +76,18 @@ the SAME core the digest pipeline runs — through a deterministic stub call (se
 so the report is reproducible). `pnpm eval -- --ranker llm-rerank` writes
 `reports/llm-rerank.dataset.json`, so eval scores exactly what production reranks. (The synthesis
 "why matched" contract is exercised in the pipeline, not scored here.)
+
+## Extraction accuracy (Phase F4)
+
+Distinct from the ranking metrics above (a different shape, not a `Ranker`): `src/extraction.ts` +
+`scripts/eval-extraction.ts` (`pnpm eval:extraction`) score the Phase-F4 job-enrichment extractor field-by-field
+as a **confusion matrix** — per field: correctly-null / hallucinated-when-absent / wrong-value / missed /
+correct. The **hallucinated-when-absent** rate is the gate for the deferred F4-FILTER, since a deterministic
+filter would trust these columns literally. It runs the SAME injected extractor the backfill uses
+(`makeJobEnrichmentExtractor`) against `data/extraction-fixtures.jsonl` (hand-labeled real prose); keyless
+deterministic stub by default, `-- --live` for real Haiku (`--model sonnet` for the F4-MODEL spot-check).
+Latest live run: salary 0% hallucination / 100% accuracy, YoE ~94% accuracy. This is an accuracy eval, not a
+ranker — its `reports/extraction-*.json` is a gitignored run artifact, not a committed ranking baseline.
 
 ## Keys
 
