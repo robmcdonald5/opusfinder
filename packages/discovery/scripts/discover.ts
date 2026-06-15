@@ -4,12 +4,13 @@ import { runScript } from "@opusfinder/shared/script";
 import { isSourceName } from "@opusfinder/sources";
 
 import { runDiscovery } from "../src/discover";
+import { SEED_LANES } from "../src/seed";
 
 /**
  * Local slug-discovery run: seed → resolve → probe → upsert the live subset → reprobe → staleness
  * sweep, all under one source_runs row. Default (no args) is the BROADER pass over all covered sources.
  *
- *   pnpm discover [--source=<name>] [--limit=<n>] [--dry-run]
+ *   pnpm discover [--source=<name>] [--limit=<n>] [--lanes=<a,b>] [--dry-run]
  *
  * `--dry-run` is a read-only preview (writes nothing). Moves to a Cloudflare Worker in Phase 8 —
  * `runDiscovery` is already argv-free for that.
@@ -65,8 +66,34 @@ async function main(): Promise<void> {
     }
   }
 
+  const lanesFlag = flagValue("lanes");
+  let lanes: string[] | undefined;
+  if (lanesFlag.present) {
+    if (lanesFlag.value === undefined) {
+      console.error("--lanes needs a value, e.g. --lanes=outscal,hn");
+      process.exitCode = 1;
+      return;
+    }
+    lanes = lanesFlag.value
+      .split(",")
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0);
+    if (lanes.length === 0) {
+      console.error("--lanes needs at least one lane name, e.g. --lanes=outscal,hn");
+      process.exitCode = 1;
+      return;
+    }
+    const known = new Set(SEED_LANES.map((l) => l.name));
+    const unknown = lanes.filter((l) => !known.has(l));
+    if (unknown.length > 0) {
+      console.error(`Unknown --lanes: ${unknown.join(", ")}. Known: ${[...known].join(", ")}`);
+      process.exitCode = 1;
+      return;
+    }
+  }
+
   const db = createDb(getDatabaseUrl());
-  await runDiscovery(db, { source: rawSource, limit, dryRun });
+  await runDiscovery(db, { source: rawSource, limit, lanes, dryRun });
 }
 
 await runScript("Discover", main);
