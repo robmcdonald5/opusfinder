@@ -21,12 +21,13 @@ enabled = true
 # per fire, KV cursor), and on the current board set one tick re-sweeps everything, so */30 meant ~48
 # full re-scrapes/day of a slowly-changing set; hourly is ample freshness for a daily/weekly digest,
 # halves the load, and still keeps full-sweep latency reasonable as the board set grows (see
-# PHASE_F6_PLAN.md). Discovery stays PAUSED — it REQUIRES Workers Paid (a user-side billing upgrade).
+# PHASE_F6_PLAN.md). Discovery RESUMED in Phase F5 (2026-06-15): Workers Paid is active, so the weekly
+# Sunday tick runs the workerSafe lanes (outscal + hn) via runDiscovery({ workerOnly: true }).
 # (UTC; CF weekdays are 1=Sun..7=Sat — Sunday is "SUN", never "0"; the strings MUST match the `case`
 # literals in src/index.ts character-for-character. USER: `wrangler deploy` to register the trigger.)
 crons = [
   "0 * * * *", # ingestion — hourly
-  # "0 3 * * SUN", # discovery — Sunday 03:00 (REQUIRES Workers Paid; see PHASE_8_PLAN.md §6) — resume after the Workers-Paid upgrade
+  "0 3 * * SUN", # discovery — Sunday 03:00 (Workers Paid; F5f resumed) — workerSafe lanes via workerOnly:true
 ]
 
 [vars]

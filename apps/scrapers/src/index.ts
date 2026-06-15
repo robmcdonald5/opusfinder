@@ -77,7 +77,13 @@ export default {
           pingWatchdog(env, ctx);
           break;
         case DISCOVERY_CRON:
-          await runDiscovery(db, { limit: DISCOVERY_LIMIT, reprobeLimit: DISCOVERY_REPROBE_LIMIT });
+          // workerOnly: run only workerSafe (fetch-only, bundle-safe) lanes — the F5-LANES-2 guard so a
+          // future Node-only lane (passive DNS / Common Crawl) can never execute inside the isolate.
+          await runDiscovery(db, {
+            limit: DISCOVERY_LIMIT,
+            reprobeLimit: DISCOVERY_REPROBE_LIMIT,
+            workerOnly: true,
+          });
           break;
         default:
           // A cron fired that no case matches — wrangler.toml [triggers].crons and the INGEST_CRON/
