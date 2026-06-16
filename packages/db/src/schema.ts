@@ -106,9 +106,11 @@ export const companies = pgTable(
  * `(source, external_id)` (the ATS-native posting id, unique within an ATS), so
  * re-ingesting the same board upserts in place rather than duplicating.
  *
- * `raw` keeps the untouched source payload for debugging/reprocessing; it is
- * refreshed on every real change but deliberately NOT part of change detection
- * (Greenhouse bumps an internal timestamp inside it on nearly every fetch).
+ * `raw` (the untouched source payload) is DEPRECATED and NO LONGER WRITTEN. It was
+ * write-only debug data and grew to ~90% of the database (442 MB of 489 MB), exhausting
+ * the Neon storage limit and failing every write (2026-06-16). `upsertJobs` stopped
+ * writing it; the column is kept NULLABLE for rollback/backfill safety and emptied to
+ * NULL to reclaim space. To re-derive richer text from a posting, re-ingest the board.
  */
 export const jobs = pgTable(
   "jobs",
@@ -123,7 +125,8 @@ export const jobs = pgTable(
     remote: boolean("remote").notNull(),
     applyUrl: text("apply_url").notNull(),
     postedAt: timestamp("posted_at", { withTimezone: true }),
-    raw: jsonb("raw").notNull(),
+    // DEPRECATED — no longer written by upsertJobs (was 90% of the DB). Kept nullable; see jobs doc above.
+    raw: jsonb("raw"),
     // Voyage voyage-3-large vectors (1024 dims), written by the Phase 4 embeddings
     // path. NULL until embedded, and reset to NULL when content changes (see
     // upsertJobs) so the backfill re-embeds it. HNSW-indexed below for retrieval.
