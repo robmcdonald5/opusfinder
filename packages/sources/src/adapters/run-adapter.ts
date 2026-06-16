@@ -22,10 +22,25 @@ export interface RunAdapterOptions {
   hydrateConcurrency?: number;
   /** Max retry attempts on a transient failure (429 / 5xx / network throw). */
   maxRetries?: number;
+  /**
+   * Per-request fetch timeout (ms). The global `fetch` has NO default timeout, so a board
+   * endpoint that accepts the connection but never sends a response would hang the bare `await
+   * fetch(...)` FOREVER — stalling the whole ingestion run until the Cloudflare Worker is
+   * wall-clock-killed before `finishRun`. Because the KV chunk cursor only advances on a clean
+   * return (`apps/scrapers/src/index.ts`), a killed run never advances it, so the next tick
+   * re-pins the SAME poison chunk and hangs again — a stuck loop that never self-heals. An
+   * `AbortSignal.timeout` converts that hang into an ordinary transient failure: it is retried
+   * like a network throw, then (if still failing) fails THAT board in isolation, so the run
+   * completes and the cursor moves past the chunk. Defaults to {@link DEFAULT_FETCH_TIMEOUT_MS}.
+   */
+  fetchTimeoutMs?: number;
 }
 
 const DEFAULT_HYDRATE_CONCURRENCY = 5;
 const DEFAULT_MAX_RETRIES = 3;
+// Generous for a healthy ATS JSON endpoint, but well under the Worker wall limit so one hung
+// board (worst case ~maxRetries attempts + backoff) can't eat the whole tick's budget.
+const DEFAULT_FETCH_TIMEOUT_MS = 10_000;
 
 export async function runAdapter(
   adapter: SourceAdapter,
@@ -34,10 +49,11 @@ export async function runAdapter(
 ): Promise<NormalizedJob[]> {
   const hydrateConcurrency = opts.hydrateConcurrency ?? DEFAULT_HYDRATE_CONCURRENCY;
   const maxRetries = opts.maxRetries ?? DEFAULT_MAX_RETRIES;
+  const fetchTimeoutMs = opts.fetchTimeoutMs ?? DEFAULT_FETCH_TIMEOUT_MS;
 
   const ctx: SourceContext = { slug: adapter.normalizeSlug(rawSlug), rawSlug };
   const tag = `${adapter.source} "${ctx.slug}"`;
-  const fetchJson: FetchJson = (req) => fetchJsonResilient(req, tag, maxRetries);
+  const fetchJson: FetchJson = (req) => fetchJsonResilient(req, tag, maxRetries, fetchTimeoutMs);
 
   // Pagination loop. Keep each raw item beside its mapped job so hydrate has both.
   const mapped: { raw: unknown; job: NormalizedJob }[] = [];
@@ -109,12 +125,20 @@ async function fetchJsonResilient(
   req: JobsRequest,
   tag: string,
   maxRetries: number,
+  timeoutMs: number,
 ): Promise<unknown> {
   let attempt = 0;
   for (;;) {
     let res: Response;
     try {
-      res = await fetch(req.url, req.init);
+      // Bound every attempt with a fresh timeout signal (the abort throws -> the catch below
+      // retries it like any transient network failure). Merge — never clobber — an adapter's
+      // own signal on the off chance a future adapter sets one.
+      const timeout = AbortSignal.timeout(timeoutMs);
+      const signal = req.init?.signal
+        ? AbortSignal.any([req.init.signal, timeout])
+        : timeout;
+      res = await fetch(req.url, { ...req.init, signal });
     } catch (err) {
       if (attempt < maxRetries) {
         await backoff(attempt++);
