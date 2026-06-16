@@ -86,6 +86,15 @@ export interface IngestionOptions {
   /** Forwarded to `fetchJobs`/`runAdapter` — a Worker may LOWER `hydrateConcurrency` for subrequests. */
   adapter?: RunAdapterOptions;
   /**
+   * Wall-clock budget (ms) for the whole run (Worker-only). Once exceeded, the board loop STOPS starting
+   * new boards, then finishes the run cleanly and returns — guaranteeing `finishRun` is reached (and the
+   * KV cursor advances to the last processed board) well within the Worker's 15-min per-invocation wall
+   * limit, so a heavy chunk can never kill the tick mid-run and re-pin the cursor on the same poison
+   * chunk. The in-flight board always completes (its cost is itself bounded by `adapter.maxItems`). Omit
+   * ⇒ no budget (the CLI, in Node, has no per-invocation limit). See `counts.processed`.
+   */
+  maxRunMs?: number;
+  /**
    * Optional per-board progress hook, fired once per board as it finishes (success or failure).
    * The library stays quiet by default (only the run summary is logged); the CLI supplies this to
    * restore real-time per-board output, the Worker omits it. MUST NOT throw — a throwing hook is
@@ -97,13 +106,16 @@ export interface IngestionOptions {
 /**
  * Flat metric bag, persisted verbatim to `source_runs.counts` (the index signature keeps it
  * assignable to the db `RunCounts` = `Record<string, number>` while the named fields give typed
- * access). `companies` is the number of boards PROCESSED THIS RUN — the `afterId`/`limit` chunk
- * after the `activeOnly` filter — NOT the total active board count; the chunk-cursor wrap test
- * (`companies < limit` ⇒ sweep done ⇒ reset) depends on that meaning.
+ * access). `companies` is the size of the `afterId`/`limit` SQL chunk (after the `activeOnly` filter)
+ * — NOT the total active board count; the chunk-cursor wrap test (`companies < limit` ⇒ end of table ⇒
+ * reset) depends on that meaning. `processed` is how many of those boards actually ran: it equals
+ * `companies` unless the `maxRunMs` budget stopped the loop early, which the handler uses to advance
+ * (not wrap) the cursor mid-chunk.
  */
 export interface IngestionCounts {
   [key: string]: number;
-  companies: number; // boards processed THIS run (the activeOnly + afterId + limit chunk)
+  companies: number; // size of the activeOnly + afterId + limit SQL chunk (NOT necessarily all processed)
+  processed: number; // boards actually processed (< companies ⇒ the maxRunMs budget stopped the loop early)
   ok: number; // boards fetched + upserted cleanly
   failed: number; // boards that threw (isolated — does NOT fail the run)
   jobs: number; // distinct postings persisted
@@ -134,6 +146,7 @@ const DEFAULT_PACE_MS = 500;
 export async function runIngestion(db: Db, opts: IngestionOptions = {}): Promise<IngestionCounts> {
   const paceMs = opts.paceMs ?? DEFAULT_PACE_MS;
   const counts = emptyCounts();
+  const startMs = Date.now();
   const runId = await startRun(db, "ingestion", { source: opts.source });
   let errorSample: string | undefined;
 
@@ -149,10 +162,20 @@ export async function runIngestion(db: Db, opts: IngestionOptions = {}): Promise
     counts.companies = list.length;
 
     for (const [i, company] of list.entries()) {
+      // Wall-clock budget (Worker-only — see opts.maxRunMs): stop STARTING new boards once the budget is
+      // spent, so `finishRun` is always reached within the Worker's 15-min limit. `i > 0` guarantees at
+      // least one board runs (its own cost is bounded by adapter.maxItems); BREAK (not return) so the
+      // finishRun + summary below still run and the handler advances the cursor to the last processed id.
+      if (i > 0 && opts.maxRunMs !== undefined && Date.now() - startMs >= opts.maxRunMs) break;
       if (i > 0) await sleep(paceMs);
       counts.lastId = company.id; // advance the chunk cursor even when this board fails
       try {
         const normalized = await fetchJobs(company.source, company.slug, opts.adapter);
+        // A capped board (adapter.maxItems truncated the fetch) is PARTIAL — its present-set is
+        // incomplete, so the F2 feed-absence sweep below MUST be skipped or it would false-close the
+        // un-fetched tail. runAdapter trims to EXACTLY maxItems, so length >= cap ⇔ capped.
+        const cap = opts.adapter?.maxItems;
+        const capped = cap !== undefined && normalized.length >= cap;
         // Idempotent get-or-create from the canonical slug (not jobs[0]) keeps a valid-but-
         // empty board recorded too.
         const companyId = await upsertCompany(db, company.slug, company.source);
@@ -170,7 +193,7 @@ export async function runIngestion(db: Db, opts: IngestionOptions = {}): Promise
         // the chunk. `presentExternalIds` is the board's de-duplicated external_ids (== what upsertJobs just
         // persisted; length === total). Isolated like the embed step: a sweep fault leaves jobs persisted and
         // self-heals next cycle, so it must not fail the board.
-        if (total > 0) {
+        if (total > 0 && !capped) {
           try {
             const presentExternalIds = [...new Set(normalized.map((j) => j.externalId))];
             // F2-ENFORCE FLIP SITE 1 of 3 (also discover.ts Arm B + digest.ts Arm C): pass { enforce: true }
@@ -237,6 +260,7 @@ export async function runIngestion(db: Db, opts: IngestionOptions = {}): Promise
           error: message,
         });
       }
+      counts.processed += 1; // boards we got through (ok or failed) — the early-stop cursor signal
     }
 
     await finishRun(db, runId, { status: "ok", counts, errorSample });
@@ -258,6 +282,7 @@ function sampleOf(company: { source: SourceName; slug: string }, message: string
 function emptyCounts(): IngestionCounts {
   return {
     companies: 0,
+    processed: 0,
     ok: 0,
     failed: 0,
     jobs: 0,

@@ -53,6 +53,17 @@ const DEFAULT_INGEST_LIMIT = 150;
 // Upper bound: a misconfigured INGEST_LIMIT (e.g. "50000") is clamped so one tick can't blow the
 // subrequest/wall budget (~500 boards x up to ~20 subrequests ~= the Workers Paid 10K cap; §6).
 const MAX_INGEST_LIMIT = 500;
+// Per-board posting cap — the real per-invocation budget guard. The ~20-subrequests/board assumption
+// above breaks on a mega-board: SmartRecruiters boschgroup (~4.6k postings, each an N+1 hydrate fetch)
+// otherwise consumes the whole tick's wall-clock / memory / subrequest budget, the run is killed before
+// finishRun, and the KV cursor freezes on that chunk forever (the ~21:00 UTC 2026-06-15 outage). Capping
+// per-board hydration bounds all three; a capped board ingests its first N postings and runIngestion
+// skips its lifecycle sweep (the rest wait — acceptable for the rare giant board).
+const MAX_JOBS_PER_BOARD = 1500;
+// Whole-run wall-clock budget, well under Cloudflare's 15-min scheduled-Worker per-invocation limit:
+// runIngestion stops starting new boards past this and finishes cleanly, so even a chunk of many medium
+// boards can't be killed mid-run. Belt-and-suspenders behind the per-board cap.
+const MAX_RUN_MS = 10 * 60_000;
 // limit + reprobeLimit sized to the subrequest budget (PHASE_8_PLAN.md §6 — REQUIRES Workers Paid).
 const DISCOVERY_LIMIT = 400;
 const DISCOVERY_REPROBE_LIMIT = 500;
@@ -125,10 +136,11 @@ function pingWatchdog(env: Env, ctx: ExecutionContext): void {
 }
 
 /**
- * One ingestion tick: read the chunk cursor from KV, process the next `INGEST_LIMIT` boards via
- * `runIngestion`, then advance or wrap the cursor. `counts.companies` is the boards processed this
- * tick (the SQL chunk), so `companies < limit` ⇒ the chunk under-filled ⇒ the sweep reached the end
- * ⇒ wrap to the start; otherwise advance past the last id processed.
+ * One ingestion tick: read the chunk cursor from KV, process up to `INGEST_LIMIT` boards via
+ * `runIngestion` (bounded per board by MAX_JOBS_PER_BOARD and per tick by MAX_RUN_MS so a heavy chunk
+ * can't be killed before finishRun), then advance or wrap the cursor. Wrap to the start only when the
+ * whole chunk ran AND under-filled (`processed >= companies && companies < limit` ⇒ end of table);
+ * otherwise advance past the last processed id (continuing a budget-truncated chunk next tick).
  */
 async function runIngestionTick(db: Db, env: Env): Promise<void> {
   // A corrupt / non-numeric cursor restarts the sweep from the beginning (afterId 0) rather than
@@ -146,9 +158,21 @@ async function runIngestionTick(db: Db, env: Env): Promise<void> {
       : DEFAULT_INGEST_LIMIT;
 
   // Inline embedding is OFF (not wired — see the module doc-comment). Jobs are upserted; the still-NULL
-  // vectors are filled by `pnpm embeddings:backfill`.
-  const counts = await runIngestion(db, { activeOnly: true, afterId, limit });
+  // vectors are filled by `pnpm embeddings:backfill`. The per-board cap + run budget keep one tick inside
+  // the Worker's per-invocation limits regardless of how heavy the chunk is.
+  const counts = await runIngestion(db, {
+    activeOnly: true,
+    afterId,
+    limit,
+    maxRunMs: MAX_RUN_MS,
+    adapter: { maxItems: MAX_JOBS_PER_BOARD },
+  });
 
-  const next = counts.companies < limit ? 0 : counts.lastId;
+  // Wrap to the start (afterId 0) ONLY when the whole chunk was processed AND it under-filled
+  // (companies < limit ⇒ the id-keyset sweep reached the end of the table). If the maxRunMs budget
+  // stopped the loop early (processed < companies) there are still boards left in THIS chunk, so advance
+  // to the last processed id and continue it next tick — never wrap mid-chunk (that would skip the rest).
+  const reachedEnd = counts.processed >= counts.companies && counts.companies < limit;
+  const next = reachedEnd ? 0 : counts.lastId;
   await env.INGEST_CURSOR.put("afterId", String(next));
 }
