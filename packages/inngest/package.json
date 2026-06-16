@@ -4,7 +4,9 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./deps": "./src/deps.ts",
+    "./backfill-deps": "./src/backfill-deps.ts"
   },
   "types": "./src/index.ts",
   "scripts": {
@@ -19,6 +21,7 @@
   "dependencies": {
     "@opusfinder/db": "workspace:*",
     "@opusfinder/email": "workspace:*",
+    "@opusfinder/embeddings": "workspace:*",
     "@opusfinder/llm": "workspace:*",
     "@opusfinder/rerank": "workspace:*",
     "@opusfinder/shared": "workspace:*",

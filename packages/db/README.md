@@ -12,9 +12,13 @@ returns a Drizzle client. Phase 2 added subpath exports alongside it:
 the Phase-9 profiles repo — `insertCvFile` / `patchCvFileExtracted` / `markCvFileFailed` /
 `upsertUserProfile` / `getProfileTextKey`; and the Phase-9.5 preferences repo — `getPreferences` /
 `getOrCreatePreferences` / `updatePreferences`; the Phase-10 retrieval repo —
-`retrieveCandidatesForProfile`; and the Phase-10 digests repo — `listDigestRecipients` /
+`retrieveCandidatesForProfile`; and the Phase-10 digests repo — `listDigestRecipients` (gained an
+opt-in `cadenceDue` cadence-window predicate — daily 20h / weekly 6d / monthly 28d off
+`last_digest_sent_at`; default no-filter, set true only on a cron run) /
 `alreadyShownJobIds` / `startDigestRun` / `finishDigestRun` / `insertDigest` / `insertDigestItems` /
-`deleteUserDigestForRun` / `getLatestDigestForUser` (plus `getProfileForDigest` on the profiles repo); and the Phase-F2 lifecycle repo —
+`deleteUserDigestForRun` / `getLatestDigestForUser` / `markDigestConsidered` (the Phase-12a no-send
+backoff — stamps `last_digest_sent_at` on the skip paths so a due-but-empty user doesn't re-run the paid
+pipeline each daily tick) (plus `getProfileForDigest` on the profiles repo); and the Phase-F2 lifecycle repo —
 `sweepLifecycle` / `closeJobsForCompanies` / `closeJobsByIds` / `ABSENCE_CLOSE_THRESHOLD` (the first writers of
 `lifecycle_state='closed'`), plus `getDigestApplyTargets` / `dropDigestItemsAndRecount` on the digests repo
 (Arm C apply-URL read + dead-link drop); and the Phase-F1 de-dup spine — `alreadyShownSignatures` on the digests
@@ -184,7 +188,13 @@ Run from the repo root via the workspace filter so the cwd is `packages/db`:
   `off|shadow|enforce` modes, shadow-first: validate on real traffic before flipping a check to enforce). Window
   sizes clamp to ≥1 so a `0` can't silently disarm the check it sizes. Read-only; shape-only (every metric is a
   count/age/ratio, no PII). The verdict layer is `pnpm health` (in `@opusfinder/inngest`); no-creds smoke
-  `test:health`.
+  `test:health`. (The CHECKER itself still adds NO migration — only the `health_alerts` TABLE below is 0014.)
+- **Schema (Phase 12a).** `drizzle/0014_slow_red_hulk.sql` (additive) adds the append-only `health_alerts`
+  incident log — `check_id` / `mode` / `metric` / `threshold` / `detail` / `created_at`, plus a `created_at`
+  index. `check_id` / `mode` are plain `text` (NOT a TS union imported from `health.ts`) deliberately, to
+  avoid a `schema.ts`→`health.ts`→client import cycle. There is **NO writer yet** — the table is
+  forward-provisioned for the 12b dev panel's incident history. **Migration NOT yet applied** (owner runs
+  `pnpm db:migrate`).
 - **neon-http migrations are NOT transactional.** The neon-http migrator applies
   a migration's statements without a wrapping transaction, so a multi-statement
   migration that fails partway leaves a partial apply with no rollback (and a

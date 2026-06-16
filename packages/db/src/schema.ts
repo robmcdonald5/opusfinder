@@ -685,3 +685,27 @@ export const digestItems = pgTable(
     }),
   ],
 );
+
+/**
+ * Append-only health-incident log (Phase-12 12a-4; the F6-reserved migration 0014). The one health signal
+ * NOT re-derivable from the event tables: `checkHealth` (health.ts) reads LIVE pipeline state, but nothing
+ * records WHEN a check fired over time. A future health-check alert fn / the dev panel's enforce path (12b)
+ * WRITES one row per enforce-firing; the Phase-12 dev panel READS it for incident history. Created here so
+ * 12b is purely additive (no later migration). Shape-only — `check_id` (a `HealthCheckId`) + numeric
+ * metric/threshold mirror {@link HealthCheck}; never job/user text (the F6 no-secrets/PII invariant).
+ * `check_id`/`mode` are plain `text` (not `.$type<HealthCheckId>()`) to avoid a schema→health→client import
+ * cycle — the writer casts. Append-only: no updates, no deletes.
+ */
+export const healthAlerts = pgTable(
+  "health_alerts",
+  {
+    id: serial("id").primaryKey(),
+    checkId: text("check_id").notNull(),
+    mode: text("mode").notNull(),
+    metric: real("metric"),
+    threshold: real("threshold"),
+    detail: text("detail"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("health_alerts_created_at_idx").on(t.createdAt)],
+);

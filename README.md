@@ -9,14 +9,14 @@ pipeline, and delivers a personalized digest on a regular cadence. See
 
 | Path                   | What                                                                                                                                                                                              |
 | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `apps/web/`            | SvelteKit frontend (placeholder until Phase 12)                                                                                                                                                   |
+| `apps/web/`            | SvelteKit headless production runtime — `/api/inngest` + `/api/health` on Vercel + Inngest Cloud (Phase 12a) ([README](apps/web/README.md))                                                        |
 | `apps/scrapers/`       | Cloudflare Workers cron runtime — scheduled ingestion + discovery against Neon (Phase 8) ([README](apps/scrapers/README.md))                                                                      |
 | `packages/auth/`       | Better Auth (email+password) — `user`/`session`/`account` schema + user-creation service + management CLIs (Phase 9.5; node/server-only, never in the Worker) ([README](packages/auth/README.md)) |
 | `packages/db/`         | Drizzle ORM over Neon Postgres + pgvector ([README](packages/db/README.md))                                                                                                                       |
 | `packages/discovery/`  | Slug-discovery pipeline — seed lanes (outscal + HN) → probe → upsert + staleness (Phase 7; F5 lane registry) ([README](packages/discovery/README.md))                                                                                    |
 | `packages/embeddings/` | Voyage `voyage-3-large` embeddings + HNSW retrieval ([README](packages/embeddings/README.md))                                                                                                     |
 | `packages/eval/`       | Matching-quality eval harness — metrics, rankers, reports ([README](packages/eval/README.md))                                                                                                     |
-| `packages/inngest/`    | Per-user digest pipeline on Inngest — orchestrator + per-user fn, local serve + trigger CLI (Phase 10; local-dev-only) ([README](packages/inngest/README.md))                                     |
+| `packages/inngest/`    | Per-user digest pipeline on Inngest — orchestrator + per-user fn + cadence cron + F8 backfills, serve + trigger CLI (Phase 10; cadence/backfills Phase 12a) ([README](packages/inngest/README.md)) |
 | `packages/llm/`        | Vercel AI SDK + Anthropic wrapper, prompt caching, structured output, Message Batches (Phase 10) ([README](packages/llm/README.md))                                                               |
 | `packages/profiles/`   | CV → semantic-profile pipeline — transcribe → structure → embed (Phase 9) ([README](packages/profiles/README.md))                                                                                 |
 | `packages/rerank/`     | Shared listwise LLM rerank core — `RerankCall` injection, runs in both the digest pipeline and eval (Phase 10) ([README](packages/rerank/README.md))                                              |
@@ -107,6 +107,22 @@ but not in a fresh clone:
 - `research/sources/README.md` — source-discovery catalog
 
 ## Status
+
+Phase 12a stood up the **headless production runtime**. `apps/web` became a real SvelteKit app
+(svelte 5 / `@sveltejs/kit` 2 / `adapter-vercel` 6 / vite 8) whose only two routes are `/api/inngest`
+(`inngest/sveltekit`, hosting the digest functions + the F8 backfills) and `/api/health` (over the pure
+`checkHealth` core) — Node serverless (not edge; `maxDuration` 300), deployed to Vercel with Inngest
+Cloud. Three new pieces ride this runtime: a **cadence cron** (`makeCadenceOrchestrator`, `0 13 * * *`,
+`singleton:skip`) that emits `digest/run.requested {trigger:'cron'}` so `listDigestRecipients`'s opt-in
+`cadenceDue` predicate picks the daily/weekly/monthly-due users (manual `pnpm digest --all` unchanged) —
+with a new `markDigestConsidered` repo fn stamping the no-send skip paths for cadence backoff; the **F8
+backfill drains** (`embed-backlog-drain` `0 4 * * *` cursorless + `enrich-backlog-drain` `15 4 * * *`
+keyset, both `singleton:skip`, `MAX_PAGES_PER_RUN=200`, paged per `step.run`), replacing the dropped
+GitHub Actions bridge; and the new `health_alerts` append-only incident table (migration
+`0014_slow_red_hulk`, additive, no writer yet — forward-provisioned for the 12b dev panel). 12b (auth +
+prefs/CV forms + history + the interactive dev panel) is deferred. Owner-pending: `pnpm db:migrate`
+(0014) + the Cloud deploy (the Inngest↔Vercel integration auto-provisions the signing/event keys;
+`INNGEST_DEV` UNSET; Deployment Protection OFF for `/api/inngest`). Built on branch `feat/headless-runtime`.
 
 Phase F6 added **pipeline health & alerting** — the watcher for health data that was recorded everywhere but
 read nowhere. A new pure, serverless-safe checker (`@opusfinder/db/health`, **NO migration**) computes eight

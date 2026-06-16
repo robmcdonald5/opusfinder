@@ -7,42 +7,52 @@ emails them (Phase 11). The sequence is: deterministic filter → pgvector retri
 synthesis (Anthropic Message Batches API) → persist → **send (Resend, idempotency-keyed) → bounded
 delivery poll → record** (`src/delivery.ts`).
 
-> **Phases 10/11 are LOCAL-DEV-ONLY.** They run against the local Inngest dev server
-> (`npx inngest-cli dev`, `INNGEST_DEV=1`) — **no Inngest Cloud account, no signing/event keys, no
-> deployed serve endpoint**. The production serve home (SvelteKit-on-Vercel via `inngest/sveltekit`),
-> the cadence cron, and delivery webhooks are **Phase 12**.
+> **Phases 10/11 run on the local Inngest dev server** (`npx inngest-cli dev`, `INNGEST_DEV=1`) for
+> end-to-end iteration — keyless, no Cloud account needed. **Phase 12a then BUILT the production runtime:**
+> the cadence cron (`makeCadenceOrchestrator`), the F8 backfill drains, and the deployed serve home
+> (SvelteKit-on-Vercel via `inngest/sveltekit` at `apps/web/src/routes/api/inngest/+server.ts`) all ship
+> in code on branch `feat/headless-runtime` — only the **Inngest Cloud deploy** (account + keys via the
+> Inngest↔Vercel integration) is owner-pending. Delivery webhooks + the unsubscribe endpoint remain **12b**.
 
 > **Worker invariant.** Inngest functions are a Node/server runtime that read Neon directly as a
 > trusted process — this package must NEVER enter the `apps/scrapers` Cloudflare Worker bundle. Both
 > `@opusfinder/inngest` and `inngest` are on `pnpm guard:worker`'s deny lists.
 
-## Why Inngest (and why local-dev-only)
+## Why Inngest (and the local-dev-first path)
 
 The synthesis step submits an Anthropic **Message Batch** (50% discount) and then waits for it — most
 batches finish in under an hour but the SLA is a 24h hard cap. Inngest's durable `step.sleep` /
 `step.run` suspend across that wait at **zero compute cost**, which a vanilla Cloudflare cron tick
 cannot (hard 15-min wall, no cross-invocation suspend). That durability is the decisive reason the
 digest runs on Inngest rather than extending `apps/scrapers`. Phase 10 only needs the local dev server
-to prove the pipeline end-to-end; the deployed runtime + keys land in Phase 12 (email ships in
-Phase 11 on the local dev runtime — locked at Phase-11 planning, 2026-06-11).
+to prove the pipeline end-to-end; Phase 12a then built the deployed runtime (the SvelteKit serve route +
+the cadence cron + the F8 backfills) — only the Inngest Cloud account + keys are owner-pending (email
+ships in Phase 11 on the local dev runtime — locked at Phase-11 planning, 2026-06-11).
 
 ## What's here
 
 - `src/inngest.ts` — the `inngest` client (`id: "opusfinder"`) + the typed event surface
-  (`EventSchemas().fromRecord`): `digest/run.requested` (kicks the orchestrator — manual CLI now, a
-  cadence cron in Phase 12; optional `userId` scopes it to one user) and `digest/user.requested` (one
-  per recipient, fanned out by the orchestrator).
-- `src/digest.ts` — `createDigestFunctions(deps)` → `[orchestrator, perUser]`, plus the `DigestDeps`
+  (`EventSchemas().fromRecord`): `digest/run.requested` (kicks the orchestrator — fired by the manual CLI
+  AND by the 12a cadence cron, which carries `trigger:'cron'`; optional `userId` scopes it to one user)
+  and `digest/user.requested` (one per recipient, fanned out by the orchestrator).
+- `src/digest.ts` — `createDigestFunctions(deps)` → `[orchestrator, perUser, cadence]`, plus the `DigestDeps`
   injection seam (`db` + a `rerank` closure + the `batch` submit/poll/collect lifecycle + the Phase-11
   `email` send/lastEvent pair) so the pipeline is stub-testable and the heavy `@opusfinder/llm` wiring
   stays out of the function bodies.
   - **Orchestrator** (`digest-orchestrator`): opens a `digest_run`, resolves recipients (single user
     when `event.data.userId` is set — runtime-validated as a uuid, since the event schema is
-    compile-time only — else every eligible user keyset-swept), fans out one `digest/user.requested`
+    compile-time only — else every eligible user keyset-swept, with `cadenceDue` passed through as
+    `event.data.trigger === 'cron'` so a cron run filters to cadence-due users while a manual `--all`
+    sweep does not), fans out one `digest/user.requested`
     each via `step.sendEvent`, and finalizes the run to the dispatch count. Fan-out is fire-and-forget,
     so the run row records **dispatch**, not per-user completion (those land on `digests`). A step that
     exhausts its retries is caught and terminalized onto the run row (`status: 'error'` +
     `error_sample`) before the failure is rethrown.
+  - **Cadence** (`makeCadenceOrchestrator`, `{ cron: "0 13 * * *", singleton: { mode: "skip" } }`): the
+    Phase-12a daily tick. It just emits `digest/run.requested` with `{ trigger: 'cron' }` (reusing the
+    orchestrator above rather than a parallel pipeline), so `listDigestRecipients`'s opt-in `cadenceDue`
+    predicate (daily 20h / weekly 6d / monthly 28d off `last_digest_sent_at`) decides who is actually due
+    on each daily run. Manual `pnpm digest --all` is unaffected (no `cadenceDue`).
   - **Per-user** (`digest-user`, `singleton` keyed on `userId`, mode `skip` — `concurrency` would
     release its slot during the batch-wait sleeps and let runs overlap): load + **eligibility gate**
     (skip if no profile/embedding, unverified email, `!digestEnabled`, or suppressed — so even a manual
@@ -89,6 +99,20 @@ Phase 11 on the local dev runtime — locked at Phase-11 planning, 2026-06-11).
   real `probeLiveness` (HEAD/GET apply-URL check) in production, a fake in the stub smoke. Phase F3
   threads the judgment-context prefs (`PromptPreferences` via `toPromptPrefs`) into rerank + synthesis —
   `DigestDeps.rerank` gained a `prefs?` arg and `deps.ts` forwards it.
+- `src/backfill.ts` (Phase F8) — `createBackfillFunctions(deps)` → the two scheduled drains that keep the
+  embedding + enrichment backlogs from accumulating on the deployed runtime (F8 rides the 12a runtime; the
+  original GitHub Actions bridge was dropped):
+  - **`embed-backlog-drain`** (`{ cron: "0 4 * * *", singleton: { mode: "skip" } }`): a **cursorless**
+    re-query — each page re-selects `embedding IS NULL` (the just-written rows fall out of the predicate),
+    so it self-advances with no cursor to thread.
+  - **`enrich-backlog-drain`** (`{ cron: "15 4 * * *", singleton: { mode: "skip" } }`): a **keyset**
+    `afterId` cursor (the `enriched_at` sentinel stays set even on a "found nothing", so a re-query would
+    spin — it must page forward by id instead).
+  - Both cap at `MAX_PAGES_PER_RUN = 200` PAGED per `step.run` (an uncapped drain would exceed the
+    serverless `maxDuration`), and `singleton: { mode: "skip" }` keeps a long run from overlapping the next
+    daily tick. The injection seam is `BackfillDeps` (`./backfill-deps` → `buildBackfillDeps()`: the
+    neon-http `createDb` + the real Voyage embed from the new `@opusfinder/embeddings` dep + the Haiku
+    enrichment extractor), mirroring `DigestDeps`/`buildDigestDeps`.
 - `scripts/test-digest-email.ts` (`pnpm --filter @opusfinder/inngest test:digest-email`) — the
   stub-seam smoke for the email tail: render determinism + escaping, the idempotency-key shape, the
   full event→status mapping, allowlist fail-closed, and the failure/skip/happy/slow-poll step
@@ -99,8 +123,12 @@ Phase 11 on the local dev runtime — locked at Phase-11 planning, 2026-06-11).
   `step`/db/email harness deduped from the email smoke).
 - `scripts/serve.ts` (`pnpm inngest:serve`) — the local serve endpoint over a bare Node `http` server
   (`inngest/node`) on port 3000 (pinned — the root `inngest:dev` registers exactly that URL), so the
-  dev server can discover + invoke the functions. Dev-only. The Phase-12 production serve will need
-  `INNGEST_SIGNING_KEY`/`INNGEST_EVENT_KEY`, which the Inngest SDK reads from the environment itself.
+  dev server can discover + invoke the functions. It now serves
+  `[...createDigestFunctions(...), ...createBackfillFunctions(...)]` (digest + F8 backfills). Dev-only —
+  the Phase-12a **production** serve home is `apps/web/src/routes/api/inngest/+server.ts`
+  (`inngest/sveltekit` on Vercel), which hosts the same function set; the Inngest SDK reads
+  `INNGEST_SIGNING_KEY`/`INNGEST_EVENT_KEY` from the environment itself (auto-provisioned by the
+  Inngest↔Vercel integration in prod).
 - `scripts/digest.ts` (`pnpm digest`) — the manual trigger CLI: send `digest/run.requested`, then poll
   the DB until each targeted recipient has a NEW digest, and print it (item count, the rerank
   cache-read/create counters, and the top reasons). `process.exitCode` only (never `process.exit`).
@@ -166,5 +194,5 @@ Per CLAUDE.md (external-platform integration), the work splits cleanly:
 | All package code, the local dev server (`pnpm inngest:dev` — keyless), the end-to-end gate | **Agent** |
 | Provide `DATABASE_URL` + `ANTHROPIC_API_KEY` (already in place since Phase 9) | **User** |
 | **Resend account + API key + verified sending domain (SPF/DKIM/DMARC) + `EMAIL_FROM`/`EMAIL_ALLOWLIST`** | **User (Phase 11)** |
-| **Inngest Cloud account + `INNGEST_SIGNING_KEY`/`INNGEST_EVENT_KEY` + a deployed serve endpoint + app sync** | **User (Phase 12)** |
-| Decide the production serve host (SvelteKit-on-Vercel) + the cadence cron schedule/timezone | **User (Phase 12)** |
+| Production serve route (SvelteKit-on-Vercel, `apps/web`) + the cadence cron (`0 13 * * *`) + the F8 backfill crons | Code built (**Agent**, 12a) |
+| **Inngest Cloud account + app sync; `INNGEST_SIGNING_KEY`/`INNGEST_EVENT_KEY` auto-provisioned by the Inngest↔Vercel integration (`INNGEST_DEV` UNSET)** | **User (deploy, 12a)** |
