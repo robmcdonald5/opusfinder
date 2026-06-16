@@ -12,7 +12,7 @@ import type { CompanySlug, NormalizedJob, SourceName } from "@opusfinder/shared"
 
 import type { Db } from "../client";
 import { companies, jobs } from "../schema";
-import { NUL, signatureSql, stripNul } from "./sql";
+import { NUL, signatureSql } from "./sql";
 
 /** One row of the companies table, as the ingestion driver needs it (id + identity). */
 export interface CompanyRow {
@@ -128,12 +128,14 @@ export async function upsertJobs(
       // different order across ingests would otherwise report a spurious "changed" every run.
       // runAdapter already canonicalizes the in-memory job's locations, so on the ingestion
       // path this is a no-op — it stays here as the defense for any direct upsertJobs caller.
-      // Order isn't semantically meaningful for ATS locations (the original is kept on `raw`).
+      // Order isn't semantically meaningful for ATS locations.
       locations: [...job.locations].map((l) => l.replaceAll(NUL, "")).sort(),
       remote: job.remote,
       applyUrl: job.applyUrl.replaceAll(NUL, ""),
       postedAt: job.postedAt,
-      raw: stripNul(job.raw),
+      // `raw` (job.raw) is DEPRECATED and intentionally NOT written — it was write-only debug
+      // data that grew to ~90% of the DB and exhausted the Neon storage limit (2026-06-16). The
+      // column is nullable; omitting it from the INSERT leaves it NULL. See schema.ts jobs doc.
       // content_signature (Phase F1): md5 over the SAME normalized title+desc, computed SQL-side
       // from the bound (NUL-stripped) values via the ONE signatureSql definition — byte-identical to
       // the ON CONFLICT SET and the F1d backfill, so an insert and any later re-ingest/backfill of the
@@ -161,11 +163,11 @@ export async function upsertJobs(
   // batch rows), so build it ONCE and reuse it for each batch below.
   const conflictUpdate = {
     target: [jobs.source, jobs.externalId],
-    // Write every comparable field + company_id, refresh write-only fields
-    // (posted_at, raw), conditionally reset the derived embedding, and advance
-    // updated_at. INVARIANT: every column tested
-    // in `setWhere` below must also appear here — a field compared but not
-    // written would make every re-ingest look "changed" forever.
+    // Write every comparable field + company_id, refresh the write-only `posted_at`,
+    // conditionally reset the derived embedding, and advance updated_at. INVARIANT: every
+    // column tested in `setWhere` below must also appear here — a field compared but not
+    // written would make every re-ingest look "changed" forever. (`raw` is DEPRECATED and no
+    // longer written — see the INSERT VALUES note above; an existing row's raw is left as-is.)
     set: {
       companyId: sql`excluded.company_id`,
       title: sql`excluded.title`,
@@ -174,7 +176,6 @@ export async function upsertJobs(
       remote: sql`excluded.remote`,
       applyUrl: sql`excluded.apply_url`,
       postedAt: sql`excluded.posted_at`,
-      raw: sql`excluded.raw`,
       // The embedding is derived from title + description_text ONLY (see nullIfContentChanged above): reset
       // it on a content change so the backfill / inline-embed step re-embeds, keep it on any other churn.
       embedding: nullIfContentChanged(jobs.embedding),
@@ -194,15 +195,14 @@ export async function upsertJobs(
       enrichedAt: nullIfContentChanged(jobs.enrichedAt),
       updatedAt: sql`now()`,
     },
-    // Advance the row only when a real change differs. Two fields are written
-    // above but deliberately EXCLUDED from this test:
-    //  - `raw`: Greenhouse bumps an internal timestamp inside it on nearly
-    //    every fetch, so comparing it would defeat idempotency.
+    // Advance the row only when a real change differs. Fields written above but
+    // deliberately EXCLUDED from this test:
     //  - `posted_at`: the adapter derives it as `first_published || updated_at`,
     //    so for postings lacking `first_published` it ALIASES that same churning
-    //    `updated_at`; comparing it would reintroduce exactly the instability
-    //    `raw` is excluded to avoid. Still written, so it stays fresh whenever a
-    //    real change fires.
+    //    `updated_at`; comparing it would make nearly every re-fetch look "changed"
+    //    and defeat idempotency. Still written, so it stays fresh whenever a real
+    //    change fires. (Greenhouse's per-fetch timestamp churn — the reason the old
+    //    `raw` column was also excluded here — no longer applies: `raw` is no longer written.)
     //  - `content_signature` (Phase F1): rewritten unconditionally in the set block
     //    above but DELIBERATELY excluded from this test. It is a PURE function of
     //    title + description_text — the exact two fields this test already checks (and
