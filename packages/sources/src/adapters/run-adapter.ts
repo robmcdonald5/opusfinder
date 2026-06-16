@@ -34,6 +34,16 @@ export interface RunAdapterOptions {
    * completes and the cursor moves past the chunk. Defaults to {@link DEFAULT_FETCH_TIMEOUT_MS}.
    */
   fetchTimeoutMs?: number;
+  /**
+   * Cap the postings PROCESSED for one board (Worker-only). Stops PAGINATION once this many valid
+   * postings are mapped, so the list-fetch count, the N+1 hydrate pool, AND the in-memory array are all
+   * bounded — a pathological mega-board (SmartRecruiters boschgroup ~4.6k postings) otherwise consumes
+   * the whole Worker invocation's wall-clock / memory / subrequest budget and kills the tick before
+   * `finishRun`, freezing the chunk cursor. Omit ⇒ no cap (the CLI, in Node, has no per-invocation budget
+   * and ingests the whole board). A capped board is a PARTIAL fetch: runIngestion skips its feed-absence
+   * sweep (an incomplete present-set would false-close the un-fetched tail).
+   */
+  maxItems?: number;
 }
 
 const DEFAULT_HYDRATE_CONCURRENCY = 5;
@@ -50,6 +60,7 @@ export async function runAdapter(
   const hydrateConcurrency = opts.hydrateConcurrency ?? DEFAULT_HYDRATE_CONCURRENCY;
   const maxRetries = opts.maxRetries ?? DEFAULT_MAX_RETRIES;
   const fetchTimeoutMs = opts.fetchTimeoutMs ?? DEFAULT_FETCH_TIMEOUT_MS;
+  const maxItems = opts.maxItems;
 
   const ctx: SourceContext = { slug: adapter.normalizeSlug(rawSlug), rawSlug };
   const tag = `${adapter.source} "${ctx.slug}"`;
@@ -79,6 +90,13 @@ export async function runAdapter(
       } else {
         skipped++;
       }
+    }
+    // Per-board cap (Worker-only — see RunAdapterOptions.maxItems): stop paginating once enough valid
+    // postings are mapped, trimming any final-page overshoot. Bounds the list-fetch count, the hydrate
+    // pool, AND the in-memory array, so a mega-board can't exhaust the Worker's per-invocation budget.
+    if (maxItems !== undefined && mapped.length >= maxItems) {
+      mapped.length = maxItems;
+      break;
     }
     if (!adapter.nextCursor) break; // omitted ⇒ single unpaginated fetch
     const next = adapter.nextCursor(body, cursor, items.length);
@@ -135,9 +153,7 @@ async function fetchJsonResilient(
       // retries it like any transient network failure). Merge — never clobber — an adapter's
       // own signal on the off chance a future adapter sets one.
       const timeout = AbortSignal.timeout(timeoutMs);
-      const signal = req.init?.signal
-        ? AbortSignal.any([req.init.signal, timeout])
-        : timeout;
+      const signal = req.init?.signal ? AbortSignal.any([req.init.signal, timeout]) : timeout;
       res = await fetch(req.url, { ...req.init, signal });
     } catch (err) {
       if (attempt < maxRetries) {
