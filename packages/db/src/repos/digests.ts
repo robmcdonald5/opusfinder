@@ -32,18 +32,39 @@ export interface DigestRecipient {
 }
 
 /**
+ * The Phase-12 cadence "due now" predicate, applied ONLY for the cadence cron (trigger='cron', via
+ * `listDigestRecipients`'s `cadenceDue`). A user is due when enough time has elapsed since their last send
+ * for their cadence. `last_digest_sent_at` is stamped `now()` on every successful send (`recordDigestSent`),
+ * so NULL = never-sent = always due. The windows sit a little UNDER the nominal period (daily 20h / weekly
+ * 6d / monthly 28d) so a fixed-time daily cron reliably catches each user once per period without skipping a
+ * tick; the per-user `singleton` (digest-user) guards the double-send edge. Tunable in this one place. The
+ * cadence/interval literals are hardcoded (not user input) — safe inline SQL.
+ */
+function cadenceDuePredicate(): SQL {
+  const sent = userPreferences.lastDigestSentAt;
+  const cadence = userPreferences.digestCadence;
+  return sql`(
+    (${cadence} = 'daily' AND (${sent} IS NULL OR ${sent} < now() - interval '20 hours'))
+    OR (${cadence} = 'weekly' AND (${sent} IS NULL OR ${sent} < now() - interval '6 days'))
+    OR (${cadence} = 'monthly' AND (${sent} IS NULL OR ${sent} < now() - interval '28 days'))
+  )`;
+}
+
+/**
  * The next batch of users eligible for a digest, id-keyset paginated (matching `listCompanies`):
  * `WHERE id > afterId ORDER BY id LIMIT limit`. Eligibility = delivery on (`digest_enabled`), a
  * verified email (`user.email_verified` — the send gate), not suppressed (`digest_suppressed_at IS
  * NULL`), AND a usable profile vector (INNER JOIN `user_profiles` + `embedding IS NOT NULL`, so a user
- * with no CV / no embedding is skipped — they can't be matched). Cadence is deliberately NOT filtered
- * here (Phase 10/11 trigger manually; the Phase-12 cadence cron adds a `digest_cadence` predicate). The
- * keyset orders by `user.id` (uuid) — an arbitrary but total, stable order, all that chunked iteration
- * needs.
+ * with no CV / no embedding is skipped — they can't be matched). The keyset orders by `user.id` (uuid) —
+ * an arbitrary but total, stable order, all that chunked iteration needs.
+ *
+ * `cadenceDue` (Phase-12 cadence cron) is OPT-IN: when true, also require the user's cadence window to
+ * have elapsed ({@link cadenceDuePredicate}). Default/omitted = NO cadence filter, so the manual
+ * `pnpm digest --all` sweep (and the CLI's watch-list call) send to ALL eligible — unchanged.
  */
 export function listDigestRecipients(
   db: Db,
-  opts: { afterId?: UserId; limit: number },
+  opts: { afterId?: UserId; limit: number; cadenceDue?: boolean },
 ): Promise<DigestRecipient[]> {
   const conditions: SQL[] = [
     eq(userPreferences.digestEnabled, true),
@@ -52,6 +73,7 @@ export function listDigestRecipients(
     isNotNull(userProfiles.embedding),
   ];
   if (opts.afterId !== undefined) conditions.push(gt(user.id, opts.afterId));
+  if (opts.cadenceDue) conditions.push(cadenceDuePredicate());
   return db
     .select({ userId: user.id })
     .from(user)
@@ -397,6 +419,22 @@ export async function recordDigestSent(db: Db, digestId: number, emailId: string
     .update(userPreferences)
     .set({ lastDigestSentAt: sql`now()`, lastDigestEmailId: emailId, updatedAt: sql`now()` })
     .where(eq(userPreferences.userId, row.userId));
+}
+
+/**
+ * Cadence backoff (Phase-12 12a-2): stamp `last_digest_sent_at = now()` WITHOUT an email id, for a user a
+ * cadence run CONSIDERED but did not email (no candidates / nothing above the score floor / all apply-URLs
+ * dead / not on the send allowlist). This backs the user off until their next cadence period, so the daily
+ * cadence cron does NOT re-run the full (paid) pipeline for a perpetually-thin or non-allowlisted user
+ * every tick. Deliberately NOT called on ERROR paths (those throw and SHOULD retry next tick), and it
+ * leaves `last_digest_email_id` as-is (no email was sent) — so the row reads "considered, not delivered".
+ * Idempotent single write. Pairs with {@link cadenceDuePredicate}, which reads `last_digest_sent_at`.
+ */
+export async function markDigestConsidered(db: Db, userId: UserId): Promise<void> {
+  await db
+    .update(userPreferences)
+    .set({ lastDigestSentAt: sql`now()`, updatedAt: sql`now()` })
+    .where(eq(userPreferences.userId, userId));
 }
 
 /**

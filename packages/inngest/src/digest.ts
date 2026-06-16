@@ -9,6 +9,7 @@ import {
   insertDigest,
   insertDigestItems,
   listDigestRecipients,
+  markDigestConsidered,
   retrieveCandidatesForProfile,
   startDigestRun,
   type UserPreferencesRow,
@@ -131,7 +132,8 @@ function toPromptPrefs(prefs: UserPreferencesRow): PromptPreferences {
  * Inngest fan-out is fire-and-forget, the run row records DISPATCH, not per-user completion (those land
  * on `digests`). A step that exhausts its retries is caught and terminalized onto the run row
  * (`status: 'error'` + `error_sample`) before the failure is rethrown to Inngest — so a dead run never
- * sits `running` forever. A cadence cron trigger is added in Phase 12 (with the deployed runtime).
+ * sits `running` forever. The cadence cron (`makeCadenceOrchestrator`) emits this with `trigger: 'cron'`;
+ * the orchestrator then filters the recipient sweep by cadence (`listDigestRecipients`' `cadenceDue`, 12a-2).
  */
 function makeOrchestrator(deps: DigestDeps) {
   return inngest.createFunction(
@@ -154,10 +156,17 @@ function makeOrchestrator(deps: DigestDeps) {
             }
             return [userId]; // single-user (the per-user fn skips if ineligible)
           }
+          // The cadence cron (trigger='cron') filters to recipients whose cadence window has elapsed; a
+          // manual run (trigger='manual', e.g. `pnpm digest --all`) sends to ALL eligible (cadence-agnostic).
+          const cadenceDue = event.data.trigger === "cron";
           const ids: string[] = [];
           let afterId: UserId | undefined;
           for (;;) {
-            const page = await listDigestRecipients(deps.db, { afterId, limit: RECIPIENT_CHUNK });
+            const page = await listDigestRecipients(deps.db, {
+              afterId,
+              limit: RECIPIENT_CHUNK,
+              cadenceDue,
+            });
             for (const r of page) ids.push(r.userId);
             const last = page[page.length - 1];
             if (page.length < RECIPIENT_CHUNK || !last) break;
@@ -286,7 +295,11 @@ function makePerUser(deps: DigestDeps) {
           descriptionText: c.descriptionText.slice(0, DESCRIPTION_STATE_CHARS + 1),
         }));
       });
-      if (candidates.length === 0) return { userId, skipped: "no-candidates" as const };
+      if (candidates.length === 0) {
+        // Considered this cadence period (nothing retrieved) — back off so the daily cron doesn't re-run.
+        await step.run("mark-considered-no-candidates", () => markDigestConsidered(deps.db, userId));
+        return { userId, skipped: "no-candidates" as const };
+      }
 
       // 3. Sync rerank (Haiku, prompt-cached) → top-K, with the cache counters for the gate. No rank
       //    field here — persist re-ranks the reason-filtered survivors 1..N, and a rank in this shape
@@ -306,7 +319,11 @@ function makePerUser(deps: DigestDeps) {
       });
       // No candidate cleared the quality floor — skip rather than send a digest of weak/bad-fit roles (or
       // an empty email). Distinct from "no-candidates": jobs matched here, but none scored well enough.
-      if (reranked.items.length === 0) return { userId, skipped: "no-strong-matches" as const };
+      if (reranked.items.length === 0) {
+        // Considered this period (matches found, none cleared the floor) — back off after the PAID rerank.
+        await step.run("mark-considered-no-strong", () => markDigestConsidered(deps.db, userId));
+        return { userId, skipped: "no-strong-matches" as const };
+      }
 
       // 4. Submit the synthesis batch (Sonnet, 50% discount): one request per kept item, cached
       //    rubric+profile system, custom_id = synthId(jobId) — the ONE key definition shared with the
@@ -435,6 +452,9 @@ function makePerUser(deps: DigestDeps) {
         // and folded the probe counts into digests.counts — so the 0-item digest row stays as audit (and keeps
         // the all-dead case visible to the shadow analysis); we just send no email. This is the graceful
         // no-send success, distinct from the persist step's throw for an empty SYNTHESIS.
+        // Considered this period (a digest was built, every apply-URL was dead) — back off after the PAID
+        // rerank + synthesis so the daily cron doesn't re-run the whole pipeline for them tomorrow.
+        await step.run("mark-considered-all-dead", () => markDigestConsidered(deps.db, userId));
         return { userId, digestId: persisted.digestId, itemCount: 0, skipped: "all-items-dead" as const };
       }
 
@@ -452,12 +472,40 @@ function makePerUser(deps: DigestDeps) {
         deps.email,
         persisted.digestId,
       );
+      // Allowlist skip = a deliberate no-send (user not on EMAIL_ALLOWLIST); the send step never stamped
+      // last_digest_sent_at, so back them off the cadence here (else the daily cron re-runs the paid pipeline
+      // for a non-allowlisted user every tick). A real send already stamped via recordDigestSent.
+      if (delivery === "skipped-allowlist") {
+        await step.run("mark-considered-allowlist", () => markDigestConsidered(deps.db, userId));
+      }
       return { ...persisted, delivery };
+    },
+  );
+}
+
+/**
+ * The Phase-12 cadence cron (12a-2): a daily {cron} that EMITS `digest/run.requested {trigger:'cron'}`,
+ * reusing the orchestrator's recipient sweep + fan-out. The orchestrator applies the cadence "due now"
+ * predicate (only for trigger='cron'), so each user is sent on their own cadence (daily/weekly/monthly)
+ * while the manual `pnpm digest --all` path stays cadence-agnostic. Emits only (no deps); all the work is
+ * the orchestrator's. 13:00 UTC ≈ 8am US-Eastern (Inngest cron is UTC). The cadence WINDOWS that decide
+ * "due" live in `listDigestRecipients` (db); change the FIRE TIME here.
+ */
+function makeCadenceOrchestrator() {
+  return inngest.createFunction(
+    { id: "digest-cadence", singleton: { mode: "skip" } },
+    { cron: "0 13 * * *" },
+    async ({ step }) => {
+      await step.sendEvent("emit-cadence-run", {
+        name: "digest/run.requested",
+        data: { trigger: "cron" },
+      });
+      return { emitted: true };
     },
   );
 }
 
 /** The Inngest functions for the digest pipeline, wired to `deps`. Registered with the serve handler. */
 export function createDigestFunctions(deps: DigestDeps) {
-  return [makeOrchestrator(deps), makePerUser(deps)];
+  return [makeOrchestrator(deps), makePerUser(deps), makeCadenceOrchestrator()];
 }

@@ -68,6 +68,7 @@ export {
   insertDigestItems,
   deleteUserDigestForRun,
   getLatestDigestForUser,
+  markDigestConsidered,
 } from "./digests";
 export type { DigestRecipient, NewDigest, NewDigestItem, DigestView } from "./digests";
 // Phase 11 email delivery — the render payload read + per-send / user-level delivery-state writes.
