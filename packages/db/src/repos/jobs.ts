@@ -78,8 +78,18 @@ export async function upsertCompany(
 }
 
 /**
- * Batch-upsert a board's jobs in a single INSERT ... ON CONFLICT statement
- * (one HTTP round-trip on neon-http). Conflict key is `(source, external_id)`.
+ * Max rows per INSERT batch in {@link upsertJobs}. Sized to stay well under Postgres's 65,535
+ * bound-parameter ceiling (~12 binds/row ⇒ a hard ceiling of ~5,461 rows) AND to keep each neon-http
+ * request payload small, so a mega-board (SmartRecruiters boschgroup ~4.6k postings) can't emit one
+ * oversized statement that fails on payload size and helps blow the Worker's per-invocation budget.
+ * Most boards are a single batch; only pathologically large boards split.
+ */
+const UPSERT_BATCH_SIZE = 500;
+
+/**
+ * Batch-upsert a board's jobs via INSERT ... ON CONFLICT, split into {@link UPSERT_BATCH_SIZE}-row
+ * batches (one neon-http round-trip each — was a single statement until a mega-board overflowed it).
+ * Conflict key is `(source, external_id)`.
  *
  * Returns `{ changed, total }`: `total` is the count of DISTINCT jobs after
  * de-duplication; `changed` is how many were inserted or updated (rows whose
@@ -147,77 +157,76 @@ export async function upsertJobs(
           ELSE ${col}
         END`;
 
-  const updated = await db
-    .insert(jobs)
-    .values(values)
-    .onConflictDoUpdate({
-      target: [jobs.source, jobs.externalId],
-      // Write every comparable field + company_id, refresh write-only fields
-      // (posted_at, raw), conditionally reset the derived embedding, and advance
-      // updated_at. INVARIANT: every column tested
-      // in `setWhere` below must also appear here — a field compared but not
-      // written would make every re-ingest look "changed" forever.
-      set: {
-        companyId: sql`excluded.company_id`,
-        title: sql`excluded.title`,
-        descriptionText: sql`excluded.description_text`,
-        locations: sql`excluded.locations`,
-        remote: sql`excluded.remote`,
-        applyUrl: sql`excluded.apply_url`,
-        postedAt: sql`excluded.posted_at`,
-        raw: sql`excluded.raw`,
-        // The embedding is derived from title + description_text ONLY (see nullIfContentChanged above): reset
-        // it on a content change so the backfill / inline-embed step re-embeds, keep it on any other churn.
-        embedding: nullIfContentChanged(jobs.embedding),
-        // content_signature (Phase F1): rewritten unconditionally from excluded title+desc via the
-        // ONE signatureSql definition (the setWhere note below explains why it is written but NOT
-        // also tested). Byte-identical to the INSERT VALUES above and the F1d backfill.
-        contentSignature: signatureSql(sql`excluded.title`, sql`excluded.description_text`),
-        // Phase F4 enrichment (yoe_*/salary_*) + the enriched_at sentinel: reset on the title/description
-        // trigger (NOT the broader setWhere), written but NOT tested in setWhere — derived fields, exactly
-        // like content_signature/embedding. See nullIfContentChanged above.
-        yoeMin: nullIfContentChanged(jobs.yoeMin),
-        yoeMax: nullIfContentChanged(jobs.yoeMax),
-        salaryMin: nullIfContentChanged(jobs.salaryMin),
-        salaryMax: nullIfContentChanged(jobs.salaryMax),
-        salaryCurrency: nullIfContentChanged(jobs.salaryCurrency),
-        salaryPeriod: nullIfContentChanged(jobs.salaryPeriod),
-        enrichedAt: nullIfContentChanged(jobs.enrichedAt),
-        updatedAt: sql`now()`,
-      },
-      // Advance the row only when a real change differs. Two fields are written
-      // above but deliberately EXCLUDED from this test:
-      //  - `raw`: Greenhouse bumps an internal timestamp inside it on nearly
-      //    every fetch, so comparing it would defeat idempotency.
-      //  - `posted_at`: the adapter derives it as `first_published || updated_at`,
-      //    so for postings lacking `first_published` it ALIASES that same churning
-      //    `updated_at`; comparing it would reintroduce exactly the instability
-      //    `raw` is excluded to avoid. Still written, so it stays fresh whenever a
-      //    real change fires.
-      //  - `content_signature` (Phase F1): rewritten unconditionally in the set block
-      //    above but DELIBERATELY excluded from this test. It is a PURE function of
-      //    title + description_text — the exact two fields this test already checks (and
-      //    the embedding CASE keys on) — so it changes IFF those clauses already fire;
-      //    rewriting it when only a non-content field changed is a harmless no-op
-      //    (identical md5), and an unchanged re-ingest never runs the set at all. Do NOT
-      //    add it to this test (redundant), and do NOT drop the title/description clauses
-      //    thinking the signature subsumes them (that would silently defeat idempotency +
-      //    re-embedding). See repos/sql.ts signatureSql + PHASE_F1_PLAN.md §4.2.
-      //  - `yoe_*` / `salary_*` / `enriched_at` (Phase F4): reset by nullIfContentChanged in the
-      //    set block above on the SAME title/description trigger, and likewise EXCLUDED from this test — they
-      //    are derived from those two fields, so the rule is identical to content_signature (written here,
-      //    not tested here). The async extraction writer (repos/enrichment.ts) is what re-populates them.
-      // OTHER-PHASE WRITERS, note:
-      //  - `lifecycle_state` is NOT written here (this set leaves it at its existing
-      //    value). Phase F2's closing/revival is a SEPARATE writer (repos/lifecycle.ts
-      //    sweepLifecycle) precisely because reviving a reappearing job to 'active' must
-      //    NOT be gated by this content test — an unchanged-but-reappearing job would
-      //    otherwise stay 'closed'. Keep lifecycle_state out of this set block.
-      //  - `locations` is compared as an ORDER-SENSITIVE jsonb array, but the
-      //    values above are sorted to a canonical order on write, so a
-      //    multi-location adapter that reorders offices won't report a spurious
-      //    change. (Keep that sort if this comparison stays order-sensitive.)
-      setWhere: sql`
+  // The ON CONFLICT config is batch-agnostic (every clause references excluded.* / jobs.*, never the
+  // batch rows), so build it ONCE and reuse it for each batch below.
+  const conflictUpdate = {
+    target: [jobs.source, jobs.externalId],
+    // Write every comparable field + company_id, refresh write-only fields
+    // (posted_at, raw), conditionally reset the derived embedding, and advance
+    // updated_at. INVARIANT: every column tested
+    // in `setWhere` below must also appear here — a field compared but not
+    // written would make every re-ingest look "changed" forever.
+    set: {
+      companyId: sql`excluded.company_id`,
+      title: sql`excluded.title`,
+      descriptionText: sql`excluded.description_text`,
+      locations: sql`excluded.locations`,
+      remote: sql`excluded.remote`,
+      applyUrl: sql`excluded.apply_url`,
+      postedAt: sql`excluded.posted_at`,
+      raw: sql`excluded.raw`,
+      // The embedding is derived from title + description_text ONLY (see nullIfContentChanged above): reset
+      // it on a content change so the backfill / inline-embed step re-embeds, keep it on any other churn.
+      embedding: nullIfContentChanged(jobs.embedding),
+      // content_signature (Phase F1): rewritten unconditionally from excluded title+desc via the
+      // ONE signatureSql definition (the setWhere note below explains why it is written but NOT
+      // also tested). Byte-identical to the INSERT VALUES above and the F1d backfill.
+      contentSignature: signatureSql(sql`excluded.title`, sql`excluded.description_text`),
+      // Phase F4 enrichment (yoe_*/salary_*) + the enriched_at sentinel: reset on the title/description
+      // trigger (NOT the broader setWhere), written but NOT tested in setWhere — derived fields, exactly
+      // like content_signature/embedding. See nullIfContentChanged above.
+      yoeMin: nullIfContentChanged(jobs.yoeMin),
+      yoeMax: nullIfContentChanged(jobs.yoeMax),
+      salaryMin: nullIfContentChanged(jobs.salaryMin),
+      salaryMax: nullIfContentChanged(jobs.salaryMax),
+      salaryCurrency: nullIfContentChanged(jobs.salaryCurrency),
+      salaryPeriod: nullIfContentChanged(jobs.salaryPeriod),
+      enrichedAt: nullIfContentChanged(jobs.enrichedAt),
+      updatedAt: sql`now()`,
+    },
+    // Advance the row only when a real change differs. Two fields are written
+    // above but deliberately EXCLUDED from this test:
+    //  - `raw`: Greenhouse bumps an internal timestamp inside it on nearly
+    //    every fetch, so comparing it would defeat idempotency.
+    //  - `posted_at`: the adapter derives it as `first_published || updated_at`,
+    //    so for postings lacking `first_published` it ALIASES that same churning
+    //    `updated_at`; comparing it would reintroduce exactly the instability
+    //    `raw` is excluded to avoid. Still written, so it stays fresh whenever a
+    //    real change fires.
+    //  - `content_signature` (Phase F1): rewritten unconditionally in the set block
+    //    above but DELIBERATELY excluded from this test. It is a PURE function of
+    //    title + description_text — the exact two fields this test already checks (and
+    //    the embedding CASE keys on) — so it changes IFF those clauses already fire;
+    //    rewriting it when only a non-content field changed is a harmless no-op
+    //    (identical md5), and an unchanged re-ingest never runs the set at all. Do NOT
+    //    add it to this test (redundant), and do NOT drop the title/description clauses
+    //    thinking the signature subsumes them (that would silently defeat idempotency +
+    //    re-embedding). See repos/sql.ts signatureSql + PHASE_F1_PLAN.md §4.2.
+    //  - `yoe_*` / `salary_*` / `enriched_at` (Phase F4): reset by nullIfContentChanged in the
+    //    set block above on the SAME title/description trigger, and likewise EXCLUDED from this test — they
+    //    are derived from those two fields, so the rule is identical to content_signature (written here,
+    //    not tested here). The async extraction writer (repos/enrichment.ts) is what re-populates them.
+    // OTHER-PHASE WRITERS, note:
+    //  - `lifecycle_state` is NOT written here (this set leaves it at its existing
+    //    value). Phase F2's closing/revival is a SEPARATE writer (repos/lifecycle.ts
+    //    sweepLifecycle) precisely because reviving a reappearing job to 'active' must
+    //    NOT be gated by this content test — an unchanged-but-reappearing job would
+    //    otherwise stay 'closed'. Keep lifecycle_state out of this set block.
+    //  - `locations` is compared as an ORDER-SENSITIVE jsonb array, but the
+    //    values above are sorted to a canonical order on write, so a
+    //    multi-location adapter that reorders offices won't report a spurious
+    //    change. (Keep that sort if this comparison stays order-sensitive.)
+    setWhere: sql`
         ${jobs.companyId} IS DISTINCT FROM excluded.company_id OR
         ${jobs.title} IS DISTINCT FROM excluded.title OR
         ${jobs.descriptionText} IS DISTINCT FROM excluded.description_text OR
@@ -225,8 +234,22 @@ export async function upsertJobs(
         ${jobs.remote} IS DISTINCT FROM excluded.remote OR
         ${jobs.applyUrl} IS DISTINCT FROM excluded.apply_url
       `,
-    })
-    .returning({ id: jobs.id });
+  };
 
-  return { changed: updated.length, total: deduped.size };
+  // Run the upsert in payload-bounded batches (see UPSERT_BATCH_SIZE). The whole-board dedupe ABOVE
+  // already ran, so a conflict key can't straddle two batches and re-raise Postgres 21000. Each batch is
+  // a separate neon-http autocommit statement (no wrapping txn — a per-board failure is already isolated
+  // in runIngestion and the upsert is idempotent, so a mid-board failure self-heals on the next ingest).
+  // `changed` sums across batches; `total` stays the whole-board distinct count.
+  let changed = 0;
+  for (let offset = 0; offset < values.length; offset += UPSERT_BATCH_SIZE) {
+    const updated = await db
+      .insert(jobs)
+      .values(values.slice(offset, offset + UPSERT_BATCH_SIZE))
+      .onConflictDoUpdate(conflictUpdate)
+      .returning({ id: jobs.id });
+    changed += updated.length;
+  }
+
+  return { changed, total: deduped.size };
 }
