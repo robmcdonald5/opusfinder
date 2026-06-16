@@ -9,6 +9,20 @@ compatibility_date = "2026-06-03"
 [observability]
 enabled = true
 
+[limits]
+# CPU time per invocation. Cloudflare's DEFAULT is 30s of CPU — and CPU time is COMPUTE ONLY (not
+# wall-clock), accumulated CUMULATIVELY across the whole invocation. A dense ingestion chunk (~130
+# boards each parsing + htmlToText-cleaning hundreds of postings) burns >30s of CPU and is hard-killed
+# BEFORE finishRun. That kill is UNCATCHABLE, so the KV cursor never advances and the same poison
+# chunk re-runs hourly forever (the 2026-06-16 outage, frozen at cursor 1436). Neither adapter.maxItems
+# (a PER-BOARD posting cap) nor maxRunMs (a between-boards WALL-clock budget) bounds CPU. Raise to the
+# 5-min (300,000 ms) maximum so a heavy chunk completes — or cleanly hits the 10-min maxRunMs wall
+# budget and PARTIALLY advances the cursor — instead of dying mid-chunk. Subrequests are NOT the limit
+# (Workers Paid = 10,000/invocation). `cpu_ms` requires the Standard Usage Model (this account is
+# Workers Paid/Standard). The lossless deeper fix (per-board offset pagination + per-board cursor
+# checkpoint) is a follow-up PR.
+cpu_ms = 300000
+
 [triggers]
 # SCHEDULING TOGGLE — pause/resume the deployed cron (see README "Pause / resume the schedule").
 #   PAUSED  : crons = []         + `wrangler deploy`  -> removes the deployed triggers; nothing fires.
@@ -33,7 +47,11 @@ crons = [
 [vars]
 # Non-secret config only. The secret (DATABASE_URL) is set with `wrangler secret put` and arrives as
 # env.DATABASE_URL.
-INGEST_LIMIT = "150" # boards processed per ingestion tick (the wall/subrequest budget)
+# Boards per ingestion tick. HALVED 150 -> 75 (2026-06-16) to bound each tick's cumulative CPU/wall/
+# memory blast radius behind the cpu_ms raise above (belt-and-suspenders — cpu_ms is the primary fix).
+# Tradeoff: a full sweep of ~1.6k active boards now takes ~21 hourly ticks (~21h) instead of ~11h —
+# ample freshness for a daily/weekly digest. Clamped to MAX_INGEST_LIMIT (500) in src/index.ts.
+INGEST_LIMIT = "75"
 
 # Chunk-cursor store for the Option-A chunked-cron ingestion lane. The binding is DECLARED so
 # `wrangler dev` simulates a local KV for it (no id needed) and the ingestion tick can read/write the
