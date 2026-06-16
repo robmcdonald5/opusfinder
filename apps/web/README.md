@@ -4,9 +4,10 @@ The SvelteKit app — the production runtime host (Phase 12). No React/JSX; this
 
 ## 12a — headless runtime (current)
 
-A minimal SvelteKit skeleton whose only route is the **Inngest serve endpoint**
-(`src/routes/api/inngest/+server.ts`, `inngest/sveltekit`). It hosts the Phase-10 digest functions + the
-F8 embedding/enrichment backfill drains on Inngest Cloud, deployed to Vercel. There are **no user-facing
+A minimal SvelteKit skeleton with two routes: the **Inngest serve endpoint**
+(`src/routes/api/inngest/+server.ts`, `inngest/sveltekit`) and a **`/api/health` endpoint** (over the
+pure `checkHealth` core). The serve endpoint hosts the Phase-10 digest functions + the F8
+embedding/enrichment backfill drains on Inngest Cloud, deployed to Vercel. There are **no user-facing
 pages yet** — friends are onboarded via the CLIs (`pnpm user:create` → `pnpm ingest-cv` → `pnpm user:set-prefs`).
 
 - **Serverless Node, not edge** (`svelte.config.js`, adapter-vercel): the deps reach `@anthropic-ai/sdk` +
