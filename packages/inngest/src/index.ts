@@ -5,3 +5,5 @@ export { inngest } from "./inngest";
 export type { DigestEvents } from "./inngest";
 export { createDigestFunctions } from "./digest";
 export type { DigestDeps, RerankOutcome } from "./digest";
+export { createBackfillFunctions } from "./backfill";
+export type { BackfillDeps } from "./backfill";

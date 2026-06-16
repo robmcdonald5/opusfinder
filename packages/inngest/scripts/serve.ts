@@ -8,14 +8,21 @@ import http from "node:http";
 
 import { serve } from "inngest/node";
 
+import { buildBackfillDeps } from "../src/backfill-deps.ts";
 import { buildDigestDeps } from "../src/deps.ts";
-import { createDigestFunctions, inngest } from "../src/index.ts";
+import { createBackfillFunctions, createDigestFunctions, inngest } from "../src/index.ts";
 
 // Port 3000 is PINNED: the root `inngest:dev` script registers this endpoint at
 // http://localhost:3000/api/inngest with --no-discovery, so a port override here would silently
 // de-register every digest function from the dev server. Change both together or neither.
 const port = 3000;
-const handler = serve({ client: inngest, functions: createDigestFunctions(buildDigestDeps()) });
+const handler = serve({
+  client: inngest,
+  functions: [
+    ...createDigestFunctions(buildDigestDeps()),
+    ...createBackfillFunctions(buildBackfillDeps()),
+  ],
+});
 
 http.createServer(handler).listen(port, () => {
   console.log(`Inngest serve listening on http://localhost:${port}/api/inngest`);
