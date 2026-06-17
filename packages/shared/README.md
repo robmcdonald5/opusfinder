@@ -96,19 +96,6 @@ profile representation retrieval uses.
 Contact info / addresses are intentionally omitted (no job-alignment signal); `preferences` is not
 part of the vector (it comes from the Phase-12 form, feeds the deterministic filter).
 
-## Job enrichment shape (Phase F4)
-
-`JobEnrichment` (`{ yoeMin, yoeMax, salaryMin, salaryMax, salaryCurrency, salaryPeriod }`, every field
-nullable) is the cross-package contract for job-side structured enrichment extracted from a posting's own
-title + description — the shape `@opusfinder/llm`'s `JobEnrichmentSchema` produces, `@opusfinder/db`'s
-`writeJobEnrichment` persists onto the `jobs` enrichment columns, and the extraction eval scores; kept here so
-the prompt schema, the DB writer, and the eval can't drift. `null` means "absent in prose," never a default.
-`SalaryPeriod` (`"year" | "month" | "week" | "day" | "hour"`, with the `SALARY_PERIODS` tuple it derives from)
-is the period union backing `salaryPeriod` and the `jobs.salary_period` text column. `jobEnrichmentText(job)`
-composes the `{ title, descriptionText }` text the extractor reads — the enrichment-side mirror of
-`jobEmbeddingText`, sharing `composeEmbeddingText`'s one empty-content notion so the extractor and the
-`jobsNeedingEnrichment` eligibility guard agree on "has extractable content."
-
 ## Script runner
 
 `runScript(label, main)` (from `@opusfinder/shared/script`) is the shared failure
@@ -186,9 +173,8 @@ digestEnabled }` — the shape both the `user_preferences` repo (`@opusfinder/db
 write, and the future SvelteKit settings form will reuse. The deterministic-filter fields
 (`locationMode`/`locations`/`recencyDays`/`exclusions`/`dealbreakers`) feed digest retrieval; the
 judgment-context fields (`yoeMin`/`yoeMax`/`minSalary`/`maxSalary`/`dealbreakers`) feed the rerank + synthesis
-prompt via `composePromptPrefs` (Phase F3 — salary/YoE are stored + soft-prompt now; Phase F4 added the
-job-side `JobEnrichment` band, so the deferred, twice-gated F4-FILTER can range-overlap BOTH the salary and
-YoE bands as hard filters). The YoE band is the declared-level signal (the too-senior fix); a categorical
+prompt via `composePromptPrefs` (Phase F3 — salary/YoE are stored + soft-prompt signals only, never hard
+filters). The YoE band is the declared-level signal (the too-senior fix); a categorical
 `TargetLevel` was considered and dropped as redundant/ambiguous (YoE is the cleaner objective gate — and is
 now the sole level signal on both the user and job sides). `DigestCadence` is
 `"daily" | "weekly" | "monthly"`; `LocationMode` is `"any" | "remote_only" | "onsite_only"` (F3 — subsumes

@@ -9,7 +9,7 @@ delivery poll → record** (`src/delivery.ts`).
 
 > **Phases 10/11 run on the local Inngest dev server** (`npx inngest-cli dev`, `INNGEST_DEV=1`) for
 > end-to-end iteration — keyless, no Cloud account needed. **Phase 12a then BUILT the production runtime:**
-> the cadence cron (`makeCadenceOrchestrator`), the F8 backfill drains, and the deployed serve home
+> the cadence cron (`makeCadenceOrchestrator`), the F8 backfill drain, and the deployed serve home
 > (SvelteKit-on-Vercel via `inngest/sveltekit` at `apps/web/src/routes/api/inngest/+server.ts`) all ship
 > in code on branch `feat/headless-runtime` — only the **Inngest Cloud deploy** (account + keys via the
 > Inngest↔Vercel integration) is owner-pending. Delivery webhooks + the unsubscribe endpoint remain **12b**.
@@ -26,7 +26,7 @@ batches finish in under an hour but the SLA is a 24h hard cap. Inngest's durable
 cannot (hard 15-min wall, no cross-invocation suspend). That durability is the decisive reason the
 digest runs on Inngest rather than extending `apps/scrapers`. Phase 10 only needs the local dev server
 to prove the pipeline end-to-end; Phase 12a then built the deployed runtime (the SvelteKit serve route +
-the cadence cron + the F8 backfills) — only the Inngest Cloud account + keys are owner-pending (email
+the cadence cron + the F8 backfill) — only the Inngest Cloud account + keys are owner-pending (email
 ships in Phase 11 on the local dev runtime — locked at Phase-11 planning, 2026-06-11).
 
 ## What's here
@@ -99,20 +99,17 @@ ships in Phase 11 on the local dev runtime — locked at Phase-11 planning, 2026
   real `probeLiveness` (HEAD/GET apply-URL check) in production, a fake in the stub smoke. Phase F3
   threads the judgment-context prefs (`PromptPreferences` via `toPromptPrefs`) into rerank + synthesis —
   `DigestDeps.rerank` gained a `prefs?` arg and `deps.ts` forwards it.
-- `src/backfill.ts` (Phase F8) — `createBackfillFunctions(deps)` → the two scheduled drains that keep the
-  embedding + enrichment backlogs from accumulating on the deployed runtime (F8 rides the 12a runtime; the
+- `src/backfill.ts` (Phase F8) — `createBackfillFunctions(deps)` → the scheduled drain that keeps the
+  embedding backlog from accumulating on the deployed runtime (F8 rides the 12a runtime; the
   original GitHub Actions bridge was dropped):
   - **`embed-backlog-drain`** (`{ cron: "0 4 * * *", singleton: { mode: "skip" } }`): a **cursorless**
     re-query — each page re-selects `embedding IS NULL` (the just-written rows fall out of the predicate),
     so it self-advances with no cursor to thread.
-  - **`enrich-backlog-drain`** (`{ cron: "15 4 * * *", singleton: { mode: "skip" } }`): a **keyset**
-    `afterId` cursor (the `enriched_at` sentinel stays set even on a "found nothing", so a re-query would
-    spin — it must page forward by id instead).
-  - Both cap at `MAX_PAGES_PER_RUN = 200` PAGED per `step.run` (an uncapped drain would exceed the
+  - It caps at `MAX_PAGES_PER_RUN = 200` PAGED per `step.run` (an uncapped drain would exceed the
     serverless `maxDuration`), and `singleton: { mode: "skip" }` keeps a long run from overlapping the next
     daily tick. The injection seam is `BackfillDeps` (`./backfill-deps` → `buildBackfillDeps()`: the
-    neon-http `createDb` + the real Voyage embed from the new `@opusfinder/embeddings` dep + the Haiku
-    enrichment extractor), mirroring `DigestDeps`/`buildDigestDeps`.
+    neon-http `createDb` + the real Voyage embed from the new `@opusfinder/embeddings` dep),
+    mirroring `DigestDeps`/`buildDigestDeps`.
 - `scripts/test-digest-email.ts` (`pnpm --filter @opusfinder/inngest test:digest-email`) — the
   stub-seam smoke for the email tail: render determinism + escaping, the idempotency-key shape, the
   full event→status mapping, allowlist fail-closed, and the failure/skip/happy/slow-poll step
@@ -124,7 +121,7 @@ ships in Phase 11 on the local dev runtime — locked at Phase-11 planning, 2026
 - `scripts/serve.ts` (`pnpm inngest:serve`) — the local serve endpoint over a bare Node `http` server
   (`inngest/node`) on port 3000 (pinned — the root `inngest:dev` registers exactly that URL), so the
   dev server can discover + invoke the functions. It now serves
-  `[...createDigestFunctions(...), ...createBackfillFunctions(...)]` (digest + F8 backfills). Dev-only —
+  `[...createDigestFunctions(...), ...createBackfillFunctions(...)]` (digest + F8 backfill). Dev-only —
   the Phase-12a **production** serve home is `apps/web/src/routes/api/inngest/+server.ts`
   (`inngest/sveltekit` on Vercel), which hosts the same function set; the Inngest SDK reads
   `INNGEST_SIGNING_KEY`/`INNGEST_EVENT_KEY` from the environment itself (auto-provisioned by the
@@ -132,17 +129,12 @@ ships in Phase 11 on the local dev runtime — locked at Phase-11 planning, 2026
 - `scripts/digest.ts` (`pnpm digest`) — the manual trigger CLI: send `digest/run.requested`, then poll
   the DB until each targeted recipient has a NEW digest, and print it (item count, the rerank
   cache-read/create counters, and the top reasons). `process.exitCode` only (never `process.exit`).
-- `scripts/enrich-backfill.ts` (`pnpm enrich:backfill`) — a standalone **Phase-F4** CLI (NOT part of the
-  digest function graph): wire the real Haiku enrichment extractor (`makeJobEnrichmentExtractor`) and run
-  `backfillJobEnrichment` over `jobs` rows whose `enriched_at` is NULL. Lives here only because it needs both
-  `@opusfinder/db` and `@opusfinder/llm` — and inngest is the one package already allowed to depend on both
-  (the scrapers Worker forbids `@opusfinder/llm`). `process.exitCode` only.
 - `scripts/show-health.ts` (`pnpm health`) — a standalone **Phase-F6** CLI (NOT part of the digest function
   graph): runs `checkHealth` (the pure `@opusfinder/db/health` core) over live Neon, prints every check (ok /
   shadow-firing / enforce-firing) + the cost rollup, and on any **enforce**-mode firing emails the operator via
   `@opusfinder/email`'s `sendHealthAlert` then exits non-zero (shadow firings print but never page). Lives here —
   not in `@opusfinder/db` — because it both READS (db) and SENDS (email): inngest is the one package already
-  depending on both, so it dodges a `db`⇄`email` workspace cycle (same rationale as `enrich:backfill`).
+  depending on both, so it dodges a `db`⇄`email` workspace cycle.
   `process.exitCode` only; read-only on the DB; shape-only output.
 
 The `digest_runs` / `digests` / `digest_items` tables live in the unified `@opusfinder/db` schema +
@@ -194,5 +186,5 @@ Per CLAUDE.md (external-platform integration), the work splits cleanly:
 | All package code, the local dev server (`pnpm inngest:dev` — keyless), the end-to-end gate | **Agent** |
 | Provide `DATABASE_URL` + `ANTHROPIC_API_KEY` (already in place since Phase 9) | **User** |
 | **Resend account + API key + verified sending domain (SPF/DKIM/DMARC) + `EMAIL_FROM`/`EMAIL_ALLOWLIST`** | **User (Phase 11)** |
-| Production serve route (SvelteKit-on-Vercel, `apps/web`) + the cadence cron (`0 13 * * *`) + the F8 backfill crons | Code built (**Agent**, 12a) |
+| Production serve route (SvelteKit-on-Vercel, `apps/web`) + the cadence cron (`0 13 * * *`) + the F8 backfill cron | Code built (**Agent**, 12a) |
 | **Inngest Cloud account + app sync; `INNGEST_SIGNING_KEY`/`INNGEST_EVENT_KEY` auto-provisioned by the Inngest↔Vercel integration (`INNGEST_DEV` UNSET)** | **User (deploy, 12a)** |

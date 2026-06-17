@@ -5,7 +5,7 @@ import { resultRows } from "./repos/sql";
 
 /**
  * Pipeline health checker (Phase F6) — "kill silent failure". Health data is recorded across five
- * tables but read by nobody on a schedule; this module is the watcher. It computes eight liveness
+ * tables but read by nobody on a schedule; this module is the watcher. It computes seven liveness
  * checks + a cost rollup from EXISTING columns (pure Neon reads, no migration) and returns a
  * shape-only {@link HealthReport} the `pnpm health` CLI prints/alerts on AND a future Phase-12 dev
  * panel renders.
@@ -24,13 +24,12 @@ import { resultRows } from "./repos/sql";
  * No secrets / no PII: every metric is a count / age / ratio; nothing here reads job or user text.
  */
 
-/** The eight F6 checks (stable ids — the panel + env modes key off these). */
+/** The seven F6 checks (stable ids — the panel + env modes key off these). */
 export type HealthCheckId =
   | "ingestion_staleness" // (a) last successful ingestion age
   | "board_fail_ratio" // (b) within-run failed/companies — the status='ok' trap
   | "discovery_window" // (c) discovery last-run age
   | "embedding_backlog" // (d) jobs WHERE embedding IS NULL
-  | "enrichment_backlog" // (g) jobs WHERE enriched_at IS NULL (F4's second backlog)
   | "digest_health" // (e) any digest_runs with status='error' in the window
   | "bounce_suppression" // (f) hard-bounced / suppressed users
   | "discovery_lane_errors"; // (h) lane_<name>_error tallies on the latest discovery run (F5f)
@@ -54,8 +53,6 @@ export interface HealthThresholds {
   discoveryMaxAgeD: number;
   /** (d) un-embedded backlog (`jobs.embedding IS NULL`) watermark. */
   backlogMax: number;
-  /** (g) un-enriched backlog (`jobs.enriched_at IS NULL`) watermark — F4's second backlog. */
-  enrichBacklogMax: number;
   /** (e) how many most-recent digest runs to scan for a `status='error'` run (clamped to >=1). */
   digestWindowN: number;
   /** Cost rollup window: how many most-recent `digests` rows to sum rerank-cache tokens over. */
@@ -67,7 +64,6 @@ export const DEFAULT_HEALTH_THRESHOLDS: HealthThresholds = {
   failRatio: 0.5,
   discoveryMaxAgeD: 13,
   backlogMax: 2000,
-  enrichBacklogMax: 2000,
   digestWindowN: 10,
   costRollupN: 20,
 };
@@ -127,8 +123,6 @@ export interface HealthSignals {
   discoveryLaneErrors: number;
   /** (d) un-embedded backlog. */
   embeddingBacklog: number;
-  /** (g) un-enriched backlog (F4). */
-  enrichmentBacklog: number;
   /** (e) count of recent digest runs with `status='error'` in the window. (Per-user shortfall was
    *  dropped — dispatch != completion AND the digest pipeline legitimately persists no row for
    *  no-candidate / below-quality-floor recipients, so `dispatched > persisted` cannot distinguish a
@@ -158,7 +152,6 @@ const CHECK_LABELS: Record<HealthCheckId, string> = {
   board_fail_ratio: "Board fail-ratio",
   discovery_window: "Discovery window",
   embedding_backlog: "Embedding backlog",
-  enrichment_backlog: "Enrichment backlog",
   digest_health: "Digest health",
   bounce_suppression: "Bounce / suppression",
   discovery_lane_errors: "Discovery lane errors",
@@ -210,10 +203,9 @@ export async function gatherHealthSignals(
         SELECT extract(epoch FROM (now() - max(finished_at))) / 86400.0 AS age_d
         FROM source_runs WHERE pipeline = 'discovery' AND status = 'ok'
       `),
-      // (d) + (g) both backlogs in one scan of jobs.
+      // (d) un-embedded backlog.
       db.execute(sql`
-        SELECT count(*) FILTER (WHERE embedding IS NULL)   AS embedding_backlog,
-               count(*) FILTER (WHERE enriched_at IS NULL) AS enrichment_backlog
+        SELECT count(*) FILTER (WHERE embedding IS NULL) AS embedding_backlog
         FROM jobs
       `),
       // (e) digest health — count error-status runs in the recent window. (Per-user shortfall was
@@ -250,7 +242,7 @@ export async function gatherHealthSignals(
     | undefined;
   const discoveryAge = resultRows(discoveryAgeR)[0] as { age_d: unknown } | undefined;
   const backlogs = resultRows(backlogsR)[0] as
-    | { embedding_backlog: unknown; enrichment_backlog: unknown }
+    | { embedding_backlog: unknown }
     | undefined;
   const digestErr = resultRows(digestErrR)[0] as { errors: unknown } | undefined;
   const bounce = resultRows(bounceR)[0] as { hard_bounced: unknown; suppressed: unknown } | undefined;
@@ -279,7 +271,6 @@ export async function gatherHealthSignals(
     discoveryAgeD: discoveryAge?.age_d == null ? null : num(discoveryAge.age_d),
     discoveryLaneErrors,
     embeddingBacklog: num(backlogs?.embedding_backlog),
-    enrichmentBacklog: num(backlogs?.enrichment_backlog),
     digestErrors: num(digestErr?.errors),
     hardBounces: num(bounce?.hard_bounced),
     suppressed: num(bounce?.suppressed),
@@ -335,12 +326,6 @@ export function evaluateHealth(signals: HealthSignals, opts?: HealthOptions): He
       signals.discoveryAgeD === null || signals.discoveryAgeD > t.discoveryMaxAgeD,
     ),
     make("embedding_backlog", signals.embeddingBacklog, t.backlogMax, signals.embeddingBacklog > t.backlogMax),
-    make(
-      "enrichment_backlog",
-      signals.enrichmentBacklog,
-      t.enrichBacklogMax,
-      signals.enrichmentBacklog > t.enrichBacklogMax,
-    ),
     // (e)/(f) fire on any occurrence (threshold null = boolean condition).
     make("digest_health", signals.digestErrors, null, signals.digestErrors > 0),
     make("bounce_suppression", bounceTotal, null, bounceTotal > 0),
@@ -377,7 +362,7 @@ export async function checkHealth(db: Db, opts?: HealthOptions): Promise<HealthR
 /**
  * Build {@link HealthOptions} from `HEALTH_*` env (kept OUT of the pure core on purpose). Thresholds:
  * `HEALTH_INGEST_MAX_AGE_H` / `HEALTH_FAIL_RATIO` / `HEALTH_DISCOVERY_MAX_AGE_D` / `HEALTH_BACKLOG_MAX` /
- * `HEALTH_ENRICH_BACKLOG_MAX` / `HEALTH_DIGEST_WINDOW_N` / `HEALTH_COST_ROLLUP_N`. Modes (default
+ * `HEALTH_DIGEST_WINDOW_N` / `HEALTH_COST_ROLLUP_N`. Modes (default
  * `shadow`): `HEALTH_ENFORCE` and `HEALTH_OFF` are comma-separated check-id lists.
  */
 export function healthOptionsFromEnv(
@@ -397,7 +382,6 @@ export function healthOptionsFromEnv(
     failRatio: n("HEALTH_FAIL_RATIO"),
     discoveryMaxAgeD: n("HEALTH_DISCOVERY_MAX_AGE_D"),
     backlogMax: n("HEALTH_BACKLOG_MAX"),
-    enrichBacklogMax: n("HEALTH_ENRICH_BACKLOG_MAX"),
     digestWindowN: n("HEALTH_DIGEST_WINDOW_N"),
     costRollupN: n("HEALTH_COST_ROLLUP_N"),
   };

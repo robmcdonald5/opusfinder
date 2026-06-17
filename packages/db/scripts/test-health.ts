@@ -13,7 +13,7 @@ import {
  * Exercises the PURE evaluator `evaluateHealth(signals, opts)` directly with canned signal shapes (the
  * point of the gather/evaluate split: no db stub needed), plus `healthOptionsFromEnv` parsing. Asserts:
  *   - a healthy signal set fires nothing and is not `unhealthy`;
- *   - each of the eight checks fires on its own breach shape (incl. the status='ok' all-board-failed
+ *   - each of the seven checks fires on its own breach shape (incl. the status='ok' all-board-failed
  *     trap and an errored ingestion run) and stays quiet otherwise;
  *   - `shadow` firings are reported but NEVER set `unhealthy`; `enforce` firings DO; `off` skips;
  *   - the board fail-ratio does not divide by zero on an empty (0-company) tick;
@@ -32,7 +32,6 @@ const HEALTHY: HealthSignals = {
   discoveryAgeD: 1,
   discoveryLaneErrors: 0,
   embeddingBacklog: 0,
-  enrichmentBacklog: 0,
   digestErrors: 0,
   hardBounces: 0,
   suppressed: 0,
@@ -46,7 +45,6 @@ const BREACHES: Array<{ id: HealthCheckId; over: Partial<HealthSignals> }> = [
   { id: "board_fail_ratio", over: { latestIngestFailed: 11, latestIngestCompanies: 11 } },
   { id: "discovery_window", over: { discoveryAgeD: 30 } },
   { id: "embedding_backlog", over: { embeddingBacklog: 5000 } },
-  { id: "enrichment_backlog", over: { enrichmentBacklog: 5000 } },
   { id: "digest_health", over: { digestErrors: 2 } },
   { id: "bounce_suppression", over: { hardBounces: 1 } },
   { id: "discovery_lane_errors", over: { discoveryLaneErrors: 2 } },
@@ -59,10 +57,10 @@ const find = (r: HealthReport, id: HealthCheckId) => {
 };
 
 await runScript("test-health", async () => {
-  // 1) Healthy signals: nothing fires, not unhealthy, all eight checks present.
+  // 1) Healthy signals: nothing fires, not unhealthy, all seven checks present.
   {
     const r = evaluateHealth(HEALTHY);
-    assert(r.checks.length === 8, `expected 8 checks, got ${r.checks.length}`);
+    assert(r.checks.length === 7, `expected 7 checks, got ${r.checks.length}`);
     assert(!r.unhealthy, "healthy signals must not be unhealthy");
     assert(r.checks.every((c) => c.state === "ok"), "healthy signals must leave every check ok");
   }
@@ -143,14 +141,14 @@ await runScript("test-health", async () => {
   // 5d) unhealthy aggregation is `.some(enforce && firing)`: a shadow firing alongside an enforce firing
   //     stays unhealthy via the enforce one; two enforce firings stay unhealthy; all-shadow never is.
   {
-    const twoBreached = { ...HEALTHY, embeddingBacklog: 5000, enrichmentBacklog: 5000 };
+    const twoBreached = { ...HEALTHY, embeddingBacklog: 5000, digestErrors: 2 };
     assert(!evaluateHealth(twoBreached).unhealthy, "two shadow firings must NOT be unhealthy");
     assert(
       evaluateHealth(twoBreached, { modes: { embedding_backlog: "enforce" } }).unhealthy,
       "one enforce firing among shadow firings must be unhealthy",
     );
     assert(
-      evaluateHealth(twoBreached, { modes: { embedding_backlog: "enforce", enrichment_backlog: "enforce" } })
+      evaluateHealth(twoBreached, { modes: { embedding_backlog: "enforce", digest_health: "enforce" } })
         .unhealthy,
       "two enforce firings must be unhealthy",
     );
@@ -163,7 +161,7 @@ await runScript("test-health", async () => {
       HEALTH_OFF: "discovery_window",
       HEALTH_BACKLOG_MAX: "100",
       HEALTH_FAIL_RATIO: "", // blank must fall through to the default, not NaN
-      HEALTH_ENRICH_BACKLOG_MAX: "-1", // negative must be rejected (would invert a high-watermark check)
+      HEALTH_DISCOVERY_MAX_AGE_D: "-1", // negative must be rejected (would invert a high-watermark check)
     });
     assert(opts.modes?.embedding_backlog === "enforce", "HEALTH_ENFORCE must mark embedding_backlog enforce");
     assert(opts.modes?.ingestion_staleness === "enforce", "HEALTH_ENFORCE must mark ingestion_staleness enforce");
@@ -171,7 +169,7 @@ await runScript("test-health", async () => {
     assert(!("not_a_real_check" in (opts.modes ?? {})), "invalid check ids must be ignored");
     assert(opts.thresholds?.backlogMax === 100, "HEALTH_BACKLOG_MAX must override backlogMax");
     assert(!("failRatio" in (opts.thresholds ?? {})), "a blank threshold must not override the default");
-    assert(!("enrichBacklogMax" in (opts.thresholds ?? {})), "a negative threshold must be rejected, not applied");
+    assert(!("discoveryMaxAgeD" in (opts.thresholds ?? {})), "a negative threshold must be rejected, not applied");
 
     // and the parsed opts drive evaluateHealth as expected: backlog 150 > 100 now fires + enforces.
     const r = evaluateHealth({ ...HEALTHY, embeddingBacklog: 150 }, opts);
@@ -183,7 +181,7 @@ await runScript("test-health", async () => {
   }
 
   console.log(
-    "test-health OK — 8 checks, healthy=clean; each breach fires only itself; shadow!=unhealthy, " +
+    "test-health OK — 7 checks, healthy=clean; each breach fires only itself; shadow!=unhealthy, " +
       "enforce=unhealthy (single + multi-enforce), off=skipped; board_fail_ratio fires on an errored run " +
       "and at the 0.5 boundary, no div-by-zero on empty ticks; null ages fire; cost hit-rate/null + token " +
       "pass-through; healthOptionsFromEnv parses modes/thresholds, ignores invalid ids, rejects negatives, " +
