@@ -427,13 +427,16 @@ export async function recordDigestSent(db: Db, digestId: number, emailId: string
  * dead / not on the send allowlist). This backs the user off until their next cadence period, so the daily
  * cadence cron does NOT re-run the full (paid) pipeline for a perpetually-thin or non-allowlisted user
  * every tick. Deliberately NOT called on ERROR paths (those throw and SHOULD retry next tick), and it
- * leaves `last_digest_email_id` as-is (no email was sent) — so the row reads "considered, not delivered".
+ * NULLs `last_digest_email_id` (no email was sent this consideration) so the row unambiguously reads
+ * "considered, not delivered" — without the null, a user who previously received a REAL digest would keep
+ * that prior email id alongside a fresh `last_digest_sent_at`, mislabeling a considered tick as delivered
+ * (the only reader is the show-digest-delivery diagnostic; no pipeline logic branches on the id).
  * Idempotent single write. Pairs with {@link cadenceDuePredicate}, which reads `last_digest_sent_at`.
  */
 export async function markDigestConsidered(db: Db, userId: UserId): Promise<void> {
   await db
     .update(userPreferences)
-    .set({ lastDigestSentAt: sql`now()`, updatedAt: sql`now()` })
+    .set({ lastDigestSentAt: sql`now()`, lastDigestEmailId: null, updatedAt: sql`now()` })
     .where(eq(userPreferences.userId, userId));
 }
 

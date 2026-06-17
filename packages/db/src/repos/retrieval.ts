@@ -136,6 +136,13 @@ export async function retrieveCandidatesForProfile(
     } satisfies JobCandidate;
   });
 
+  // Deterministic tiebreak: same-signature cross-posts have IDENTICAL embeddings → an exact distance tie
+  // that the SQL `ORDER BY distance` (kept single-key on purpose, to preserve the HNSW sort pathkey) leaves
+  // in implementation-defined order. Re-break ties by id here so collapseBySignature's "first member wins"
+  // keeps a STABLE representative run-to-run (the lowest/oldest job id) instead of a flipping
+  // apply_url/company. No-op for distinct distances (distance still decides), so the HNSW ordering stands.
+  candidates.sort((a, b) => a.distance - b.distance || a.id - b.id);
+
   // App-side geo + exclusion filters, then the same-signature display collapse (F1b), then trim to
   // `limit` (see the file header for why app-side). Running the collapse on the over-fetch buffer means
   // a dropped cross-post frees a slot the trim back-fills from the remaining buffer.

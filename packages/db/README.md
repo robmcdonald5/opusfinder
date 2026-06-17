@@ -127,7 +127,11 @@ Run from the repo root via the workspace filter so the cwd is `packages/db`:
   Arm B can close their jobs. Soft-close only — never a row DELETE (F1 reads the closed row's signature;
   `digest_items.job_id` is `ON DELETE NO ACTION`). Smoke: `pnpm --filter @opusfinder/db test:lifecycle` (no
   creds). **Shipped SHADOW / count-only** — the `'closed'` flip is currently suppressed and tallied as
-  `wouldClose` pending the F2-enforce sub-phase.
+  `wouldClose` pending the F2-enforce sub-phase. Note for `sweepLifecycle` (Arm A): "shadow" here means
+  "no `'closed'` WRITE", NOT "no write at all" — it still persists the `consecutive_absences` streak
+  (capped at the threshold) and revives reappearing rows by design, so the streak is warm when enforce
+  flips on. This is a deliberate asymmetry vs the bulk Arm B/C closers (a pure count, zero writes in
+  shadow) and vs the F6 health checks (pure reads); don't mistake the streak writes for a leak.
 - **Schema (Phase F1).** `drizzle/0011_cool_silvermane.sql` (additive, hand-guarded `IF NOT EXISTS` — same
   neon-http discipline as 0002/0010) adds nullable, NON-unique `jobs.content_signature` (md5 over a normalized
   `title + chr(10) + description_text`: `lower` → `[[:space:]]+`-collapse → `btrim`) + the

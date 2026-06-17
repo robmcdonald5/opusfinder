@@ -26,6 +26,7 @@
     "test:digest-payload": "tsx scripts/test-digest-payload.ts",
     "test:lifecycle": "tsx scripts/test-lifecycle-sweep.ts",
     "test:health": "tsx scripts/test-health.ts",
+    "test:embed-parity": "tsx scripts/test-embedding-backlog-parity.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

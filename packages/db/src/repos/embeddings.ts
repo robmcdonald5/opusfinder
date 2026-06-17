@@ -9,7 +9,7 @@
  * import these repos). Same dependency-injection style as `createDb` taking its client.
  */
 import { composeEmbeddingText } from "@opusfinder/shared";
-import { and, eq, isNull, sql } from "drizzle-orm";
+import { and, eq, isNull, sql, type SQL } from "drizzle-orm";
 
 import type { Db } from "../client";
 import { jobs } from "../schema";
@@ -44,22 +44,27 @@ export interface JobNeedingEmbedding {
  * scoped to one company (the ingestion path embeds just the board it touched). `limit`
  * bounds the batch so a huge backlog is processed in chunks.
  */
+/**
+ * The "has embeddable (non-whitespace) content" predicate: title OR description_text contains a
+ * non-whitespace char. The SINGLE SOURCE shared by jobsNeedingEmbedding and the parity smoke, so the
+ * two cannot drift. It MUST stay aligned with composeEmbeddingText's empty-notion
+ * (`parts.filter((s) => s.trim().length > 0)`, see jobEmbeddingText) — that alignment is what lets the
+ * F8 embed-backlog-drain terminate without a cursor (a row this predicate excludes also produces empty
+ * embed text, so it is never selected AND would never reach embed(), which Voyage 400s on ""). The POSIX
+ * class `[^[:space:]]` matches JS .trim() for ASCII whitespace, diverging only on exotic Unicode
+ * whitespace (e.g. NBSP) — negligible for ATS data. test-embedding-backlog-parity.ts locks both halves;
+ * if jobEmbeddingText starts composing more than title + description, update this predicate in lockstep.
+ */
+export const embeddableContentSql: SQL = sql`(${jobs.title} ~ '[^[:space:]]' OR ${jobs.descriptionText} ~ '[^[:space:]]')`;
+
 export async function jobsNeedingEmbedding(
   db: Db,
   opts: { companyId?: number; limit: number },
 ): Promise<JobNeedingEmbedding[]> {
-  // Rows with no vector AND embeddable (non-whitespace) content. The empty-content check
-  // lives in SQL so contentless rows never enter the result set — that is what lets
-  // backfillJobEmbeddings terminate without a keyset cursor (nothing is perpetually
-  // re-selected). TRADEOFF: this duplicates the "empty" notion in jobEmbeddingText; the two
-  // MUST stay aligned. `[^[:space:]]` ("has a non-whitespace char") matches JS .trim() for
-  // ASCII whitespace, diverging only on exotic Unicode whitespace (e.g. NBSP) — negligible
-  // for ATS data. If jobEmbeddingText starts embedding more than title + description, or a
-  // contentless job ever reaches embed() (Voyage 400s on ""), revisit this predicate.
-  const conditions = [
-    isNull(jobs.embedding),
-    sql`(${jobs.title} ~ '[^[:space:]]' OR ${jobs.descriptionText} ~ '[^[:space:]]')`,
-  ];
+  // Rows with no vector AND embeddable content. The empty-content check lives in SQL so contentless
+  // rows never enter the result set — that is what lets backfillJobEmbeddings / the F8 embed-drain
+  // terminate without a keyset cursor (nothing is perpetually re-selected).
+  const conditions = [isNull(jobs.embedding), embeddableContentSql];
   if (opts.companyId !== undefined) conditions.push(eq(jobs.companyId, opts.companyId));
 
   return db
