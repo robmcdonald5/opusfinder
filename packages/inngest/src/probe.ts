@@ -131,6 +131,10 @@ export async function probeDigestLiveness(
           // 404 → drop from THIS digest but never close (may be a transient blip). NB this also removes the
           // job from shown-history (digest_items), so a persistently-404-but-active job can re-surface on a
           // later digest until Arm A / recency clears it — see dropDigestItemsAndRecount's coupling caveat.
+          // NO same-signature SIBLING fallback (F1–F8 review B1): the F1b collapse (db/retrieval.ts
+          // collapseBySignature) already discarded this role's other cross-posts before retrieval returned,
+          // so a live sibling can't be promoted here — the whole role is lost from this digest. Accepted
+          // low-sev; the re-surface above is the self-heal. (Same applies to the 410 'gone' drop below.)
           counts.probed404Dropped++;
           droppedJobIds.push(jobId);
           break;
