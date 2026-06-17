@@ -10,6 +10,7 @@ import {
   submitBatch,
 } from "@opusfinder/llm";
 import { rerankCandidates, type RerankCall, type RerankCandidate } from "@opusfinder/rerank";
+import { parseEnforceFlag } from "@opusfinder/shared";
 import type { PromptPreferences, StructuredProfile } from "@opusfinder/shared";
 
 import type { DigestDeps, RerankOutcome } from "./digest";
@@ -39,6 +40,9 @@ export function buildDigestDeps(): DigestDeps {
       lastEvent: (emailId) => getEmailLastEvent(emailId),
     },
     probe: probeLiveness,
+    // F2 Arm C enforcement — the same single switch the Worker reads for Arms A/B (parseEnforceFlag),
+    // here off process.env since the digest pipeline is Node-hosted. Default false = shadow.
+    enforceLifecycle: parseEnforceFlag(process.env.F2_ENFORCE),
   };
 }
 
