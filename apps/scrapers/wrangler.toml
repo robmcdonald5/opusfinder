@@ -47,11 +47,14 @@ crons = [
 [vars]
 # Non-secret config only. The secret (DATABASE_URL) is set with `wrangler secret put` and arrives as
 # env.DATABASE_URL.
-# Boards per ingestion tick. HALVED 150 -> 75 (2026-06-16) to bound each tick's cumulative CPU/wall/
-# memory blast radius behind the cpu_ms raise above (belt-and-suspenders — cpu_ms is the primary fix).
-# Tradeoff: a full sweep of ~1.6k active boards now takes ~21 hourly ticks (~21h) instead of ~11h —
-# ample freshness for a daily/weekly digest. Clamped to MAX_INGEST_LIMIT (500) in src/index.ts.
-INGEST_LIMIT = "75"
+# Boards per ingestion tick. RESTORED 75 -> 150 (2026-06-17). The 150 -> 75 halving (PR #28, 2026-06-16)
+# was added during the Neon 512MB-outage misdiagnosis as a CPU/wall/memory "blast radius" throttle — but
+# the real cause was Neon hitting its free-tier STORAGE limit (jobs.raw bloat), fixed by upgrading Neon +
+# dropping the raw write (PR #29), not by throttling the tick. The genuine per-tick protections stay in
+# place: cpu_ms = 300000 above + the per-tick Worker budget bounding (PR #27). 150 matches
+# DEFAULT_INGEST_LIMIT in src/index.ts and halves full-sweep latency (~21h -> ~11h over ~1.6k boards).
+# Clamped to MAX_INGEST_LIMIT (500) in src/index.ts.
+INGEST_LIMIT = "150"
 
 # Chunk-cursor store for the Option-A chunked-cron ingestion lane. The binding is DECLARED so
 # `wrangler dev` simulates a local KV for it (no id needed) and the ingestion tick can read/write the
