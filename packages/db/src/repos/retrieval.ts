@@ -159,6 +159,16 @@ export async function retrieveCandidatesForProfile(
  * un-backfilled row is never collapsed. Pure + order-preserving; the `Set` is declared OUTSIDE the
  * predicate so state persists across the scan. Generic + exported so the smoke can drive it with minimal
  * `{contentSignature}` objects.
+ *
+ * CAVEAT (F1b × F2 Arm C — F1–F8 review B1): the dropped siblings are gone from the candidate set BEFORE
+ * the pre-send liveness probe (inngest/probe.ts) runs. So if the kept representative's apply_url is later
+ * dead (404/410), the probe drops the WHOLE role with no fallback to a live same-signature sibling — and
+ * if it was the digest's only item, no email is sent. Reachable because content_signature excludes the
+ * apply_url, so cross-board siblings have DISTINCT urls. Bounded (≤ the retrieved slot count) and usually
+ * self-healing next run (the dead member re-surfaces, or a live sibling wins once the dead posting
+ * changes); a persistent-404-but-active representative re-loses it until Arm A's absence streak closes it.
+ * ACCEPTED as low-severity — recover via a probe-time same-signature fallback only if dead-link cross-post
+ * recall becomes a real problem.
  */
 export function collapseBySignature<T extends { contentSignature: string | null }>(
   candidates: T[],
