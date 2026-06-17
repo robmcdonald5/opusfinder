@@ -22,14 +22,6 @@ export {
   jobEmbeddingText,
 } from "./embeddings";
 export type { JobNeedingEmbedding, JobNeighbor } from "./embeddings";
-// Phase F4 job-side enrichment — the async extract → write+stamp lifecycle (mirrors the embedding backfill).
-export {
-  jobsNeedingEnrichment,
-  writeJobEnrichment,
-  backfillJobEnrichment,
-  drainEnrichment,
-} from "./enrichment";
-export type { ExtractFn, JobNeedingEnrichment, EnrichmentDeps } from "./enrichment";
 export {
   insertCvFile,
   patchCvFileExtracted,

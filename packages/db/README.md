@@ -23,10 +23,7 @@ pipeline each daily tick) (plus `getProfileForDigest` on the profiles repo); and
 `lifecycle_state='closed'`), plus `getDigestApplyTargets` / `dropDigestItemsAndRecount` on the digests repo
 (Arm C apply-URL read + dead-link drop); and the Phase-F1 de-dup spine — `alreadyShownSignatures` on the digests
 repo (the signature sibling of `alreadyShownJobIds`) + `collapseBySignature` on the retrieval repo (the exported
-same-signature display-collapse), with `retrieveCandidatesForProfile` gaining an `excludeSignatures` clause;
-and the Phase-F4 enrichment repo — `jobsNeedingEnrichment` / `writeJobEnrichment` / `backfillJobEnrichment` /
-`drainEnrichment` over an injected `ExtractFn` (mirrors the embedding backfill; keyed off the `enriched_at`
-sentinel + a keyset cursor))
+same-signature display-collapse), with `retrieveCandidatesForProfile` gaining an `excludeSignatures` clause)
 and `@opusfinder/db/env` (`getDatabaseUrl`); and the Phase-F6 health subpath `@opusfinder/db/health`
 (`checkHealth(db, opts?)` → `HealthReport` — the PURE, serverless-safe pipeline-health core, composed from the
 impure `gatherHealthSignals` + the pure `evaluateHealth`; plus `healthOptionsFromEnv` and the `isEnforceFiring`
@@ -60,8 +57,6 @@ Run from the repo root via the workspace filter so the cwd is `packages/db`:
 | `pnpm --filter @opusfinder/db studio`    | Open Drizzle Studio                                        |
 | `pnpm --filter @opusfinder/db ping`      | Round-trip `SELECT 1` against Neon                         |
 | `pnpm --filter @opusfinder/db runs`      | Print the most recent `source_runs` rows (pipeline health) |
-| `pnpm --filter @opusfinder/db enrichment` | Print job-enrichment coverage (enriched / found-nothing / pending; Phase F4) |
-| `pnpm --filter @opusfinder/db test:enrichment` | Enrichment lifecycle smoke — keyset loop + write SQL (no creds; Phase F4) |
 | `pnpm --filter @opusfinder/db test:health` | Health-checker smoke — pure `evaluateHealth` over canned signals (no creds; Phase F6) |
 | `pnpm --filter @opusfinder/db typecheck` | `tsc --noEmit`                                             |
 
@@ -157,33 +152,20 @@ Run from the repo root via the workspace filter so the cwd is `packages/db`:
   `repos/preferences.ts` `toRow` maps the new fields. Retrieval's `geoMatches` was REWRITTEN to branch on
   `LocationMode` (`remote_only` excludes on-site; `onsite_only` excludes remote — subsumes the old `remoteOk`
   boolean), and `RetrieveOpts.remoteOk` → `locationMode`. LOCATION is the only working hard filter in F3; salary +
-  YoE are stored + soft-prompt-only (hard filters land in F4). No-creds smokes:
+  YoE are stored + soft-prompt-only (never hard filters). No-creds smokes:
   `pnpm --filter @opusfinder/db test:prefs` (preferences round-trip) + `pnpm --filter @opusfinder/db test:location`
   (`geoMatches` LocationMode branches). **APPLIED to prod** (unlike F1's unapplied 0011).
-- **Schema (Phase F4).** `drizzle/0013_cloudy_polaris.sql` (additive, hand-guarded `IF NOT EXISTS` — same
-  neon-http discipline as 0002/0010/0011/0012) adds seven nullable `jobs` columns for job-side structured
-  enrichment, all extracted ASYNCHRONOUSLY (NULL at upsert, like `embedding`, omitted from INSERT VALUES):
-  `yoe_min`/`yoe_max` (`smallint` — the required-years band, the sole level signal now that F3 dropped
-  `target_level`; **Path A** = numeric YoE, NO categorical `seniority_band`), `salary_min`/`salary_max`
-  (`integer`), `salary_currency`/`salary_period` (`text`; `salary_period` is the `SalaryPeriod` TS union on
-  plain text, same idempotent-migration rule as `lifecycle_state`), and `enriched_at` (`timestamptz`
-  **SENTINEL** — NULL = not-yet-extracted, the `jobsNeedingEnrichment` WHERE key; it can't be inferred from the
-  data columns, which are legitimately all-NULL after a successful "found nothing"). The writers live in
-  `repos/enrichment.ts` — `jobsNeedingEnrichment` / `writeJobEnrichment` + the `backfillJobEnrichment` /
-  `drainEnrichment` extract→write loop over an injected `ExtractFn` + a keyset cursor (mirrors the Phase-4
-  embedding backfill, diverging only by the sentinel + keyset since extraction can throw or return all-NULL).
-  `upsertJobs` resets BOTH `embedding` and the enrichment columns on a `title`/`description_text` change (one
-  `nullIfContentChanged` CASE); `enriched_at` is DELIBERATELY NOT in `setWhere` (a derived field, like
-  `content_signature`/`embedding`). Smoke: `pnpm --filter @opusfinder/db test:enrichment` (no creds); status:
-  `pnpm --filter @opusfinder/db enrichment`. **APPLIED to prod**; 1472 rows enriched (880 yoe / 385 salary /
-  542 found-nothing). F4 ships DATA + extraction only — the salary/YoE retrieval filters are the deferred,
-  twice-gated F4-FILTER follow-on.
-- **Health checker (Phase F6) — NO migration.** `src/health.ts` (subpath `@opusfinder/db/health`) computes eight
+- **Schema (Phase F4) — job-side enrichment, REMOVED.** `drizzle/0013_cloudy_polaris.sql` originally added
+  seven nullable `jobs` columns for job-side structured enrichment (`yoe_min`/`yoe_max`, `salary_min`/`salary_max`,
+  `salary_currency`/`salary_period`, `enriched_at`). The feature was fully removed: `drizzle/0016` drops those
+  columns and `repos/enrichment.ts` no longer exists. The salary/YoE *user* preferences on `user_preferences`
+  (Phase F3) are unaffected — they remain soft prompt signals only.
+- **Health checker (Phase F6) — NO migration.** `src/health.ts` (subpath `@opusfinder/db/health`) computes seven
   liveness checks (`ingestion_staleness`, `board_fail_ratio`, `discovery_window`, `embedding_backlog`,
-  `enrichment_backlog`, `digest_health` [error-runs only], `bounce_suppression`, `discovery_lane_errors` [F5f —
+  `digest_health` [error-runs only], `bounce_suppression`, `discovery_lane_errors` [F5f —
   per-lane `lane_<name>_error` on the latest all-source discovery run]) + a rerank-cache cost rollup from
   EXISTING columns across `source_runs` / `jobs` / `digest_runs` / `digests` / `user_preferences` — pure Neon
-  reads, ZERO schema change. Split into `gatherHealthSignals` (the only impure fn — the eight reads issued
+  reads, ZERO schema change. Split into `gatherHealthSignals` (the only impure fn — the reads issued
   concurrently, ages computed SQL-side so the evaluator needs no clock) + the PURE `evaluateHealth` (thresholds +
   `off|shadow|enforce` modes, shadow-first: validate on real traffic before flipping a check to enforce). Window
   sizes clamp to ≥1 so a `0` can't silently disarm the check it sizes. Read-only; shape-only (every metric is a
@@ -213,8 +195,7 @@ Run from the repo root via the workspace filter so the cwd is `packages/db`:
 - **Embedding invalidation on upsert (Phase 4).** `upsertJobs` resets `embedding` to
   `NULL` only when `title` OR `description_text` changed (a `CASE` in the conflict `set`);
   changes to other fields keep the existing vector, so re-embedding cost is paid only on
-  real content change. **Phase F4** widened this same trigger into one `nullIfContentChanged` helper that also
-  resets the `enriched_at` sentinel + the enrichment columns on a title/description change.
+  real content change.
 - **Canonical `locations` on upsert (Phase 6).** `upsertJobs` sorts each job's `locations`
   to a canonical order on write. `locations` is compared as an order-sensitive jsonb array in
   the change test, so a multi-location board that emits the same offices in a different order

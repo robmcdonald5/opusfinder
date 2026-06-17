@@ -5,7 +5,7 @@ It makes Anthropic **prompt caching** first-class and (Phase 10) wires Anthropic
 lifecycle — the raw `@anthropic-ai/sdk` lives in ONE place (`src/batch.ts`), since the Vercel AI SDK has
 no batch support.
 Every downstream LLM step builds on it: CV extraction (Phase 9), digest rerank +
-synthesis (Phase 10), job-side enrichment extraction (Phase F4).
+synthesis (Phase 10).
 
 ## Setup
 
@@ -75,17 +75,6 @@ never frames the note around a dealbreaker, and keeps salary/location off-limits
 Haiku rerank output schema + candidate renderer. The rerank **scoring rubric** and orchestration live in
 `@opusfinder/rerank` (shared with the eval harness), not here — this package owns only the per-call
 prompt pieces.
-
-### Job-enrichment prompt (Phase F4)
-
-`prompts/job-enrich.ts` (`JOB_ENRICH_SYSTEM` + `JobEnrichmentSchema`) is the strict **null-when-absent**
-extraction of a YoE/salary band from a job's own title + description — every field is `.nullable().catch(null)`
-with bounds, so a missing or out-of-range value coerces to `null`, never a hallucinated default (a deterministic
-filter would trust a wrong value literally). `makeJobEnrichmentExtractor` (`job-enrich-extractor.ts`) is the
-Haiku (temp 0) `generateObject`-backed extractor the Node-side backfill and the accuracy eval both inject as
-their `ExtractFn`, so they share one code path. **F4-MODEL is locked to Haiku** (Sonnet scored worse on YoE in
-the accuracy eval). DB persistence + the backfill lifecycle live in `@opusfinder/db`; the per-field accuracy
-eval (`pnpm eval:extraction`) in `@opusfinder/eval`.
 
 ### Swapping providers
 

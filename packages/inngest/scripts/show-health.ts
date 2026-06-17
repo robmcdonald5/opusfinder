@@ -8,15 +8,15 @@ import { sendHealthAlert } from "@opusfinder/email";
 import { runScript } from "@opusfinder/shared/script";
 
 /**
- * Phase F6 health verdict — the verdict layer over the human-dump readers (`pnpm runs` / `delivery` /
- * `enrichment`). Runs `checkHealth` (from @opusfinder/db, the pure/serverless-safe core) over live Neon,
+ * Phase F6 health verdict — the verdict layer over the human-dump readers (`pnpm runs` / `delivery`).
+ * Runs `checkHealth` (from @opusfinder/db, the pure/serverless-safe core) over live Neon,
  * prints every check (shadow + enforce + ok) and the cost rollup, and — if any ENFORCE-mode check is
  * firing — emails the operator via `sendHealthAlert` and exits non-zero. Shadow firings are printed but
  * never page (`[[shadow-validate-tunable-filters]]`).
  *
  * Lives in @opusfinder/inngest (not @opusfinder/db) because it both READS (db) and SENDS (email): db is
- * the pure-read scripts home, while the send makes this an action CLI like `digest` / `enrich:backfill`
- * — and inngest already depends on both packages, so it avoids a db⇄email workspace cycle.
+ * the pure-read scripts home, while the send makes this an action CLI like `digest` — and inngest
+ * already depends on both packages, so it avoids a db⇄email workspace cycle.
  *
  * Read-only on the DB. Needs DATABASE_URL (packages/db/.env). Thresholds/modes come from HEALTH_* env
  * (see healthOptionsFromEnv). A real alert send additionally needs ALERT_TO + RESEND_API_KEY +
@@ -80,7 +80,6 @@ function formatMetric(c: HealthCheck): string {
     case "board_fail_ratio":
       return `${(c.metric * 100).toFixed(0)}% boards failed`;
     case "embedding_backlog":
-    case "enrichment_backlog":
       return `${c.metric} rows`;
     case "digest_health":
       return `${c.metric} errored run(s)`;

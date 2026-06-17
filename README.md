@@ -69,17 +69,15 @@ pnpm db:ping      # round-trips SELECT 1 against Neon
 | `pnpm db:backfill-signatures`             | Backfill `jobs.content_signature` for unsigned rows (idempotent; Phase F1d)                                                                                                    |
 | `pnpm db:ping`                            | Connectivity check against Neon                                                                                                                                                |
 | `pnpm runs`                               | Print the most recent `source_runs` rows (pipeline health at a glance)                                                                                                         |
-| `pnpm health`                             | Run the pipeline health checker over Neon — print 8 checks + a cost rollup; on an enforce-mode firing email `ALERT_TO` + exit non-zero (Phase F6)                              |
+| `pnpm health`                             | Run the pipeline health checker over Neon — print 7 checks + a cost rollup; on an enforce-mode firing email `ALERT_TO` + exit non-zero (Phase F6)                              |
 | `pnpm ingest <source> <slug>`             | Fetch + normalize one ATS board, upsert to Neon, embed new postings (`--no-embed` to skip)                                                                                     |
 | `pnpm ingest:all`                         | Ingest every seeded company across all sources (`[--no-embed] [--source=<name>]`)                                                                                              |
 | `pnpm discover`                           | Discover + validate + upsert company slugs from the seed lanes (`[--source=<name>] [--lanes=<a,b>] [--limit=<n>] [--dry-run]`)                                                  |
 | `pnpm llm:test`                           | Call Haiku twice with a cached system prompt; assert cache write then read                                                                                                     |
 | `pnpm embeddings:backfill`                | Embed every job whose `embedding` is still NULL (idempotent)                                                                                                                   |
 | `pnpm embeddings:search "<q>"`            | Embed a query and print the nearest jobs by cosine distance (HNSW)                                                                                                             |
-| `pnpm enrich:backfill`                    | Extract a structured YoE/salary band into `jobs` for un-enriched rows via Haiku (idempotent; Phase F4)                                                                         |
 | `pnpm eval`                               | Score a ranker over the labeled set; write a report + diff vs last run                                                                                                         |
 | `pnpm eval:compare`                       | Voyage vs OpenAI embedding retrieval, side-by-side                                                                                                                             |
-| `pnpm eval:extraction`                    | Per-field extraction-accuracy eval (confusion matrix; keyless stub default, `-- --live` for real Haiku; Phase F4)                                                             |
 | `pnpm ingest-cv <cv.pdf> <email>`         | Ingest a CV PDF → R2 + `user_cv_files` + `user_profiles` (transcribe → structure → embed)                                                                                      |
 | `pnpm profiles:restructure <email>`       | Re-structure a profile from the cached R2 transcript (skips transcribe)                                                                                                        |
 | `pnpm user:create --email … --password …` | Create a verified user + default prefs (`[--name] [--location-mode] [--locations] [--min-salary] [--max-salary] [--min-yoe] [--max-yoe] [--dealbreakers] [--exclusions] [--recency-days] [--cadence] [--enabled]`) |
@@ -116,8 +114,8 @@ Cloud. Three new pieces ride this runtime: a **cadence cron** (`makeCadenceOrche
 `singleton:skip`) that emits `digest/run.requested {trigger:'cron'}` so `listDigestRecipients`'s opt-in
 `cadenceDue` predicate picks the daily/weekly/monthly-due users (manual `pnpm digest --all` unchanged) —
 with a new `markDigestConsidered` repo fn stamping the no-send skip paths for cadence backoff; the **F8
-backfill drains** (`embed-backlog-drain` `0 4 * * *` cursorless + `enrich-backlog-drain` `15 4 * * *`
-keyset, both `singleton:skip`, `MAX_PAGES_PER_RUN=200`, paged per `step.run`), replacing the dropped
+backfill drain** (`embed-backlog-drain` `0 4 * * *` cursorless, `singleton:skip`,
+`MAX_PAGES_PER_RUN=200`, paged per `step.run`), replacing the dropped
 GitHub Actions bridge; and the new `health_alerts` append-only incident table (migration
 `0014_slow_red_hulk`, additive, no writer yet — forward-provisioned for the 12b dev panel). 12b (auth +
 prefs/CV forms + history + the interactive dev panel) is deferred. Owner-pending: `pnpm db:migrate`
@@ -125,8 +123,8 @@ prefs/CV forms + history + the interactive dev panel) is deferred. Owner-pending
 `INNGEST_DEV` UNSET; Deployment Protection OFF for `/api/inngest`). Built on branch `feat/headless-runtime`.
 
 Phase F6 added **pipeline health & alerting** — the watcher for health data that was recorded everywhere but
-read nowhere. A new pure, serverless-safe checker (`@opusfinder/db/health`, **NO migration**) computes eight
-liveness checks (ingestion staleness, board fail-ratio, discovery window, embedding + enrichment backlogs, digest
+read nowhere. A new pure, serverless-safe checker (`@opusfinder/db/health`, **NO migration**) computes seven
+liveness checks (ingestion staleness, board fail-ratio, discovery window, embedding backlog, digest
 errors, bounce/suppression, discovery lane-errors) + a rerank-cache cost rollup from existing columns, behind
 `off|shadow|enforce` modes (shadow-first). `pnpm health` (in `@opusfinder/inngest`, reusing both db + email) prints the report and emails the
 operator (a new `sendHealthAlert` in `@opusfinder/email` → a dedicated `ALERT_TO`) on an enforce-firing check. The
@@ -141,32 +139,15 @@ tally `lane_<name>_error` and continue; counts accumulate field-wise; candidates
 fetch-only Algolia calls + a regex over covered ATS board URLs (Worker-safe, reusing
 `@opusfinder/sources` `cleanHtml(["decode"])` to decode `&#x2F;`-encoded URLs). `pnpm discover` gains
 `--lanes`; the weekly Worker discovery cron is **RESUMED** (`0 3 * * SUN`, Workers Paid) via
-`runDiscovery({ workerOnly: true })`; the health checker gains an 8th check (`discovery_lane_errors`);
+`runDiscovery({ workerOnly: true })`; the health checker gains a `discovery_lane_errors` check;
 `discoveryMaxAgeD` 8→13; `@opusfinder/sources` now exports `cleanHtml` / `htmlToText` / `CleanStep`.
 **Scope: registry + HN only** (passive DNS + Common Crawl → F5-LANES-2); **NO migration**. Uncommitted
 on `main`.
 
-Phase F4 added **job-side structured enrichment at ingest**: an async Haiku pass extracts a numeric **YoE
-band** (`yoe_min` / `yoe_max`) and a structured **salary band** (`salary_min` / `salary_max` +
-`salary_currency` / `salary_period`) from each posting's own title + description into seven new nullable
-`jobs` columns, gated by an **`enriched_at` SENTINEL** (NULL = not-yet-extracted — distinct from a successful
-"found nothing", where the data columns are legitimately all-NULL). The lifecycle mirrors the embedding
-backfill (`packages/db/src/repos/enrichment.ts` — `jobsNeedingEnrichment` / `writeJobEnrichment` /
-`backfillJobEnrichment` over an injected `ExtractFn` + a keyset cursor), and `upsertJobs` resets enrichment
-alongside the embedding on a title/description change. The extractor is `@opusfinder/llm`'s `JOB_ENRICH_SYSTEM`
-+ `JobEnrichmentSchema` (strict null-when-absent, per-field `.catch(null)` bounds, Haiku temp 0), with a new
-per-field confusion-matrix accuracy eval (`pnpm eval:extraction`, distinct from the permutation-locked Ranker).
-**Path A**: a numeric YoE band, NO categorical `seniority_band` — F3 dropped `target_level`, so the YoE band is
-the sole declared-level signal on both sides. Live: 1472 jobs enriched (880 YoE / 385 salary / 542
-found-nothing); eval — salary 0% hallucination / 100% accuracy, YoE ~94% (haiku beat Sonnet on YoE, so
-F4-MODEL locks to haiku). Migration 0013 applied to prod. **SCOPE: DATA + extraction + eval only — the
-salary/YoE retrieval `WHERE` clauses are the deferred, twice-gated F4-FILTER follow-on.** Uncommitted on branch
-`feat/job-enrichment`.
-
 Phase F3 added **user preferences** as a hard-filter + soft-prompt layer. A new `location_mode`
 (`any` / `remote_only` / `onsite_only`) hard filter subsumes the old `remote_ok` boolean in retrieval;
 min/max salary and a YoE band (`yoe_min` / `yoe_max`) are stored and fed to rerank/synthesis as a
-**soft prompt signal only** (hard salary/YoE filters deferred to F4), and `dealbreakers` merge into the
+**soft prompt signal only** (never hard filters), and `dealbreakers` merge into the
 exclusions list. A digest **quality floor** (`MIN_SCORE=0.5`) drops sub-floor reranked items before the
 top-K cut and skips synthesis/send entirely when none clear. `target_level` was dropped — the YoE band
 is the sole declared-level signal. Migration 0012 applied; backend-only; live self-send passed. Uncommitted
