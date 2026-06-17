@@ -253,6 +253,21 @@ export function composeEmbeddingText(parts: string[]): string {
 }
 
 /**
+ * The single F2 lifecycle-close enforcement switch. PURE + Worker-safe: it reads no env itself — the
+ * Worker passes `env.F2_ENFORCE` (a wrangler var), the Node digest runtime passes `process.env.F2_ENFORCE`
+ * — so ONE flag governs all three F2 arms (sweepLifecycle / closeJobsForCompanies / probeDigestLiveness)
+ * instead of a coordinated 3-site code edit. Returns true ONLY for an explicit affirmative ("enforce" —
+ * the documented value — plus "true"/"1"/"on"/"yes" for ergonomics), case/space-insensitive; every other
+ * value — "shadow", "off", "", undefined — is false (count-only, the ratified default). Flip to enforce in
+ * ONE place once the shadow `wouldClose` counters are reviewed. Mirrors the off|shadow|enforce vocabulary
+ * of healthOptionsFromEnv (db/health.ts).
+ */
+export function parseEnforceFlag(value: string | undefined): boolean {
+  const v = value?.trim().toLowerCase();
+  return v === "enforce" || v === "true" || v === "1" || v === "on" || v === "yes";
+}
+
+/**
  * The semantic CV profile — the embeddable, PII-free representation produced by Phase 9 CV
  * ingestion and stored in `user_profiles.structured`. Deliberately the `{ summary, skills,
  * targetRoles }` subset that feeds the match vector: NO `id` (that is an eval-only handle on

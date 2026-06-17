@@ -1,5 +1,6 @@
 import { createDb, type Db } from "@opusfinder/db";
 import { runDiscovery } from "@opusfinder/discovery";
+import { parseEnforceFlag } from "@opusfinder/shared";
 import { runIngestion } from "@opusfinder/sources";
 
 /**
@@ -42,6 +43,11 @@ interface Env {
    *  unset the heartbeat is skipped silently (so the Worker can redeploy before the watchdog account
    *  exists). See {@link pingWatchdog}. */
   HEALTH_PING_URL?: string;
+  /** F2 lifecycle-close enforcement (the single switch across Arms A/B/C — see {@link parseEnforceFlag}).
+   *  A wrangler `[vars]` value. Unset / "shadow" = count-only (the default); "enforce" flips the `'closed'`
+   *  write on for the per-board sweep (Arm A) AND the board-death close (Arm B). Keep it in sync with the
+   *  digest runtime's `F2_ENFORCE` so all three arms enforce together. */
+  F2_ENFORCE?: string;
 }
 
 // Must equal the wrangler.toml cron strings exactly (esp. the weekday — "SUN", not "0"). Ingestion is
@@ -94,6 +100,8 @@ export default {
             limit: DISCOVERY_LIMIT,
             reprobeLimit: DISCOVERY_REPROBE_LIMIT,
             workerOnly: true,
+            // F2 Arm B enforcement — the one shared switch (off by default = shadow).
+            enforceLifecycle: parseEnforceFlag(env.F2_ENFORCE),
           });
           break;
         default:
@@ -166,6 +174,8 @@ async function runIngestionTick(db: Db, env: Env): Promise<void> {
     limit,
     maxRunMs: MAX_RUN_MS,
     adapter: { maxItems: MAX_JOBS_PER_BOARD },
+    // F2 Arm A enforcement — the one shared switch (off by default = shadow).
+    enforceLifecycle: parseEnforceFlag(env.F2_ENFORCE),
   });
 
   // Wrap to the start (afterId 0) ONLY when the whole chunk was processed AND it under-filled

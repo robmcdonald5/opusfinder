@@ -86,6 +86,11 @@ export interface DigestDeps {
   /** F2 Arm C — the pre-send apply-URL liveness probe (one URL → verdict); the per-digest fan-out lives
    *  in `probeDigestLiveness`. Injected so the stub smoke drives it with a fake. */
   probe: LivenessProbe;
+  /** F2 Arm C enforcement (the single F2 switch — see `parseEnforceFlag`). Default false = SHADOW: the
+   *  dead-link (404/410) DROP is always live, but the explicit-410 soft-CLOSE is suppressed and tallied.
+   *  buildDigestDeps sets this from `parseEnforceFlag(process.env.F2_ENFORCE)` — the same flag the Worker
+   *  reads for Arms A/B, so all three flip together. */
+  enforceLifecycle?: boolean;
 }
 
 interface FilterPrefs {
@@ -440,14 +445,15 @@ function makePerUser(deps: DigestDeps) {
       //     F2-enforce flips it on); KEEP ambiguous (2xx/3xx/5xx/timeout — never lose a possibly-live match
       //     over a blip). Re-reads applyUrl by digest id (not via step state). If EVERY item is dead, drop
       //     the whole digest and skip the send — the graceful no-send success, not an empty email.
-      // F2-ENFORCE FLIP SITE 3 of 3 (also ingest.ts Arm A + discover.ts Arm B): add { enforce: true } as the
-      // 5th arg here AND flip the other two together — no shared switch, so a partial flip silently leaves an
-      // arm in shadow. (Arm C's DROP is already live in shadow; only its 410-CLOSE is gated by this flag.)
+      // F2 enforcement rides the ONE shared switch: deps.enforceLifecycle = parseEnforceFlag(F2_ENFORCE),
+      // the same flag the Worker reads for Arms A/B, so all three flip together — no partial-flip footgun.
+      // (Arm C's dead-link DROP is always live; only its explicit-410 soft-CLOSE is gated by this flag.)
       const liveness = await probeDigestLiveness(
         { run: async (id, fn) => (await step.run(id, fn)) as Awaited<ReturnType<typeof fn>> },
         deps.db,
         deps.probe,
         persisted.digestId,
+        { enforce: deps.enforceLifecycle ?? false },
       );
       if (liveness.survivors === 0) {
         // Every apply URL was dead (404/410). The probe step already emptied digest_items, set item_count=0,

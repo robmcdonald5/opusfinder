@@ -42,6 +42,12 @@ export interface DiscoveryOptions {
   lanes?: string[];
   /** Worker filter: when true, run only `workerSafe` (fetch-only, bundle-safe) lanes. */
   workerOnly?: boolean;
+  /**
+   * F2 Arm B enforcement (the single F2 switch — see `parseEnforceFlag`). Default false = SHADOW (tally
+   * `wouldCloseOnDeactivation`, write no `'closed'`). The Worker passes `parseEnforceFlag(env.F2_ENFORCE)`;
+   * the same flag flips all three F2 arms together once the shadow counters are reviewed.
+   */
+  enforceLifecycle?: boolean;
 }
 
 /**
@@ -145,11 +151,12 @@ export async function runDiscovery(db: Db, opts: DiscoveryOptions = {}): Promise
       const deactivatedIds = await deactivateStale(db, olderThanDays, { source: opts.source });
       counts.deactivated = deactivatedIds.length;
       // F2 Arm B: soft-close every still-active job of a just-deactivated (board-death) company — the
-      // orphan Arm A is blind to (activeOnly:true never re-fetches a dead board). Count-only first
-      // (F2-SHADOW: tally wouldCloseOnDeactivation, write no 'closed' yet); F2-enforce flips it on.
-      // F2-ENFORCE FLIP SITE 2 of 3 (also ingest.ts Arm A + digest.ts Arm C): pass { enforce: true } here AND
-      // at the other two together — no shared switch, so a partial flip silently leaves an arm in shadow.
-      const boardClose = await closeJobsForCompanies(db, deactivatedIds);
+      // orphan Arm A is blind to (activeOnly:true never re-fetches a dead board). Default count-only
+      // (F2-SHADOW: tally wouldCloseOnDeactivation, write no 'closed'). Enforcement rides the ONE shared
+      // switch: opts.enforceLifecycle = parseEnforceFlag(F2_ENFORCE), threaded to all three arms together.
+      const boardClose = await closeJobsForCompanies(db, deactivatedIds, {
+        enforce: opts.enforceLifecycle ?? false,
+      });
       counts.jobsClosedOnDeactivation = boardClose.closed;
       counts.wouldCloseOnDeactivation = boardClose.wouldClose;
     }

@@ -101,6 +101,13 @@ export interface IngestionOptions {
    * the caller's bug, not a board failure.
    */
   onBoard?: (result: IngestBoardResult) => void;
+  /**
+   * F2 Arm A enforcement (the single F2 switch — see {@link parseEnforceFlag}). Default false = SHADOW
+   * (the sweep increments the absence streak + revives, but writes no `'closed'`, tallying `wouldClose`).
+   * The Worker passes `parseEnforceFlag(env.F2_ENFORCE)`; flip enforce on at ALL THREE arms together via
+   * that one env flag once the shadow counters are reviewed.
+   */
+  enforceLifecycle?: boolean;
 }
 
 /**
@@ -196,10 +203,12 @@ export async function runIngestion(db: Db, opts: IngestionOptions = {}): Promise
         if (total > 0 && !capped) {
           try {
             const presentExternalIds = [...new Set(normalized.map((j) => j.externalId))];
-            // F2-ENFORCE FLIP SITE 1 of 3 (also discover.ts Arm B + digest.ts Arm C): pass { enforce: true }
-            // here AND at the other two together. There is no shared switch, so a partial flip silently
-            // leaves an arm in shadow with no compile/test signal — flip all three or none.
-            const sweep = await sweepLifecycle(db, companyId, presentExternalIds);
+            // F2 enforcement rides the ONE shared switch: opts.enforceLifecycle = parseEnforceFlag(F2_ENFORCE),
+            // resolved once by the caller (the Worker / CLI) and threaded to all three arms together, so there
+            // is no partial-flip footgun. Default false = shadow (count-only; tally wouldClose, write no 'closed').
+            const sweep = await sweepLifecycle(db, companyId, presentExternalIds, {
+              enforce: opts.enforceLifecycle ?? false,
+            });
             counts.revived += sweep.revived;
             counts.swept += sweep.swept;
             counts.closed += sweep.closed;
