@@ -85,6 +85,8 @@ function formatMetric(c: HealthCheck): string {
       return `${c.metric} errored run(s)`;
     case "bounce_suppression":
       return `${c.metric} affected user(s)`;
+    case "discovery_lane_errors":
+      return `${c.metric} lane error(s)`;
     default:
       return String(c.metric);
   }
