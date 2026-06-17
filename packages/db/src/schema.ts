@@ -172,6 +172,17 @@ export const jobs = pgTable(
     // FK below). CREATE INDEX CONCURRENTLY is deferred — the table is small now and it
     // can't run inside a single neon-http call.
     index("jobs_embedding_hnsw_idx").using("hnsw", t.embedding.op("vector_cosine_ops")),
+    // Partial btree over ONLY the un-embedded rows. Backs the recurring `embedding IS NULL` scans —
+    // the F6 embedding_backlog health count (health.ts), jobsNeedingEmbedding (repos/embeddings.ts), and
+    // the F8 embed-backlog-drain's `ORDER BY id LIMIT` paging (inngest/backfill.ts) — turning a full
+    // seq-scan of the (~54K-row) table into an index-only scan. Self-prunes to ~0 entries as rows embed,
+    // so it stays tiny (same partial-index discipline as companies_active_last_probed_idx /
+    // user_preferences_eligible_idx). The HNSW index above only covers NON-NULL vectors for the `<=>`
+    // cosine path and cannot serve `IS NULL`. drizzle-kit emits this bare; the 0017 migration hand-adds
+    // IF NOT EXISTS (neon-http isn't transactional) — same discipline as the guarded indexes above.
+    index("jobs_unembedded_idx")
+      .on(t.id)
+      .where(sql`${t.embedding} IS NULL`),
     // FK with an explicit, stable constraint name. NOTE: drizzle-kit (0.31)
     // emits this as a STANDALONE `ALTER TABLE ... ADD CONSTRAINT`, NOT inline in
     // CREATE TABLE, and Postgres has no `ADD CONSTRAINT IF NOT EXISTS`. The 0001
