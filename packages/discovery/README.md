@@ -43,8 +43,9 @@ null)` through a NON-throwing, per-host-throttled fetcher (a 404/400/200-empty i
    Arm B) bulk-closes those just-deactivated boards' still-active jobs via `closeJobsForCompanies` — the orphan
    class the ingest-time feed-absence sweep is blind to, since a deactivated board is never re-fetched.
    `deactivateStale` was widened to RETURN the deactivated company ids; the close is tallied onto the run's
-   `source_runs.counts` (`jobsClosedOnDeactivation` / `wouldCloseOnDeactivation`). Shipped SHADOW (count-only)
-   until F2-enforce.
+   `source_runs.counts` (`jobsClosedOnDeactivation` / `wouldCloseOnDeactivation`). Shipped SHADOW (count-only);
+   enforcement rides the single `F2_ENFORCE` switch via `runDiscovery`'s `enforceLifecycle` option (the Worker
+   sets it from `parseEnforceFlag(env.F2_ENFORCE)`, the same flag that flips Arm A + Arm C).
 
 ## Usage
 

@@ -56,6 +56,13 @@ crons = [
 # Clamped to MAX_INGEST_LIMIT (500) in src/index.ts.
 INGEST_LIMIT = "150"
 
+# F2 lifecycle-close enforcement — the SINGLE switch across all three F2 arms (Arm A per-board sweep +
+# Arm B board-death close here in the Worker; Arm C 410-close in the digest runtime). "shadow" (default)
+# = count-only: the absence streak is kept and `wouldClose` is tallied, but NO job is written 'closed'.
+# Flip to "enforce" ONLY after reviewing the shadow `wouldClose` counters — AND set the digest runtime's
+# F2_ENFORCE to match (Vercel/Inngest env), so all three arms enforce together. Redeploy to apply.
+F2_ENFORCE = "shadow"
+
 # Chunk-cursor store for the Option-A chunked-cron ingestion lane. The binding is DECLARED so
 # `wrangler dev` simulates a local KV for it (no id needed) and the ingestion tick can read/write the
 # cursor locally. A real `wrangler deploy` needs the id — USER step (PHASE_8_PLAN.md §9):
