@@ -99,7 +99,9 @@ interface FilterPrefs {
  *  defaults — the defaults live in ONE place, the schema). `dealbreakers` (Phase F3) are MERGED into the
  *  `exclusions` list here — they ride the same whole-word compileExclusions matcher in retrieval, so this
  *  is the single row→filter mapper and retrieval.ts needs no new predicate. minSalary/maxSalary are
- *  intentionally omitted (no job-side salary column until Phase F4 — they are stored + soft-prompt only). */
+ *  intentionally omitted: there is no job-side salary column (Phase F4 enrichment was built then removed,
+ *  PR #31), so salary lives only in user_preferences and rides the soft prompt signal (toPromptPrefs) —
+ *  it is never a hard retrieval filter. */
 function toFilterPrefs(prefs: UserPreferencesRow): FilterPrefs {
   return {
     locationMode: prefs.locationMode,
