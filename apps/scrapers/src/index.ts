@@ -43,10 +43,11 @@ interface Env {
    *  unset the heartbeat is skipped silently (so the Worker can redeploy before the watchdog account
    *  exists). See {@link pingWatchdog}. */
   HEALTH_PING_URL?: string;
-  /** F2 lifecycle-close enforcement (the single switch across Arms A/B/C — see {@link parseEnforceFlag}).
-   *  A wrangler `[vars]` value. Unset / "shadow" = count-only (the default); "enforce" flips the `'closed'`
-   *  write on for the per-board sweep (Arm A) AND the board-death close (Arm B). Keep it in sync with the
-   *  digest runtime's `F2_ENFORCE` so all three arms enforce together. */
+  /** F2 lifecycle-close enforcement — see {@link parseEnforceFlag}. A wrangler `[vars]` value. Unset /
+   *  "shadow" = count-only (the default); "enforce" flips the `'closed'` write on. THIS Worker var drives
+   *  Arms A (per-board sweep) + B (board-death close) ONLY; Arm C (digest 410-close) reads the digest
+   *  runtime's `process.env.F2_ENFORCE` independently. Keep BOTH in sync so all three arms enforce together
+   *  (a partial flip is harmless but confusing — the #1 operational footgun). */
   F2_ENFORCE?: string;
 }
 
