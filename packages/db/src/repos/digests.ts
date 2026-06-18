@@ -333,6 +333,8 @@ export async function dropDigestItemsAndRecount(
  * `digests ⋈ user ⋈ digest_items ⋈ jobs ⋈ companies`, ORDER BY rank. INNER JOINs are safe: the
  * persist step throws on zero kept items, so an existing digest always has ≥1 item row here.
  * `companySlug` is `companies.slug` — there is NO name column (metadata jsonb is unpopulated).
+ * `items` may be EMPTY when every item's job was lifecycle-closed after persist (G1b — see
+ * `getDigestEmailPayload`); the send step treats that as a clean no-send.
  */
 export interface DigestEmailPayload {
   digestId: number;
@@ -354,8 +356,24 @@ export interface DigestEmailPayload {
 
 /**
  * The email payload for one digest, recipient resolved from `user` (the row is the truth — never
- * event data). `null` for an unknown digest id; the send step treats that as an invariant break and
- * throws (same posture as the rerank-permutation check).
+ * event data).
+ *
+ * Two distinct empty shapes the caller must tell apart (G1b — close the email-render lifecycle gap
+ * that turning F2_ENFORCE on exposes):
+ *   - `null` — NO joined row at all. Persist guarantees ≥1 `digest_items` row (it throws on zero kept
+ *     items), and jobs/companies are soft-closed/deactivated never deleted (the FK joins always match),
+ *     so zero rows means the digest row itself vanished. The send step treats this as an invariant
+ *     break and throws (same posture as the rerank-permutation check).
+ *   - `{ items: [] }` — the digest exists, but every item's job is now `lifecycle_state != 'active'`.
+ *     A job CLOSED between this digest's retrieval and its send (an Arm A/B Worker cron tick landing
+ *     during the multi-hour synthesis batch wait — closed AFTER retrieval, persisted anyway, then kept
+ *     by the step-7.5 probe, which checks only the apply URL's HTTP liveness, never `lifecycle_state`)
+ *     must NOT render in an inbox: retrieval.ts already excludes closed jobs, and this is the one
+ *     render-time gap. The send step treats an empty `items` as a clean no-send.
+ *
+ * The lifecycle filter is applied APP-SIDE (closed rows are still fetched — ≤TOP_K of them) rather than
+ * in the SQL join, so a single round trip keeps the header/recipient available from any row and lets us
+ * distinguish "no digest" (null) from "all items closed" (empty). `companySlug` is `companies.slug`.
  */
 export async function getDigestEmailPayload(
   db: Db,
@@ -374,6 +392,7 @@ export async function getDigestEmailPayload(
       applyUrl: jobs.applyUrl,
       locations: jobs.locations,
       remote: jobs.remote,
+      lifecycleState: jobs.lifecycleState,
     })
     .from(digests)
     .innerJoin(user, eq(user.id, digests.userId))
@@ -389,15 +408,17 @@ export async function getDigestEmailPayload(
     userId: first.userId,
     recipient: { email: first.email, name: first.name },
     createdAt: first.createdAt,
-    items: rows.map((r) => ({
-      rank: r.rank,
-      reason: r.reason,
-      title: r.title,
-      companySlug: r.companySlug,
-      applyUrl: r.applyUrl,
-      locations: r.locations,
-      remote: r.remote,
-    })),
+    items: rows
+      .filter((r) => r.lifecycleState === "active")
+      .map((r) => ({
+        rank: r.rank,
+        reason: r.reason,
+        title: r.title,
+        companySlug: r.companySlug,
+        applyUrl: r.applyUrl,
+        locations: r.locations,
+        remote: r.remote,
+      })),
   };
 }
 

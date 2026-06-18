@@ -56,15 +56,17 @@ const FIXTURE: DigestEmailPayload = {
   ],
 };
 
-/** Rows shaped like getDigestEmailPayload's joined select projection (2 items). */
-function joinedPayloadRows(): unknown[] {
+/** Rows shaped like getDigestEmailPayload's joined select projection (2 items). `states` sets each
+ *  item's `lifecycle_state` (default all 'active') so the G1b render-time lifecycle filter — which runs
+ *  app-side, so the stub's real `.filter` exercises it — can be driven with closed items. */
+function joinedPayloadRows(states: string[] = FIXTURE.items.map(() => "active")): unknown[] {
   const head = {
     userId: FIXTURE.userId,
     createdAt: FIXTURE.createdAt,
     email: FIXTURE.recipient.email,
     name: FIXTURE.recipient.name,
   };
-  return FIXTURE.items.map((it) => ({ ...head, ...it }));
+  return FIXTURE.items.map((it, i) => ({ ...head, ...it, lifecycleState: states[i] ?? "active" }));
 }
 
 await runScript("test-digest-email", async () => {
@@ -249,6 +251,63 @@ await runScript("test-digest-email", async () => {
     );
   }
   console.log("8. slow-poll + bounce suppression OK");
+
+  // 9. G1b — all items lifecycle-closed between persist and send: the render filters every item, so
+  //    deliverDigestEmail must clean no-send ("skipped-empty") — NO email.send, NO poll, ONE step.
+  {
+    const { runs, sleeps, tools } = recordingStep();
+    const db = stubDb([joinedPayloadRows(["closed", "closed"])]); // ONLY the payload read
+    let sendCalled = false;
+    const result = await deliverDigestEmail(
+      tools,
+      db,
+      {
+        send: async () => {
+          sendCalled = true;
+          return { emailId: "re_x" };
+        },
+        lastEvent: async () => "delivered",
+      },
+      7,
+    );
+    assert(result === "skipped-empty", `all-closed result: ${String(result)}`);
+    assert(!sendCalled, "send must not be called when every item is closed");
+    assert(JSON.stringify(runs) === '["send-email"]', `steps: ${runs.join(",")}`);
+    assert(sleeps.length === 0, "empty-payload path must not sleep");
+  }
+  console.log("9. G1b all-closed → clean no-send OK");
+
+  // 10. G1b — mixed active+closed: the closed item is filtered out at render, the active one still sends.
+  {
+    const { runs, sleeps, tools } = recordingStep();
+    const db = stubDb([
+      joinedPayloadRows(["active", "closed"]), // payload read (rank 1 active, rank 2 closed)
+      [{ userId: FIXTURE.userId }], // recordDigestSent: digests update RETURNING
+      [], // recordDigestSent: user_preferences update
+      [{ userId: FIXTURE.userId }], // recordDigestDeliveryOutcome: digests update RETURNING
+    ]);
+    let sentItemCount = -1;
+    const result = await deliverDigestEmail(
+      tools,
+      db,
+      {
+        send: async (payload) => {
+          sentItemCount = payload.items.length;
+          return { emailId: "re_x" };
+        },
+        lastEvent: async () => "delivered",
+      },
+      7,
+    );
+    assert(result === "delivered", `mixed result: ${String(result)}`);
+    assert(sentItemCount === 1, `closed item not filtered from render: sent ${sentItemCount} item(s)`);
+    assert(
+      JSON.stringify(runs) === '["send-email","delivery-poll-0","record-delivery"]',
+      `steps: ${runs.join(",")}`,
+    );
+    assert(JSON.stringify(sleeps) === '["delivery-wait-0"]', `sleeps: ${sleeps.join(",")}`);
+  }
+  console.log("10. G1b mixed active+closed → only active rendered OK");
 
   console.log("test-digest-email OK");
 });

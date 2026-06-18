@@ -102,14 +102,22 @@ export async function deliverDigestEmail(
   db: Db,
   email: EmailSeam,
   digestId: number,
-): Promise<DigestDeliveryStatus | "skipped-allowlist"> {
-  let sent: SendDigestResult;
+): Promise<DigestDeliveryStatus | "skipped-allowlist" | "skipped-empty"> {
+  let sent: SendDigestResult | { skipped: "empty" };
   try {
     sent = await step.run("send-email", async () => {
       const payload = await getDigestEmailPayload(db, digestId);
       // An existing digest always joins to ≥1 item; null means the row vanished — an invariant
       // break, same posture as the rerank-permutation check in ./digest.
       if (!payload) throw new Error(`digest: email payload missing for digest ${digestId}.`);
+      // G1b: every item's job was lifecycle-closed between retrieval and send (an Arm A/B Worker tick
+      // landing during the multi-hour synthesis wait — getDigestEmailPayload filters non-active jobs).
+      // Send NOTHING (a closed job must never reach an inbox) and skip the poll. A clean no-send,
+      // distinct from the null invariant break above; the orchestrator backs the user off the cadence.
+      // Like the allowlist skip this is a SUCCESSFUL step result — once memoized it replays identically,
+      // so the send-vs-skip branch never diverges across a retry (the per-attempt re-read residual noted
+      // in this function's doc applies only when the step itself FAILS and the whole function retries).
+      if (payload.items.length === 0) return { skipped: "empty" as const };
       const res = await email.send(payload);
       if ("emailId" in res) await recordDigestSent(db, digestId, res.emailId);
       return res;
@@ -118,7 +126,7 @@ export async function deliverDigestEmail(
     await step.run("record-send-failure", () => recordDigestSendFailure(db, digestId));
     throw err; // rethrow so Inngest records the failed run
   }
-  if ("skipped" in sent) return "skipped-allowlist";
+  if ("skipped" in sent) return sent.skipped === "empty" ? "skipped-empty" : "skipped-allowlist";
   const emailId = sent.emailId;
 
   // Bounded poll: sleep → poll; if still in flight, one slower second round. Poll steps are PURE

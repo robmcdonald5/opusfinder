@@ -88,7 +88,11 @@ integration (email ships in Phase 11 on the local dev runtime — locked at Phas
 - `src/delivery.ts` (Phase 11) — `deliverDigestEmail(step, db, email, digestId)`, the post-persist
   step block: ONE `send-email` step (payload read → allowlist-gated Resend send with
   `Idempotency-Key: digest/<digestId>` → `recordDigestSent`) wrapped in the fail-run discipline (retry
-  exhaustion → `delivery_status='failed'` → rethrow); then a **bounded delivery poll** — sleep 2m,
+  exhaustion → `delivery_status='failed'` → rethrow). G1b: `getDigestEmailPayload` filters items to
+  `lifecycle_state='active'`, so a job closed between retrieval and send (an Arm A/B Worker tick during
+  the synthesis wait — the probe checks only the apply URL, never lifecycle) never renders; if that
+  empties the payload the step returns `"skipped-empty"` (no send, the orchestrator backs the user off
+  the cadence) — distinct from the allowlist skip. Then a **bounded delivery poll** — sleep 2m,
   `GET /emails/:id`, and if still in flight one more 10m round — and ONE `record-delivery` step.
   `mapDeliveryEvent` encodes the pipeline policy: `delivered`/`opened`/`clicked` → `delivered`;
   `bounced` → `bounced` + **hard**-suppress (the poll's `last_event` carries no bounce subtype —
