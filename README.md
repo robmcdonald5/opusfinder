@@ -118,9 +118,11 @@ backfill drain** (`embed-backlog-drain` `0 4 * * *` cursorless, `singleton:skip`
 `MAX_PAGES_PER_RUN=200`, paged per `step.run`), replacing the dropped
 GitHub Actions bridge; and the new `health_alerts` append-only incident table (migration
 `0014_slow_red_hulk`, additive, no writer yet — forward-provisioned for the 12b dev panel). 12b (auth +
-prefs/CV forms + history + the interactive dev panel) is deferred. Owner-pending: `pnpm db:migrate`
-(0014) + the Cloud deploy (the Inngest↔Vercel integration auto-provisions the signing/event keys;
-`INNGEST_DEV` UNSET; Deployment Protection OFF for `/api/inngest`). Built on branch `feat/headless-runtime`.
+prefs/CV forms + history + the interactive dev panel) is deferred. **Deployed live on Vercel + Inngest
+Cloud 2026-06-17** — the `/api/inngest` serve route, the cadence cron (`0 13 * * *`), and the F8
+`embed-backlog-drain` (`0 4 * * *`) all run in prod; migration 0014 applied; the Inngest↔Vercel integration
+auto-provisions the signing/event keys (`INNGEST_DEV` UNSET); Vercel Standard Protection is ON but the custom
+domain `opusfinder.ai` stays PUBLIC so Inngest reaches `/api/inngest`. Merged to `main` (PR #24).
 
 Phase F6 added **pipeline health & alerting** — the watcher for health data that was recorded everywhere but
 read nowhere. A new pure, serverless-safe checker (`@opusfinder/db/health`, **NO migration**) computes seven
@@ -130,7 +132,7 @@ errors, bounce/suppression, discovery lane-errors) + a rerank-cache cost rollup 
 operator (a new `sendHealthAlert` in `@opusfinder/email` → a dedicated `ALERT_TO`) on an enforce-firing check. The
 scrapers Worker fires a content-free watchdog heartbeat (`HEALTH_PING_URL`) on each successful ingestion tick to
 catch the cron's own death, and **ingestion is resumed hourly** (`0 * * * *`, dialed back from `*/30`; deployed
-live 2026-06-15); F5 also **resumed the weekly discovery cron** (`0 3 * * SUN`). Uncommitted on `main`.
+live 2026-06-15); F5 also **resumed the weekly discovery cron** (`0 3 * * SUN`). Merged to `main` (PR #22).
 
 Phase F5 added **discovery scale-out** — a `SeedLane` registry (`SEED_LANES`) replaces the single
 `loadSeed()` call with a per-lane loop (`selectLanes` / `resolveLanes`; isolated non-`failLoud` lanes
@@ -141,8 +143,8 @@ fetch-only Algolia calls + a regex over covered ATS board URLs (Worker-safe, reu
 `--lanes`; the weekly Worker discovery cron is **RESUMED** (`0 3 * * SUN`, Workers Paid) via
 `runDiscovery({ workerOnly: true })`; the health checker gains a `discovery_lane_errors` check;
 `discoveryMaxAgeD` 8→13; `@opusfinder/sources` now exports `cleanHtml` / `htmlToText` / `CleanStep`.
-**Scope: registry + HN only** (passive DNS + Common Crawl → F5-LANES-2); **NO migration**. Uncommitted
-on `main`.
+**Scope: registry + HN only** (passive DNS + Common Crawl → F5-LANES-2); **NO migration**. Merged to
+`main` (PR #23).
 
 Phase F3 added **user preferences** as a hard-filter + soft-prompt layer. A new `location_mode`
 (`any` / `remote_only` / `onsite_only`) hard filter subsumes the old `remote_ok` boolean in retrieval;
@@ -150,8 +152,14 @@ min/max salary and a YoE band (`yoe_min` / `yoe_max`) are stored and fed to rera
 **soft prompt signal only** (never hard filters), and `dealbreakers` merge into the
 exclusions list. A digest **quality floor** (`MIN_SCORE=0.5`) drops sub-floor reranked items before the
 top-K cut and skips synthesis/send entirely when none clear. `target_level` was dropped — the YoE band
-is the sole declared-level signal. Migration 0012 applied; backend-only; live self-send passed. Uncommitted
-on branch `feat/user-preferences`.
+is the sole declared-level signal. Migration 0012 applied; backend-only; live self-send passed. Merged to
+`main` (PR #20).
+
+Phase F2 added **stale-job lifecycle close** — three arms (feed-absence sweep, board-death close,
+pre-send liveness probe) that ship **SHADOW** (count-only) by default behind a SINGLE `F2_ENFORCE` env
+switch (`parseEnforceFlag` in `@opusfinder/shared`): the scrapers Worker reads `env.F2_ENFORCE`
+(`wrangler [vars]`) for Arm A (`sweepLifecycle`) + Arm B (`closeJobsForCompanies`), and the digest
+runtime reads `process.env.F2_ENFORCE` for Arm C (`probeDigestLiveness`). Merged to `main` (PR #18).
 
 Phase 11 adds **email delivery** on **Resend**: the per-user digest function now ends with a send →
 bounded-delivery-poll → record tail (`packages/inngest/src/delivery.ts`). A new **`@opusfinder/email`**
@@ -160,8 +168,8 @@ hostile input; `javascript:` apply URLs degrade to inert text) from the only `re
 `Idempotency-Key: digest/<digestId>` so step retries can't double-send, fail-closed `EMAIL_ALLOWLIST`).
 Delivery state lands per-send on `digests` (`email_id`/`delivery_status`/`sent_at`, migration 0009) and
 user-level on `user_preferences` (bounce → hard-suppress; complaint → suppress without a bounce write).
-**LOCAL-DEV-ONLY, manual trigger**: the cadence cron, Inngest Cloud keys, production serve, webhooks,
-and the unsubscribe endpoint are all Phase 12. Sending domain: `send.opusfinder.ai` (verified on Resend,
+The cadence cron, Inngest Cloud keys, and production serve shipped in 12a (2026-06-17); webhooks and the
+unsubscribe endpoint remain 12b. Sending domain: `send.opusfinder.ai` (verified on Resend,
 SPF/DKIM/DMARC). Gates: `pnpm email:preview` (hostile-fixture render, no creds),
 `pnpm --filter @opusfinder/inngest test:digest-email` (stub smoke), and the live inbox gate.
 

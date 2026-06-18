@@ -10,9 +10,11 @@ delivery poll → record** (`src/delivery.ts`).
 > **Phases 10/11 run on the local Inngest dev server** (`npx inngest-cli dev`, `INNGEST_DEV=1`) for
 > end-to-end iteration — keyless, no Cloud account needed. **Phase 12a then BUILT the production runtime:**
 > the cadence cron (`makeCadenceOrchestrator`), the F8 backfill drain, and the deployed serve home
-> (SvelteKit-on-Vercel via `inngest/sveltekit` at `apps/web/src/routes/api/inngest/+server.ts`) all ship
-> in code on branch `feat/headless-runtime` — only the **Inngest Cloud deploy** (account + keys via the
-> Inngest↔Vercel integration) is owner-pending. Delivery webhooks + the unsubscribe endpoint remain **12b**.
+> (SvelteKit-on-Vercel via `inngest/sveltekit` at `apps/web/src/routes/api/inngest/+server.ts`) all shipped
+> on `main` (PR #24) and are **DEPLOYED LIVE on Vercel + Inngest Cloud** (2026-06-17) — the SvelteKit serve
+> hosts the digest fns + the cadence cron + the F8 `embed-backlog-drain`, with
+> `INNGEST_SIGNING_KEY`/`INNGEST_EVENT_KEY` auto-provisioned by the Inngest↔Vercel integration. Delivery
+> webhooks + the unsubscribe endpoint remain **12b**.
 
 > **Worker invariant.** Inngest functions are a Node/server runtime that read Neon directly as a
 > trusted process — this package must NEVER enter the `apps/scrapers` Cloudflare Worker bundle. Both
@@ -26,8 +28,9 @@ batches finish in under an hour but the SLA is a 24h hard cap. Inngest's durable
 cannot (hard 15-min wall, no cross-invocation suspend). That durability is the decisive reason the
 digest runs on Inngest rather than extending `apps/scrapers`. Phase 10 only needs the local dev server
 to prove the pipeline end-to-end; Phase 12a then built the deployed runtime (the SvelteKit serve route +
-the cadence cron + the F8 backfill) — only the Inngest Cloud account + keys are owner-pending (email
-ships in Phase 11 on the local dev runtime — locked at Phase-11 planning, 2026-06-11).
+the cadence cron + the F8 backfill), shipped on `main` (PR #24) and DEPLOYED LIVE on Vercel + Inngest Cloud
+(2026-06-17) with `INNGEST_SIGNING_KEY`/`INNGEST_EVENT_KEY` auto-provisioned by the Inngest↔Vercel
+integration (email ships in Phase 11 on the local dev runtime — locked at Phase-11 planning, 2026-06-11).
 
 ## What's here
 
@@ -188,5 +191,5 @@ Per CLAUDE.md (external-platform integration), the work splits cleanly:
 | All package code, the local dev server (`pnpm inngest:dev` — keyless), the end-to-end gate | **Agent** |
 | Provide `DATABASE_URL` + `ANTHROPIC_API_KEY` (already in place since Phase 9) | **User** |
 | **Resend account + API key + verified sending domain (SPF/DKIM/DMARC) + `EMAIL_FROM`/`EMAIL_ALLOWLIST`** | **User (Phase 11)** |
-| Production serve route (SvelteKit-on-Vercel, `apps/web`) + the cadence cron (`0 13 * * *`) + the F8 backfill cron | Code built (**Agent**, 12a) |
-| **Inngest Cloud account + app sync; `INNGEST_SIGNING_KEY`/`INNGEST_EVENT_KEY` auto-provisioned by the Inngest↔Vercel integration (`INNGEST_DEV` UNSET)** | **User (deploy, 12a)** |
+| Production serve route (SvelteKit-on-Vercel, `apps/web`) + the cadence cron (`0 13 * * *`) + the F8 backfill cron | Built + deployed (12a; live 2026-06-17) |
+| **Inngest Cloud account + app sync; `INNGEST_SIGNING_KEY`/`INNGEST_EVENT_KEY` auto-provisioned by the Inngest↔Vercel integration (`INNGEST_DEV` UNSET)** | Done (User, deployed 2026-06-17) |

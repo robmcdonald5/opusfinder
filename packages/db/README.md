@@ -2,7 +2,7 @@
 
 Drizzle ORM over Neon Postgres, using the **neon-http** driver
 (`@neondatabase/serverless`). HTTP/fetch-based, no TCP sockets — so the same
-client runs in Node today and in Cloudflare Workers later (Phase 8). The package
+client runs in Node today and in Cloudflare Workers (Phase 8). The package
 exports raw `.ts` (no build step / no `dist`): `createDb(connectionString)`
 returns a Drizzle client. Phase 2 added subpath exports alongside it:
 `@opusfinder/db/repos` (`upsertCompany` / `upsertJobs` / `listCompanies`; the Phase-4 embedding repo —
@@ -126,8 +126,11 @@ Run from the repo root via the workspace filter so the cwd is `packages/db`:
   `repos/discovery.ts`'s `deactivateStale` was widened to RETURN the deactivated ids (was a bare count) so
   Arm B can close their jobs. Soft-close only — never a row DELETE (F1 reads the closed row's signature;
   `digest_items.job_id` is `ON DELETE NO ACTION`). Smoke: `pnpm --filter @opusfinder/db test:lifecycle` (no
-  creds). **Shipped SHADOW / count-only** — the `'closed'` flip is currently suppressed and tallied as
-  `wouldClose` pending the F2-enforce sub-phase. Note for `sweepLifecycle` (Arm A): "shadow" here means
+  creds). **Ships SHADOW / count-only by DEFAULT** — the `'closed'` flip is suppressed and tallied as
+  `wouldClose` unless a SINGLE `F2_ENFORCE` switch (`parseEnforceFlag` in `@opusfinder/shared`) is on; it's
+  threaded through all three arms with no multi-site code edit — the scrapers Worker reads `env.F2_ENFORCE`
+  (wrangler `[vars]`) for Arms A/B, and the digest runtime reads `process.env.F2_ENFORCE` for Arm C.
+  Note for `sweepLifecycle` (Arm A): "shadow" here means
   "no `'closed'` WRITE", NOT "no write at all" — it still persists the `consecutive_absences` streak
   (capped at the threshold) and revives reappearing rows by design, so the streak is warm when enforce
   flips on. This is a deliberate asymmetry vs the bulk Arm B/C closers (a pure count, zero writes in
@@ -145,8 +148,8 @@ Run from the repo root via the workspace filter so the cwd is `packages/db`:
   excluded, so un-backfilled rows are inert, not wrong. `alreadyShownSignatures` carries NO `lifecycle_state`
   filter (a soft-closed predecessor's signature still suppresses its repost). Re-runnable backfill:
   `pnpm db:backfill-signatures` (`scripts/backfill-content-signature.ts`); no-creds smoke
-  `pnpm --filter @opusfinder/db test:signature`. **NOT YET LIVE** — migration 0011 is unapplied and rows are
-  unsigned, so the read paths are INERT by design until the owner-gated F1d backfill; the cosine near-dup layer
+  `pnpm --filter @opusfinder/db test:signature`. **LIVE** — migration 0011 is APPLIED and the rows are
+  backfilled, so the display-collapse + repost anti-join read paths are active; the cosine near-dup layer
   (F1e/F1f) is DEFERRED.
 - **Schema (Phase F3).** `drizzle/0012_dazzling_layla_miller.sql` (additive, hand-guarded `IF NOT EXISTS` — same
   neon-http discipline as 0002/0010/0011) adds five `user_preferences` columns — `max_salary`, `yoe_min`,
@@ -158,7 +161,7 @@ Run from the repo root via the workspace filter so the cwd is `packages/db`:
   boolean), and `RetrieveOpts.remoteOk` → `locationMode`. LOCATION is the only working hard filter in F3; salary +
   YoE are stored + soft-prompt-only (never hard filters). No-creds smokes:
   `pnpm --filter @opusfinder/db test:prefs` (preferences round-trip) + `pnpm --filter @opusfinder/db test:location`
-  (`geoMatches` LocationMode branches). **APPLIED to prod** (unlike F1's unapplied 0011).
+  (`geoMatches` LocationMode branches). **APPLIED to prod.**
 - **Schema (Phase F4) — job-side enrichment, REMOVED.** `drizzle/0013_cloudy_polaris.sql` originally added
   seven nullable `jobs` columns for job-side structured enrichment (`yoe_min`/`yoe_max`, `salary_min`/`salary_max`,
   `salary_currency`/`salary_period`, `enriched_at`). The feature was fully removed: `drizzle/0016` drops those
@@ -179,8 +182,24 @@ Run from the repo root via the workspace filter so the cwd is `packages/db`:
   incident log — `check_id` / `mode` / `metric` / `threshold` / `detail` / `created_at`, plus a `created_at`
   index. `check_id` / `mode` are plain `text` (NOT a TS union imported from `health.ts`) deliberately, to
   avoid a `schema.ts`→`health.ts`→client import cycle. There is **NO writer yet** — the table is
-  forward-provisioned for the 12b dev panel's incident history. **Migration NOT yet applied** (owner runs
-  `pnpm db:migrate`).
+  forward-provisioned for the 12b dev panel's incident history. **APPLIED to prod.**
+- **`jobs.raw` DEPRECATED — no longer written.** `drizzle/0015_known_black_queen.sql`
+  (`ALTER COLUMN "raw" DROP NOT NULL`) made the untouched-source-payload column nullable. `raw` was
+  write-only debug data that grew to ~90% of the database (442 MB of 489 MB), exhausting the Neon free-tier
+  storage limit and failing every write on 2026-06-16. `upsertJobs` stopped writing it; the column is kept
+  (nullable, for rollback/backfill safety) and the reclaim NULLed the existing rows. To re-derive richer
+  text from a posting, re-ingest the board. (Mirrors the `jobs` doc comment in `schema.ts:108-128`;
+  `INGEST_LIMIT` was restored to 150 once storage was freed.) **APPLIED to prod.**
+- **Schema (Phase F4 enrichment cols DROPPED).** `drizzle/0016_friendly_rachel_grey.sql` (`DROP COLUMN IF
+  EXISTS`) removes the seven job-side enrichment columns added by 0013 (`yoe_min`/`yoe_max`,
+  `salary_min`/`salary_max`, `salary_currency`/`salary_period`, `enriched_at`) — see the Phase F4 bullet
+  above for the full removal story. **APPLIED to prod.**
+- **Index (Phase F8/F6) — `jobs_unembedded_idx`.** `drizzle/0017_uneven_doctor_spectrum.sql` (hand-guarded
+  `CREATE INDEX IF NOT EXISTS`, same neon-http discipline as 0002) adds a partial btree
+  `ON "jobs" ("id") WHERE "embedding" IS NULL`, so the recurring un-embedded scans index-scan instead of
+  seq-scanning the whole table: the F6 `embedding_backlog` health count, `jobsNeedingEmbedding`, and the F8
+  `embed-backlog-drain`'s `ORDER BY id LIMIT` paging. Self-prunes to ~0 entries as rows embed. **APPLIED to
+  prod.**
 - **neon-http migrations are NOT transactional.** The neon-http migrator applies
   a migration's statements without a wrapping transaction, so a multi-statement
   migration that fails partway leaves a partial apply with no rollback (and a
