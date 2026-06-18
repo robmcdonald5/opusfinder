@@ -485,6 +485,13 @@ function makePerUser(deps: DigestDeps) {
       // for a non-allowlisted user every tick). A real send already stamped via recordDigestSent.
       if (delivery === "skipped-allowlist") {
         await step.run("mark-considered-allowlist", () => markDigestConsidered(deps.db, userId));
+      } else if (delivery === "skipped-empty") {
+        // G1b: every item's job was lifecycle-closed between retrieval and send (the Arm A/B race spanning
+        // the synthesis wait — closed after retrieval, persisted anyway, kept by the probe's URL-only check),
+        // so the render filtered them all out and no email was sent. Like the all-dead and allowlist-skip
+        // paths, back the user off the cadence (no send stamped sent_at) so the daily cron doesn't re-run the
+        // paid pipeline for them next tick. The 0-item digest row stays as audit.
+        await step.run("mark-considered-all-closed", () => markDigestConsidered(deps.db, userId));
       }
       return { ...persisted, delivery };
     },

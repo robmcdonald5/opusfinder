@@ -113,7 +113,9 @@ Run from the repo root via the workspace filter so the cwd is `packages/db`:
   by the pipeline's send/poll/failure steps; the user-level aggregates (`last_digest_*`,
   `digest_bounce_status`, `digest_suppressed_at`) stay on `user_preferences`. The email repo surface
   (`repos/digests.ts`): `getDigestEmailPayload` (the render read — digests ⋈ user ⋈ digest_items ⋈
-  jobs ⋈ companies in one round trip) + `recordDigestSent` / `recordDigestDeliveryOutcome` /
+  jobs ⋈ companies in one round trip; items are filtered APP-SIDE to `lifecycle_state='active'` so a job
+  closed between retrieval and send never renders — G1b: returns `null` only when the digest row vanished,
+  vs empty `items` for a clean no-send) + `recordDigestSent` / `recordDigestDeliveryOutcome` /
   `recordDigestSendFailure`, smoke-checked by `pnpm --filter @opusfinder/db test:digest-payload`.
 - **Schema (Phase F2).** `drizzle/0010_curly_drax.sql` adds `jobs.consecutive_absences`
   (`smallint NOT NULL DEFAULT 0`) — a pure-streak counter of consecutive trusted fetches in which an `active`
