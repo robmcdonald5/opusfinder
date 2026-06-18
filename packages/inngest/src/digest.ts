@@ -4,6 +4,7 @@ import {
   alreadyShownSignatures,
   deleteUserDigestForRun,
   finishDigestRun,
+  getJobSnapshots,
   getPreferences,
   getProfileForDigest,
   insertDigest,
@@ -17,7 +18,12 @@ import {
 import { buildDigestSystem, renderDigestJob } from "@opusfinder/llm";
 import type { BatchPoll, BatchRequest, BatchResult } from "@opusfinder/llm";
 import type { RerankCandidate } from "@opusfinder/rerank";
-import type { LocationMode, PromptPreferences, StructuredProfile, UserId } from "@opusfinder/shared";
+import type {
+  LocationMode,
+  PromptPreferences,
+  StructuredProfile,
+  UserId,
+} from "@opusfinder/shared";
 import { NonRetriableError } from "inngest";
 
 import { deliverDigestEmail, type EmailSeam } from "./delivery";
@@ -304,7 +310,9 @@ function makePerUser(deps: DigestDeps) {
       });
       if (candidates.length === 0) {
         // Considered this cadence period (nothing retrieved) — back off so the daily cron doesn't re-run.
-        await step.run("mark-considered-no-candidates", () => markDigestConsidered(deps.db, userId));
+        await step.run("mark-considered-no-candidates", () =>
+          markDigestConsidered(deps.db, userId),
+        );
         return { userId, skipped: "no-candidates" as const };
       }
 
@@ -344,7 +352,9 @@ function makePerUser(deps: DigestDeps) {
           if (!job) {
             // Invariant: reranked ids are a permutation of the retrieved candidates. A miss means a
             // broken rerank — fail loudly rather than synthesize a blank job into a fabricated reason.
-            throw new Error(`digest: reranked job ${it.jobId} is not in the candidate set (user ${userId}).`);
+            throw new Error(
+              `digest: reranked job ${it.jobId} is not in the candidate set (user ${userId}).`,
+            );
           }
           return {
             customId: synthId(it.jobId),
@@ -431,11 +441,26 @@ function makePerUser(deps: DigestDeps) {
             rerankCacheCreationTokens: reranked.cache.creationInputTokens,
           },
         });
+        // G3b: snapshot the kept jobs' display fields onto digest_items (fork G3-SNAPSHOT-SOURCE — one
+        // small SELECT over the ~12 kept ids, which the rerank/synthesis step state never carried). The
+        // jobs are live (just retrieved), so every kept id must resolve; a miss is an invariant break.
+        const snapshots = await getJobSnapshots(
+          deps.db,
+          kept.map((it) => it.jobId),
+        );
         await insertDigestItems(
           deps.db,
           digestId,
           userId,
-          kept.map((it, i) => ({ jobId: it.jobId, rank: i + 1, score: it.score, reason: it.reason })),
+          kept.map((it, i) => {
+            const snap = snapshots.get(it.jobId);
+            if (!snap) {
+              throw new Error(
+                `digest: no job snapshot for kept job ${it.jobId} (user ${userId}, run ${digestRunId}).`,
+              );
+            }
+            return { jobId: it.jobId, rank: i + 1, score: it.score, reason: it.reason, ...snap };
+          }),
         );
         return { userId, digestId, itemCount: kept.length };
       });
@@ -463,7 +488,12 @@ function makePerUser(deps: DigestDeps) {
         // Considered this period (a digest was built, every apply-URL was dead) — back off after the PAID
         // rerank + synthesis so the daily cron doesn't re-run the whole pipeline for them tomorrow.
         await step.run("mark-considered-all-dead", () => markDigestConsidered(deps.db, userId));
-        return { userId, digestId: persisted.digestId, itemCount: 0, skipped: "all-items-dead" as const };
+        return {
+          userId,
+          digestId: persisted.digestId,
+          itemCount: 0,
+          skipped: "all-items-dead" as const,
+        };
       }
 
       // 8. Email delivery (Phase 11): send (Idempotency-Key digest/<digestId>) → bounded delivery

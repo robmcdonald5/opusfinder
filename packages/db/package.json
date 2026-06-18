@@ -15,7 +15,9 @@
   "scripts": {
     "migrate": "tsx scripts/migrate.ts",
     "backfill-signatures": "tsx scripts/backfill-content-signature.ts",
+    "backfill-snapshots": "tsx scripts/backfill-digest-item-snapshot.ts",
     "prune-stale": "tsx scripts/prune-stale-jobs.ts",
+    "prune-oplog": "tsx scripts/prune-oplog.ts",
     "test:signature": "tsx scripts/test-content-signature.ts",
     "test:prefs": "tsx scripts/test-prefs-roundtrip.ts",
     "test:location": "tsx scripts/test-location-mode.ts",
@@ -28,6 +30,7 @@
     "test:digest-payload": "tsx scripts/test-digest-payload.ts",
     "test:lifecycle": "tsx scripts/test-lifecycle-sweep.ts",
     "test:prune": "tsx scripts/test-prune-stale-jobs.ts",
+    "test:prune-oplog": "tsx scripts/test-prune-oplog.ts",
     "test:health": "tsx scripts/test-health.ts",
     "test:embed-parity": "tsx scripts/test-embedding-backlog-parity.ts",
     "typecheck": "tsc --noEmit"

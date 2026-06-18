@@ -628,15 +628,19 @@ export const digests = pgTable(
       foreignColumns: [user.id],
       name: "digests_user_id_user_id_fk",
     }).onDelete("cascade"),
-    // CASCADE HAZARD: deleting a digest_runs row cascades run → digests → digest_items, ERASING the
-    // (user_id, job_id) dedup history `alreadyShownJobIds` depends on — already-shown jobs would
-    // silently re-surface. No code deletes digest_runs today; any future retention/cleanup of run rows
-    // must first denormalize the shown-history (or switch this FK to NO ACTION).
+    // G3 decision 6 (migration 0019): NO ACTION, NOT cascade. Deleting a digest_runs row USED to cascade
+    // run → digests → digest_items, ERASING the (user_id, job_id) dedup + recommendation history that
+    // `alreadyShownJobIds` and the Phase-12 history view depend on. G3g adds a 90-day `digest_runs`
+    // retention prune, which turns that dormant cascade into a LIVE hazard — so this FK is NO ACTION: a
+    // run-row delete now REFUSES while any digest still references it (G3g's digest_runs gate carries a
+    // matching `NOT EXISTS (… digests …)` clause, so it only ever prunes childless/aged-out runs). This
+    // is load-bearing for G3's "self-contained history" claim: without it, oplog retention (G3g) would
+    // erase the very recommendation history G3 makes durable.
     foreignKey({
       columns: [t.digestRunId],
       foreignColumns: [digestRuns.id],
       name: "digests_digest_run_id_digest_runs_id_fk",
-    }).onDelete("cascade"),
+    }).onDelete("no action"),
   ],
 );
 
@@ -658,6 +662,22 @@ export const digestItems = pgTable(
     score: real("score").notNull(),
     reason: text("reason").notNull(),
     feedback: text("feedback").$type<DigestFeedback>(),
+    // --- G3 display snapshot (migration 0019): the render fields copied from the LIVE jobs/companies row
+    // at persist time (insertDigestItems), so a digest renders — and the Phase-12 history view reads —
+    // WITHOUT a live jobs join, and the record SURVIVES the job's prune (G3e lets the prune delete a
+    // closed+stale job EVEN when a digest_items row references it). All nullable: NULL on pre-G3 rows until
+    // the one-time keyset backfill (scripts/backfill-digest-item-snapshot.ts), then every new row is
+    // populated at insert. `getDigestEmailPayload` reads these FIRST, COALESCE-falling-back to the live
+    // jobs/companies row during the backfill gap (G3c). DELIBERATELY NOT `content_signature` (decision 4 —
+    // a durable signature snapshot would suppress a relisted role FOREVER, breaking re-recommend-after-
+    // relist; the live INNER JOIN in `alreadyShownSignatures` is the self-scoping cooldown) and NOT
+    // `rank`/`score`/`reason` (already durable columns above). `lifecycle_state` is INTENTIONALLY not
+    // snapshotted: it is mutable, and the email's G1b active-filter must read it LIVE, not a frozen copy.
+    jobTitle: text("job_title"),
+    companySlug: text("company_slug"),
+    applyUrl: text("apply_url"),
+    locations: jsonb("locations").$type<string[]>(),
+    remote: boolean("remote"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
@@ -674,15 +694,15 @@ export const digestItems = pgTable(
       foreignColumns: [user.id],
       name: "digest_items_user_id_user_id_fk",
     }).onDelete("cascade"),
-    foreignKey({
-      columns: [t.jobId],
-      foreignColumns: [jobs.id],
-      name: "digest_items_job_id_jobs_id_fk",
-      // NO onDelete cascade (unlike the digest/user FKs above): digest_items is an append-only
-      // history + the already-shown dedup source, so a job row must NOT silently erase the dedup
-      // record (matches jobs.company_id's plain FK convention). Jobs are soft-closed, never hard-
-      // deleted; if a hard delete is ever added it must explicitly handle dependent digest_items.
-    }),
+    // job_id is a PLAIN historical reference — NO FK to jobs (the constraint was DROPPED in migration
+    // 0019, G3 decision 5). G3 lets the prune (G3e) hard-DELETE a closed+stale job EVEN when a
+    // digest_items row still references it (the "recommended-but-stale" reclamation that G2's `NOT IN
+    // digest_items` gate pinned forever); an ON DELETE NO ACTION FK would REJECT that delete. A
+    // post-prune job_id may dangle — harmless by design: `alreadyShownJobIds` matches it by id (a
+    // dangling id never collides with a live job's id) and `alreadyShownSignatures` INNER-JOINs the LIVE
+    // jobs row, so a pruned row's signature self-drops from the exclude set (decision 4 — the relist
+    // becomes re-recommendable; the retention window IS the cooldown). The render/history display fields
+    // are preserved by the G3 snapshot columns above, so dropping the FK loses no user-visible data.
   ],
 );
 
