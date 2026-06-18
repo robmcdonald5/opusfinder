@@ -4,7 +4,7 @@
  * Drizzle client is injected, every mutation is a single neon-http round-trip, and time math is
  * SQL-side (`now()`). The run helpers mirror ./discovery's `startRun`/`finishRun` against `digest_runs`.
  */
-import { and, desc, eq, gt, isNotNull, isNull, sql, type SQL } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, isNotNull, isNull, sql, type SQL } from "drizzle-orm";
 
 import type { DigestTrigger, UserId } from "@opusfinder/shared";
 
@@ -24,7 +24,7 @@ import {
   type RunStatus,
 } from "../schema";
 import { finishRunRow } from "./runs";
-import { intArrayLiteral, NUL } from "./sql";
+import { intArrayLiteral, NUL, stripNul } from "./sql";
 
 /** A user eligible to receive a digest (just the id — the per-user function reads the rest). */
 export interface DigestRecipient {
@@ -179,19 +179,76 @@ export async function insertDigest(db: Db, input: NewDigest): Promise<{ id: numb
   return row;
 }
 
-/** A ranked digest item to write. `rank`/`score` come from the rerank; `reason` from synthesis. */
-export interface NewDigestItem {
+/**
+ * A ranked digest item to write. `rank`/`score` come from the rerank; `reason` from synthesis. The
+ * display SNAPSHOT (`jobTitle`/`companySlug`/`applyUrl`/`locations`/`remote`, G3) is copied off the live
+ * job at persist (via {@link getJobSnapshots}) so the row renders + survives the job's prune — see
+ * {@link DigestItemSnapshot}. The persist step throws if a snapshot is missing, so these are non-null.
+ */
+export interface NewDigestItem extends DigestItemSnapshot {
   jobId: number;
   rank: number;
   score: number;
   reason: string;
 }
 
+/** The display fields a digest_items row snapshots from its job's live `jobs`/`companies` row (G3,
+ *  migration 0019). The render/history reads these instead of joining live `jobs`, so the record is
+ *  self-contained and survives the job's prune. Mirrors what `getDigestEmailPayload` projects. */
+export interface DigestItemSnapshot {
+  jobTitle: string;
+  companySlug: string;
+  applyUrl: string;
+  locations: string[];
+  remote: boolean;
+}
+
+/**
+ * The display snapshot for each of `jobIds`, keyed by job id — the persist step's source for the G3
+ * `digest_items` snapshot columns (fork G3-SNAPSHOT-SOURCE: one small SELECT over the ~12 kept ids rather
+ * than threading the fields through the rerank/synthesis step state, which never carried apply_url /
+ * company_slug). INNER JOIN is sound: the kept jobs were JUST retrieved (so `lifecycle_state='active'`,
+ * present in `jobs`) and every job has a `companies` row. A job pruned later (G3e) is irrelevant here —
+ * it is live NOW. Empty input → empty map (no query). Callers treat a MISSING id as an invariant break.
+ */
+export async function getJobSnapshots(
+  db: Db,
+  jobIds: number[],
+): Promise<Map<number, DigestItemSnapshot>> {
+  if (jobIds.length === 0) return new Map();
+  const rows = await db
+    .select({
+      jobId: jobs.id,
+      jobTitle: jobs.title,
+      companySlug: companies.slug,
+      applyUrl: jobs.applyUrl,
+      locations: jobs.locations,
+      remote: jobs.remote,
+    })
+    .from(jobs)
+    .innerJoin(companies, eq(companies.id, jobs.companyId))
+    .where(inArray(jobs.id, jobIds));
+  return new Map(
+    rows.map((r) => [
+      r.jobId,
+      {
+        jobTitle: r.jobTitle,
+        companySlug: r.companySlug,
+        applyUrl: r.applyUrl,
+        locations: r.locations,
+        remote: r.remote,
+      },
+    ]),
+  );
+}
+
 /**
  * Batch-insert a digest's ranked items in one statement. `userId` is denormalized onto each row (the
- * already-shown anti-join keys on it). `reason` is NUL-stripped (Postgres text can't store U+0000),
- * same discipline as the other text writes. An empty list is a no-op.
- * Top-K is small (~12), well under the bind-param ceiling, so no chunking.
+ * already-shown anti-join keys on it). `reason` AND the G3 display snapshot (`jobTitle`/`companySlug`/
+ * `applyUrl`/`locations`) are NUL-stripped (Postgres text/jsonb can't store U+0000), same discipline as
+ * the other text writes — the snapshot is sourced from already-NUL-clean `jobs` rows, but stripping here
+ * is belt-and-suspenders. An empty list is a no-op. Top-K is small (~12), well under the bind-param
+ * ceiling, so no chunking.
  */
 export async function insertDigestItems(
   db: Db,
@@ -208,6 +265,11 @@ export async function insertDigestItems(
       rank: it.rank,
       score: it.score,
       reason: it.reason.replaceAll(NUL, ""),
+      jobTitle: it.jobTitle.replaceAll(NUL, ""),
+      companySlug: it.companySlug.replaceAll(NUL, ""),
+      applyUrl: it.applyUrl.replaceAll(NUL, ""),
+      locations: stripNul(it.locations) as string[],
+      remote: it.remote,
     })),
   );
 }
@@ -223,7 +285,9 @@ export async function deleteUserDigestForRun(
   userId: UserId,
   digestRunId: number,
 ): Promise<void> {
-  await db.delete(digests).where(and(eq(digests.userId, userId), eq(digests.digestRunId, digestRunId)));
+  await db
+    .delete(digests)
+    .where(and(eq(digests.userId, userId), eq(digests.digestRunId, digestRunId)));
 }
 
 /** A user's most-recent digest header + its ranked items — read by the trigger CLI (and the Phase-12
@@ -277,8 +341,16 @@ export interface DigestApplyTarget {
 
 /**
  * The (jobId, applyUrl) of every item in one digest — Arm C HEAD/GET-probes these before send. INNER JOIN
- * is safe (persist throws on zero kept items, so an existing digest has ≥1 item). Ordered by rank for a
- * stable probe order.
+ * is safe AND correct here: this only ever runs on the JUST-PERSISTED current digest (step 7.5, immediately
+ * after persist), whose jobs are all `active` (never pruned — the prune targets only closed+30d jobs), so
+ * the live `jobs` row always matches. Ordered by rank for a stable probe order.
+ *
+ * G3 NOTE — apply_url source: this deliberately reads the LIVE `jobs.apply_url`, while the email render
+ * (getDigestEmailPayload) now reads the FROZEN snapshot `digest_items.apply_url`. They are captured the same
+ * instant (persist) and the probe is the very next step, so they diverge ONLY if a re-ingest UPDATEs
+ * `jobs.apply_url` in that seconds-wide window — an accepted, bounded gap (worst case: one dead link, the
+ * pre-Arm-C baseline). Reading LIVE here is the RIGHT choice for the 410→close decision (close on the job's
+ * CURRENT url, never a stale snapshot that a re-ingest may already have replaced with a working one).
  */
 export function getDigestApplyTargets(db: Db, digestId: number): Promise<DigestApplyTarget[]> {
   return db
@@ -358,22 +430,29 @@ export interface DigestEmailPayload {
  * The email payload for one digest, recipient resolved from `user` (the row is the truth — never
  * event data).
  *
+ * Display fields read from the G3 SNAPSHOT (digest_items.*) with a COALESCE fallback to the live
+ * jobs/companies row for un-backfilled pre-G3 rows; the jobs/companies joins are LEFT so the row
+ * survives the job's prune (G3e). The output shape is unchanged.
+ *
  * Two distinct empty shapes the caller must tell apart (G1b — close the email-render lifecycle gap
  * that turning F2_ENFORCE on exposes):
- *   - `null` — NO joined row at all. Persist guarantees ≥1 `digest_items` row (it throws on zero kept
- *     items), and jobs/companies are soft-closed/deactivated never deleted (the FK joins always match),
- *     so zero rows means the digest row itself vanished. The send step treats this as an invariant
- *     break and throws (same posture as the rerank-permutation check).
- *   - `{ items: [] }` — the digest exists, but every item's job is now `lifecycle_state != 'active'`.
- *     A job CLOSED between this digest's retrieval and its send (an Arm A/B Worker cron tick landing
- *     during the multi-hour synthesis batch wait — closed AFTER retrieval, persisted anyway, then kept
- *     by the step-7.5 probe, which checks only the apply URL's HTTP liveness, never `lifecycle_state`)
- *     must NOT render in an inbox: retrieval.ts already excludes closed jobs, and this is the one
- *     render-time gap. The send step treats an empty `items` as a clean no-send.
+ *   - `null` — NO digest_items row at all. Persist guarantees ≥1 (it throws on zero kept items), and
+ *     digest_items is never deleted by the prune (only the LEFT-joined jobs row may be), so zero rows
+ *     means the digest row itself vanished. The send step treats this as an invariant break and throws
+ *     (same posture as the rerank-permutation check).
+ *   - `{ items: [] }` — the digest exists, but every item's job is now `lifecycle_state != 'active'`
+ *     (closed) or pruned (LEFT-miss → NULL state). A job CLOSED between this digest's retrieval and its
+ *     send (an Arm A/B Worker cron tick landing during the multi-hour synthesis batch wait — closed
+ *     AFTER retrieval, persisted anyway, then kept by the step-7.5 probe, which checks only the apply
+ *     URL's HTTP liveness, never `lifecycle_state`) must NOT render in an inbox: retrieval.ts already
+ *     excludes closed jobs, and this is the one render-time gap. The send step treats an empty `items`
+ *     as a clean no-send.
  *
- * The lifecycle filter is applied APP-SIDE (closed rows are still fetched — ≤TOP_K of them) rather than
- * in the SQL join, so a single round trip keeps the header/recipient available from any row and lets us
- * distinguish "no digest" (null) from "all items closed" (empty). `companySlug` is `companies.slug`.
+ * The lifecycle filter is applied APP-SIDE on the LIVE `lifecycle_state` (closed/pruned rows are still
+ * fetched — ≤TOP_K of them) rather than in the SQL join, so a single round trip keeps the
+ * header/recipient available from any row and lets us distinguish "no digest" (null) from "all items
+ * closed/pruned" (empty). `lifecycle_state` is deliberately read live, NOT snapshotted (it is mutable —
+ * snapshotting it would re-open the very race G1b closed).
  */
 export async function getDigestEmailPayload(
   db: Db,
@@ -387,18 +466,31 @@ export async function getDigestEmailPayload(
       name: user.name,
       rank: digestItems.rank,
       reason: digestItems.reason,
-      title: jobs.title,
-      companySlug: companies.slug,
-      applyUrl: jobs.applyUrl,
-      locations: jobs.locations,
-      remote: jobs.remote,
+      // G3c (phase 1): read the display fields from the digest_items SNAPSHOT, COALESCE-falling-back to
+      // the live jobs/companies row for pre-G3 rows whose snapshot is still NULL (the backfill gap). The
+      // joins are LEFT so a future PRUNED job (G3e) keeps its digest_items row in the result rendering
+      // from the snapshot, instead of the INNER join dropping it. `lifecycle_state` is STILL read LIVE
+      // (NOT snapshotted — it is mutable) so the G1b active-filter below is unchanged; a pruned job's
+      // LEFT-miss yields NULL state → filtered out (correct: never email a delisted/pruned role). Phase 2
+      // ("drop the live join entirely", PHASE_G3_PLAN.md §4) is DEFERRED — it would remove this live
+      // lifecycle read and so REVERSE G1b; it needs an explicit decision at the backfill-complete cutover.
+      // The `sql<string>`/`sql<boolean>` types are non-null by ASSERTION: a row that is BOTH pruned (LEFT-miss
+      // → live NULL) and un-backfilled (snapshot NULL) would COALESCE to NULL, but it also has NULL
+      // lifecycle_state and is dropped by the active-filter below BEFORE these fields are read — so every
+      // RENDERED row resolves a real value. (Pre-G3e this combination can't even arise — the backfill is
+      // gated to reach 0-NULL first.)
+      title: sql<string>`COALESCE(${digestItems.jobTitle}, ${jobs.title})`,
+      companySlug: sql<string>`COALESCE(${digestItems.companySlug}, ${companies.slug})`,
+      applyUrl: sql<string>`COALESCE(${digestItems.applyUrl}, ${jobs.applyUrl})`,
+      locations: sql<string[]>`COALESCE(${digestItems.locations}, ${jobs.locations})`,
+      remote: sql<boolean>`COALESCE(${digestItems.remote}, ${jobs.remote})`,
       lifecycleState: jobs.lifecycleState,
     })
     .from(digests)
     .innerJoin(user, eq(user.id, digests.userId))
     .innerJoin(digestItems, eq(digestItems.digestId, digests.id))
-    .innerJoin(jobs, eq(jobs.id, digestItems.jobId))
-    .innerJoin(companies, eq(companies.id, jobs.companyId))
+    .leftJoin(jobs, eq(jobs.id, digestItems.jobId))
+    .leftJoin(companies, eq(companies.id, jobs.companyId))
     .where(eq(digests.id, digestId))
     .orderBy(digestItems.rank);
   const first = rows[0];

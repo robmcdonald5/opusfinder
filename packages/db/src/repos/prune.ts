@@ -33,19 +33,24 @@ export const PRUNE_BATCH = 2000;
  *   2. closed_at < now() - PRUNE_WINDOW_DAYS       — closed long enough. A NULL closed_at (every active
  *                                                    row, plus any row closed before the 0018 backfill)
  *                                                    fails this comparison and is CONSERVATIVELY skipped.
- *   3. id NOT IN (SELECT job_id FROM digest_items) — referenced by NO digest history. This is
- *                                                    CORRECTNESS, not optimization: digest_items.job_id is
- *                                                    ON DELETE NO ACTION (0007), so deleting a referenced
- *                                                    job would FK-VIOLATE; and that row's content_signature
- *                                                    is the proof alreadyShownSignatures uses to suppress a
- *                                                    repost (digests.ts). NULL-safe because
- *                                                    digest_items.job_id is NOT NULL (no NOT-IN
- *                                                    three-valued-logic trap). Do NOT drop this clause "to
- *                                                    reclaim more", and do NOT switch the FK to CASCADE —
- *                                                    both silently erase the repost-dedup history. (NOT
- *                                                    EXISTS over digest_items_user_id_job_id_idx is an
- *                                                    index-friendlier equivalent if an EXPLAIN ever
- *                                                    warrants it; NOT IN is fine at friends-scale.)
+ *   3. id NOT IN (SELECT job_id FROM digest_items) — referenced by NO digest history. NB the
+ *                                                    digest_items.job_id FK was DROPPED in G3 (migration
+ *                                                    0019, decision 5), so deleting a referenced job no
+ *                                                    longer FK-VIOLATES — this clause is now retained ON
+ *                                                    PURPOSE as G2's conservatism, and it is the EXACT
+ *                                                    clause G3e deliberately relaxes (the gated, destructive
+ *                                                    "prune recommended-but-stale jobs too" step — do that
+ *                                                    via G3e, never by silently editing here). Its surviving
+ *                                                    correctness reason: a still-live referenced row's
+ *                                                    content_signature is the proof alreadyShownSignatures
+ *                                                    uses to suppress a repost (digests.ts); G3 makes that
+ *                                                    suppression last only until the row is pruned (the
+ *                                                    re-recommend-after-relist cooldown, decision 4).
+ *                                                    NULL-safe because digest_items.job_id is NOT NULL (no
+ *                                                    NOT-IN three-valued-logic trap). (NOT EXISTS over
+ *                                                    digest_items_user_id_job_id_idx is an index-friendlier
+ *                                                    equivalent if an EXPLAIN ever warrants it; NOT IN is
+ *                                                    fine at friends-scale.)
  *
  * Returns a FRESH fragment per call so it can be embedded in multiple statements (the breakdown FILTER and
  * the DELETE CTE) without aliasing a shared instance. The `${n} * interval '1 day'` form is the repo idiom
