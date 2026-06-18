@@ -9,6 +9,10 @@
  * Both are single race-safe neon-http UPDATEs with SQL-side counter math (never read-modify-write — the
  * markProbeResult idiom, discovery.ts), because neon-http is autocommit and NO transaction wraps the
  * upsert + sweep (client.ts). Worker-safe: pure @opusfinder/db SQL, nothing on the isolation deny-lists.
+ *
+ * Both writers ALSO maintain the `jobs.closed_at` clock (Phase G2a): stamp now() when a job flips to
+ * 'closed', clear to NULL when a job revives — the staleness clock the G2 prune (prune-stale-jobs.ts)
+ * keys on. The stamp rides the SAME enforce gate as the close itself, so shadow mode writes neither.
  */
 import { sql } from "drizzle-orm";
 
@@ -94,6 +98,15 @@ export async function sweepLifecycle(
     ? sql`WHEN jobs.consecutive_absences + 1 >= ${threshold} THEN 'closed' `
     : sql``;
 
+  // The `closed_at` clock (Phase G2a), in LOCKSTEP with closeBranch: the SAME `+ 1 >= threshold`
+  // condition, so closed_at is stamped to now() EXACTLY when (and only when) lifecycle_state flips to
+  // 'closed'. Empty in shadow (no close → no stamp), like closeBranch. Revival is handled in the
+  // closed_at CASE's present-branch (THEN NULL), not here, so the invariant holds: closed_at is non-NULL
+  // iff the row is currently in a closed episode (decision 4).
+  const closedAtBranch = enforce
+    ? sql`WHEN jobs.consecutive_absences + 1 >= ${threshold} THEN now() `
+    : sql``;
+
   const result: unknown = await db.execute(sql`
     WITH present_set AS (
       SELECT array_agg(value) AS ids
@@ -108,6 +121,10 @@ export async function sweepLifecycle(
         lifecycle_state = CASE
           WHEN jobs.external_id = ANY(present_set.ids) THEN 'active'
           ${closeBranch}ELSE jobs.lifecycle_state
+        END,
+        closed_at = CASE
+          WHEN jobs.external_id = ANY(present_set.ids) THEN NULL
+          ${closedAtBranch}ELSE jobs.closed_at
         END,
         updated_at = now()
       FROM present_set
@@ -166,9 +183,7 @@ async function closeActiveJobsBy(
   if (ids.length === 0) return { closed: 0, wouldClose: 0 };
   const idList = intArrayLiteral(ids);
   const match =
-    column === "id"
-      ? sql`id = ANY(${idList}::int[])`
-      : sql`company_id = ANY(${idList}::int[])`;
+    column === "id" ? sql`id = ANY(${idList}::int[])` : sql`company_id = ANY(${idList}::int[])`;
 
   if (!enforce) {
     const result: unknown = await db.execute(sql`
@@ -181,7 +196,7 @@ async function closeActiveJobsBy(
   }
 
   const result: unknown = await db.execute(sql`
-    UPDATE ${jobs} SET lifecycle_state = 'closed', updated_at = now()
+    UPDATE ${jobs} SET lifecycle_state = 'closed', closed_at = now(), updated_at = now()
     WHERE ${match} AND lifecycle_state = 'active'
     RETURNING id
   `);

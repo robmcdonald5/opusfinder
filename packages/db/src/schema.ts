@@ -141,6 +141,17 @@ export const jobs = pgTable(
     // precedent column is `integer`; `smallint` is deliberate here — a streak that stops at the close
     // threshold never needs integer range.
     consecutiveAbsences: smallint("consecutive_absences").notNull().default(0),
+    // The close clock (Phase G2). NON-NULL iff the row is CURRENTLY in a closed episode: stamped to
+    // now() at the three lifecycle close sites (lifecycle.ts — Arm A's enforce close branch + the shared
+    // closeActiveJobsBy bulk close for Arms B/C) and CLEARED back to NULL on revive (Arm A's presence
+    // reset). DISTINCT from updated_at, which other writers bump (a revive, a content change) and so
+    // cannot measure "closed for N days"; closed_at moves ONLY on a close/revive transition. The G2 prune
+    // (prune-stale-jobs.ts) reads it as the staleness window's clock — a row is prunable only once it has
+    // been closed (closed_at < now() - WINDOW) AND is referenced by no digest_items. NULL on every active
+    // row (and on any row closed BEFORE this column landed until the 0018 backfill stamps it from
+    // updated_at). Nullable, no default. No index at this scale — the prune query filters lifecycle_state
+    // first; add a partial `(closed_at) WHERE lifecycle_state='closed'` only if an EXPLAIN warrants it.
+    closedAt: timestamp("closed_at", { withTimezone: true }),
     // md5 hex over an aggressively-NORMALIZED title + description_text (lower + whitespace-collapse +
     // btrim), written SQL-side in upsertJobs via signatureSql (repos/sql.ts) — the de-dup spine
     // (Phase F1). NON-unique BY DESIGN: cross-posts and reposts are MEANT to share a signature, so it
@@ -606,10 +617,7 @@ export const digests = pgTable(
     // catch writes 'failed'. User-level aggregates (last_digest_*, suppression) live on
     // user_preferences — this is the per-send history the gate's bounce/failure logging needs.
     emailId: text("email_id"), // Resend email id; NULL until a send is accepted
-    deliveryStatus: text("delivery_status")
-      .$type<DigestDeliveryStatus>()
-      .notNull()
-      .default("none"),
+    deliveryStatus: text("delivery_status").$type<DigestDeliveryStatus>().notNull().default("none"),
     sentAt: timestamp("sent_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
