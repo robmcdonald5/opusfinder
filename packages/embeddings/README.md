@@ -26,8 +26,11 @@ This package needs a Voyage API key. Either:
 
 - or export `VOYAGE_API_KEY` in your shell (a pre-set env var wins over the file).
 
-Get a key from the [Voyage AI dashboard](https://dashboard.voyageai.com); the free tier
-(first 200M tokens) covers development comfortably. The key is read + validated by
+Get a key from the [Voyage AI dashboard](https://dashboard.voyageai.com); billing is
+usage-based and `voyage-3-large` bills $0.18/1M tokens from the first token (no free
+allotment — the "first 200M tokens free" applies only to the voyage-4 line). This account
+has a payment method on file, so it runs at standard limits (2000 RPM / 3M TPM), not the
+no-card throttle. The key is read + validated by
 `getVoyageApiKey()` (`@opusfinder/embeddings/env`), which loads `packages/embeddings/.env`
 relative to the module (never the caller's cwd), so the key lives in ONE place no matter
 which package's script imports it. Errors echo only the key's shape (presence/length),

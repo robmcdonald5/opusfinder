@@ -37,7 +37,8 @@ export const MAX_TOKENS_PER_REQUEST = 90_000;
 export const CHARS_PER_TOKEN = 3;
 
 // voyage-3-large list price, USD per 1M tokens (pinned 2026-05; revisit if Voyage
-// changes pricing or the model is swapped). The first 200M tokens are free.
+// changes pricing or the model is swapped). Usage-based, billed from the first token —
+// no free allotment (the "200M tokens free" tier is voyage-4 only).
 const PRICE_PER_MTOK_USD = 0.18;
 
 /** Estimate the USD cost of embedding `totalTokens` at the current model's list price. */
