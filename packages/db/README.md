@@ -183,8 +183,14 @@ Run from the repo root via the workspace filter so the cwd is `packages/db`:
 - **Schema (Phase 12a).** `drizzle/0014_slow_red_hulk.sql` (additive) adds the append-only `health_alerts`
   incident log — `check_id` / `mode` / `metric` / `threshold` / `detail` / `created_at`, plus a `created_at`
   index. `check_id` / `mode` are plain `text` (NOT a TS union imported from `health.ts`) deliberately, to
-  avoid a `schema.ts`→`health.ts`→client import cycle. There is **NO writer yet** — the table is
-  forward-provisioned for the 12b dev panel's incident history. **APPLIED to prod.**
+  avoid a `schema.ts`→`health.ts`→client import cycle. **APPLIED to prod.** **Writer/reader (Phase H1b):**
+  `repos/health-alerts.ts` — `recordHealthAlert(db, check, detail)` inserts one row per enforce-firing that
+  actually paged, and `shouldNotify(db, checkId, cooldownH)` reads "any prior row within the cooldown window"
+  for page-once-per-`HEALTH_ALERT_COOLDOWN_H` dedup (`DEFAULT_HEALTH_ALERT_COOLDOWN_H = 24`). The check shape
+  is a LOCAL `HealthAlertInput` (a structural subset of `HealthCheck`), NOT a `health.ts` import — this repo
+  is reachable from the scraper Worker's compile graph (via `@opusfinder/db/repos`), and `health.ts`
+  references `process`, which would break the Worker's node-types-free typecheck. The 12b dev panel reads the
+  same table for incident history; G3g's `pruneOplog` bounds it at 90d.
 - **`jobs.raw` DEPRECATED — no longer written.** `drizzle/0015_known_black_queen.sql`
   (`ALTER COLUMN "raw" DROP NOT NULL`) made the untouched-source-payload column nullable. `raw` was
   write-only debug data that grew to ~90% of the database (442 MB of 489 MB), exhausting the Neon free-tier

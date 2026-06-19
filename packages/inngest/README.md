@@ -130,7 +130,8 @@ integration (email ships in Phase 11 on the local dev runtime — locked at Phas
 - `scripts/serve.ts` (`pnpm inngest:serve`) — the local serve endpoint over a bare Node `http` server
   (`inngest/node`) on port 3000 (pinned — the root `inngest:dev` registers exactly that URL), so the
   dev server can discover + invoke the functions. It now serves
-  `[...createDigestFunctions(...), ...createBackfillFunctions(...)]` (digest + F8 backfill). Dev-only —
+  `[...createDigestFunctions(...), ...createBackfillFunctions(...), ...createHealthFunctions(...)]` (digest +
+  F8 backfill + H1b health-check alerter). Dev-only —
   the Phase-12a **production** serve home is `apps/web/src/routes/api/inngest/+server.ts`
   (`inngest/sveltekit` on Vercel), which hosts the same function set; the Inngest SDK reads
   `INNGEST_SIGNING_KEY`/`INNGEST_EVENT_KEY` from the environment itself (auto-provisioned by the
@@ -138,13 +139,21 @@ integration (email ships in Phase 11 on the local dev runtime — locked at Phas
 - `scripts/digest.ts` (`pnpm digest`) — the manual trigger CLI: send `digest/run.requested`, then poll
   the DB until each targeted recipient has a NEW digest, and print it (item count, the rerank
   cache-read/create counters, and the top reasons). `process.exitCode` only (never `process.exit`).
-- `scripts/show-health.ts` (`pnpm health`) — a standalone **Phase-F6** CLI (NOT part of the digest function
-  graph): runs `checkHealth` (the pure `@opusfinder/db/health` core) over live Neon, prints every check (ok /
-  shadow-firing / enforce-firing) + the cost rollup, and on any **enforce**-mode firing emails the operator via
-  `@opusfinder/email`'s `sendHealthAlert` then exits non-zero (shadow firings print but never page). Lives here —
-  not in `@opusfinder/db` — because it both READS (db) and SENDS (email): inngest is the one package already
-  depending on both, so it dodges a `db`⇄`email` workspace cycle.
-  `process.exitCode` only; read-only on the DB; shape-only output.
+- `scripts/show-health.ts` (`pnpm health`) — the **Phase-F6** CLI (NOT part of the digest function graph): runs
+  `checkHealth` (the pure `@opusfinder/db/health` core) over live Neon, prints every check (ok / shadow-firing /
+  enforce-firing) + the cost rollup, and on any **enforce**-mode firing pages the operator through the SHARED
+  `src/health-alert.ts` path (H1b — same deduped logic the scheduled fn uses), then exits non-zero (shadow
+  firings print but never page). Lives here — not in `@opusfinder/db` — because it both READS (db) and SENDS
+  (email): inngest is the one package already depending on both, so it dodges a `db`⇄`email` workspace cycle.
+  H1b note: it is **no longer purely read-only** — an enforce-firing check clear of the cooldown WRITES one
+  `health_alerts` row + sends one email; `process.exitCode = 1` whenever unhealthy, even if cooldown-suppressed.
+- `src/health-check.ts` + `src/health-deps.ts` (Phase H1b) — `createHealthFunctions(buildHealthDeps())` is the
+  unattended **`health-check-alert`** Inngest cron fn (`*/30`, `singleton: skip`): `checkHealth` → dedup via
+  `health_alerts` → `sendHealthAlert` a named-subsystem operator alert, page-once-per-`HEALTH_ALERT_COOLDOWN_H`
+  (default 24h). Served alongside the digest + F8 functions in prod (`apps/web`). The CLI and the fn share
+  `src/health-alert.ts` (`alertOnHealth` + the shape-only `formatMetric`/`checkDetail`) so they cannot drift on
+  which checks page, the body shape, or the cooldown. Enforcing checks is env-only (`HEALTH_ENFORCE`); the seven
+  checks still default `shadow`. No-creds smoke: `pnpm --filter @opusfinder/inngest test:health-alert`.
 
 The `digest_runs` / `digests` / `digest_items` tables live in the unified `@opusfinder/db` schema +
 migrations (`0007`/`0008`; `0009` adds the per-send `email_id`/`delivery_status`/`sent_at` columns);
