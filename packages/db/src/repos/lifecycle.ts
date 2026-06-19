@@ -17,7 +17,7 @@
 import { sql } from "drizzle-orm";
 
 import type { Db } from "../client";
-import { jobs } from "../schema";
+import { companies, jobs } from "../schema";
 import { intArrayLiteral, NUL, resultRows } from "./sql";
 
 /**
@@ -158,11 +158,16 @@ export async function sweepLifecycle(
   };
 }
 
-/** The board-death bulk close (Arm B) outcome — tallied onto the discovery run's counts. */
+/**
+ * Outcome of a bulk soft-close, tallied onto the run's counts. Shared by every bulk closer — Arm B
+ * (board-death, {@link closeJobsForCompanies}), Arm C (410-close, {@link closeJobsByIds}), and the Tier-1
+ * staleness timer ({@link sweepStaleJobs}) — since all three have the identical shadow/enforce shape; the
+ * caller names the per-arm counters (e.g. closed→staleClosed, wouldClose→staleWouldClose for the timer).
+ */
 export interface CloseResult {
-  /** Active jobs flipped to 'closed' (enforce only; 0 in shadow). */
+  /** Active jobs flipped to 'closed' this run (enforce only; always 0 in shadow/count-only). */
   closed: number;
-  /** Active jobs of the deactivated companies that WOULD close (count-only/shadow; 0 in enforce). */
+  /** Active jobs that WOULD close (count-only/shadow standing population; always 0 in enforce). */
   wouldClose: number;
 }
 
@@ -229,4 +234,155 @@ export function closeJobsByIds(
   opts: { enforce?: boolean } = {},
 ): Promise<CloseResult> {
   return closeActiveJobsBy(db, "id", jobIds, opts.enforce ?? false);
+}
+
+/**
+ * markJobsPresent (Tier-1) — the completeness-INDEPENDENT positive "I saw this job live" writer, called per
+ * board from runIngestion for the de-duplicated external_ids a fetch returned. It (1) refreshes last_seen_at
+ * (the staleness clock {@link sweepStaleJobs} keys on) and (2) REVIVES any reappearing closed job
+ * (lifecycle_state→'active', closed_at→NULL, streak→0). Runs for EVERY board, capped or not — UNLIKE Arm A's
+ * set-difference sweep (sweepLifecycle), which is skipped on a capped/partial fetch; this is the path that
+ * lets a capped mega-board's jobs both stay fresh AND revive on reappearance.
+ *
+ * Separate from upsertJobs (pure content persistence) and from its content-gated ON CONFLICT SET: last_seen_at
+ * must advance on every re-fetch even when content is byte-unchanged, and reviving a closed row must NOT be
+ * content-gated (the same reason sweepLifecycle lives outside upsertJobs). All written columns are UN-indexed
+ * ⇒ HOT-eligible. A NO-OP GUARD in the WHERE skips rows already fresh-and-active, so an unchanged board does
+ * NOT rewrite every present row every tick (which would defeat upsertJobs' idempotency + churn dead tuples):
+ * a row is touched only if its clock is stale (>1h — far inside the ≥~daily re-fetch cadence and the multi-week
+ * TTL) OR it needs reviving. Returns `revived` = closed→active revivals only; the streak-reset-only revivals
+ * of still-active rows stay sweepLifecycle's `revived`, so runIngestion sums the two for the true total.
+ *
+ * The present set rides as ONE jsonb param, unnested to text[] (the sweepLifecycle idiom — no array-literal
+ * escaping; NUL stripped, jsonb rejects it). Empty set ⇒ skip the round-trip (no `<> ALL` trap here).
+ */
+export async function markJobsPresent(
+  db: Db,
+  companyId: number,
+  presentExternalIds: string[],
+): Promise<{ revived: number }> {
+  if (presentExternalIds.length === 0) return { revived: 0 };
+  const presentJson = JSON.stringify(presentExternalIds.map((id) => id.replaceAll(NUL, "")));
+  // revived_set snapshots the to-be-revived (currently-closed) rows BEFORE upd runs — all CTEs see the
+  // statement-start snapshot, so the count is the pre-update closed population regardless of CTE exec order.
+  const result: unknown = await db.execute(sql`
+    WITH present_set AS (
+      SELECT array_agg(value) AS ids
+      FROM jsonb_array_elements_text(${presentJson}::jsonb) AS value
+    ),
+    revived_set AS (
+      SELECT jobs.id
+      FROM ${jobs}, present_set
+      WHERE jobs.company_id = ${companyId}
+        AND jobs.external_id = ANY(present_set.ids)
+        AND jobs.lifecycle_state <> 'active'
+    ),
+    upd AS (
+      UPDATE ${jobs} SET
+        last_seen_at = now(),
+        lifecycle_state = 'active',
+        closed_at = NULL,
+        consecutive_absences = CASE
+          WHEN jobs.lifecycle_state <> 'active' THEN 0
+          ELSE jobs.consecutive_absences
+        END
+      FROM present_set
+      WHERE jobs.company_id = ${companyId}
+        AND jobs.external_id = ANY(present_set.ids)
+        AND (
+          jobs.last_seen_at < now() - interval '1 hour'
+          OR jobs.lifecycle_state <> 'active'
+          OR jobs.closed_at IS NOT NULL
+        )
+      RETURNING 1
+    )
+    SELECT (SELECT count(*) FROM revived_set) AS revived
+  `);
+  const row = resultRows(result)[0] as Record<string, unknown> | undefined;
+  return { revived: Number(row?.revived ?? 0) };
+}
+
+/**
+ * markCompanyIngested (Tier-1 board-health) — stamp companies.last_ingested_at = now() to record a SUCCESSFUL,
+ * non-empty fetch of this board. runIngestion calls it only when total>0 (an empty/ambiguous fetch must not
+ * certify health — the same gate as Arm A). {@link sweepStaleJobs} requires this stamp to be recent, so a
+ * board that fails or empties for >TTL is not certified and its still-live jobs are SPARED from the timer.
+ */
+export async function markCompanyIngested(db: Db, companyId: number): Promise<void> {
+  await db.execute(sql`UPDATE ${companies} SET last_ingested_at = now() WHERE id = ${companyId}`);
+}
+
+/**
+ * Default staleness-close TTL (Tier-1, in DAYS): an active job not re-confirmed (last_seen_at stamped by
+ * {@link markJobsPresent}) within this many days soft-closes — IF its board is still being ingested (the
+ * board-health guard, see {@link sweepStaleJobs}). MUST comfortably exceed the worst-case full-sweep latency —
+ * at ~150 boards/tick hourly over ~1.6k boards the nominal floor is hours, stretched to a few days by maxRunMs
+ * mid-chunk truncation + slow boards. 21d gives ~10-20x margin and sits past the ~14d retrieval recency
+ * window, so a not-yet-closed stale job is already invisible to digests and erring long costs nothing
+ * user-visible. The Worker overrides via STALE_SWEEP_TTL_DAYS.
+ */
+export const DEFAULT_STALE_TTL_DAYS = 21;
+
+/**
+ * The UNIVERSAL staleness closer (Tier-1) — the completeness-INDEPENDENT lifecycle backstop that covers
+ * EVERY board, including a permanently-capped mega-board (boschgroup) that SKIPS Arm A's complete-feed
+ * set-difference sweep. It closes an active job whose `last_seen_at` (stamped by {@link markJobsPresent} on
+ * every fetch that returned it) is older than `ttlDays` — gated by the BOARD-HEALTH guard below — so an
+ * aged-out / vanished posting closes on the same clock regardless of how its board is fetched. This removes
+ * the lifecycle-exemption the `!capped` Arm A skip created: the set-difference stays a FAST-PATH for boards
+ * we see completely; this timer is the floor under all of them.
+ *
+ * BOARD-HEALTH GUARD (joins companies): a job closes ONLY if its company was SUCCESSFULLY ingested within the
+ * same TTL window (`c.last_ingested_at >= cutoff`, stamped by {@link markCompanyIngested}). A board that is
+ * DOWN/empty for >TTL has last_ingested_at older than the window (or NULL pre-first-ingest), so its still-live
+ * jobs are SPARED — NOT false-closed because the cron simply couldn't fetch them. Using the SAME cutoff for
+ * the job-staleness and the board-health window makes a failing board's jobs become stale-eligible and
+ * board-excluded at the same moment. A HEALTHY capped board keeps last_ingested_at fresh, so its aged-out
+ * tail still closes (the intended FRESHNESS close — see schema.ts last_seen_at; those jobs are past recency
+ * and revive if they re-enter the fetch window).
+ *
+ * GLOBAL (all healthy companies), not per-board — the signal is time, not feed presence, so there is no
+ * complete-feed precondition and no empty-set trap (`= ANY`/JOIN here, never `<> ALL`). count-only by DEFAULT
+ * (shadow — tally `wouldClose`, write nothing); `enforce` writes 'closed' and stamps the `closed_at` clock
+ * (G2), like closeActiveJobsBy. `COALESCE(last_seen_at, created_at)` is defensive only (0020 backfills NOT
+ * NULL). Worker-safe (pure @opusfinder/db SQL). Ships SHADOW-first under its OWN switch (STALE_SWEEP),
+ * INDEPENDENT of F2_ENFORCE, so its would-close population is read on real traffic before any close — and
+ * deliberately NOT coupled to the already-enforced F2 flag (which would skip the observation window). NOTE
+ * for the shadow gate: the FIRST enforce closes a one-time BACKLOG (every healthy capped board's accumulated
+ * aged-out tail, expected sizable); steady-state `staleWouldClose` should then be a trickle. Read the
+ * per-board breakdown (`pnpm shadow-closes`) so a big capped-board contribution isn't mistaken for a bug.
+ */
+export async function sweepStaleJobs(
+  db: Db,
+  opts: { ttlDays?: number; enforce?: boolean } = {},
+): Promise<CloseResult> {
+  const ttlDays = Math.max(1, Math.trunc(opts.ttlDays ?? DEFAULT_STALE_TTL_DAYS));
+  const enforce = opts.enforce ?? false;
+  // `${ttlDays}::int` (a Math.trunc'd in-code/env integer, never raw input) * interval — `::` binds tighter
+  // than `*`, so `($n::int) * (interval '1 day')`. ONE cutoff drives both the job-staleness test and the
+  // board-health window (so a failing board's jobs become stale-eligible and excluded together).
+  const cutoff = sql`now() - ${ttlDays}::int * interval '1 day'`;
+  const stale = sql`jobs.lifecycle_state = 'active'
+      AND COALESCE(jobs.last_seen_at, jobs.created_at) < ${cutoff}
+      AND c.last_ingested_at >= ${cutoff}`;
+
+  // SHADOW (count-only): never UPDATE — just tally the standing stale-AND-board-healthy population.
+  if (!enforce) {
+    const result: unknown = await db.execute(sql`
+      SELECT count(*) AS would_close
+      FROM ${jobs} JOIN ${companies} c ON c.id = jobs.company_id
+      WHERE ${stale}
+    `);
+    const row = resultRows(result)[0] as Record<string, unknown> | undefined;
+    return { closed: 0, wouldClose: Number(row?.would_close ?? 0) };
+  }
+
+  // ENFORCE: close + stamp the closed_at clock (G2 prune reads it). RETURNING count is the closed total.
+  const result: unknown = await db.execute(sql`
+    UPDATE ${jobs} SET lifecycle_state = 'closed', closed_at = now(), updated_at = now()
+    FROM ${companies} c
+    WHERE jobs.company_id = c.id AND ${stale}
+    RETURNING jobs.id
+  `);
+  return { closed: resultRows(result).length, wouldClose: 0 };
 }

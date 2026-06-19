@@ -47,7 +47,11 @@ export {
   sweepLifecycle,
   closeJobsForCompanies,
   closeJobsByIds,
+  markJobsPresent,
+  markCompanyIngested,
+  sweepStaleJobs,
   ABSENCE_CLOSE_THRESHOLD,
+  DEFAULT_STALE_TTL_DAYS,
 } from "./lifecycle";
 export type { SweepResult, SweepOptions, CloseResult } from "./lifecycle";
 // Phase 10 digest persistence — recipient list, already-shown anti-join, run/header/item writes.
