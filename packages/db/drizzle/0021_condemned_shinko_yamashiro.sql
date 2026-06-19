@@ -1,0 +1,13 @@
+-- Tier-1 board-health guard: companies.last_ingested_at — the last SUCCESSFUL, non-empty ingestion of a
+-- board. Stamped by markCompanyIngested after a clean upsertJobs with total>0 (repos/lifecycle.ts); a board
+-- that fails to fetch or returns empty does NOT advance it. sweepStaleJobs only stale-closes a job whose
+-- company was successfully ingested within the staleness TTL (`last_ingested_at >= now() - ttl`), so a board
+-- DOWN for >TTL has its still-live jobs SPARED rather than false-closed. Distinct from active/last_live_at,
+-- which track discovery probes (not ingestion) and for SmartRecruiters never mark absent.
+--
+-- NULLABLE, no default/backfill: existing rows start NULL and are CONSERVATIVELY excluded from the timer
+-- (`last_ingested_at >= now() - ttl` is never true for NULL) until their first successful ingest post-deploy
+-- stamps them — so the staleness sweep cannot close any job until we've re-confirmed its board is fetchable.
+-- Hand-guarded with IF NOT EXISTS (drizzle-kit emits it bare; neon-http migrations are NOT transactional —
+-- same discipline as 0011/0012/0017/0018/0020).
+ALTER TABLE "companies" ADD COLUMN IF NOT EXISTS "last_ingested_at" timestamp with time zone;

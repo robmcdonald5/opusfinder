@@ -141,6 +141,20 @@
       "when": 1781818873667,
       "tag": "0019_curly_sleeper",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1781896055267,
+      "tag": "0020_tiresome_azazel",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1781897941064,
+      "tag": "0021_condemned_shinko_yamashiro",
+      "breakpoints": true
     }
   ]
 }

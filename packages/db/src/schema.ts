@@ -86,6 +86,15 @@ export const companies = pgTable(
     lastProbedAt: timestamp("last_probed_at", { withTimezone: true }),
     lastLiveAt: timestamp("last_live_at", { withTimezone: true }),
     consecutiveProbeFailures: integer("consecutive_probe_failures").notNull().default(0),
+    // Last SUCCESSFUL, non-empty INGESTION of this board (Tier-1 board-health guard). Stamped by
+    // markCompanyIngested after a clean upsertJobs with total>0 (repos/lifecycle.ts); a board that FAILS to
+    // fetch or returns empty does NOT advance it. sweepStaleJobs only stale-closes a job whose company was
+    // successfully fetched within the staleness TTL (`last_ingested_at >= now() - ttl`), so a board that is
+    // DOWN for >TTL has its still-live jobs SPARED rather than false-closed (the failing-board guard).
+    // DISTINCT from active / last_live_at, which track DISCOVERY probes (not ingestion) and for
+    // SmartRecruiters never even mark absent — so ingestion is the only signal that a feed was really seen.
+    // NULL until the first successful ingest post-deploy ⇒ conservatively EXCLUDED from the timer until then.
+    lastIngestedAt: timestamp("last_ingested_at", { withTimezone: true }),
   },
   (t) => [
     uniqueIndex("companies_slug_source_uq").on(t.slug, t.source),
@@ -152,6 +161,28 @@ export const jobs = pgTable(
     // updated_at). Nullable, no default. No index at this scale — the prune query filters lifecycle_state
     // first; add a partial `(closed_at) WHERE lifecycle_state='closed'` only if an EXPLAIN warrants it.
     closedAt: timestamp("closed_at", { withTimezone: true }),
+    // The last-fetch liveness clock (Tier-1 staleness lifecycle). Stamped to now() by markJobsPresent
+    // (repos/lifecycle.ts), called per board from runIngestion, for EVERY job a fetch actually returned —
+    // completeness-INDEPENDENTLY, so it works identically for a fully-fetched board and a budget-capped
+    // partial fetch (boschgroup). The staleness closer (sweepStaleJobs) closes an active job whose
+    // last_seen_at is older than STALE_SWEEP_TTL_DAYS *and* whose board was successfully ingested within that
+    // window (the companies.last_ingested_at board-health guard) — so a DOWN board's live jobs are SPARED,
+    // while a healthy board's un-restamped jobs close.
+    //
+    // CAPPED-BOARD SEMANTICS — do NOT mis-read as a sweep-latency margin: the cap is a PAGINATION-POSITION
+    // cap restarted at offset 0 every tick, so a capped board re-fetches only its freshest ~N postings each
+    // tick and STRUCTURALLY never sees its older tail in ANY tick. Those tail jobs stop being stamped and
+    // close on the timer — an INTENDED FRESHNESS close (they are past the retrieval recency window, already
+    // invisible to digests), NOT a proof-of-death close, and REVERSIBLE: markJobsPresent revives any that
+    // re-enter the fetch window. This is the deliberate trade chosen over per-board offset pagination (the
+    // heavier "fetch the whole board across ticks" fix).
+    //
+    // NOT NULL DEFAULT now() so the ADD COLUMN backfills every existing row to the migration time (a fresh
+    // stamp, so no live job lands instantly past the TTL; the sweep ships shadow-first so counts are observed
+    // before any close). DELIBERATELY UN-indexed (keeps the markJobsPresent write HOT + the table seq-scans
+    // at this size — same discipline as content_signature / closed_at); add a partial
+    // `(last_seen_at) WHERE lifecycle_state='active'` only if an EXPLAIN on the sweepStaleJobs query warrants it.
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).notNull().defaultNow(),
     // md5 hex over an aggressively-NORMALIZED title + description_text (lower + whitespace-collapse +
     // btrim), written SQL-side in upsertJobs via signatureSql (repos/sql.ts) — the de-dup spine
     // (Phase F1). NON-unique BY DESIGN: cross-posts and reposts are MEANT to share a signature, so it
