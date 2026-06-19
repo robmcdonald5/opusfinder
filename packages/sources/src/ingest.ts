@@ -14,8 +14,11 @@ import {
   backfillJobEmbeddings,
   finishRun,
   listCompanies,
+  markCompanyIngested,
+  markJobsPresent,
   startRun,
   sweepLifecycle,
+  sweepStaleJobs,
   upsertCompany,
   upsertJobs,
 } from "@opusfinder/db/repos";
@@ -108,6 +111,17 @@ export interface IngestionOptions {
    * that one env flag once the shadow counters are reviewed.
    */
   enforceLifecycle?: boolean;
+  /**
+   * Tier-1 universal staleness sweep (opt-in, Worker-driven). When set, AFTER the per-board loop the run
+   * closes any active job not re-confirmed (last_seen_at, stamped by markJobsPresent) within `ttlDays` —
+   * GATED by the board-health guard, so only jobs of boards SUCCESSFULLY ingested within the same window
+   * close (a board down for >TTL has its live jobs spared). This is the completeness-INDEPENDENT backstop
+   * that closes a healthy capped mega-board's aged-out tail on the same clock as every other board (see
+   * {@link sweepStaleJobs}). Omit ⇒ no stale sweep (the CLI default, so a manual run never closes on this
+   * timer). `enforce` rides its OWN switch (STALE_SWEEP), INDEPENDENT of `enforceLifecycle`/F2_ENFORCE, so it
+   * ships shadow-first; `ttlDays` defaults to {@link DEFAULT_STALE_TTL_DAYS} when omitted.
+   */
+  staleSweep?: { ttlDays?: number; enforce: boolean };
 }
 
 /**
@@ -137,6 +151,12 @@ export interface IngestionCounts {
   closed: number; // postings flipped to 'closed' (enforce only; always 0 in shadow)
   wouldClose: number; // absent postings at/over threshold NOT yet closed (shadow standing population)
   sweepFailed: number; // boards whose sweep step threw (jobs still persisted; self-heals next cycle)
+  // Tier-1 observability + universal staleness sweep (run-level, post-loop).
+  markFailed: number; // boards whose markJobsPresent/markCompanyIngested liveness stamp threw (jobs still persisted)
+  cappedBoards: number; // boards whose fetch hit adapter.maxItems (partial → Arm A sweep skipped → covered by the stale timer)
+  staleClosed: number; // jobs closed by the staleness timer this run (STALE_SWEEP enforce only; always 0 in shadow)
+  staleWouldClose: number; // active jobs past the TTL the timer WOULD close (shadow standing population; 0 in enforce)
+  staleSweepFailed: number; // 1 if the post-loop stale sweep threw (jobs untouched; self-heals next tick), else 0
   lastId: number; // max company id seen — the next tick's `afterId` cursor (0 if none)
 }
 
@@ -183,6 +203,12 @@ export async function runIngestion(db: Db, opts: IngestionOptions = {}): Promise
         // un-fetched tail. runAdapter trims to EXACTLY maxItems, so length >= cap ⇔ capped.
         const cap = opts.adapter?.maxItems;
         const capped = cap !== undefined && normalized.length >= cap;
+        // Tier-1 observability: a capped board is a PARTIAL fetch that skips Arm A's set-difference sweep
+        // below (it would false-close the un-fetched tail). Count it so the lifecycle-exempt-from-Arm-A
+        // population — silent + unbounded-as-discovery-grows until now — is visible in source_runs.counts.
+        // These boards are NOT lifecycle-exempt overall: the post-loop staleness timer (sweepStaleJobs) is
+        // their close path.
+        if (capped) counts.cappedBoards += 1;
         // Idempotent get-or-create from the canonical slug (not jobs[0]) keeps a valid-but-
         // empty board recorded too.
         const companyId = await upsertCompany(db, company.slug, company.source);
@@ -191,21 +217,43 @@ export async function runIngestion(db: Db, opts: IngestionOptions = {}): Promise
         counts.changed += changed;
         counts.ok += 1;
 
-        // F2 Arm A: soft-close postings absent from THIS board's fetch (streak hysteresis; revive on
-        // reappearance), in count-only/shadow mode (F2-SHADOW — tally `wouldClose`, write no 'closed' yet;
-        // F2-enforce flips it on). GATED on total > 0 (decision 4): an empty/ambiguous fetch (e.g.
-        // SmartRecruiters 200+totalFound:0 → []) must NEVER sweep — `<> ALL('{}')` would false-close the
-        // whole board. PER-COMPANY inside this per-board try — NEVER hoist to a run-level seen-set: the cron
-        // processes only an id-keyset chunk per tick, so a run-level sweep would close every company NOT in
-        // the chunk. `presentExternalIds` is the board's de-duplicated external_ids (== what upsertJobs just
-        // persisted; length === total). Isolated like the embed step: a sweep fault leaves jobs persisted and
-        // self-heals next cycle, so it must not fail the board.
-        if (total > 0 && !capped) {
+        // Tier-1 liveness stamp (EVERY board, capped or not — see markJobsPresent): refresh last_seen_at for
+        // the jobs this fetch returned + revive any reappearing closed ones, then certify a successful
+        // non-empty fetch (markCompanyIngested) so the staleness timer's board-health guard knows this board
+        // is fetchable. GATED on total > 0 (decision 4): an empty/ambiguous fetch (e.g. SmartRecruiters
+        // 200+totalFound:0 → []) must NOT stamp presence OR certify health. PER-COMPANY inside this per-board
+        // try (the cron processes only an id-keyset chunk per tick). `presentExternalIds` is the board's
+        // de-duplicated external_ids (== what upsertJobs persisted; length === total). Isolated like the
+        // sweep/embed steps: a stamp fault leaves jobs persisted and self-heals next cycle. ORDER IS
+        // LOAD-BEARING — markJobsPresent (stamp last_seen) BEFORE markCompanyIngested (certify board health):
+        // if the company were certified first and the job-stamp then threw, the timer could close jobs that
+        // were never re-stamped. This order fails SAFE (jobs stamped, board left uncertified ⇒ guard spares it).
+        let presentExternalIds: string[] | undefined;
+        if (total > 0) {
+          presentExternalIds = [...new Set(normalized.map((j) => j.externalId))];
           try {
-            const presentExternalIds = [...new Set(normalized.map((j) => j.externalId))];
-            // F2 enforcement rides the ONE shared switch: opts.enforceLifecycle = parseEnforceFlag(F2_ENFORCE),
-            // resolved once by the caller (the Worker / CLI) and threaded to all three arms together, so there
-            // is no partial-flip footgun. Default false = shadow (count-only; tally wouldClose, write no 'closed').
+            const present = await markJobsPresent(db, companyId, presentExternalIds);
+            counts.revived += present.revived; // closed→active revivals (works for capped boards too)
+            await markCompanyIngested(db, companyId);
+          } catch (err) {
+            counts.markFailed += 1;
+            // Shape-only (no job text); companyId is a non-secret int.
+            console.warn(
+              `markJobsPresent/markCompanyIngested failed for company ${companyId}: ` +
+                `${err instanceof Error ? err.message : String(err)}`.slice(0, 200),
+            );
+          }
+        }
+
+        // F2 Arm A: soft-close postings absent from THIS board's COMPLETE fetch (streak hysteresis), in
+        // count-only/shadow or enforce per opts.enforceLifecycle. SKIPPED on a capped/partial fetch — a
+        // partial present-set would false-close the un-fetched tail (`<> ALL` over an incomplete set); those
+        // boards rely on the Tier-1 staleness timer (sweepStaleJobs) instead. F2 enforcement rides the ONE
+        // shared switch (parseEnforceFlag(F2_ENFORCE)), threaded to all three arms together (no partial-flip
+        // footgun). Isolated like the stamp/embed steps. NB closed→active revivals are now owned by
+        // markJobsPresent above; sweepLifecycle.revived here counts only still-active streak resets.
+        if (presentExternalIds !== undefined && !capped) {
+          try {
             const sweep = await sweepLifecycle(db, companyId, presentExternalIds, {
               enforce: opts.enforceLifecycle ?? false,
             });
@@ -272,6 +320,32 @@ export async function runIngestion(db: Db, opts: IngestionOptions = {}): Promise
       counts.processed += 1; // boards we got through (ok or failed) — the early-stop cursor signal
     }
 
+    // Tier-1 universal staleness sweep (opt-in — Worker only; CLI omits staleSweep so a manual run never
+    // closes on this timer). AFTER the board loop so THIS tick's fetches have refreshed last_seen_at first.
+    // GLOBAL (all companies in one statement), so a permanently-capped mega-board's aged-out tail and any
+    // vanished posting close on ONE clock, independent of feed completeness — the backstop that ends the
+    // capped-board Arm-A exemption. ISOLATED like the per-board sweep/embed steps: a failure tallies
+    // staleSweepFailed and is swallowed (jobs untouched; self-heals next tick) so it never errors the run.
+    // Ships shadow-first via its own STALE_SWEEP switch (enforce here is INDEPENDENT of enforceLifecycle).
+    if (opts.staleSweep) {
+      try {
+        const stale = await sweepStaleJobs(db, {
+          ttlDays: opts.staleSweep.ttlDays,
+          enforce: opts.staleSweep.enforce,
+        });
+        counts.staleClosed += stale.closed;
+        counts.staleWouldClose += stale.wouldClose;
+      } catch (err) {
+        counts.staleSweepFailed += 1;
+        console.warn(
+          `sweepStaleJobs failed: ${err instanceof Error ? err.message : String(err)}`.slice(
+            0,
+            200,
+          ),
+        );
+      }
+    }
+
     await finishRun(db, runId, { status: "ok", counts, errorSample });
     logSummary(counts, opts.embed !== undefined);
     return counts;
@@ -304,6 +378,11 @@ function emptyCounts(): IngestionCounts {
     closed: 0,
     wouldClose: 0,
     sweepFailed: 0,
+    markFailed: 0,
+    cappedBoards: 0,
+    staleClosed: 0,
+    staleWouldClose: 0,
+    staleSweepFailed: 0,
     lastId: 0,
   };
 }
@@ -321,6 +400,12 @@ function logSummary(counts: IngestionCounts, embedEnabled: boolean): void {
       `; lifecycle: ${counts.revived} revived, ${counts.swept} swept, ${counts.wouldClose} would-close, ` +
       `${counts.closed} closed` +
       (counts.sweepFailed > 0 ? `, ${counts.sweepFailed} sweep-failed` : "") +
+      (counts.markFailed > 0 ? `, ${counts.markFailed} mark-failed` : "") +
+      (counts.cappedBoards > 0 ? `; ${counts.cappedBoards} capped board(s)` : "") +
+      (counts.staleWouldClose > 0 || counts.staleClosed > 0 || counts.staleSweepFailed > 0
+        ? `; stale: ${counts.staleWouldClose} would-close, ${counts.staleClosed} closed` +
+          (counts.staleSweepFailed > 0 ? `, ${counts.staleSweepFailed} stale-sweep-failed` : "")
+        : "") +
       ".",
   );
 }

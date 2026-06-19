@@ -4,6 +4,7 @@ import { runScript } from "@opusfinder/shared/script";
 
 import { createDb } from "../src/client";
 import { getDatabaseUrl } from "../src/env";
+import { DEFAULT_STALE_TTL_DAYS } from "../src/repos/lifecycle";
 import { digests, sourceRuns } from "../src/schema";
 
 /**
@@ -32,6 +33,10 @@ const ARM_AB_KEYS = [
 ] as const;
 // Arm C (probeDigestLiveness, pre-send 410 probe) tallies onto digests.counts.
 const ARM_C_KEYS = ["probed410WouldClose", "probed410Closed", "probed404Dropped"] as const;
+// Tier-1 universal staleness timer (sweepStaleJobs, its OWN STALE_SWEEP switch) + capped-board observability,
+// both tallied onto an ingestion run's source_runs.counts. `staleWouldClose` is the standing population the
+// owner reads BEFORE flipping STALE_SWEEP=enforce; `cappedBoards` is how many boards skip Arm A per tick.
+const TIER1_KEYS = ["cappedBoards", "staleWouldClose", "staleClosed", "staleSweepFailed"] as const;
 
 await runScript("ShowShadowCloses", async () => {
   const limitArg = Number(process.argv[2]);
@@ -52,13 +57,20 @@ await runScript("ShowShadowCloses", async () => {
     .orderBy(desc(sourceRuns.startedAt))
     .limit(limit);
 
-  console.log(`=== Arm A/B — last ${runs.length} ingestion/discovery run(s) ===`);
+  console.log(`=== Arm A/B + Tier-1 stale — last ${runs.length} ingestion/discovery run(s) ===`);
   let wouldCloseTotal = 0;
   let closedTotal = 0;
+  let staleWouldCloseTotal = 0;
+  let staleClosedTotal = 0;
   for (const r of runs) {
     wouldCloseTotal += num(r.counts, "wouldClose") + num(r.counts, "wouldCloseOnDeactivation");
     closedTotal += num(r.counts, "closed") + num(r.counts, "jobsClosedOnDeactivation");
-    console.log(`#${r.id} ${r.pipeline} started=${iso(r.startedAt)} ${pick(r.counts, ARM_AB_KEYS)}`);
+    staleWouldCloseTotal += num(r.counts, "staleWouldClose");
+    staleClosedTotal += num(r.counts, "staleClosed");
+    console.log(
+      `#${r.id} ${r.pipeline} started=${iso(r.startedAt)} ${pick(r.counts, ARM_AB_KEYS)} | ` +
+        `${pick(r.counts, TIER1_KEYS)}`,
+    );
   }
   if (runs.length === 0) console.log("(no ingestion/discovery runs yet)");
 
@@ -99,6 +111,47 @@ await runScript("ShowShadowCloses", async () => {
       ? "NOTE: closed > 0 — F2_ENFORCE may ALREADY be 'enforce' (shadow never writes 'closed')."
       : "Gate: wouldClose should be a small, believable staleness trickle — NOT a large fraction of active jobs.",
   );
+
+  // Tier-1 universal staleness timer (sweepStaleJobs) — its OWN STALE_SWEEP switch, read BEFORE flipping it.
+  const stalePct = active > 0 ? `${((staleWouldCloseTotal / active) * 100).toFixed(2)}%` : "n/a";
+  console.log(
+    `\n=== Tier-1 stale timer ===\n` +
+      `staleWouldClose across shown runs=${staleWouldCloseTotal} (${stalePct} of active); ` +
+      `staleClosed=${staleClosedTotal}`,
+  );
+  console.log(
+    staleClosedTotal > 0
+      ? "NOTE: staleClosed > 0 — STALE_SWEEP may ALREADY be 'enforce' (shadow never closes)."
+      : "Gate: staleWouldClose is the STANDING stale-active population each tick. The FIRST enforce clears a " +
+          "one-time backlog (healthy capped mega-boards' aged-out tails — EXPECTED). Read the per-board breakdown below.",
+  );
+
+  // Per-board attribution for the stale timer — the gate's key calibration aid. Replicates sweepStaleJobs'
+  // board-health-guarded predicate at the DEFAULT TTL (the deployed STALE_SWEEP_TTL_DAYS may differ). A
+  // healthy capped mega-board (boschgroup) topping this is EXPECTED (its aged-out tail). A cluster of small
+  // boards would signal the failing-board case — but the guard (c.last_ingested_at >= cutoff) already excludes
+  // any board down > TTL, so a down board's jobs never appear here at all.
+  const byBoard = rows(
+    await db.execute(sql`
+      SELECT c.source, c.slug, count(*)::int AS would_close, max(c.last_ingested_at) AS last_ingested
+      FROM jobs j JOIN companies c ON c.id = j.company_id
+      WHERE j.lifecycle_state = 'active'
+        AND COALESCE(j.last_seen_at, j.created_at) < now() - ${DEFAULT_STALE_TTL_DAYS}::int * interval '1 day'
+        AND c.last_ingested_at >= now() - ${DEFAULT_STALE_TTL_DAYS}::int * interval '1 day'
+      GROUP BY c.source, c.slug
+      ORDER BY would_close DESC
+      LIMIT 10`),
+  );
+  console.log(
+    `\n=== Tier-1 stale by board (top ${byBoard.length}, TTL ${DEFAULT_STALE_TTL_DAYS}d, board-health-guarded) ===`,
+  );
+  for (const b of byBoard) {
+    console.log(
+      `${String(b.source)}:${String(b.slug)} would_close=${Number(b.would_close)} ` +
+        `last_ingested=${iso(b.last_ingested as Date | string | null)}`,
+    );
+  }
+  if (byBoard.length === 0) console.log("(no board-health-eligible stale jobs at this TTL)");
 });
 
 /** Read a numeric counter from a RunCounts bag, defaulting a missing/non-numeric key to 0. */
