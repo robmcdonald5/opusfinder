@@ -24,9 +24,10 @@ import { runIngestion } from "@opusfinder/sources";
  * particular the discovery weekday: Cloudflare numbers weekdays 1=Sun..7=Sat, so it is "SUN", never
  * "0". The handler AWAITS the dispatched PIPELINE work (not fire-and-forget `ctx.waitUntil`) in one
  * try/catch, so a failure in the KV cursor I/O or the pipeline is logged to `wrangler tail` and re-thrown
- * so Cloudflare records the invocation as errored. The ONE `ctx.waitUntil` exception is the Phase-F6
- * liveness heartbeat ({@link pingWatchdog}): a content-free ping to an external watchdog on a SUCCESSFUL
- * tick, run non-blocking so a watchdog hiccup can never fail the tick. GUARD: `pnpm guard:worker`
+ * so Cloudflare records the invocation as errored. The `ctx.waitUntil` exceptions are the watchdog pings:
+ * the Phase-F6 liveness heartbeat ({@link pingWatchdog}, a content-free ping on a SUCCESSFUL tick) and the
+ * Phase-H1a failure ping ({@link pingWatchdogFail}, a shape-safe cause on a caught exception) — both
+ * non-blocking so a watchdog hiccup can never fail the tick. GUARD: `pnpm guard:worker`
  * substring-scans this file (comments included, case-sensitive) for the forbidden server-only package
  * imports — which the heartbeat trips none of (the ping target lives ONLY in `env.HEALTH_PING_URL`, a
  * secret). The guard does NOT detect a provider/watchdog HOST literal, so by author discipline never
@@ -116,11 +117,19 @@ export default {
       }
     } catch (err) {
       // The KV cursor read/write happens here, OUTSIDE runIngestion's own try/catch, so this is the
-      // only place those failures (and any infrastructural throw) are caught. Log for `wrangler tail`
-      // then re-throw so the Cloudflare cron event records this invocation as errored.
-      console.error(
-        `scheduled(${controller.cron}) failed: ${err instanceof Error ? err.message : String(err)}`,
-      );
+      // only place those failures (and any infrastructural throw) are caught. Log for `wrangler tail`,
+      // signal the watchdog WITH the cause (Phase H1a), then re-throw so the Cloudflare cron event
+      // records this invocation as errored.
+      // Name + message (decision 3's "name + first line"); pingWatchdogFail trims to the first line for the
+      // published surface, while `wrangler tail` keeps the full multi-line message below.
+      const detail = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+      const message = `scheduled(${controller.cron}) failed: ${detail}`;
+      console.error(message);
+      // H1a: a shape-safe failure ping so the existing watchdog DOWN alert carries WHAT broke and trips
+      // IMMEDIATELY (no grace wait). Additive precision only — it fires solely when this catch runs, so a
+      // dead cron / cold-start kill (no invocation reaching our code) stays detected by ping ABSENCE via
+      // {@link pingWatchdog} (PHASE_H1_PLAN.md decision 4).
+      pingWatchdogFail(env, ctx, message);
       throw err;
     }
   },
@@ -142,6 +151,32 @@ export default {
 function pingWatchdog(env: Env, ctx: ExecutionContext): void {
   if (!env.HEALTH_PING_URL) return;
   ctx.waitUntil(fetch(env.HEALTH_PING_URL).catch(() => {}));
+}
+
+/**
+ * Fire-and-forget FAILURE ping (Phase H1a) — POST a shape-safe cause to `${HEALTH_PING_URL}/fail` on a
+ * caught tick exception, so the watchdog's DOWN alert distinguishes errored-vs-vanished and carries the
+ * cause (the external watchdog stores a `/fail` POST body, viewable in the check's Events). `/fail` also
+ * trips the check DOWN immediately — no grace wait — unlike the absence-detected dead-cron case.
+ *
+ * SHAPE-SAFE + PUBLISHED (PHASE_H1_PLAN.md decision 3): the body lands in an external service, so it is the
+ * error name + FIRST LINE only, capped at 500 chars — never a connection string (which rides `err.cause`,
+ * NOT `err.message`; diagnose Neon failures by cause shape, never the URL — `[[neon-512mb-raw-bloat-outage]]`
+ * / `[[secrets-not-in-errors-or-logs]]`). First-line-only is LOAD-BEARING: a drizzle `DrizzleQueryError`
+ * message is multi-line (`Failed query: <SQL>` then `params: <array>`), so dropping everything past the
+ * first newline keeps the bound-param array off the published surface.
+ *
+ * OPTIONAL: unset secret ⇒ skip silently (no network). `ctx.waitUntil` so a watchdog hiccup never fails
+ * the tick (we are already in the catch; the original error is re-thrown by the caller regardless).
+ * GUARD (author discipline): the target lives ONLY in `env.HEALTH_PING_URL`; no provider/watchdog host
+ * literal in this file. Exported solely for the `test:watchdog` smoke.
+ */
+export function pingWatchdogFail(env: Env, ctx: ExecutionContext, message: string): void {
+  if (!env.HEALTH_PING_URL) return;
+  // First line only + capped (decision 3): split always yields ≥1 element, so `[0]` is the text before the
+  // first newline — which drops a multi-line drizzle `params:` tail / stack from the published surface.
+  const body = (message.split("\n")[0] ?? "").slice(0, 500);
+  ctx.waitUntil(fetch(`${env.HEALTH_PING_URL}/fail`, { method: "POST", body }).catch(() => {}));
 }
 
 /**
