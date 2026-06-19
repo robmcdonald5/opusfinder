@@ -7,3 +7,5 @@ export { createDigestFunctions } from "./digest";
 export type { DigestDeps, RerankOutcome } from "./digest";
 export { createBackfillFunctions } from "./backfill";
 export type { BackfillDeps } from "./backfill";
+export { createHealthFunctions } from "./health-check";
+export type { HealthCheckDeps } from "./health-check";

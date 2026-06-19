@@ -6,7 +6,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./deps": "./src/deps.ts",
-    "./backfill-deps": "./src/backfill-deps.ts"
+    "./backfill-deps": "./src/backfill-deps.ts",
+    "./health-deps": "./src/health-deps.ts"
   },
   "types": "./src/index.ts",
   "scripts": {
@@ -15,7 +16,8 @@
     "digest": "tsx scripts/digest.ts",
     "health": "tsx scripts/show-health.ts",
     "test:digest-email": "tsx scripts/test-digest-email.ts",
-    "test:probe": "tsx scripts/test-digest-probe.ts"
+    "test:probe": "tsx scripts/test-digest-probe.ts",
+    "test:health-alert": "tsx scripts/test-health-alert.ts"
   },
   "dependencies": {
     "@opusfinder/db": "workspace:*",

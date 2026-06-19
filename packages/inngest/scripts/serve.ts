@@ -10,7 +10,13 @@ import { serve } from "inngest/node";
 
 import { buildBackfillDeps } from "../src/backfill-deps.ts";
 import { buildDigestDeps } from "../src/deps.ts";
-import { createBackfillFunctions, createDigestFunctions, inngest } from "../src/index.ts";
+import { buildHealthDeps } from "../src/health-deps.ts";
+import {
+  createBackfillFunctions,
+  createDigestFunctions,
+  createHealthFunctions,
+  inngest,
+} from "../src/index.ts";
 
 // Port 3000 is PINNED: the root `inngest:dev` script registers this endpoint at
 // http://localhost:3000/api/inngest with --no-discovery, so a port override here would silently
@@ -21,6 +27,7 @@ const handler = serve({
   functions: [
     ...createDigestFunctions(buildDigestDeps()),
     ...createBackfillFunctions(buildBackfillDeps()),
+    ...createHealthFunctions(buildHealthDeps()),
   ],
 });
 

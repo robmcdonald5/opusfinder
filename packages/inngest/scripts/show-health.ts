@@ -3,26 +3,36 @@ import { createDb } from "@opusfinder/db";
 // as a side effect — this is what makes the HEALTH_* vars resolvable below; @opusfinder/db/health does
 // NOT load any .env. Keep this import even if the DB URL is ever plumbed in another way.
 import { getDatabaseUrl } from "@opusfinder/db/env";
-import { type HealthCheck, checkHealth, healthOptionsFromEnv, isEnforceFiring } from "@opusfinder/db/health";
+import { checkHealth, healthOptionsFromEnv } from "@opusfinder/db/health";
 import { sendHealthAlert } from "@opusfinder/email";
 import { runScript } from "@opusfinder/shared/script";
 
+import {
+  alertOnHealth,
+  formatMetric,
+  getHealthAlertCooldownH,
+  thresholdSuffix,
+} from "../src/health-alert.ts";
+
 /**
  * Phase F6 health verdict — the verdict layer over the human-dump readers (`pnpm runs` / `delivery`).
- * Runs `checkHealth` (from @opusfinder/db, the pure/serverless-safe core) over live Neon,
- * prints every check (shadow + enforce + ok) and the cost rollup, and — if any ENFORCE-mode check is
- * firing — emails the operator via `sendHealthAlert` and exits non-zero. Shadow firings are printed but
- * never page (`[[shadow-validate-tunable-filters]]`).
+ * Runs `checkHealth` (from @opusfinder/db, the pure/serverless-safe core) over live Neon, prints every
+ * check (shadow + enforce + ok) and the cost rollup, and — if any ENFORCE-mode check is firing — pages the
+ * operator via the SHARED `alertOnHealth` path (H1b). Shadow firings are printed but never page
+ * (`[[shadow-validate-tunable-filters]]`).
  *
- * Lives in @opusfinder/inngest (not @opusfinder/db) because it both READS (db) and SENDS (email): db is
- * the pure-read scripts home, while the send makes this an action CLI like `digest` — and inngest
- * already depends on both packages, so it avoids a db⇄email workspace cycle.
+ * H1b: the alert send is the SAME deduped path the scheduled Inngest fn uses (`../src/health-alert`), so the
+ * manual and scheduled runs page-once-per-`HEALTH_ALERT_COOLDOWN_H` consistently and BOTH populate the
+ * `health_alerts` history (the Phase-12 panel reads it). This means `pnpm health` is no longer purely
+ * read-only: an enforce-firing check that clears the cooldown WRITES one `health_alerts` row + sends one
+ * email. Exit is non-zero whenever the report is unhealthy, even if the email was cooldown-suppressed.
  *
- * Read-only on the DB. Needs DATABASE_URL (packages/db/.env). Thresholds/modes come from HEALTH_* env
- * (see healthOptionsFromEnv). A real alert send additionally needs ALERT_TO + RESEND_API_KEY +
- * EMAIL_FROM (packages/email/.env) — fail-LOUD: if the report is unhealthy and those are unset,
- * sendHealthAlert throws and this script exits non-zero rather than silently dropping the alert.
- * Output is shape-only (counts / ages / ratios) — no job or user text, no secrets.
+ * Lives in @opusfinder/inngest (not @opusfinder/db) because it both READS (db) and SENDS (email). Needs
+ * DATABASE_URL (packages/db/.env); thresholds/modes come from HEALTH_* env (see healthOptionsFromEnv), the
+ * cooldown from HEALTH_ALERT_COOLDOWN_H. A real alert send additionally needs ALERT_TO + RESEND_API_KEY +
+ * EMAIL_FROM (packages/email/.env) — fail-LOUD: if a page is due and those are unset, sendHealthAlert throws
+ * and this script exits non-zero rather than silently dropping the alert. Output is shape-only (counts /
+ * ages / ratios) — no job or user text, no secrets.
  *
  *   pnpm health
  */
@@ -48,46 +58,21 @@ await runScript("ShowHealth", async () => {
     return;
   }
 
-  // Unhealthy: send ONE shape-only alert summarising the firing enforce checks, then exit non-zero.
-  // Reuse the report's own predicate so the alert list can never drift from report.unhealthy's verdict.
-  const firing = report.checks.filter(isEnforceFiring);
-  const subject = `[opusfinder] health alert — ${firing.length} check(s) firing`;
-  const body =
-    "opusfinder pipeline health — enforce-mode check(s) firing:\n\n" +
-    firing.map((c) => `- ${c.label} (${c.id}): ${formatMetric(c)}${thresholdSuffix(c)}`).join("\n") +
-    "\n\nShape-only; run `pnpm health` for the full report.";
-
-  console.error(`health UNHEALTHY — ${firing.length} enforce check(s) firing; sending alert to ALERT_TO.`);
-  const { emailId } = await sendHealthAlert(subject, body);
-  console.log(`alert sent (email ${emailId}).`);
+  // Unhealthy: page via the shared deduped path (cooldown gate + one row per paged check), then exit
+  // non-zero. A page suppressed by the cooldown is NOT a failure to alert — the report is simply still
+  // unhealthy and was already paged within the window.
+  const cooldownH = getHealthAlertCooldownH();
+  const outcome = await alertOnHealth(db, report, sendHealthAlert, cooldownH);
+  if (outcome.emailId) {
+    console.log(
+      `alert sent (email ${outcome.emailId}) for ${outcome.notified.length} check(s); ` +
+        `${outcome.suppressed.length} suppressed within the ${cooldownH}h cooldown.`,
+    );
+  } else {
+    console.log(
+      `health UNHEALTHY — all ${outcome.firing.length} firing check(s) already paged within the ` +
+        `${cooldownH}h cooldown; no repeat alert sent.`,
+    );
+  }
   process.exitCode = 1;
 });
-
-/** The `[threshold N]` suffix (empty for boolean checks) — shared by the printed report + the alert
- *  body so the two can't drift. */
-function thresholdSuffix(c: HealthCheck): string {
-  return c.threshold === null ? "" : ` [threshold ${c.threshold}]`;
-}
-
-/** Shape-only metric formatting per check id — counts / ages / ratios, never job/user text. */
-function formatMetric(c: HealthCheck): string {
-  if (c.metric === null) return "no data";
-  switch (c.id) {
-    case "ingestion_staleness":
-      return `${c.metric.toFixed(1)}h since last ok`;
-    case "discovery_window":
-      return `${c.metric.toFixed(1)}d since last ok`;
-    case "board_fail_ratio":
-      return `${(c.metric * 100).toFixed(0)}% boards failed`;
-    case "embedding_backlog":
-      return `${c.metric} rows`;
-    case "digest_health":
-      return `${c.metric} errored run(s)`;
-    case "bounce_suppression":
-      return `${c.metric} affected user(s)`;
-    case "discovery_lane_errors":
-      return `${c.metric} lane error(s)`;
-    default:
-      return String(c.metric);
-  }
-}
