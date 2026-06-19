@@ -21,25 +21,29 @@ export type VoyageInputType = "query" | "document" | null;
 //   //                                            // jobs.embedding vector(1024) column
 //
 const VOYAGE_URL = "https://api.voyageai.com/v1/embeddings";
-export const EMBED_MODEL = "voyage-3-large";
+export const EMBED_MODEL = "voyage-4-large";
 // Must match the jobs.embedding column width (EMBEDDING_DIMENSIONS in @opusfinder/db).
-// 1024 is also voyage-3-large's default output dimension.
+// 1024 is also voyage-4-large's default output dimension, so the swap from voyage-3-large
+// needs NO schema migration — but it DOES require a full corpus + profile re-embed: the two
+// models live in different embedding spaces, so a voyage-3 vector and a voyage-4 vector
+// cannot be cosine-compared (mixing them silently corrupts retrieval).
 export const EMBED_DIMENSIONS = 1024;
 
 // Per-request limits the embed() chunker enforces. They live HERE (the swap point) with
-// the other provider facts, so a provider swap updates them in one place. Voyage caps a
-// request at 1000 inputs and ~120K tokens for voyage-3-large. CHARS_PER_TOKEN is a
-// deliberately LOW (worst-case dense text) estimate, so MAX_TOKENS_PER_REQUEST is an UPPER
-// bound on real tokens — at ~3 chars/token a 90K-token estimate stays under the 120K cap
-// even for code/punctuation-heavy postings.
+// the other provider facts, so a provider swap updates them in one place. voyage-4-large
+// accepts a 32K-token context per input; these bounds (128 items, ~90K estimated tokens per
+// request) stay deliberately conservative and well under Voyage's per-request caps.
+// CHARS_PER_TOKEN is a deliberately LOW (worst-case dense text) estimate, so
+// MAX_TOKENS_PER_REQUEST is an UPPER bound on the real token count per request.
 export const MAX_ITEMS_PER_REQUEST = 128;
 export const MAX_TOKENS_PER_REQUEST = 90_000;
 export const CHARS_PER_TOKEN = 3;
 
-// voyage-3-large list price, USD per 1M tokens (pinned 2026-05; revisit if Voyage
-// changes pricing or the model is swapped). Usage-based, billed from the first token —
-// no free allotment (the "200M tokens free" tier is voyage-4 only).
-const PRICE_PER_MTOK_USD = 0.18;
+// voyage-4-large list price, USD per 1M tokens (pinned 2026-06-19; revisit if Voyage
+// changes pricing or the model is swapped). The first 200M tokens per account are free, so
+// estimateCostUsd is a gross list-price UPPER bound that ignores the free allotment — real
+// spend stays $0 until the account's lifetime usage outgrows 200M tokens.
+const PRICE_PER_MTOK_USD = 0.12;
 
 /** Estimate the USD cost of embedding `totalTokens` at the current model's list price. */
 export function estimateCostUsd(totalTokens: number): number {
