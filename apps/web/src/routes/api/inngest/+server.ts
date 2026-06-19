@@ -1,7 +1,8 @@
 /**
  * The PRODUCTION Inngest serve endpoint (Phase-12 12a) — the deployed counterpart of the dev-only
  * `scripts/serve.ts` in @opusfinder/inngest, swapped from `inngest/node` to `inngest/sveltekit`. It hosts
- * the Phase-10 digest functions + the F8 backfill drains on Inngest Cloud, served from SvelteKit-on-Vercel.
+ * the Phase-10 digest functions + the F8 backfill drains + the H1b health-check alerter on Inngest Cloud,
+ * served from SvelteKit-on-Vercel.
  *
  * Runtime: serverless NODE (not edge — the deps reach @anthropic-ai/sdk + @neondatabase/serverless);
  * maxDuration is set on the adapter (svelte.config.js). The Inngest Cloud keys (INNGEST_SIGNING_KEY /
@@ -13,9 +14,15 @@
  * (absent during the build). Deferring to the first request reads env at runtime (cold start), where Vercel
  * provides it; the handler is memoized per serverless instance.
  */
-import { createBackfillFunctions, createDigestFunctions, inngest } from "@opusfinder/inngest";
+import {
+  createBackfillFunctions,
+  createDigestFunctions,
+  createHealthFunctions,
+  inngest,
+} from "@opusfinder/inngest";
 import { buildBackfillDeps } from "@opusfinder/inngest/backfill-deps";
 import { buildDigestDeps } from "@opusfinder/inngest/deps";
+import { buildHealthDeps } from "@opusfinder/inngest/health-deps";
 import { serve } from "inngest/sveltekit";
 
 import type { RequestHandler } from "./$types";
@@ -28,6 +35,7 @@ function getHandler(): ReturnType<typeof serve> {
     functions: [
       ...createDigestFunctions(buildDigestDeps()),
       ...createBackfillFunctions(buildBackfillDeps()),
+      ...createHealthFunctions(buildHealthDeps()),
     ],
   }));
 }
