@@ -107,11 +107,15 @@ export interface HealthCost {
 export interface HealthSignals {
   /** (a) hours since the last `status='ok'` ingestion run; `null` if none ever succeeded. */
   ingestionAgeH: number | null;
-  /** (b) the latest ingestion run's status + `counts.failed` / `counts.companies` (the chunk
-   *  denominator). `status` lets the check fire on an errored run that processed 0 boards — which
-   *  `failed/companies` alone (a 0/0 → 0 ratio) would read as healthy. */
+  /** (b) the latest ingestion run's status + `counts.failed` over the boards actually ATTEMPTED
+   *  (`counts.processed`), falling back to `counts.companies` (the chunk size) when `processed` is
+   *  absent/0. Dividing by processed — not companies — keeps the ratio exact on a budget-truncated tick
+   *  (`maxRunMs` stopped the loop early ⇒ `processed < companies`), where `failed/companies` dilutes the
+   *  real failure rate among attempted boards. `status` lets the check fire on an errored run that
+   *  attempted 0 boards — which the ratio alone (a 0/0 → 0) would read as healthy. */
   latestIngestStatus: string | null;
   latestIngestFailed: number;
+  latestIngestProcessed: number;
   latestIngestCompanies: number;
   /** (c) days since the last `status='ok'` discovery run; `null` if none ever succeeded. Like (a),
    *  this is last-SUCCESS (finished_at), not last-attempt — a crash-looping discovery that keeps
@@ -188,13 +192,16 @@ export async function gatherHealthSignals(
       `),
       // (b) latest ingestion run's status + fail-ratio inputs. Read `counts`, NOT `status` ALONE (a run
       //     where every board 404'd stays status='ok' while incrementing counts.failed) — but ALSO carry
-      //     `status` so an errored run that processed 0 boards (counts.companies=0 → a 0/0 ratio that
-      //     would read healthy) still fires. `::numeric` (not `::int`) so a non-integer value can never
-      //     abort the query and take the checker dark.
+      //     `status` so an errored run that attempted 0 boards (processed=0 → a 0/0 ratio that would read
+      //     healthy) still fires. `processed` (boards actually attempted) is the exact ratio denominator —
+      //     on a budget-truncated tick it is < companies, so failed/companies would under-report.
+      //     `::numeric` (not `::int`) so a non-integer value can never abort the query and take the
+      //     checker dark.
       db.execute(sql`
         SELECT status,
-               coalesce((counts->>'failed')::numeric, 0)    AS failed,
-               coalesce((counts->>'companies')::numeric, 0) AS companies
+               coalesce((counts->>'failed')::numeric, 0)     AS failed,
+               coalesce((counts->>'processed')::numeric, 0)  AS processed,
+               coalesce((counts->>'companies')::numeric, 0)  AS companies
         FROM source_runs WHERE pipeline = 'ingestion' ORDER BY started_at DESC LIMIT 1
       `),
       // (c) discovery window — last SUCCESS (finished_at WHERE status='ok'), mirroring (a), so a
@@ -238,7 +245,7 @@ export async function gatherHealthSignals(
 
   const ingestAge = resultRows(ingestAgeR)[0] as { age_h: unknown } | undefined;
   const latestIngest = resultRows(latestIngestR)[0] as
-    | { status: unknown; failed: unknown; companies: unknown }
+    | { status: unknown; failed: unknown; processed: unknown; companies: unknown }
     | undefined;
   const discoveryAge = resultRows(discoveryAgeR)[0] as { age_d: unknown } | undefined;
   const backlogs = resultRows(backlogsR)[0] as
@@ -267,6 +274,7 @@ export async function gatherHealthSignals(
     ingestionAgeH: ingestAge?.age_h == null ? null : num(ingestAge.age_h),
     latestIngestStatus: (latestIngest?.status as string | null | undefined) ?? null,
     latestIngestFailed: num(latestIngest?.failed),
+    latestIngestProcessed: num(latestIngest?.processed),
     latestIngestCompanies: num(latestIngest?.companies),
     discoveryAgeD: discoveryAge?.age_d == null ? null : num(discoveryAge.age_d),
     discoveryLaneErrors,
@@ -298,7 +306,11 @@ export function evaluateHealth(signals: HealthSignals, opts?: HealthOptions): He
     return { id, label: CHECK_LABELS[id], state, metric, threshold, mode };
   };
 
-  const failRatio = signals.latestIngestCompanies > 0 ? signals.latestIngestFailed / signals.latestIngestCompanies : 0;
+  // Divide by the boards actually ATTEMPTED (processed), not the whole chunk (companies): on a
+  // budget-truncated tick (processed < companies) failed/companies dilutes the real failure rate. Fall
+  // back to companies when processed is 0/absent (e.g. an older run's counts) so the check never goes dark.
+  const failDenom = signals.latestIngestProcessed > 0 ? signals.latestIngestProcessed : signals.latestIngestCompanies;
+  const failRatio = failDenom > 0 ? signals.latestIngestFailed / failDenom : 0;
   const bounceTotal = signals.hardBounces + signals.suppressed;
 
   const checks: HealthCheck[] = [
@@ -309,14 +321,13 @@ export function evaluateHealth(signals: HealthSignals, opts?: HealthOptions): He
       t.ingestMaxAgeH,
       signals.ingestionAgeH === null || signals.ingestionAgeH > t.ingestMaxAgeH,
     ),
-    // (b) fire if the latest run errored outright, OR (when it processed boards) the fail-ratio breaches.
-    //     The status arm catches a full-run abort (companies=0 → a 0/0 ratio that would read healthy).
+    // (b) fire if the latest run errored outright, OR (when it attempted boards) the fail-ratio breaches.
+    //     The status arm catches a full-run abort (processed=0 → a 0/0 ratio that would read healthy).
     make(
       "board_fail_ratio",
       failRatio,
       t.failRatio,
-      signals.latestIngestStatus === "error" ||
-        (signals.latestIngestCompanies > 0 && failRatio > t.failRatio),
+      signals.latestIngestStatus === "error" || (failDenom > 0 && failRatio > t.failRatio),
     ),
     // (c) null age (no discovery run) → firing.
     make(

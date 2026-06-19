@@ -33,6 +33,7 @@ const HEALTHY: HealthSignals = {
   ingestionAgeH: 0.5,
   latestIngestStatus: "ok",
   latestIngestFailed: 0,
+  latestIngestProcessed: 11,
   latestIngestCompanies: 11,
   discoveryAgeD: 1,
   discoveryLaneErrors: 0,
@@ -46,8 +47,8 @@ const HEALTHY: HealthSignals = {
 /** A single-check breach shape: override(s) on HEALTHY that should trip exactly `id`. */
 const BREACHES: Array<{ id: HealthCheckId; over: Partial<HealthSignals> }> = [
   { id: "ingestion_staleness", over: { ingestionAgeH: 10 } },
-  // every board 404'd but the run stayed status='ok' → failed == companies → ratio 1.0 > 0.5.
-  { id: "board_fail_ratio", over: { latestIngestFailed: 11, latestIngestCompanies: 11 } },
+  // every attempted board 404'd but the run stayed status='ok' → failed == processed → ratio 1.0 > 0.5.
+  { id: "board_fail_ratio", over: { latestIngestFailed: 11, latestIngestProcessed: 11, latestIngestCompanies: 11 } },
   { id: "discovery_window", over: { discoveryAgeD: 30 } },
   { id: "embedding_backlog", over: { embeddingBacklog: 5000 } },
   { id: "digest_health", over: { digestErrors: 2 } },
@@ -94,11 +95,11 @@ await runScript("test-health", async () => {
     assert(!off.unhealthy, `${id}: an off check must never set unhealthy`);
   }
 
-  // 3) Board fail-ratio must not divide by zero on an empty (0-company) tick.
+  // 3) Board fail-ratio must not divide by zero on an empty (0-processed) tick.
   {
-    const r = evaluateHealth({ ...HEALTHY, latestIngestFailed: 5, latestIngestCompanies: 0 });
-    assert(find(r, "board_fail_ratio").state === "ok", "0-company tick must not fire fail-ratio");
-    assert(find(r, "board_fail_ratio").metric === 0, "0-company fail-ratio metric must be 0, not NaN");
+    const r = evaluateHealth({ ...HEALTHY, latestIngestFailed: 5, latestIngestProcessed: 0, latestIngestCompanies: 0 });
+    assert(find(r, "board_fail_ratio").state === "ok", "0-processed tick must not fire fail-ratio");
+    assert(find(r, "board_fail_ratio").metric === 0, "0-processed fail-ratio metric must be 0, not NaN");
   }
 
   // 4) Null ages (pipeline never ran) fire the age checks.
@@ -124,9 +125,9 @@ await runScript("test-health", async () => {
   }
 
   // 5b) board_fail_ratio also fires when the LATEST ingestion run errored outright (a full-run abort
-  //     leaves counts.companies=0 → a 0/0 ratio that the ratio arm alone would read as healthy).
+  //     leaves processed=0 → a 0/0 ratio that the ratio arm alone would read as healthy).
   {
-    const r = evaluateHealth({ ...HEALTHY, latestIngestStatus: "error", latestIngestFailed: 0, latestIngestCompanies: 0 });
+    const r = evaluateHealth({ ...HEALTHY, latestIngestStatus: "error", latestIngestFailed: 0, latestIngestProcessed: 0, latestIngestCompanies: 0 });
     assert(find(r, "board_fail_ratio").state === "firing", "errored latest run must fire board_fail_ratio");
   }
 
@@ -143,7 +144,38 @@ await runScript("test-health", async () => {
     );
   }
 
-  // 5d) unhealthy aggregation is `.some(enforce && firing)`: a shadow firing alongside an enforce firing
+  // 5d) BUDGET-TRUNCATED tick: the ratio divides by `processed` (boards actually attempted), NOT
+  //     `companies` (the whole chunk). A tick that attempted 30 of 150 boards and failed all 30 fires
+  //     (30/30 = 1.0), where the old failed/companies (30/150 = 0.2) would under-report and stay silent;
+  //     a few failures among the attempted boards stays ok. (`processed` falls back to `companies` when 0.)
+  {
+    const allFailed = evaluateHealth({
+      ...HEALTHY,
+      latestIngestFailed: 30,
+      latestIngestProcessed: 30,
+      latestIngestCompanies: 150,
+    });
+    assert(
+      find(allFailed, "board_fail_ratio").state === "firing",
+      "all-failed truncated tick must fire on failed/processed (1.0), not failed/companies (0.2)",
+    );
+    assert(
+      Math.abs((find(allFailed, "board_fail_ratio").metric ?? 0) - 1) < 1e-9,
+      "metric is failed/processed (1.0), not failed/companies (0.2)",
+    );
+    const fewFailed = evaluateHealth({
+      ...HEALTHY,
+      latestIngestFailed: 3,
+      latestIngestProcessed: 30,
+      latestIngestCompanies: 150,
+    });
+    assert(
+      find(fewFailed, "board_fail_ratio").state === "ok",
+      "3/30 (0.1) among attempted boards stays under the 0.5 watermark",
+    );
+  }
+
+  // 5e) unhealthy aggregation is `.some(enforce && firing)`: a shadow firing alongside an enforce firing
   //     stays unhealthy via the enforce one; two enforce firings stay unhealthy; all-shadow never is.
   {
     const twoBreached = { ...HEALTHY, embeddingBacklog: 5000, digestErrors: 2 };
@@ -236,8 +268,9 @@ await runScript("test-health", async () => {
 
   console.log(
     "test-health OK — 7 checks, healthy=clean; each breach fires only itself; shadow!=unhealthy, " +
-      "enforce=unhealthy (single + multi-enforce), off=skipped; board_fail_ratio fires on an errored run " +
-      "and at the 0.5 boundary, no div-by-zero on empty ticks; null ages fire; cost hit-rate/null + token " +
+      "enforce=unhealthy (single + multi-enforce), off=skipped; board_fail_ratio = failed/processed (exact " +
+      "on a budget-truncated tick), fires on an errored run + at the 0.5 boundary, no div-by-zero on " +
+      "0-processed ticks; null ages fire; cost hit-rate/null + token " +
       "pass-through; healthOptionsFromEnv parses modes/thresholds, ignores invalid ids, rejects negatives, " +
       "and enforce wins over off; H1b dedup — shouldNotify gates on the recent-row count (page → suppress " +
       "in cooldown → re-arm), recordHealthAlert writes shape-only rows.",
