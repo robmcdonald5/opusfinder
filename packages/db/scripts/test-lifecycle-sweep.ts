@@ -6,7 +6,11 @@ import type { Db } from "../src/client";
 import {
   ABSENCE_CLOSE_THRESHOLD,
   closeJobsForCompanies,
+  DEFAULT_STALE_TTL_DAYS,
+  markCompanyIngested,
+  markJobsPresent,
   sweepLifecycle,
+  sweepStaleJobs,
 } from "../src/repos/lifecycle";
 
 /**
@@ -191,11 +195,128 @@ await runScript("test-lifecycle-sweep", async () => {
     );
   }
 
+  // 10) sweepStaleJobs (Tier-1 universal timer) — SHADOW (default): a count-only SELECT, never an UPDATE; the
+  //     default TTL is bound; the COALESCE staleness predicate AND the board-health guard (companies join +
+  //     last_ingested_at) are present so a DOWN board's jobs can't be false-closed.
+  {
+    const { db, calls } = stubDb([{ would_close: "5" }]);
+    const r = await sweepStaleJobs(db);
+    const { sql: text, params } = rendered(calls[0]);
+    assert(!text.includes("UPDATE"), "shadow stale sweep must NOT UPDATE");
+    assert(text.includes("count(*)"), "shadow stale sweep must count");
+    assert(
+      text.includes("COALESCE(jobs.last_seen_at, jobs.created_at)"),
+      "stale predicate must COALESCE last_seen_at over created_at",
+    );
+    assert(text.includes("lifecycle_state = 'active'"), "stale sweep must scope to active jobs");
+    assert(
+      /join\s+"companies"/i.test(text),
+      "shadow stale sweep must JOIN companies for the board-health guard",
+    );
+    assert(
+      text.includes("c.last_ingested_at >="),
+      "board-health guard must require a recent successful ingest (c.last_ingested_at >= cutoff)",
+    );
+    assert(params.includes(DEFAULT_STALE_TTL_DAYS), "default TTL days must be bound");
+    assert(r.closed === 0 && r.wouldClose === 5, `shadow stale result wrong: ${JSON.stringify(r)}`);
+  }
+
+  // 11) ENFORCE: UPDATE ... FROM companies (board-health guard still applied) to 'closed' AND stamps the
+  //     closed_at clock (G2); the closed count is the RETURNING row count.
+  {
+    const { db, calls } = stubDb([{ id: 1 }, { id: 2 }, { id: 3 }]);
+    const r = await sweepStaleJobs(db, { enforce: true });
+    const { sql: text } = rendered(calls[0]);
+    assert(
+      text.includes("UPDATE") && text.includes("'closed'"),
+      "enforce stale sweep must write 'closed'",
+    );
+    assert(
+      text.includes("closed_at = now()"),
+      "enforce stale sweep must stamp the closed_at clock",
+    );
+    assert(
+      text.includes("c.last_ingested_at >="),
+      "enforce stale sweep must ALSO apply the board-health guard",
+    );
+    assert(
+      r.closed === 3 && r.wouldClose === 0,
+      `enforce stale result wrong: ${JSON.stringify(r)}`,
+    );
+  }
+
+  // 12) A custom ttlDays is honored (bound), and a non-positive TTL floors to 1 (never a 0/negative horizon
+  //     that would close on now()).
+  {
+    const { db, calls } = stubDb([{ would_close: "0" }]);
+    await sweepStaleJobs(db, { ttlDays: 30 });
+    assert(rendered(calls[0]).params.includes(30), "custom ttlDays must be bound");
+  }
+  {
+    const { db, calls } = stubDb([{ would_close: "0" }]);
+    await sweepStaleJobs(db, { ttlDays: 0 });
+    assert(rendered(calls[0]).params.includes(1), "non-positive ttlDays must floor to 1");
+  }
+
+  // 13) markJobsPresent (Tier-1 liveness stamp): empty set is a no-op (no DB hit); a non-empty set emits the
+  //     CTE with the NO-OP GUARD (re-write only rows stale >1h or needing revival), the reviving columns, and
+  //     the revived count from the pre-update closed snapshot; NUL is stripped.
+  {
+    const { db, calls } = stubDb([{ revived: "0" }]);
+    const r = await markJobsPresent(db, 1, []);
+    assert(calls.length === 0, "empty present set must not hit the DB");
+    assert(r.revived === 0, "empty present set must return revived 0");
+  }
+  {
+    const { db, calls } = stubDb([{ revived: "2" }]);
+    const r = await markJobsPresent(db, 7, [`job${NUL}1`, "clean2"]);
+    const { sql: text, params } = rendered(calls[0]);
+    assert(text.includes("last_seen_at = now()"), "markJobsPresent must stamp last_seen_at");
+    assert(
+      text.includes("lifecycle_state = 'active'") && text.includes("closed_at = NULL"),
+      "markJobsPresent must revive (active + clear closed_at)",
+    );
+    assert(
+      text.includes("last_seen_at < now() - interval '1 hour'"),
+      "markJobsPresent must carry the >1h no-op guard so unchanged rows aren't rewritten every tick",
+    );
+    assert(
+      text.includes("revived_set"),
+      "markJobsPresent must count revivals from a pre-update snapshot",
+    );
+    assert(
+      text.includes("jsonb_array_elements_text"),
+      "present set must unnest from a jsonb param",
+    );
+    assert(params.includes(7), "companyId must be bound");
+    const jsonParam = params.find((p) => typeof p === "string" && p.includes("job")) as
+      | string
+      | undefined;
+    assert(
+      jsonParam !== undefined && !jsonParam.includes(NUL),
+      "NUL must be stripped from the present set",
+    );
+    assert(r.revived === 2, `markJobsPresent revived mapping wrong: ${JSON.stringify(r)}`);
+  }
+
+  // 14) markCompanyIngested (Tier-1 board-health): stamps companies.last_ingested_at for the given company.
+  {
+    const { db, calls } = stubDb([]);
+    await markCompanyIngested(db, 42);
+    const { sql: text, params } = rendered(calls[0]);
+    assert(
+      /update\s+"companies"\s+set\s+last_ingested_at\s*=\s*now\(\)/i.test(text),
+      "markCompanyIngested must stamp companies.last_ingested_at = now()",
+    );
+    assert(params.includes(42), "markCompanyIngested must bind the companyId");
+  }
+
   console.log(
     "test-lifecycle-sweep OK — Arm A: empty no-op, shadow suppresses close, enforce closes, counts parsed, " +
-      "NUL stripped, threshold honored, closed_at clock (clear-on-revive always / stamp-on-close enforce-only); " +
-      "Arm B: empty early-out, shadow counts, enforce closes + stamps closed_at " +
-      `(default threshold ${ABSENCE_CLOSE_THRESHOLD}).`,
+      "NUL stripped, threshold honored, closed_at clock; Arm B: empty early-out, shadow counts, enforce closes; " +
+      "stale timer: shadow counts, enforce closes + board-health guard (companies join + last_ingested_at), TTL " +
+      "bound + floored; markJobsPresent: empty no-op, stamp + revive + no-op guard + NUL strip + revived count; " +
+      `markCompanyIngested: stamps last_ingested_at (default threshold ${ABSENCE_CLOSE_THRESHOLD}, default stale TTL ${DEFAULT_STALE_TTL_DAYS}d).`,
   );
 });
 

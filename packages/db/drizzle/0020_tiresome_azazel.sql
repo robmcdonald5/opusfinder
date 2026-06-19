@@ -1,0 +1,16 @@
+-- Tier-1 staleness lifecycle: the `last_seen_at` last-fetch liveness clock on jobs. Stamped to now()
+-- by markJobsPresent (repos/lifecycle.ts, with a >1h no-op guard) for EVERY job a board fetch returned —
+-- completeness-INDEPENDENTLY, so a budget-capped partial fetch (boschgroup) stamps the rows it saw just
+-- like a fully-fetched board. The universal staleness closer (sweepStaleJobs, repos/lifecycle.ts) closes
+-- any active job whose last_seen_at is older than STALE_SWEEP_TTL_DAYS, so a permanently-capped mega-board's
+-- aged-out tail closes on the SAME clock as every other board (it skips Arm A's complete-feed set-difference
+-- sweep; this timer needs no complete feed). See PHASE_H/Tier-1 notes + schema.ts jobs.last_seen_at.
+--
+-- DEFAULT now() NOT NULL: the ADD COLUMN backfills every existing row to the migration timestamp — a FRESH
+-- stamp, NOT updated_at — so no live job is instantly past the TTL; the next ingestion cycle re-stamps the
+-- live ones well before STALE_SWEEP_TTL_DAYS (default 21d) elapses, and the sweep ships shadow-first
+-- (STALE_SWEEP unset) so its would-close counts are read on real traffic before any close is enforced.
+--
+-- Hand-guarded with IF NOT EXISTS (drizzle-kit emits the bare ADD COLUMN; neon-http migrations are NOT
+-- transactional, so a partial re-apply must be idempotent — same discipline as 0011/0012/0017/0018).
+ALTER TABLE "jobs" ADD COLUMN IF NOT EXISTS "last_seen_at" timestamp with time zone DEFAULT now() NOT NULL;

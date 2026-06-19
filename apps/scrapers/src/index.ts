@@ -50,6 +50,16 @@ interface Env {
    *  runtime's `process.env.F2_ENFORCE` independently. Keep BOTH in sync so all three arms enforce together
    *  (a partial flip is harmless but confusing — the #1 operational footgun). */
   F2_ENFORCE?: string;
+  /** Tier-1 universal staleness-close enforcement — see {@link parseEnforceFlag}. Its OWN switch, SEPARATE
+   *  from F2_ENFORCE: unset / "shadow" = count-only (tally `staleWouldClose`, write nothing — the SHIPPED
+   *  default so the would-close population is observed on real traffic first); "enforce" closes active jobs
+   *  not re-confirmed within STALE_SWEEP_TTL_DAYS. Deliberately not coupled to the already-enforced F2 flag
+   *  (coupling would skip the shadow-observation window). Flip to "enforce" only after `pnpm shadow-closes`
+   *  shows `staleWouldClose` is a believable trickle, not a spike. */
+  STALE_SWEEP?: string;
+  /** Staleness-close TTL in days (the {@link sweepStaleJobs} horizon). Default 21 (see DEFAULT_STALE_TTL_DAYS)
+   *  — must exceed the worst-case full-sweep latency or a still-live, not-recently-fetched job false-closes. */
+  STALE_SWEEP_TTL_DAYS?: string;
 }
 
 // Must equal the wrangler.toml cron strings exactly (esp. the weekday — "SUN", not "0"). Ingestion is
@@ -204,6 +214,12 @@ async function runIngestionTick(db: Db, env: Env): Promise<void> {
   // Inline embedding is OFF (not wired — see the module doc-comment). Jobs are upserted; the still-NULL
   // vectors are filled by `pnpm embeddings:backfill`. The per-board cap + run budget keep one tick inside
   // the Worker's per-invocation limits regardless of how heavy the chunk is.
+  // Tier-1 staleness sweep TTL: a non-numeric / non-positive STALE_SWEEP_TTL_DAYS falls back to the
+  // sweepStaleJobs default (DEFAULT_STALE_TTL_DAYS) rather than closing on a NaN/0 horizon.
+  const ttlRaw = env.STALE_SWEEP_TTL_DAYS ? Number(env.STALE_SWEEP_TTL_DAYS) : undefined;
+  const staleTtlDays =
+    ttlRaw !== undefined && Number.isFinite(ttlRaw) && ttlRaw > 0 ? Math.trunc(ttlRaw) : undefined;
+
   const counts = await runIngestion(db, {
     activeOnly: true,
     afterId,
@@ -212,6 +228,10 @@ async function runIngestionTick(db: Db, env: Env): Promise<void> {
     adapter: { maxItems: MAX_JOBS_PER_BOARD },
     // F2 Arm A enforcement — the one shared switch (off by default = shadow).
     enforceLifecycle: parseEnforceFlag(env.F2_ENFORCE),
+    // Tier-1 universal staleness sweep — runs EVERY tick (driven by the deployed feature, not gated on the
+    // switch) so the would-close population is observed in shadow; `enforce` rides its OWN STALE_SWEEP flag,
+    // independent of F2_ENFORCE, so it stays count-only until the owner flips it after reading the counts.
+    staleSweep: { ttlDays: staleTtlDays, enforce: parseEnforceFlag(env.STALE_SWEEP) },
   });
 
   // Wrap to the start (afterId 0) ONLY when the whole chunk was processed AND it under-filled
