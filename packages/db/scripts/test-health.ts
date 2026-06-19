@@ -1,12 +1,17 @@
+import { PgDialect } from "drizzle-orm/pg-core";
+
 import { runScript } from "@opusfinder/shared/script";
 
+import type { Db } from "../src/client";
 import {
+  type HealthCheck,
   type HealthCheckId,
   type HealthReport,
   type HealthSignals,
   evaluateHealth,
   healthOptionsFromEnv,
 } from "../src/health";
+import { recordHealthAlert, shouldNotify } from "../src/repos/health-alerts";
 
 /**
  * Stub smoke for the Phase-F6 health checker (F6b) — the JS-decidable surface, NO creds, NO Postgres.
@@ -180,14 +185,88 @@ await runScript("test-health", async () => {
     assert(both.modes?.embedding_backlog === "enforce", "enforce must win over off when an id is in both lists");
   }
 
+  // 7) H1b dedup primitives (stubbed db, NO creds, NO Postgres): shouldNotify gates purely on the
+  //    recent-row count, and recordHealthAlert writes the shape-only fields. Drives the full page-once
+  //    cycle — clear → page+record → suppressed within cooldown → re-armed after — by setting the count
+  //    the stub returns. (The real time-window SEMANTICS are the H1d live gate's job, like prune-oplog.)
+  {
+    const { db, inserts, setRecent, lastExecuteQuery } = stubAlertDb();
+    const check: HealthCheck = {
+      id: "ingestion_staleness",
+      label: "Ingestion staleness",
+      state: "firing",
+      metric: 4.2,
+      threshold: 3,
+      mode: "enforce",
+    };
+
+    setRecent(0);
+    assert(await shouldNotify(db, check.id, 24), "no recent row ⇒ clear to page");
+
+    // shouldNotify must BIND the passed check id + cooldown (a wrong-id query would silently never dedup —
+    // the order-bound orchestration smoke can't catch that, so pin the SQL shape here where PgDialect lives).
+    const dialect = new PgDialect();
+    const { sql: gateSql, params: gateParams } = dialect.sqlToQuery(
+      lastExecuteQuery() as Parameters<typeof dialect.sqlToQuery>[0],
+    );
+    assert(gateSql.includes("check_id"), "shouldNotify filters on check_id");
+    assert(gateSql.includes("interval '1 hour'"), "shouldNotify binds the cooldown as an hour window");
+    assert(gateParams[0] === "ingestion_staleness", "shouldNotify binds the PASSED check id, not a stray one");
+    assert(gateParams.includes(24), "shouldNotify binds the passed cooldown hours");
+
+    await recordHealthAlert(db, check, "Ingestion staleness (ingestion_staleness): 4.2h since last ok [threshold 3]");
+    assert(inserts.length === 1, "recordHealthAlert writes exactly one row");
+    const row = inserts[0];
+    assert(row !== undefined, "recordHealthAlert row is present");
+    assert(row.checkId === "ingestion_staleness", "row carries the check id");
+    assert(row.mode === "enforce", "row carries the mode");
+    assert(row.metric === 4.2 && row.threshold === 3, "row carries the numeric metric/threshold");
+    assert(typeof row.detail === "string", "detail is a string");
+    assert(
+      !(row.detail as string).includes("@") && !(row.detail as string).includes("http"),
+      "detail is shape-only — no email address / URL leaks into the event log",
+    );
+
+    setRecent(1); // the just-paged row now sits inside the cooldown window
+    assert(!(await shouldNotify(db, check.id, 24)), "a recent row within cooldown ⇒ suppress the re-page");
+
+    setRecent(0); // cooldown elapsed / the row aged past the window
+    assert(await shouldNotify(db, check.id, 24), "after the cooldown clears ⇒ re-armed to page");
+  }
+
   console.log(
     "test-health OK — 7 checks, healthy=clean; each breach fires only itself; shadow!=unhealthy, " +
       "enforce=unhealthy (single + multi-enforce), off=skipped; board_fail_ratio fires on an errored run " +
       "and at the 0.5 boundary, no div-by-zero on empty ticks; null ages fire; cost hit-rate/null + token " +
       "pass-through; healthOptionsFromEnv parses modes/thresholds, ignores invalid ids, rejects negatives, " +
-      "and enforce wins over off.",
+      "and enforce wins over off; H1b dedup — shouldNotify gates on the recent-row count (page → suppress " +
+      "in cooldown → re-arm), recordHealthAlert writes shape-only rows.",
   );
 });
+
+/**
+ * A fake Db for the H1b primitives — NO Postgres, NO creds. `recordHealthAlert` lands its `.values()`
+ * object in `inserts`; `shouldNotify` reads the count `execute` returns, which `setRecent` controls so the
+ * test can drive the page → suppress → re-arm cycle deterministically.
+ */
+function stubAlertDb(): {
+  db: Db;
+  inserts: Array<Record<string, unknown>>;
+  setRecent: (n: number) => void;
+  lastExecuteQuery: () => unknown;
+} {
+  const inserts: Array<Record<string, unknown>> = [];
+  let recent = 0;
+  let lastQuery: unknown;
+  const db = {
+    insert: () => ({ values: async (v: Record<string, unknown>) => void inserts.push(v) }),
+    execute: async (q: unknown) => {
+      lastQuery = q;
+      return [{ n: recent }];
+    },
+  } as unknown as Db;
+  return { db, inserts, setRecent: (n) => void (recent = n), lastExecuteQuery: () => lastQuery };
+}
 
 function assert(cond: boolean, msg: string): asserts cond {
   if (!cond) throw new Error(`assertion failed: ${msg}`);

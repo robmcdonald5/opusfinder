@@ -82,3 +82,5 @@ export type { DigestEmailPayload, DigestDeliveryOutcome } from "./digests";
 // Phase F2 Arm C — the pre-send liveness probe's apply-URL read + dead-link drop.
 export { getDigestApplyTargets, dropDigestItemsAndRecount } from "./digests";
 export type { DigestApplyTarget } from "./digests";
+// Phase H1b — first writer/reader of health_alerts (cooldown page-once dedup over the F6 checker).
+export { recordHealthAlert, shouldNotify, DEFAULT_HEALTH_ALERT_COOLDOWN_H } from "./health-alerts";
