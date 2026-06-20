@@ -85,6 +85,32 @@ export async function updatePreferences(
 }
 
 /**
+ * Grant or revoke the digest SEND PERMIT (migration 0022) — the operator-written `digest_approved_at`
+ * gate that replaces the env-var EMAIL_ALLOWLIST. Lives HERE (not in updatePreferences/toRow) because it
+ * is operator/pipeline STATE, not a user-settable preference — the exact posture of `digest_suppressed_at`,
+ * which is likewise never in toRow. `approve=true` stamps `now()` but COALESCEs onto any existing value so a
+ * re-approve is idempotent and PRESERVES the original grant instant (the audit timestamp); `approve=false`
+ * clears it back to NULL (un-approved = fail-closed, no send). Single idempotent write; throws if the user
+ * has no preferences row (created at user creation, so a missing row is a real error, not a silent insert).
+ */
+export async function setDigestApproval(
+  db: Db,
+  userId: UserId,
+  approved: boolean,
+): Promise<UserPreferencesRow> {
+  const rows = await db
+    .update(userPreferences)
+    .set({
+      digestApprovedAt: approved ? sql`COALESCE(${userPreferences.digestApprovedAt}, now())` : null,
+      updatedAt: sql`now()`,
+    })
+    .where(eq(userPreferences.userId, userId))
+    .returning();
+  if (!rows[0]) throw new Error(`setDigestApproval: no preferences row for ${userId}`);
+  return rows[0];
+}
+
+/**
  * Map the shared `UserPreferences` (settable subset, camelCase) onto the table's insert/update
  * columns, DROPPING `undefined` keys so column defaults (on create) / existing values (on update) are
  * preserved. `minSalary: null` is kept (an explicit "no floor"); only `undefined` means "leave alone".

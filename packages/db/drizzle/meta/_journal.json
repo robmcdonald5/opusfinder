@@ -155,6 +155,20 @@
       "when": 1781897941064,
       "tag": "0021_condemned_shinko_yamashiro",
       "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1781914567559,
+      "tag": "0022_lovely_jackal",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1781916687783,
+      "tag": "0023_tiny_amazoness",
+      "breakpoints": true
     }
   ]
 }

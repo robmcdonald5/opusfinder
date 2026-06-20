@@ -37,7 +37,12 @@ export type {
   ProfileTextRef,
   ProfileForDigest,
 } from "./profiles";
-export { getPreferences, getOrCreatePreferences, updatePreferences } from "./preferences";
+export {
+  getPreferences,
+  getOrCreatePreferences,
+  updatePreferences,
+  setDigestApproval,
+} from "./preferences";
 export type { UserPreferencesRow, CreatePreferencesInput } from "./preferences";
 // Phase 10 digest retrieval — the deterministic filter + cosine ranking over a profile vector.
 export { retrieveCandidatesForProfile } from "./retrieval";
