@@ -11,7 +11,7 @@ import type { DigestDeliveryStatus } from "@opusfinder/db/schema";
 import type { SendDigestResult } from "@opusfinder/email";
 
 /**
- * The Phase-11 email-delivery tail of `digest-user`: ONE send step (payload read → allowlist-gated
+ * The Phase-11 email-delivery tail of `digest-user`: ONE send step (payload read → permit-gated
  * Resend send → state write), a bounded delivery poll, and ONE record step. Split from ./digest so
  * the stub smoke (scripts/test-digest-email.ts) can drive the failure/skip/happy paths with a fake
  * `step` — the real function passes Inngest's step tools straight through.
@@ -102,8 +102,8 @@ export async function deliverDigestEmail(
   db: Db,
   email: EmailSeam,
   digestId: number,
-): Promise<DigestDeliveryStatus | "skipped-allowlist" | "skipped-empty"> {
-  let sent: SendDigestResult | { skipped: "empty" };
+): Promise<DigestDeliveryStatus | "skipped-unapproved" | "skipped-empty"> {
+  let sent: SendDigestResult | { skipped: "empty" | "unapproved" };
   try {
     sent = await step.run("send-email", async () => {
       const payload = await getDigestEmailPayload(db, digestId);
@@ -114,19 +114,28 @@ export async function deliverDigestEmail(
       // landing during the multi-hour synthesis wait — getDigestEmailPayload filters non-active jobs).
       // Send NOTHING (a closed job must never reach an inbox) and skip the poll. A clean no-send,
       // distinct from the null invariant break above; the orchestrator backs the user off the cadence.
-      // Like the allowlist skip this is a SUCCESSFUL step result — once memoized it replays identically,
-      // so the send-vs-skip branch never diverges across a retry (the per-attempt re-read residual noted
-      // in this function's doc applies only when the step itself FAILS and the whole function retries).
+      // A SUCCESSFUL step result — once memoized it replays identically, so the send-vs-skip branch never
+      // diverges across a retry (the per-attempt re-read residual noted in this function's doc applies only
+      // when the step itself FAILS and the whole function retries).
       if (payload.items.length === 0) return { skipped: "empty" as const };
+      // DB-native SEND PERMIT (replaced EMAIL_ALLOWLIST): re-read at the send boundary as defense-in-depth.
+      // Falsy approvedAt (NULL = un-approved) ⇒ no send. EXPLICIT branch BEFORE email.send — an un-approved
+      // user returns a NON-null payload WITH items, so this must NOT be folded into the null-invariant or
+      // empty-items shapes above. Near-dead in practice (listDigestRecipients + the load gate already exclude
+      // un-approved users before any spend); this only fires on a permit REVOKED during the synthesis wait.
+      if (!payload.approvedAt) {
+        console.log(`digest: recipient not approved — skipping send for digest ${digestId}`);
+        return { skipped: "unapproved" as const };
+      }
       const res = await email.send(payload);
-      if ("emailId" in res) await recordDigestSent(db, digestId, res.emailId);
+      await recordDigestSent(db, digestId, res.emailId);
       return res;
     });
   } catch (err) {
     await step.run("record-send-failure", () => recordDigestSendFailure(db, digestId));
     throw err; // rethrow so Inngest records the failed run
   }
-  if ("skipped" in sent) return sent.skipped === "empty" ? "skipped-empty" : "skipped-allowlist";
+  if ("skipped" in sent) return sent.skipped === "empty" ? "skipped-empty" : "skipped-unapproved";
   const emailId = sent.emailId;
 
   // Bounded poll: sleep → poll; if still in flight, one slower second round. Poll steps are PURE

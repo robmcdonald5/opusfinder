@@ -46,38 +46,17 @@ export const getEmailFrom = requireEnv({
 
 /**
  * The operator address Phase-F6 health alerts go to ({@link import("./transport").sendHealthAlert}).
- * DEDICATED + decoupled from the fail-closed digest {@link getEmailAllowlist} ON PURPOSE: the owner is
- * an operator, not a product user, and routing the alert through the allowlist risks the alert itself
- * being the silently-broken thing — the exact failure F6 exists to kill. FAIL-LOUD: requireEnv throws
+ * A DEDICATED operator address — the owner AS operator, not a product user. FAIL-LOUD: requireEnv throws
  * if unset, so `pnpm health` logs + exits non-zero rather than silently dropping an alert.
  */
 export const getAlertTo = requireEnv({
   name: "ALERT_TO",
   notSet:
     "ALERT_TO is not set — the operator address health alerts are sent to. Set ALERT_TO=you@example.com " +
-    "in packages/email/.env (a dedicated operator address, NOT the digest EMAIL_ALLOWLIST).",
+    "in packages/email/.env (a dedicated operator address).",
 });
 
-const getEmailAllowlistRaw = requireEnv({
-  name: "EMAIL_ALLOWLIST",
-  notSet:
-    "EMAIL_ALLOWLIST is not set — refusing to send (fail-closed until the Phase-12 signup flow). " +
-    "Set a comma-separated recipient allowlist in packages/email/.env.",
-});
-
-/**
- * The parsed (lowercased, trimmed) recipient allowlist. FAIL-CLOSED (Phase-11 guard): missing or
- * effectively-empty config THROWS rather than running half-guarded — `digest_enabled` defaults true,
- * so without this gate any verified user in the dev DB would get real email on an `--all` sweep.
- * Removed in Phase 12 with the real signup flow.
- */
-export function getEmailAllowlist(): string[] {
-  const list = getEmailAllowlistRaw()
-    .split(",")
-    .map((s) => s.trim().toLowerCase())
-    .filter((s) => s.length > 0);
-  if (list.length === 0) {
-    throw new Error("EMAIL_ALLOWLIST is empty — refusing to send (fail-closed).");
-  }
-  return list;
-}
+// The digest SEND PERMIT is no longer an env allowlist: it moved to the DB-native, per-user
+// `user_preferences.digest_approved_at` gate (migration 0022), checked at recipient resolution + the
+// digest load step (before any paid spend) and re-asserted at the send boundary in @opusfinder/inngest's
+// deliverDigestEmail. See packages/db/src/repos/preferences.ts `setDigestApproval` + `pnpm user:approve`.

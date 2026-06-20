@@ -2,13 +2,13 @@
  * Stub-seam smoke for the Phase-11 email-delivery tail (src/delivery.ts + @opusfinder/email) — NO
  * creds, NO network, NO real DB. Locks: render determinism + escaping, the ONE idempotency-key
  * shape, the full last_event→status mapping (incl. bounce→hard-suppress and complaint→suppress-
- * without-bounce), the allowlist fail-closed/skip behavior, and the step sequences of the failure /
+ * without-bounce), the DB-native send-permit (digest_approved_at) skip behavior, and the step sequences of the failure /
  * skip / happy / slow-poll paths (driven through a fake `step` + a chainable-thenable stub Db).
  *
  *   pnpm --filter @opusfinder/inngest test:digest-email
  */
 import type { DigestEmailPayload } from "@opusfinder/db/repos";
-import { emailIdempotencyKey, renderDigestEmail, sendDigestEmail } from "@opusfinder/email";
+import { emailIdempotencyKey, renderDigestEmail } from "@opusfinder/email";
 import { runScript } from "@opusfinder/shared/script";
 import type { UserId } from "@opusfinder/shared";
 
@@ -34,6 +34,7 @@ const FIXTURE: DigestEmailPayload = {
   userId: "00000000-0000-0000-0000-000000000007" as UserId,
   recipient: { email: "Owner@Example.com", name: "Owner" },
   createdAt: new Date("2026-06-11T00:00:00Z"),
+  approvedAt: new Date("2026-06-10T00:00:00Z"),
   items: [
     {
       rank: 1,
@@ -59,12 +60,18 @@ const FIXTURE: DigestEmailPayload = {
 /** Rows shaped like getDigestEmailPayload's joined select projection (2 items). `states` sets each
  *  item's `lifecycle_state` (default all 'active') so the G1b render-time lifecycle filter — which runs
  *  app-side, so the stub's real `.filter` exercises it — can be driven with closed items. */
-function joinedPayloadRows(states: string[] = FIXTURE.items.map(() => "active")): unknown[] {
+function joinedPayloadRows(
+  states: string[] = FIXTURE.items.map(() => "active"),
+  approved = true,
+): unknown[] {
   const head = {
     userId: FIXTURE.userId,
     createdAt: FIXTURE.createdAt,
     email: FIXTURE.recipient.email,
     name: FIXTURE.recipient.name,
+    // The send-permit re-read (digest_approved_at): non-null = approved. `approved=false` drives the
+    // un-approved no-send branch in deliverDigestEmail.
+    approvedAt: approved ? FIXTURE.approvedAt : null,
   };
   return FIXTURE.items.map((it, i) => ({ ...head, ...it, lifecycleState: states[i] ?? "active" }));
 }
@@ -111,18 +118,30 @@ await runScript("test-digest-email", async () => {
   }
   console.log("3. event mapping + terminal set OK");
 
-  // 4. Allowlist fail-closed (no RESEND_API_KEY anywhere in this test — the skip/refuse paths must
-  //    never construct the client).
-  delete process.env.RESEND_API_KEY;
-  delete process.env.RESEND_API_KEY_FULL;
-  delete process.env.EMAIL_FROM;
-  delete process.env.EMAIL_ALLOWLIST;
-  const noConfig = await expectReject(sendDigestEmail(FIXTURE), "send with EMAIL_ALLOWLIST unset");
-  assert(noConfig.message.includes("EMAIL_ALLOWLIST"), "missing-allowlist error names the var");
-  process.env.EMAIL_ALLOWLIST = "  someone-else@example.com , ,";
-  const skipped = await sendDigestEmail(FIXTURE);
-  assert("skipped" in skipped && skipped.skipped === "allowlist", "unlisted recipient must skip");
-  console.log("4. allowlist fail-closed + recorded skip OK");
+  // 4. DB-native send permit (replaced EMAIL_ALLOWLIST): an UN-APPROVED recipient (digest_approved_at NULL,
+  //    re-read at the send boundary) is a clean no-send — NO email.send, NO poll, ONE step. No creds/network.
+  {
+    const { runs, sleeps, tools } = recordingStep();
+    const db = stubDb([joinedPayloadRows(undefined, false)]); // ONLY the payload read; approvedAt = null
+    let sendCalled = false;
+    const result = await deliverDigestEmail(
+      tools,
+      db,
+      {
+        send: async () => {
+          sendCalled = true;
+          return { emailId: "re_x" };
+        },
+        lastEvent: async () => "delivered",
+      },
+      7,
+    );
+    assert(result === "skipped-unapproved", `unapproved result: ${String(result)}`);
+    assert(!sendCalled, "send must not be called for an un-approved recipient");
+    assert(JSON.stringify(runs) === '["send-email"]', `steps: ${runs.join(",")}`);
+    assert(sleeps.length === 0, "permit-skip path must not sleep");
+  }
+  console.log("4. send permit blocks un-approved recipient OK");
 
   // 5. Failure terminalization: send throws → record-send-failure runs, original error rethrown.
   {
@@ -173,26 +192,7 @@ await runScript("test-digest-email", async () => {
   }
   console.log("5. failure terminalization OK");
 
-  // 6. Allowlist-skip path: one step, zero sleeps, no state writes.
-  {
-    const { runs, sleeps, tools } = recordingStep();
-    const db = stubDb([joinedPayloadRows()]); // ONLY the payload read
-    const result = await deliverDigestEmail(
-      tools,
-      db,
-      {
-        send: async () => ({ skipped: "allowlist" }),
-        lastEvent: async () => "delivered",
-      },
-      7,
-    );
-    assert(result === "skipped-allowlist", `skip result: ${String(result)}`);
-    assert(JSON.stringify(runs) === '["send-email"]', `steps: ${runs.join(",")}`);
-    assert(sleeps.length === 0, "skip path must not sleep");
-  }
-  console.log("6. skip path OK");
-
-  // 7. Happy path: send → first poll terminal (delivered) → record; one sleep, no second poll.
+  // 6. Happy path: send → first poll terminal (delivered) → record; one sleep, no second poll.
   {
     const { runs, sleeps, tools } = recordingStep();
     const db = stubDb([
@@ -217,9 +217,9 @@ await runScript("test-digest-email", async () => {
     );
     assert(JSON.stringify(sleeps) === '["delivery-wait-0"]', `sleeps: ${sleeps.join(",")}`);
   }
-  console.log("7. happy path OK");
+  console.log("6. happy path OK");
 
-  // 8. Slow-poll + bounce: first poll in-flight → second sleep/poll → bounced → suppression write.
+  // 7. Slow-poll + bounce: first poll in-flight → second sleep/poll → bounced → suppression write.
   {
     const { runs, sleeps, tools } = recordingStep();
     const events = ["sent", "bounced"];
@@ -250,9 +250,9 @@ await runScript("test-digest-email", async () => {
       `sleeps: ${sleeps.join(",")}`,
     );
   }
-  console.log("8. slow-poll + bounce suppression OK");
+  console.log("7. slow-poll + bounce suppression OK");
 
-  // 9. G1b — all items lifecycle-closed between persist and send: the render filters every item, so
+  // 8. G1b — all items lifecycle-closed between persist and send: the render filters every item, so
   //    deliverDigestEmail must clean no-send ("skipped-empty") — NO email.send, NO poll, ONE step.
   {
     const { runs, sleeps, tools } = recordingStep();
@@ -275,9 +275,9 @@ await runScript("test-digest-email", async () => {
     assert(JSON.stringify(runs) === '["send-email"]', `steps: ${runs.join(",")}`);
     assert(sleeps.length === 0, "empty-payload path must not sleep");
   }
-  console.log("9. G1b all-closed → clean no-send OK");
+  console.log("8. G1b all-closed → clean no-send OK");
 
-  // 10. G1b — mixed active+closed: the closed item is filtered out at render, the active one still sends.
+  // 9. G1b — mixed active+closed: the closed item is filtered out at render, the active one still sends.
   {
     const { runs, sleeps, tools } = recordingStep();
     const db = stubDb([
@@ -307,7 +307,7 @@ await runScript("test-digest-email", async () => {
     );
     assert(JSON.stringify(sleeps) === '["delivery-wait-0"]', `sleeps: ${sleeps.join(",")}`);
   }
-  console.log("10. G1b mixed active+closed → only active rendered OK");
+  console.log("9. G1b mixed active+closed → only active rendered OK");
 
   console.log("test-digest-email OK");
 });

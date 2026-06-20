@@ -53,10 +53,12 @@ function cadenceDuePredicate(): SQL {
 /**
  * The next batch of users eligible for a digest, id-keyset paginated (matching `listCompanies`):
  * `WHERE id > afterId ORDER BY id LIMIT limit`. Eligibility = delivery on (`digest_enabled`), a
- * verified email (`user.email_verified` — the send gate), not suppressed (`digest_suppressed_at IS
- * NULL`), AND a usable profile vector (INNER JOIN `user_profiles` + `embedding IS NOT NULL`, so a user
- * with no CV / no embedding is skipped — they can't be matched). The keyset orders by `user.id` (uuid) —
- * an arbitrary but total, stable order, all that chunked iteration needs.
+ * verified email (`user.email_verified`), the operator SEND PERMIT granted (`digest_approved_at IS NOT
+ * NULL` — the DB-native gate that replaced the env-var EMAIL_ALLOWLIST, so an un-approved user is dropped
+ * HERE, before any paid rerank/synthesis spend), not suppressed (`digest_suppressed_at IS NULL`), AND a
+ * usable profile vector (INNER JOIN `user_profiles` + `embedding IS NOT NULL`, so a user with no CV / no
+ * embedding is skipped — they can't be matched). The keyset orders by `user.id` (uuid) — an arbitrary but
+ * total, stable order, all that chunked iteration needs.
  *
  * `cadenceDue` (Phase-12 cadence cron) is OPT-IN: when true, also require the user's cadence window to
  * have elapsed ({@link cadenceDuePredicate}). Default/omitted = NO cadence filter, so the manual
@@ -69,6 +71,7 @@ export function listDigestRecipients(
   const conditions: SQL[] = [
     eq(userPreferences.digestEnabled, true),
     eq(user.emailVerified, true),
+    isNotNull(userPreferences.digestApprovedAt),
     isNull(userPreferences.digestSuppressedAt),
     isNotNull(userProfiles.embedding),
   ];
@@ -415,6 +418,11 @@ export interface DigestEmailPayload {
   /** The ONLY date the template may render — the rendered payload must be deterministic per digest
    *  (Resend Idempotency-Key replays reject a changed payload with 409), so no `new Date()`. */
   createdAt: Date;
+  /** The DB-native SEND PERMIT (`user_preferences.digest_approved_at`), re-read at the send boundary as
+   *  defense-in-depth (it replaced the env-var EMAIL_ALLOWLIST). GATE-ONLY: `deliverDigestEmail` refuses to
+   *  send when this is falsy (NULL = un-approved); it is DELIBERATELY NOT passed to `renderDigestEmail`, so it
+   *  never enters the rendered bytes and the Resend idempotency-key replay contract is untouched. */
+  approvedAt: Date | null;
   items: {
     rank: number;
     reason: string;
@@ -485,9 +493,14 @@ export async function getDigestEmailPayload(
       locations: sql<string[]>`COALESCE(${digestItems.locations}, ${jobs.locations})`,
       remote: sql<boolean>`COALESCE(${digestItems.remote}, ${jobs.remote})`,
       lifecycleState: jobs.lifecycleState,
+      // The DB-native send permit, re-read at the send boundary (replaces EMAIL_ALLOWLIST). INNER JOIN to
+      // user_preferences is sound: the 1:1 row is created at user creation and is a hard invariant for any
+      // enrolled user (its absence yields the same null-payload invariant break the send step already throws on).
+      approvedAt: userPreferences.digestApprovedAt,
     })
     .from(digests)
     .innerJoin(user, eq(user.id, digests.userId))
+    .innerJoin(userPreferences, eq(userPreferences.userId, digests.userId))
     .innerJoin(digestItems, eq(digestItems.digestId, digests.id))
     .leftJoin(jobs, eq(jobs.id, digestItems.jobId))
     .leftJoin(companies, eq(companies.id, jobs.companyId))
@@ -500,6 +513,7 @@ export async function getDigestEmailPayload(
     userId: first.userId,
     recipient: { email: first.email, name: first.name },
     createdAt: first.createdAt,
+    approvedAt: first.approvedAt,
     items: rows
       .filter((r) => r.lifecycleState === "active")
       .map((r) => ({
@@ -537,8 +551,8 @@ export async function recordDigestSent(db: Db, digestId: number, emailId: string
 /**
  * Cadence backoff (Phase-12 12a-2): stamp `last_digest_sent_at = now()` WITHOUT an email id, for a user a
  * cadence run CONSIDERED but did not email (no candidates / nothing above the score floor / all apply-URLs
- * dead / not on the send allowlist). This backs the user off until their next cadence period, so the daily
- * cadence cron does NOT re-run the full (paid) pipeline for a perpetually-thin or non-allowlisted user
+ * dead / the send permit was revoked mid-run). This backs the user off until their next cadence period, so the
+ * daily cadence cron does NOT re-run the full (paid) pipeline for a perpetually-thin or just-un-approved user
  * every tick. Deliberately NOT called on ERROR paths (those throw and SHOULD retry next tick), and it
  * NULLs `last_digest_email_id` (no email was sent this consideration) so the row unambiguously reads
  * "considered, not delivered" — without the null, a user who previously received a REAL digest would keep
