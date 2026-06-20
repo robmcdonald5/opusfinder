@@ -558,6 +558,20 @@ export const userPreferences = pgTable(
     digestCadence: text("digest_cadence").$type<DigestCadence>().notNull().default("weekly"),
     digestEnabled: boolean("digest_enabled").notNull().default(true),
     digestSuppressedAt: timestamp("digest_suppressed_at", { withTimezone: true }),
+    // The operator SEND PERMIT (migration 0022) — the POSITIVE mirror of digest_suppressed_at above:
+    // NULL = NOT approved = no send (fail-closed); a non-NULL timestamp = an operator granted the permit,
+    // and the stamp itself is the "approved on date X" audit. It REPLACES the env-var EMAIL_ALLOWLIST as a
+    // DB-native, per-user gate so granting is a single write effective next tick (no redeploy) and an
+    // un-approved user is filtered out at recipient resolution BEFORE any paid rerank/synthesis spend
+    // (listDigestRecipients + the digest.ts load-step re-check). Nullable, NO default — exactly like
+    // digest_suppressed_at / last_ingested_at (a DEFAULT now() would fail-OPEN by auto-approving every
+    // existing eval/seed row on apply). OPERATOR/PIPELINE STATE: written ONLY by setDigestApproval
+    // (repos/preferences.ts), DELIBERATELY excluded from toRow()/updatePreferences so the user:set-prefs CLI
+    // and any future settings form physically cannot set it (same firewall as the other state columns below).
+    // Gates read it with a TRUTHY-NEGATION (`!digestApprovedAt`), so a NULL or a not-yet-migrated/undefined
+    // field both fail closed. Retires in Phase 12b when a real signup + Better Auth sendVerificationEmail makes
+    // email_verified a true consent signal (then drop the one predicate, or keep this as an operator-override lane).
+    digestApprovedAt: timestamp("digest_approved_at", { withTimezone: true }),
     digestBounceStatus: text("digest_bounce_status")
       .$type<DigestBounceStatus>()
       .notNull()
@@ -574,10 +588,14 @@ export const userPreferences = pgTable(
     // Phase 10 recipient query (listDigestRecipients): a partial index over only the digest-eligible
     // rows, keyed by user_id (the join + keyset column), so the planner enumerates eligible users
     // without scanning the whole table. Mirrors companies_active_last_probed_idx's partial style. The
-    // user-table half of the gate (email_verified) is covered by the join to the user PK.
+    // user-table half of the gate (email_verified) is covered by the join to the user PK. Migration 0023
+    // TIGHTENS the predicate to also require the send permit (`digest_approved_at IS NOT NULL`) so the
+    // index stays in lockstep with the query's eligible set (the permit is the most selective term).
     index("user_preferences_eligible_idx")
       .on(t.userId)
-      .where(sql`${t.digestEnabled} AND ${t.digestSuppressedAt} IS NULL`),
+      .where(
+        sql`${t.digestEnabled} AND ${t.digestSuppressedAt} IS NULL AND ${t.digestApprovedAt} IS NOT NULL`,
+      ),
     foreignKey({
       columns: [t.userId],
       foreignColumns: [user.id],

@@ -1,0 +1,22 @@
+-- The operator SEND PERMIT: user_preferences.digest_approved_at — the DB-native, per-user gate that replaces
+-- the env-var EMAIL_ALLOWLIST. NULL = NOT approved = no send (fail-closed); a non-NULL timestamp = an operator
+-- granted the permit (and is the "approved on date X" audit). Written ONLY by setDigestApproval
+-- (repos/preferences.ts), read by listDigestRecipients + the digest.ts load-step gate BEFORE any paid spend.
+--
+-- NULLABLE, no default/backfill — exactly like 0021's last_ingested_at / digest_suppressed_at: every existing
+-- eval/seed/CLI row starts NULL = un-approved the instant this lands, so the system cannot accidentally email
+-- anyone (a DEFAULT now() would fail-OPEN by auto-approving every row). Hand-guarded with IF NOT EXISTS
+-- (drizzle-kit emits ADD COLUMN bare; neon-http migrations are NOT transactional — same discipline as
+-- 0011/0012/0017/0018/0020/0021).
+--
+-- ROLLOUT — ATOMIC CUTOVER (no overlap window): this migration ships in the SAME change as the LIVE gates
+-- (listDigestRecipients + the digest.ts load step + the deliverDigestEmail send-boundary re-read) AND the full
+-- removal of EMAIL_ALLOWLIST / getEmailAllowlist. The companion migration 0023 tightens
+-- user_preferences_eligible_idx to also require digest_approved_at IS NOT NULL. So EMAIL_ALLOWLIST does NOT stay
+-- live — the DB permit is the SOLE send gate the moment this is applied + deployed.
+--
+-- REQUIRED, IN ORDER, or you get a SILENT total send blackout: (1) apply 0022 + 0023 (`pnpm db:migrate`); then
+-- (2) IMMEDIATELY `pnpm user:approve --email <current recipient(s)>` BEFORE the next cadence tick — every
+-- existing row is digest_approved_at = NULL = fail-closed, so until you approve them ALL digest sends stop with
+-- no error (just skip:"not-approved" + a cadence backoff). Audit who is approved with `pnpm user:list`.
+ALTER TABLE "user_preferences" ADD COLUMN IF NOT EXISTS "digest_approved_at" timestamp with time zone;

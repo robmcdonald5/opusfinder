@@ -2,7 +2,7 @@ import { Resend } from "resend";
 
 import type { DigestEmailPayload } from "@opusfinder/db/repos";
 
-import { getAlertTo, getEmailAllowlist, getEmailFrom, getResendApiKey, getResendApiKeyFull } from "./env";
+import { getAlertTo, getEmailFrom, getResendApiKey, getResendApiKeyFull } from "./env";
 import { renderDigestEmail } from "./render";
 
 /**
@@ -36,25 +36,18 @@ function getReadClient(): Resend {
  */
 export const emailIdempotencyKey = (digestId: number): string => `digest/${digestId}`;
 
-export type SendDigestResult = { emailId: string } | { skipped: "allowlist" };
+export type SendDigestResult = { emailId: string };
 
 /**
- * Render + send one digest email. Allowlist FIRST and fail-closed (missing config throws via
- * `getEmailAllowlist`); an unlisted recipient is a recorded skip — nothing is sent and the API key
- * is never even read. API errors become thrown Errors so the Inngest step owns retries (transient
- * 429/5xx) or exhausts into the caller's terminalize catch; a 409 `concurrent_idempotent_requests`
- * is safe to retry by Resend's own contract, so the plain throw → step retry is exactly right.
+ * Render + send one digest email. This is a PURE transport — the SEND PERMIT is enforced UPSTREAM (the
+ * DB-native `user_preferences.digest_approved_at` gate, checked at recipient resolution + the digest load
+ * step + re-asserted at the send boundary in deliverDigestEmail), so by the time a payload reaches here the
+ * recipient is already approved; this function just renders + sends. API errors become thrown Errors so the
+ * Inngest step owns retries (transient 429/5xx) or exhausts into the caller's terminalize catch; a 409
+ * `concurrent_idempotent_requests` is safe to retry by Resend's own contract, so the plain throw → step
+ * retry is exactly right.
  */
 export async function sendDigestEmail(payload: DigestEmailPayload): Promise<SendDigestResult> {
-  const allowlist = getEmailAllowlist();
-  const to = payload.recipient.email.trim().toLowerCase();
-  if (!allowlist.includes(to)) {
-    console.log(
-      `email: recipient not allowlisted (len ${to.length}) — skipping digest ${payload.digestId}`,
-    );
-    return { skipped: "allowlist" };
-  }
-
   const rendered = renderDigestEmail(payload);
   const { data, error } = await getSendClient().emails.send(
     {

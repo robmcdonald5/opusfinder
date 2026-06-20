@@ -165,7 +165,7 @@ Phase 11 adds **email delivery** on **Resend**: the per-user digest function now
 bounded-delivery-poll → record tail (`packages/inngest/src/delivery.ts`). A new **`@opusfinder/email`**
 package splits a PURE, byte-deterministic render (escaped HTML + text part — scraped titles/reasons are
 hostile input; `javascript:` apply URLs degrade to inert text) from the only `resend` import (send with
-`Idempotency-Key: digest/<digestId>` so step retries can't double-send, fail-closed `EMAIL_ALLOWLIST`).
+`Idempotency-Key: digest/<digestId>` so step retries can't double-send; the send permit is the DB-native, fail-closed `user_preferences.digest_approved_at` gate, not an env allowlist).
 Delivery state lands per-send on `digests` (`email_id`/`delivery_status`/`sent_at`, migration 0009) and
 user-level on `user_preferences` (bounce → hard-suppress; complaint → suppress without a bounce write).
 The cadence cron, Inngest Cloud keys, and production serve shipped in 12a (2026-06-17); webhooks and the

@@ -86,13 +86,13 @@ integration (email ships in Phase 11 on the local dev runtime — locked at Phas
   `F2_ENFORCE` switch — `buildDigestDeps` sets `DigestDeps.enforceLifecycle` from
   `parseEnforceFlag(process.env.F2_ENFORCE)` (the same flag that flips Arm A + Arm B in the Worker).
 - `src/delivery.ts` (Phase 11) — `deliverDigestEmail(step, db, email, digestId)`, the post-persist
-  step block: ONE `send-email` step (payload read → allowlist-gated Resend send with
+  step block: ONE `send-email` step (payload read → permit-gated Resend send with
   `Idempotency-Key: digest/<digestId>` → `recordDigestSent`) wrapped in the fail-run discipline (retry
   exhaustion → `delivery_status='failed'` → rethrow). G1b: `getDigestEmailPayload` filters items to
   `lifecycle_state='active'`, so a job closed between retrieval and send (an Arm A/B Worker tick during
   the synthesis wait — the probe checks only the apply URL, never lifecycle) never renders; if that
   empties the payload the step returns `"skipped-empty"` (no send, the orchestrator backs the user off
-  the cadence) — distinct from the allowlist skip. Then a **bounded delivery poll** — sleep 2m,
+  the cadence) — distinct from the unapproved permit-skip. Then a **bounded delivery poll** — sleep 2m,
   `GET /emails/:id`, and if still in flight one more 10m round — and ONE `record-delivery` step.
   `mapDeliveryEvent` encodes the pipeline policy: `delivered`/`opened`/`clicked` → `delivered`;
   `bounced` → `bounced` + **hard**-suppress (the poll's `last_event` carries no bounce subtype —
@@ -121,7 +121,7 @@ integration (email ships in Phase 11 on the local dev runtime — locked at Phas
     mirroring `DigestDeps`/`buildDigestDeps`.
 - `scripts/test-digest-email.ts` (`pnpm --filter @opusfinder/inngest test:digest-email`) — the
   stub-seam smoke for the email tail: render determinism + escaping, the idempotency-key shape, the
-  full event→status mapping, allowlist fail-closed, and the failure/skip/happy/slow-poll step
+  full event→status mapping, the DB-native send-permit skip, and the failure/skip/happy/slow-poll step
   sequences. NO creds, NO network, NO real DB.
 - `scripts/test-digest-probe.ts` (`pnpm --filter @opusfinder/inngest test:probe`) — the stub-seam smoke for
   Arm C: `410` drops + closes, a single `404` drops but does NOT close, timeout/5xx/2xx keep, and an
@@ -189,7 +189,7 @@ $env:INNGEST_DEV=1; pnpm digest --user <uuid>     # or: pnpm digest --all
 
 Needs `DATABASE_URL` (packages/db/.env) + `ANTHROPIC_API_KEY` (packages/llm/.env) and a CV-ingested,
 digest-enabled user; the Phase-11 send tail additionally needs `RESEND_API_KEY` (send) /
-`RESEND_API_KEY_FULL` (the delivery poll's read — full access) / `EMAIL_FROM` / `EMAIL_ALLOWLIST`
+`RESEND_API_KEY_FULL` (the delivery poll's read — full access) / `EMAIL_FROM`
 (packages/email/.env) in the SERVE process. The dev server's dashboard
 (http://localhost:8288) shows each step + the durable sleeps. Real, batch-discounted Anthropic spend;
 a run takes a few minutes — and the CLI's verdict prints at persist, ~2–12 min BEFORE the send/poll
@@ -203,6 +203,6 @@ Per CLAUDE.md (external-platform integration), the work splits cleanly:
 |---|---|
 | All package code, the local dev server (`pnpm inngest:dev` — keyless), the end-to-end gate | **Agent** |
 | Provide `DATABASE_URL` + `ANTHROPIC_API_KEY` (already in place since Phase 9) | **User** |
-| **Resend account + API key + verified sending domain (SPF/DKIM/DMARC) + `EMAIL_FROM`/`EMAIL_ALLOWLIST`** | **User (Phase 11)** |
+| **Resend account + API key + verified sending domain (SPF/DKIM/DMARC) + `EMAIL_FROM`** | **User (Phase 11)** |
 | Production serve route (SvelteKit-on-Vercel, `apps/web`) + the cadence cron (`0 13 * * *`) + the F8 backfill cron | Built + deployed (12a; live 2026-06-17) |
 | **Inngest Cloud account + app sync; `INNGEST_SIGNING_KEY`/`INNGEST_EVENT_KEY` auto-provisioned by the Inngest↔Vercel integration (`INNGEST_DEV` UNSET)** | Done (User, deployed 2026-06-17) |

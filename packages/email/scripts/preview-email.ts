@@ -21,6 +21,7 @@ const FIXTURE: DigestEmailPayload = {
   userId: "00000000-0000-0000-0000-000000000000" as UserId,
   recipient: { email: "preview@example.com", name: "Preview User" },
   createdAt: new Date("2026-06-11T00:00:00Z"), // fixed — the render path itself takes no clock
+  approvedAt: new Date("2026-06-10T00:00:00Z"), // gate-only; render ignores it (kept for type completeness)
   items: [
     {
       rank: 1,

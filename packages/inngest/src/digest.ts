@@ -250,9 +250,10 @@ function makePerUser(deps: DigestDeps) {
 
       // 1. Load + gate eligibility (four independent userId-keyed reads → one Promise.all round).
       //    The gate runs HERE so BOTH the --all sweep (already filtered by listDigestRecipients) and
-      //    the single-user/manual path skip a user who is unverified, disabled digests, or is
-      //    suppressed (bounce/unsubscribe) — otherwise a manual trigger would spend tokens on, and
-      //    pollute the already-shown history of, a user the sweep would skip. The profile EMBEDDING is
+      //    the single-user/manual path skip a user who is unverified, NOT approved (the DB-native send
+      //    permit that replaced EMAIL_ALLOWLIST), has disabled digests, or is suppressed
+      //    (bounce/unsubscribe) — otherwise a manual trigger would spend tokens on, and pollute the
+      //    already-shown history of, a user the sweep would skip. The profile EMBEDDING is
       //    deliberately not returned: it is consumed once, in retrieve — a 1024-dim vector is dead
       //    weight in memoized step state that every poll-loop replay re-ships.
       const loaded = await step.run("load", async () => {
@@ -271,6 +272,12 @@ function makePerUser(deps: DigestDeps) {
         ) {
           return { skip: "ineligible" as const };
         }
+        // DB-native SEND PERMIT (replaced EMAIL_ALLOWLIST): an un-approved user is gated HERE — before
+        // retrieve/rerank/synthesis — so the manual `--user` path (which bypasses listDigestRecipients)
+        // burns ZERO paid spend. Truthy-negation so a NULL or a not-yet-migrated/undefined field both fail
+        // closed. Its own skip reason (not folded into "ineligible") for clearer diagnostics: a permit-miss
+        // is distinct from a verification/suppression miss in the run logs.
+        if (!prefs.digestApprovedAt) return { skip: "not-approved" as const };
         return {
           structured: profile.structured,
           prefs: toFilterPrefs(prefs),
@@ -510,15 +517,17 @@ function makePerUser(deps: DigestDeps) {
         deps.email,
         persisted.digestId,
       );
-      // Allowlist skip = a deliberate no-send (user not on EMAIL_ALLOWLIST); the send step never stamped
-      // last_digest_sent_at, so back them off the cadence here (else the daily cron re-runs the paid pipeline
-      // for a non-allowlisted user every tick). A real send already stamped via recordDigestSent.
-      if (delivery === "skipped-allowlist") {
-        await step.run("mark-considered-allowlist", () => markDigestConsidered(deps.db, userId));
+      // Unapproved skip = the send-boundary permit re-read found digest_approved_at NULL (a revoke that
+      // landed during the synthesis wait — listDigestRecipients + the load gate already exclude un-approved
+      // users, so this is near-dead). The send step never stamped last_digest_sent_at, so back them off the
+      // cadence here (else the daily cron re-runs the paid pipeline for them every tick). A real send already
+      // stamped via recordDigestSent.
+      if (delivery === "skipped-unapproved") {
+        await step.run("mark-considered-unapproved", () => markDigestConsidered(deps.db, userId));
       } else if (delivery === "skipped-empty") {
         // G1b: every item's job was lifecycle-closed between retrieval and send (the Arm A/B race spanning
         // the synthesis wait — closed after retrieval, persisted anyway, kept by the probe's URL-only check),
-        // so the render filtered them all out and no email was sent. Like the all-dead and allowlist-skip
+        // so the render filtered them all out and no email was sent. Like the all-dead and unapproved-skip
         // paths, back the user off the cadence (no send stamped sent_at) so the daily cron doesn't re-run the
         // paid pipeline for them next tick. The 0-item digest row stays as audit.
         await step.run("mark-considered-all-closed", () => markDigestConsidered(deps.db, userId));
