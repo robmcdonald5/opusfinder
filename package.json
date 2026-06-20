@@ -37,6 +37,7 @@
     "profiles:restructure": "pnpm --filter @opusfinder/profiles profiles:restructure",
     "user:create": "pnpm --filter @opusfinder/auth user:create",
     "user:set-prefs": "pnpm --filter @opusfinder/auth user:set-prefs",
+    "user:approve": "pnpm --filter @opusfinder/auth user:approve",
     "user:list": "pnpm --filter @opusfinder/auth user:list",
     "digest": "pnpm --filter @opusfinder/inngest digest",
     "email:preview": "pnpm --filter @opusfinder/email preview",
