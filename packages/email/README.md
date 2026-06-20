@@ -1,11 +1,12 @@
 # @opusfinder/email
 
 The Phase-11 **digest email**: a pure, deterministic render (escaped HTML + a plain-text part) and a
-thin **Resend** transport (idempotency-keyed send, fail-closed allowlist, delivery-state read). The
-digest pipeline (`@opusfinder/inngest`) calls it through the `DigestDeps.email` seam after `persist`;
-nothing else sends mail. **Node/server runtime only** — deny-listed from the scrapers Worker
-(`pnpm guard:worker`), like `better-auth` and `inngest` before it. **Phase F6** adds one non-digest send —
-`sendHealthAlert` (operator health alerts to a dedicated `ALERT_TO`, decoupled from the digest allowlist).
+thin **Resend** transport (idempotency-keyed send, delivery-state read; the send PERMIT is enforced
+UPSTREAM — the DB-native `user_preferences.digest_approved_at` gate, not here). The digest pipeline
+(`@opusfinder/inngest`) calls it through the `DigestDeps.email` seam after `persist`; nothing else sends
+mail. **Node/server runtime only** — deny-listed from the scrapers Worker (`pnpm guard:worker`), like
+`better-auth` and `inngest` before it. **Phase F6** adds one non-digest send — `sendHealthAlert` (operator
+health alerts to a dedicated `ALERT_TO` — the owner as operator, not a product user).
 
 ## Why render is split from transport
 
@@ -30,18 +31,18 @@ discipline): importing the barrel never requires a key.
 
 - `renderDigestEmail(payload: DigestEmailPayload): RenderedEmail` — the pure render. The payload type
   is a type-only import from `@opusfinder/db/repos` (no db code at runtime).
-- `sendDigestEmail(payload)` → `{ emailId } | { skipped: "allowlist" }`. Checks `EMAIL_ALLOWLIST`
-  FIRST (an unlisted recipient is a recorded skip that never even reads the API key), renders, then
-  sends with `Idempotency-Key: digest/<digestId>`. API errors become thrown Errors echoing **name +
-  status code only** (Resend's `error.message` can quote the recipient address) so the Inngest step
-  owns retries.
+- `sendDigestEmail(payload)` → `{ emailId }`. A PURE transport — the send PERMIT is enforced UPSTREAM (the
+  DB-native `digest_approved_at` gate: checked at recipient resolution + the digest load step + re-asserted
+  at the send boundary in `deliverDigestEmail`), NOT here; this just renders, then sends with
+  `Idempotency-Key: digest/<digestId>`. API errors become thrown Errors echoing **name + status code
+  only** (Resend's `error.message` can quote the recipient address) so the Inngest step owns retries.
 - `getEmailLastEvent(emailId)` — `GET /emails/:id` → `last_event` passthrough. The event→status
   POLICY lives in `@opusfinder/inngest` (`mapDeliveryEvent`), not here.
 - `emailIdempotencyKey(digestId)` — the ONE key definition (the `synthId` discipline), exported so
   the smoke locks its shape.
 - `sendHealthAlert(subject, text)` → `{ emailId }` (Phase F6) — a plain-text operator alert for the `pnpm health`
   CLI. Reuses the lazy SEND client (`RESEND_API_KEY`) + `EMAIL_FROM`, but goes to a dedicated `ALERT_TO` operator
-  address — **decoupled from `EMAIL_ALLOWLIST`** so the alert can never be the silently-broken thing F6 exists to
+  address — a **DEDICATED operator address** (the owner as operator) so the alert can never be the silently-broken thing F6 exists to
   kill. **No idempotency key** (each run's verdict is its own event), shape-only errors (name + status).
 
 ## Env (`./env` subpath — `packages/email/.env`, gitignored)
@@ -51,8 +52,10 @@ discipline): importing the barrel never requires a key.
 | `RESEND_API_KEY`      | yes (at send time)    | the SEND key — a sending-only key suffices (least privilege); starts `re_`, soft prefix check, shape-only echoes                                  |
 | `RESEND_API_KEY_FULL` | yes (at poll time)    | the READ key for the delivery poll — must be FULL access (`GET /emails/:id` 401s `restricted_api_key` on a sending-only key); retires with P12 webhooks |
 | `EMAIL_FROM`          | yes (at send time)    | verified sender, display-name form: `opusfinder digest <digest@send.opusfinder.ai>`                                                               |
-| `EMAIL_ALLOWLIST`     | yes — **fail-closed** | comma-separated; missing/empty THROWS, unlisted recipient = recorded skip. The safety net for `--all` sweeps; removed with Phase 12's signup flow |
-| `ALERT_TO`            | yes (at alert time)   | Phase-F6 operator alert recipient (`sendHealthAlert`) — DEDICATED, kept distinct from `EMAIL_ALLOWLIST` (operator, not product user); fail-loud (`requireEnv` throws if unset, so `pnpm health` exits non-zero rather than dropping an alert) |
+| `ALERT_TO`            | yes (at alert time)   | Phase-F6 operator alert recipient (`sendHealthAlert`) — a DEDICATED operator address (operator, not product user); fail-loud (`requireEnv` throws if unset, so `pnpm health` exits non-zero rather than dropping an alert) |
+
+> The digest **send permit** is no longer an env var — it moved to the DB-native, fail-closed
+> `user_preferences.digest_approved_at` gate (migration 0022). Grant with `pnpm user:approve --email <addr>`.
 
 ## Scripts
 
@@ -64,6 +67,7 @@ discipline): importing the barrel never requires a key.
 
 Webhooks replace the bounded poll (and carry bounce subtypes), the unsubscribe endpoint + RFC 8058
 headers activate `user_preferences.unsubscribe_token` (the Phase-11 footer deliberately renders NO
-unsubscribe link — a dead link is worse than none at one-recipient volume), `EMAIL_ALLOWLIST` is
-removed with the real signup flow, Better Auth's `sendVerificationEmail` wires to this package, and
-the template gets its design pass with the frontend.
+unsubscribe link — a dead link is worse than none at one-recipient volume), the `digest_approved_at` operator permit either retires (drop the one
+enrollment predicate) or becomes an operator-override lane once a real signup makes `email_verified` a true
+consent signal, Better Auth's `sendVerificationEmail` wires to this package, and the template gets its
+design pass with the frontend.
