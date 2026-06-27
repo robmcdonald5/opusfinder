@@ -20,24 +20,14 @@ const MODEL_IDS: Record<ModelAlias, string> = {
   sonnet: "claude-sonnet-4-6",
 };
 
-// --- Provider swap point -----------------------------------------------------------
-// All provider-specific wiring lives in this file: the `createAnthropic` import, the
-// `getProvider()` construction, and the `MODEL_IDS` map. Swapping to OpenAI (the Phase
-// 3 abstraction sanity check) means changing those spots here PLUS the key guard in
-// env.ts (getAnthropicApiKey -> an OpenAI key) — but nothing in generate.ts/batch.ts,
-// which stay provider-agnostic and only see the model object from resolveModel(). e.g.:
-//
-//   import { createOpenAI } from "@ai-sdk/openai";
-//   provider ??= createOpenAI({ apiKey: getOpenAiApiKey() });
-//   const MODEL_IDS = { haiku: "gpt-...", sonnet: "gpt-..." };
+// All provider-specific wiring lives in this file (createAnthropic, getProvider, MODEL_IDS) plus the
+// key guard in env.ts; generate.ts/batch.ts stay provider-agnostic via resolveModel().
 let provider: ReturnType<typeof createAnthropic> | undefined;
 
 function getProvider(): ReturnType<typeof createAnthropic> {
-  // Lazy + memoized: importing @opusfinder/llm must not require a key (type-only
-  // consumers, the batch stub). The key is read only on the first real model
-  // resolution. Note: the instance (and the key it captured) lives for the process
-  // lifetime — fine for short-lived scripts and Phase 8 cron Workers, but a long-lived
-  // process won't pick up a rotated ANTHROPIC_API_KEY without a restart.
+  // Lazy + memoized: importing @opusfinder/llm must not require a key; the key is read only on the
+  // first real model resolution and captured for the process lifetime, so a rotated ANTHROPIC_API_KEY
+  // needs a restart.
   provider ??= createAnthropic({ apiKey: getAnthropicApiKey() });
   return provider;
 }

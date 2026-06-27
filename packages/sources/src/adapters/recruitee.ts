@@ -9,21 +9,17 @@ import { subdomainLabel } from "./url-match";
 const RECRUITEE_HOST = "recruitee.com";
 
 /**
- * Recruitee careers-site adapter (Phase 6.5 Wave A). Each tenant is a subdomain
- * (`{slug}.recruitee.com`) and the public `/api/offers/` returns the whole board in one
- * `{ offers: [...] }` response — no pagination (`nextCursor` omitted), descriptions inline
- * (no hydrate). The endpoint already returns only published offers.
+ * Recruitee careers-site adapter. Each tenant is a subdomain (`{slug}.recruitee.com`) and the
+ * public `/api/offers/` returns the whole board in one `{ offers: [...] }` response — no
+ * pagination (`nextCursor` omitted), descriptions inline (no hydrate). The endpoint already
+ * returns only published offers.
  *
- * Quirks: the host is case-INSENSITIVE, so `normalizeSlug` lowercases for clean Phase-7
- * dedupe (the apply URL is an explicit field, so lowercasing can't corrupt it). `id` is a
- * NUMBER (stringify before `jobId`). `remote` is THREE independent booleans
- * (`remote`/`hybrid`/`on_site`) that can co-occur — `remote:true` ships alongside `hybrid:true`
- * on real postings — so `hybrid` is checked FIRST (Hybrid ⇒ false per the contract). The
- * top-level `location` string is primary-office only and can disagree with the multi-office
- * `locations[]`, so locations prefer `locations[].name`. `published_at` is
- * `"YYYY-MM-DD HH:MM:SS UTC"` (NOT ISO-8601) and is massaged to ISO so parsing is engine-
- * independent (Worker-forward, Phase 8). Apply URL is `careers_apply_url`, falling back to the
- * listing `careers_url` VERBATIM — never reconstructed (custom careers domains exist).
+ * Quirks: the host is case-INSENSITIVE, so `normalizeSlug` lowercases (the apply URL is an
+ * explicit field, so lowercasing can't corrupt it). `id` is a NUMBER (stringify before `jobId`).
+ * `remote` is three independent booleans (see mapItem); locations prefer the multi-office
+ * `locations[].name` (see extractLocations); `published_at` is massaged to ISO (see
+ * parsePublishedAt). Apply URL is `careers_apply_url`, falling back to the listing `careers_url`
+ * VERBATIM — never reconstructed (custom careers domains exist).
  */
 export const recruiteeAdapter: SourceAdapter = {
   source: "recruitee",
@@ -80,9 +76,8 @@ function toNormalizedJob(raw: unknown, ctx: SourceContext): NormalizedJob | null
     companySlug: ctx.slug,
     locations,
     remote,
-    // `description` is raw HTML tags + SINGLE-encoded entities: strip → decode once → collapse.
-    // The separate `requirements` field (same encoding, board-dependent) stays on `raw`
-    // (primary body only for now; revisit under the Phase-5 eval).
+    // `description` is raw HTML tags + SINGLE-encoded entities (strip → decode once → collapse);
+    // the separate `requirements` field stays on `raw`.
     descriptionText: htmlToText(raw.description),
     applyUrl,
     postedAt: parsePublishedAt(raw.published_at),

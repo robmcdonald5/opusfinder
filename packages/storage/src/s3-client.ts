@@ -9,8 +9,7 @@ import {
 import type { PutObjectInput, R2Config, StorageClient } from "./types";
 
 /**
- * An S3-compatible {@link StorageClient} backed by Cloudflare R2's S3 API. Node-only (Phase 9 is
- * script-first); Phase 12 can add a Workers R2-binding client behind the same interface.
+ * An S3-compatible {@link StorageClient} backed by Cloudflare R2's S3 API. Node-only.
  *
  * The two checksum options are LOAD-BEARING: `@aws-sdk/client-s3` >= 3.729 defaults to sending CRC32
  * FULL_OBJECT checksums on every request, but R2 only supports CRC32 COMPOSITE and rejects them

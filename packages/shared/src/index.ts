@@ -8,17 +8,13 @@ export type CompanySlug = Brand<string, "CompanySlug">;
 export type JobId = Brand<string, "JobId">;
 
 /**
- * UNIVERSAL slug floor — invariants true for every ATS: non-empty, no
- * whitespace, URL-path-safe (so a slug can be dropped into a request path
- * without injection). Deliberately permits mixed case and `_`/`.` because slug
- * shape differs across platforms (Greenhouse/Lever/Workable are lowercase, but
- * SmartRecruiters company IDs are case-sensitive — lowercasing them breaks the
- * lookup). ATS-SPECIFIC canonicalization (casing, etc.) is NOT done here; it
- * belongs on the per-source adapter (`SourceAdapter.normalizeSlug`, Phase 6),
- * which calls `companySlug()` once it has produced the platform-canonical form.
- *
- * changes may need to be made here if slug formats change across ATS platforms
- * or if new ATS platforms are added that have different slug requirements.
+ * UNIVERSAL slug floor — invariants true for every ATS: non-empty, no whitespace, URL-path-safe
+ * (so a slug can be dropped into a request path without injection). Deliberately permits mixed case
+ * and `_`/`.` because slug shape differs across platforms (Greenhouse/Lever/Workable are lowercase,
+ * but SmartRecruiters company IDs are case-sensitive — lowercasing them breaks the lookup).
+ * ATS-SPECIFIC canonicalization (casing, etc.) is NOT done here; it belongs on the per-source
+ * adapter (`SourceAdapter.normalizeSlug`), which calls `companySlug()` once it has produced the
+ * platform-canonical form.
  */
 const SLUG_RE = /^[A-Za-z0-9._-]+$/;
 
@@ -47,42 +43,38 @@ export const unsafeCompanySlug = (value: string): CompanySlug => value as Compan
 export const unsafeJobId = (value: string): JobId => value as JobId;
 
 /**
- * A stable per-user identifier (a UUID string). Phase 9 hand-mints it deterministically from
- * the user's email via `mintUserId` (in the dedicated `@opusfinder/shared/userid` entry point —
- * it pulls `node:crypto`, kept off this module so the Worker bundle stays node-free, same
- * discipline as `./env`); a real users table / auth supplies it later. Branded so a raw string
- * can't be passed where a user id is expected.
+ * A stable per-user identifier (a UUID string), supplied by auth. Branded so a raw string can't be
+ * passed where a user id is expected.
  */
 export type UserId = Brand<string, "UserId">;
 
 /**
  * Digest delivery cadence — a TS union on a plain text column (no pgEnum, same idempotent-migration
- * rule as the db's `LifecycleState`/`RunStatus`/`CvFileStatus`). Lives here as the one shared contract
- * both the `user_preferences` repo (Phase 9.5) and the future settings form agree on.
+ * rule as the db's `LifecycleState`/`RunStatus`/`CvFileStatus`). The one shared contract the
+ * `user_preferences` repo and the settings form agree on.
  */
 export type DigestCadence = "daily" | "weekly" | "monthly";
 
 /**
- * How a digest run was started (Phase 10) — a manual CLI/trigger now vs the scheduled cadence cron that
- * lands in Phase 12 (with the deployed runtime). A TS union on a plain text column (no pgEnum, same
- * idempotent-migration rule as {@link DigestCadence}). Lives here so the db schema
- * (`digest_runs.trigger`) and the trigger CLI agree.
+ * How a digest run was started — a manual CLI/trigger vs the scheduled cadence cron. A TS union on a
+ * plain text column (no pgEnum, same idempotent-migration rule as {@link DigestCadence}). Lives here
+ * so the db schema (`digest_runs.trigger`) and the trigger CLI agree.
  */
 export type DigestTrigger = "manual" | "cron";
 
 /**
- * Per-item feedback a user gives on a digested job. Phase 10 RESERVES the `digest_items.feedback` column;
- * the Phase-12 UI writes it (saved/applied/dismissed/not-interested) and the rerank prompt later folds it
- * into cached context. A TS union on a plain text column (same idempotent-migration rule as above).
+ * Per-item feedback a user gives on a digested job (saved/applied/dismissed/not-interested), written
+ * via the UI; the rerank prompt later folds it into cached context. A TS union on a plain text column
+ * (same idempotent-migration rule as above).
  */
 export type DigestFeedback = "saved" | "applied" | "dismissed" | "not_interested";
 
 /**
- * Indeed/LinkedIn-style location preference — a TS union on a plain text column (no pgEnum, same rule as
- * {@link DigestCadence}). Phase F3 stores it on `user_preferences.location_mode`; the digest retrieval
- * `geoMatches` filter branches on it. SUBSUMES the former `remote_ok` boolean (`remote_ok=true → 'any'`,
- * `false → 'onsite_only'`). NO `hybrid` member: {@link NormalizedJob.remote} is a best-effort boolean
- * ("Hybrid → false"), so a hybrid mode could not be honestly distinguished from `any`.
+ * Indeed/LinkedIn-style location preference — a TS union on a plain text column (no pgEnum, same rule
+ * as {@link DigestCadence}). Stored on `user_preferences.location_mode`; the digest retrieval
+ * `geoMatches` filter branches on it. NO `hybrid` member: {@link NormalizedJob.remote} is a
+ * best-effort boolean ("Hybrid → false"), so a hybrid mode could not be honestly distinguished from
+ * `any`.
  * - `any` — remote roles pass; on-site roles pass when they match `locations` (or have no location data).
  * - `remote_only` — only remote roles pass (excludes all on-site).
  * - `onsite_only` — only on-site roles pass (excludes all remote), still subject to `locations`.
@@ -90,40 +82,37 @@ export type DigestFeedback = "saved" | "applied" | "dismissed" | "not_interested
 export type LocationMode = "any" | "remote_only" | "onsite_only";
 
 /**
- * The user-SETTABLE preferences (Phase 9.5) — the subset of the `user_preferences` row a settings
- * form / the `user:set-prefs` CLI writes, and the conservative defaults applied at user creation.
- * Deliberately NOT the full table row: system-managed delivery STATE (unsubscribe token, bounce
- * status, suppression, last-sent markers) is owned by the pipeline, never set through this contract.
- * The deterministic-filter fields (`locationMode`/`locations`/`recencyDays`/`exclusions`/`dealbreakers`)
- * feed the digest retrieval filter; the judgment-context fields (`yoeMin`/`yoeMax`/`minSalary`/`maxSalary`/
- * `dealbreakers`) feed the rerank + synthesis prompt via {@link composePromptPrefs} (Phase F3 — salary/YoE
- * are soft prompt signals, never hard retrieval filters).
- * `digestEnabled` gates delivery (Phase 10/11) while `digestCadence` drives the Phase-12 cadence cron.
- * Node-free shared (no db dep) so the CLI now and a future SvelteKit action later share one shape.
+ * The user-SETTABLE preferences — the subset of the `user_preferences` row a settings form / the
+ * `user:set-prefs` CLI writes, and the conservative defaults applied at user creation. Deliberately
+ * NOT the full table row: system-managed delivery STATE (unsubscribe token, bounce status,
+ * suppression, last-sent markers) is owned by the pipeline, never set through this contract. The
+ * deterministic-filter fields (`locationMode`/`locations`/`recencyDays`/`exclusions`/`dealbreakers`)
+ * feed the digest retrieval filter; the judgment-context fields (`yoeMin`/`yoeMax`/`minSalary`/
+ * `maxSalary`/`dealbreakers`) feed the rerank + synthesis prompt via {@link composePromptPrefs}
+ * (salary/YoE are soft prompt signals, never hard retrieval filters). Node-free shared (no db dep)
+ * so the CLI and a future SvelteKit action share one shape.
  */
 export interface UserPreferences {
-  /** Indeed/LinkedIn-style location filter (Phase F3) — a hard retrieval filter via geoMatches. SUBSUMES
-   *  the former `remoteOk` boolean. */
+  /** Indeed/LinkedIn-style location filter — a hard retrieval filter via geoMatches. */
   locationMode: LocationMode;
   /** Location strings the filter matches against; empty = no location constraint. */
   locations: string[];
   /** Salary floor in whole currency units; `null` = no floor. A soft prompt signal (never a hard filter). */
   minSalary: number | null;
-  /** Salary ceiling in whole currency units; `null` = no cap (Phase F3). Independent of `minSalary`. */
+  /** Salary ceiling in whole currency units; `null` = no cap. Independent of `minSalary`. */
   maxSalary: number | null;
-  /** Target years-of-experience floor; `null` = no floor (Phase F3). A soft prompt signal (never a hard
+  /** Target years-of-experience floor; `null` = no floor. A soft prompt signal (never a hard
    *  filter); the YoE band is the sole declared level signal. */
   yoeMin: number | null;
-  /** Target years-of-experience ceiling; `null` = no ceiling (Phase F3). The YoE band is the SOLE declared
-   *  level signal (the too-senior fix) — a categorical `targetLevel` was considered and dropped as
-   *  redundant/ambiguous; YoE is the cleaner objective gate. */
+  /** Target years-of-experience ceiling; `null` = no ceiling. The YoE band is the SOLE declared
+   *  level signal — a soft prompt signal, never a hard filter. */
   yoeMax: number | null;
   /** Max posting age (days) the digest considers. */
   recencyDays: number;
-  /** Free-form, app-side post-query exclusion rules — the one sparse field; shape firms up in Phase 10. */
+  /** Free-form, app-side post-query exclusion rules — the one sparse field. */
   exclusions: string[];
-  /** Hard "never show" keywords (Phase F3): merged into the `exclusions` post-filter (a real drop) AND
-   *  rendered as a prompt "avoid" line. */
+  /** Hard "never show" keywords: merged into the `exclusions` post-filter (a real drop) AND rendered
+   *  as a prompt "avoid" line. */
   dealbreakers: string[];
   /** Delivery cadence. */
   digestCadence: DigestCadence;
@@ -133,12 +122,10 @@ export interface UserPreferences {
 
 /**
  * A cryptographically-random, URL-safe unsubscribe token for the RFC 8058 one-click List-Unsubscribe
- * header (Phase 12 — dormant through Phase 11's lean send, which ships no unsubscribe link/headers).
- * 32 bytes (256 bits) of Web Crypto randomness, lowercase-hex-encoded — node-free
- * (the `crypto` global is present in both Node and the Worker, same as the `crypto.randomUUID()`
- * already used in the ingest pipeline), so this stays out of `./userid`'s `node:crypto` and the main
- * entry remains Worker-safe. Generated ONCE at user creation and stored on
- * `user_preferences.unsubscribe_token`; NEVER derived from email (that would be guessable).
+ * header. 32 bytes (256 bits) of Web Crypto randomness, lowercase-hex-encoded — node-free (the
+ * `crypto` global is present in both Node and the Worker), so the main entry stays Worker-safe.
+ * Generated ONCE at user creation and stored on `user_preferences.unsubscribe_token`; NEVER derived
+ * from email (that would be guessable).
  */
 export function generateUnsubscribeToken(): string {
   const bytes = new Uint8Array(32);
@@ -149,12 +136,9 @@ export function generateUnsubscribeToken(): string {
 }
 
 /**
- * Which ATS produced a job. Grows one member per adapter as they land (Phase 6
- * adds Lever, Ashby, Workable, SmartRecruiters; Phase 6.5 Wave A adds Recruitee,
- * Pinpoint, Gem, Trakstar — all zero-hydrate public boards). Kept a union, NOT
- * `string`, so a typo is a compile error and the `jobs.source` column / source
- * registry (`Record<SourceName, SourceAdapter>`) stay exhaustive — a missing
- * adapter is a compile error.
+ * Which ATS produced a job. Grows one member per adapter as they land. Kept a union, NOT `string`,
+ * so a typo is a compile error and the `jobs.source` column / source registry
+ * (`Record<SourceName, SourceAdapter>`) stay exhaustive — a missing adapter is a compile error.
  */
 export type SourceName =
   | "greenhouse"
@@ -168,15 +152,9 @@ export type SourceName =
   | "trakstar";
 
 /**
- * Cross-source normalized job posting — the first real normalization contract.
- * In-memory only in Phase 1; persisted to Neon in Phase 2. Each field encodes a
- * decision about how heterogeneous ATS payloads collapse into one shape:
- *
- * - The shape is deliberately flat and source-agnostic. Source-specific quirks
- *   are resolved by each adapter's mapper, never leaked into this type.
- * - It is intentionally NOT generic over the raw payload and there is NO adapter
- *   interface here — that abstraction is extracted in Phase 6 from 2–3 concrete
- *   adapters, not designed up front.
+ * Cross-source normalized job posting — the real normalization contract. The shape is deliberately
+ * flat and source-agnostic: source-specific quirks are resolved by each adapter's mapper, never
+ * leaked into this type.
  */
 export interface NormalizedJob {
   /** Which ATS this came from. */
@@ -189,17 +167,15 @@ export interface NormalizedJob {
   /** Posting title, as given by the ATS. */
   title: string;
   /**
-   * Platform-canonical company slug. The per-ATS canonicalizer runs BEFORE
-   * `companySlug()` (e.g. Greenhouse lowercases); `companySlug()` only enforces
-   * the universal floor and must not transform casing (Phase 6 SmartRecruiters
-   * is case-sensitive).
+   * Platform-canonical company slug. The per-ATS canonicalizer runs BEFORE `companySlug()` (e.g.
+   * Greenhouse lowercases); `companySlug()` only enforces the universal floor and must not transform
+   * casing (SmartRecruiters is case-sensitive).
    */
   companySlug: CompanySlug;
   /**
-   * Human-readable location strings exactly as the ATS gives them, e.g.
-   * "Remote - United States" or "Hybrid - San Francisco, New York City". Empty
-   * when the ATS supplies none. Multi-city strings are kept whole — no parsing
-   * or splitting in Phase 1; structured location is a later concern.
+   * Human-readable location strings exactly as the ATS gives them, e.g. "Remote - United States" or
+   * "Hybrid - San Francisco, New York City". Empty when the ATS supplies none. Multi-city strings are
+   * kept whole — no parsing or splitting.
    */
   locations: string[];
   /**
@@ -229,52 +205,45 @@ export interface NormalizedJob {
   raw: unknown;
 }
 
-/**
- * Narrow an `unknown` to a plain object (record). Shared by the ATS adapters and the
- * embeddings provider when validating untrusted JSON response shapes, so the guard has
- * one definition instead of a copy per parser.
- */
+/** Narrow an `unknown` to a plain object (record). */
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
 /**
- * Compose the text sent to an embedding model from its parts: drop blank (whitespace-only)
- * parts and join the rest with a blank line. This is the SINGLE definition of how embedding
- * input is composed and of what "no embeddable content" means — the result is `""` iff every
- * part is blank. Shared by the job composer (`jobEmbeddingText` in @opusfinder/db), the profile
- * composer (`composeProfileText`, below), and the dataset validator, so that notion has one
- * source of truth instead of a per-site copy of the trim/join logic. (The list of FIELDS each
- * composer feeds in necessarily stays at its call site.) Lives here, not in @opusfinder/embeddings,
- * so the dataset loader can reuse it without pulling the embeddings/db stack onto the load path.
+ * Compose the text sent to an embedding model from its parts: drop blank (whitespace-only) parts and
+ * join the rest with a blank line. The SINGLE definition of how embedding input is composed and of
+ * what "no embeddable content" means — the result is `""` iff every part is blank.
  */
 export function composeEmbeddingText(parts: string[]): string {
   return parts.filter((s) => s.trim().length > 0).join("\n\n");
 }
 
 /**
- * The single F2 lifecycle-close enforcement switch. PURE + Worker-safe: it reads no env itself — the
- * Worker passes `env.F2_ENFORCE` (a wrangler var), the Node digest runtime passes `process.env.F2_ENFORCE`
- * — so ONE flag governs all three F2 arms (sweepLifecycle / closeJobsForCompanies / probeDigestLiveness)
- * instead of a coordinated 3-site code edit. Returns true ONLY for an explicit affirmative ("enforce" —
- * the documented value — plus "true"/"1"/"on"/"yes" for ergonomics), case/space-insensitive; every other
- * value — "shadow", "off", "", undefined — is false (count-only, the ratified default). Flip to enforce in
- * ONE place once the shadow `wouldClose` counters are reviewed. Mirrors the off|shadow|enforce vocabulary
- * of healthOptionsFromEnv (db/health.ts).
+ * Parse a lifecycle-close enforcement flag. PURE + Worker-safe: it reads no env itself — the Worker
+ * passes `env.LIFECYCLE_CLOSE_ENFORCE` (a wrangler var), the Node digest runtime passes `process.env.LIFECYCLE_CLOSE_ENFORCE`,
+ * so ONE flag governs the close writes from both. Returns true ONLY for an explicit affirmative
+ * ("enforce", "true", "1", "on", "yes"), case/space-insensitive; every other value — "shadow", "off",
+ * "", undefined — is false (count-only). Mirrors the off|shadow|enforce vocabulary of
+ * healthOptionsFromEnv (db/health.ts).
  */
 export function parseEnforceFlag(value: string | undefined): boolean {
-  const v = value?.trim().toLowerCase();
-  return v === "enforce" || v === "true" || v === "1" || v === "on" || v === "yes";
+  const normalized = value?.trim().toLowerCase();
+  return (
+    normalized === "enforce" ||
+    normalized === "true" ||
+    normalized === "1" ||
+    normalized === "on" ||
+    normalized === "yes"
+  );
 }
 
 /**
- * The semantic CV profile — the embeddable, PII-free representation produced by Phase 9 CV
- * ingestion and stored in `user_profiles.structured`. Deliberately the `{ summary, skills,
- * targetRoles }` subset that feeds the match vector: NO `id` (that is an eval-only handle on
- * `EvalProfile`) and NO contact info / addresses (the extraction prompts drop them — they add no
- * job-alignment signal and dilute the vector). `preferences` is intentionally NOT here: it comes
- * from the Phase-12 onboarding form, not the CV, and feeds the deterministic filter (Phase 10),
- * not the embedding.
+ * The semantic CV profile — the embeddable, PII-free representation stored in
+ * `user_profiles.structured`. Deliberately the `{ summary, skills, targetRoles }` subset that feeds
+ * the match vector: NO contact info / addresses (they add no job-alignment signal and dilute the
+ * vector). `preferences` is intentionally NOT here: it comes from the onboarding form, not the CV,
+ * and feeds the deterministic filter, not the embedding.
  */
 export interface StructuredProfile {
   /** Free-text career summary — the bulk of the embedded "query" text. */
@@ -288,10 +257,9 @@ export interface StructuredProfile {
 /**
  * Compose the text embedded for a profile — the "query" side of retrieval — from a
  * {@link StructuredProfile}. The SINGLE source of truth for what goes in the profile vector
- * (mirrors `jobEmbeddingText`, the "document" side in @opusfinder/db): the summary carries the
- * most signal; skills and target roles are appended as compact, labeled context. The eval harness
- * calls this directly, so it embeds profiles exactly the way the Phase-9 ingest + Phase-10 digest
- * pipeline will. Empty iff every field is blank (per {@link composeEmbeddingText}).
+ * (mirrors `jobEmbeddingText`, the "document" side in @opusfinder/db): the summary carries the most
+ * signal; skills and target roles are appended as compact, labeled context. Empty iff every field is
+ * blank (per {@link composeEmbeddingText}).
  */
 export function composeProfileText(profile: StructuredProfile): string {
   return composeEmbeddingText([
@@ -302,11 +270,12 @@ export function composeProfileText(profile: StructuredProfile): string {
 }
 
 /**
- * The JUDGMENT-CONTEXT subset of {@link UserPreferences} that the rerank + synthesis prompt renders via
- * {@link composePromptPrefs} (Phase F3). Deliberately NOT part of {@link StructuredProfile} (which feeds the
- * embedding) — preferences are a prompt-boundary-only sibling block, never the match vector. `locationMode`
- * is excluded: it is a hard retrieval filter, and the rubric must not also SCORE location. A `Pick` of the
- * source contract (not a hand-copy) so the field types stay locked to {@link UserPreferences}.
+ * The JUDGMENT-CONTEXT subset of {@link UserPreferences} that the rerank + synthesis prompt renders
+ * via {@link composePromptPrefs}. Deliberately NOT part of {@link StructuredProfile} (which feeds the
+ * embedding) — preferences are a prompt-boundary-only sibling block, never the match vector.
+ * `locationMode` is excluded: it is a hard retrieval filter, and the rubric must not also SCORE
+ * location. A `Pick` of the source contract (not a hand-copy) so the field types stay locked to
+ * {@link UserPreferences}.
  */
 export type PromptPreferences = Pick<
   UserPreferences,
@@ -314,13 +283,12 @@ export type PromptPreferences = Pick<
 >;
 
 /**
- * Render the judgment-context preferences ({@link PromptPreferences}) into a compact labeled block for the
- * rerank + synthesis system prompt (Phase F3). Returns `""` when nothing is set, so an un-answered user
- * yields a byte-identical empty system prefix — their per-user prompt-cache prefix does not bust on deploy.
- * A small inline helper, deliberately NOT a {@link composeProfileText}-tier abstraction. NEVER fed into the
- * embedding (that is {@link composeProfileText}, which must stay prefs-free — see {@link StructuredProfile}).
- * Both nullable bounds independent: only-min, only-max, and both each render gracefully. `locationMode` is
- * intentionally absent — it is a hard filter, scored by neither prompt.
+ * Render the judgment-context preferences ({@link PromptPreferences}) into a compact labeled block
+ * for the rerank + synthesis system prompt. Returns `""` when nothing is set, so an un-answered user
+ * yields a byte-identical empty system prefix — their per-user prompt-cache prefix does not bust on
+ * deploy. NEVER fed into the embedding (that is {@link composeProfileText}, which must stay
+ * prefs-free). Both nullable bounds independent: only-min, only-max, and both each render gracefully.
+ * `locationMode` is intentionally absent — it is a hard filter, scored by neither prompt.
  */
 export function composePromptPrefs(prefs?: PromptPreferences): string {
   if (!prefs) return "";
@@ -352,21 +320,20 @@ function formatBoundedRange(
  * Minimum transcript length (chars, after trim) below which a CV extraction is treated as a FAILED
  * extraction — a shorter result means a corrupt, encrypted, or image-only PDF. The single definition
  * shared by the production pipeline (`ingestCv`) and the eval generator (`extract-profile`), so the
- * floor cannot silently drift between them (it previously lived as a copy in each).
+ * floor cannot silently drift between them.
  */
 export const MIN_TRANSCRIPT_CHARS = 50;
 
 /**
  * Non-fatal extraction warnings for a {@link StructuredProfile}: flags an empty summary / skills /
- * target-roles so a caller can surface a thin profile rather than store it blindly. The single
- * definition shared by `ingestCv` and the eval generator (both previously inlined the same checks).
+ * target-roles so a caller can surface a thin profile rather than store it blindly.
  */
 export function profileWarnings(profile: StructuredProfile): string[] {
-  const w: string[] = [];
-  if (profile.summary.trim().length === 0) w.push("empty summary");
-  if (profile.skills.length === 0) w.push("no skills extracted");
-  if (profile.targetRoles.length === 0) w.push("no target roles extracted");
-  return w;
+  const warnings: string[] = [];
+  if (profile.summary.trim().length === 0) warnings.push("empty summary");
+  if (profile.skills.length === 0) warnings.push("no skills extracted");
+  if (profile.targetRoles.length === 0) warnings.push("no target roles extracted");
+  return warnings;
 }
 
 const EMAIL_RE = /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g;
@@ -385,11 +352,9 @@ function scrubText(text: string): string {
 /**
  * Defense-in-depth PII scrub for a {@link StructuredProfile}. The CV extraction prompts already
  * instruct the model to omit PII, but LLM instructions are not a hard guarantee on untrusted CV text
- * and the profile is persisted + vectorized — so the Phase-9 pipeline ALWAYS runs this before storing
- * and embedding. It lives here (node-free shared) so the Worker-portable pipeline (`@opusfinder/profiles`)
- * can call it structurally rather than relying on a seam contract. It redacts the machine-detectable
- * PII (email addresses + phone runs of >=10 digits); names are not regex-detectable and remain a
- * prompt-only concern.
+ * and the profile is persisted + vectorized — so the pipeline ALWAYS runs this before storing and
+ * embedding. It redacts the machine-detectable PII (email addresses + phone runs of >=10 digits);
+ * names are not regex-detectable and remain a prompt-only concern.
  */
 export function scrubProfilePii(profile: StructuredProfile): StructuredProfile {
   return {

@@ -4,7 +4,7 @@ import { runScript } from "@opusfinder/shared/script";
 import { alertOnHealth, getHealthAlertCooldownH } from "../src/health-alert.ts";
 
 /**
- * H1b smoke (NO creds, NO Postgres, NO email) for the shared health-ALERT orchestration. A fake Db returns
+ * Smoke (NO creds, NO Postgres, NO email) for the shared health-ALERT orchestration. A fake Db returns
  * a queued recent-row count per `shouldNotify` call (in firing-check order) and captures `recordHealthAlert`
  * rows; a fake `send` captures the one batched email. Asserts:
  *   - a report with no ENFORCE firing ⇒ no send, no record;
@@ -39,7 +39,7 @@ function stubDb(recentQueue: number[]): {
   const inserted: Array<Record<string, unknown>> = [];
   let i = 0;
   const db = {
-    insert: () => ({ values: async (v: Record<string, unknown>) => void inserted.push(v) }),
+    insert: () => ({ values: async (row: Record<string, unknown>) => void inserted.push(row) }),
     execute: async () => [{ n: recentQueue[i++] ?? 0 }],
   } as unknown as import("@opusfinder/db").Db;
   return { db, inserted };
@@ -152,7 +152,7 @@ await runScript("test-health-alert", async () => {
       threshold: 3,
       mode: "enforce",
     };
-    const boolean: HealthCheck = {
+    const booleanCheck: HealthCheck = {
       id: "digest_health",
       label: "Digest health",
       state: "firing",
@@ -160,7 +160,7 @@ await runScript("test-health-alert", async () => {
       threshold: null,
       mode: "enforce",
     };
-    await alertOnHealth(db, report([nullMetric, boolean]), send, 24);
+    await alertOnHealth(db, report([nullMetric, booleanCheck]), send, 24);
     const text = sends[0]!.text;
     assert(text.includes("no data"), "a null metric renders as 'no data'");
     assert(!text.includes("NaN") && !text.includes("undefined"), "no NaN/undefined leaks into the body");

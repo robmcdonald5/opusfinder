@@ -1,9 +1,7 @@
 /**
- * Shared retry/backoff for the repo's resilient fetch loops. EXTRACTED (Phase 7) from
- * `@opusfinder/sources`' run-adapter so the ingestion list-fetch and the Phase-7 discovery
- * prober share ONE definition instead of two copies. Pure + Worker-forward: global `setTimeout`,
- * `Math.random` jitter, and `Date.parse`/`Date.now` for an HTTP-date `Retry-After` — no Node-only
- * APIs, no `process.env` reads.
+ * Shared retry/backoff for the repo's resilient fetch loops. Pure + Worker-forward: global
+ * `setTimeout`, `Math.random` jitter, and `Date.parse`/`Date.now` for an HTTP-date `Retry-After` —
+ * no Node-only APIs, no `process.env` reads.
  */
 
 // Cap the plain exponential backoff so a high attempt count can't sleep for minutes.
@@ -35,14 +33,13 @@ export function backoff(attempt: number, retryAfter?: string | null): Promise<vo
       }
     }
   }
-  ms += Math.random() * 250; // jitter so concurrent retries don't synchronize
+  ms += Math.random() * 250;
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /**
- * Resolve after `ms` milliseconds — the repo's one inter-request pacing primitive. Lifted here
- * (Phase 8) so the ingestion pacer (`runIngestion`) and the discovery prober's host throttle share
- * ONE definition instead of two identical copies. Pure + Worker-forward: global `setTimeout` only.
+ * Resolve after `ms` milliseconds — the repo's one inter-request pacing primitive. Pure +
+ * Worker-forward: global `setTimeout` only.
  */
 export function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));

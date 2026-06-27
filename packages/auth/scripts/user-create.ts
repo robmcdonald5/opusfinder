@@ -6,7 +6,7 @@ import { getDatabaseUrl } from "@opusfinder/db/env";
 import { runScript } from "@opusfinder/shared/script";
 
 import { getAuthBaseURL, getAuthSecret } from "../src/env";
-import { createAuth, createUserWithProfile } from "../src/index";
+import { createAuth, createUserWithPreferences } from "../src/index";
 import { maskEmail, prefsFromFlags } from "./cli-utils";
 
 const USAGE =
@@ -54,7 +54,7 @@ async function main(): Promise<void> {
   const auth = createAuth(authDb, { secret: getAuthSecret(), baseURL: getAuthBaseURL() });
   try {
     const prefs = prefsFromFlags(values);
-    const { userId } = await createUserWithProfile(db, auth, {
+    const { userId } = await createUserWithPreferences(db, auth, {
       email,
       password,
       name: values.name,

@@ -2,9 +2,9 @@ import type { ModelMessage } from "ai";
 
 /**
  * Shared Anthropic prompt-cache plumbing for {@link generate} and {@link generateObject} (and the
- * param contract `batchGenerate` mirrors). Extracted in Phase 9d once a third surface needed the same
- * system-message guard, cache-promotion trick, and cache accounting — so a future fix (e.g. an ai@7
- * `allowSystemInMessages` change, or a renamed provider cache field) lives in ONE place.
+ * param contract `batchGenerate` mirrors): the system-message guard, cache-promotion trick, and cache
+ * accounting. Shared so a future fix (e.g. an ai@7 `allowSystemInMessages` change, or a renamed
+ * provider cache field) lives in ONE place.
  */
 
 /**

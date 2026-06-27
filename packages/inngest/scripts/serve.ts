@@ -1,8 +1,7 @@
 /**
  * Local Inngest serve endpoint (dev-only). Exposes the digest functions over a bare Node http server so
  * the local dev server (`npx inngest-cli@latest dev`) can discover + invoke them — no Inngest Cloud
- * account, no keys (run with INNGEST_DEV=1). The PRODUCTION serve endpoint (inngest/sveltekit on Vercel)
- * is a Phase-12 decision; this is the development driver only. Long-running — kill with Ctrl-C.
+ * account, no keys (run with INNGEST_DEV=1). The development driver only. Long-running — kill with Ctrl-C.
  */
 import http from "node:http";
 

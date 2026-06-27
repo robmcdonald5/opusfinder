@@ -1,7 +1,6 @@
 // Exercises ingestCv end-to-end with STUB seams — no LLM, no Voyage, no R2 spend: an in-memory
 // StorageClient plus fake transcribe / structure / embed are INJECTED into the real pipeline, run
-// against the test Neon DB. This is what makes the injected-seam design pay off today: the pipeline
-// is driven without any of its heavy deps. Verifies ingestCv's three control-flow paths.
+// against the test Neon DB. Verifies ingestCv's three control-flow paths.
 //
 // Writes rows under a fixed TEST user id (it does not clean up — user_cv_files is append-only by
 // design, and user_profiles upserts the one test row). Requires DATABASE_URL in packages/db/.env.
@@ -62,9 +61,9 @@ const TEST_EMAIL = "test-ingest@opusfinder.test";
 async function main(): Promise<void> {
   const db = createDb(getDatabaseUrl());
   const userId = mintUserId(TEST_EMAIL);
-  // The Phase-9.5 user_cv_files/user_profiles → user.id FK requires a real `user` row; seed one for
-  // the deterministic test id (idempotent) so this stub smoke stays self-contained + creds-light (no
-  // auth/secret — a direct insert, not signUpEmail). mintUserId is kept here purely as a stable id source.
+  // The user_cv_files/user_profiles → user.id FK requires a real `user` row; seed one for the
+  // deterministic test id (idempotent) so this stub smoke stays self-contained + creds-light (no
+  // auth/secret — a direct insert, not signUpEmail).
   await db
     .insert(user)
     .values({ id: userId, name: "test-ingest", email: TEST_EMAIL, emailVerified: true })

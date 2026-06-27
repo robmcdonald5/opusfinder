@@ -10,7 +10,7 @@ loadPackageEnv(import.meta.url);
  */
 export const getDatabaseUrl = requireEnv({
   name: "DATABASE_URL",
-  notSet:
+  notSetMessage:
     "DATABASE_URL is not set. Copy the repo-root .env.example to packages/db/.env and paste your Neon connection string.",
   validate: (url) => {
     if (!/^postgres(ql)?:\/\//i.test(url)) {

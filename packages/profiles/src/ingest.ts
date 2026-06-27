@@ -20,7 +20,7 @@ import type { ProfileEmbedFn, StructureFn, TranscribeFn } from "./types";
 
 export interface IngestCvOptions {
   userId: UserId;
-  /** The PDF bytes. The script reads them from a file; a Phase-12 route passes the upload buffer. */
+  /** The PDF bytes. */
   bytes: Uint8Array;
   filename: string;
   contentType: string;
@@ -44,13 +44,12 @@ export interface IngestCvResult {
 /**
  * Ingest a CV: store the original PDF, transcribe → cache the text, structure → scrub → embed →
  * upsert the profile. Argv-free and fully injected (db + transcribe/structure/embed/storage), so it
- * is Worker-portable and unit-testable. ①→②→③ per the Phase-9 plan.
+ * is Worker-portable and unit-testable.
  *
  * The cv_file row is inserted FIRST with a provisional `failed` status, so a failure before the
  * transcript is cached leaves a row that reads as not-extracted (and carries an error sample). Once
  * the transcript is stored the row flips to `extracted`; a later failure (structure/embed) leaves it
- * `extracted` (the 9b guard won't regress it) and re-throws — the cached text stands, only the
- * profile write failed.
+ * `extracted` and re-throws — the cached text stands, only the profile write failed.
  */
 export async function ingestCv(db: Db, opts: IngestCvOptions): Promise<IngestCvResult> {
   const { userId, bytes, filename, contentType, transcribe, structure, embed, storage } = opts;
@@ -119,8 +118,8 @@ export async function ingestCv(db: Db, opts: IngestCvOptions): Promise<IngestCvR
     return { fileId, profileId, status: "extracted", embedTokens: usage.totalTokens, warnings };
   } catch (err) {
     // Record a secret-free error sample (markCvFileFailed truncates + strips NUL) and leave the row
-    // `failed` — unless it already flipped to `extracted` (the 9b guard won't regress it). Best-effort:
-    // a failing mark must NEVER mask the real cause, so swallow its error and always re-throw `err`.
+    // `failed` — unless it already flipped to `extracted`. Best-effort: a failing mark must NEVER mask
+    // the real cause, so swallow its error and always re-throw `err`.
     try {
       await markCvFileFailed(db, fileId, userId, err instanceof Error ? err.message : String(err));
     } catch {

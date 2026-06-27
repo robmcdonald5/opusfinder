@@ -9,7 +9,7 @@ import { collapseBySignature } from "../src/repos/retrieval";
 import { normalizeSignatureText, signatureSql, textArrayLiteral } from "../src/repos/sql";
 
 /**
- * Stub smoke for the Phase-F1 content signature — the JS-decidable surface, NO creds, NO Postgres.
+ * Stub smoke for the content signature — the JS-decidable surface, NO creds, NO Postgres.
  * It locks three things without a live table:
  *   - normalizeSignatureText (the JS mirror): case + whitespace variants of the same content fold to
  *     ONE string; genuinely different content does not; leading/trailing trimmed, runs collapsed.
@@ -18,12 +18,12 @@ import { normalizeSignatureText, signatureSql, textArrayLiteral } from "../src/r
  *     The render also GUARDS the `[[:space:]]+` pattern — a `\s+` in the tagged template would cook to
  *     a bare `s` and silently stop collapsing whitespace.
  *   - the full JS signature (normalize + md5) is deterministic and collides on equal content.
- *   - collapseBySignature (F1b) keeps one member per signature group and never collapses NULLs;
- *     textArrayLiteral (F1c) renders the repost anti-join's text[] param (with escaping).
+ *   - collapseBySignature keeps one member per signature group and never collapses NULLs;
+ *     textArrayLiteral renders the repost anti-join's text[] param (with escaping).
  *
  * The SQL md5 *semantics* (a real re-ingest no-op, the embedding+signature lockstep re-NULL, byte
  * parity between the INSERT/SET/backfill expressions) are only fully assertable against a real table —
- * that is the F1d live gate's job (PHASE_F1_PLAN.md §8).
+ * that is the live gate's job.
  *
  *   pnpm --filter @opusfinder/db test:signature
  */
@@ -93,18 +93,18 @@ await runScript("test-content-signature", async () => {
   assert(jsSignature("a", "b") !== jsSignature("c", "d"), "distinct content must hash differently");
   assert(/^[0-9a-f]{32}$/.test(sigA), `signature must be 32 hex chars, got "${sigA}"`);
 
-  // 7) collapseBySignature (F1b): same-signature members collapse to the FIRST (closest, since the input
+  // 7) collapseBySignature: same-signature members collapse to the FIRST (closest, since the input
   //    is distance-sorted); a distinct signature after a dropped dup survives (the freed slot back-fills);
   //    NULL signatures never collapse.
   {
-    const c = (id: number, sig: string | null) => ({ id, contentSignature: sig });
+    const makeRow = (id: number, sig: string | null) => ({ id, contentSignature: sig });
     const keptIds = collapseBySignature([
-      c(1, "aaa"), // kept — first of group aaa
-      c(2, "bbb"), // kept — first of group bbb
-      c(3, "aaa"), // dropped — dup of #1
-      c(4, null), // kept — NULL is its own group
-      c(5, null), // kept — NULL never collapses
-      c(6, "bbb"), // dropped — dup of #2
+      makeRow(1, "aaa"), // kept — first of group aaa
+      makeRow(2, "bbb"), // kept — first of group bbb
+      makeRow(3, "aaa"), // dropped — dup of #1
+      makeRow(4, null), // kept — NULL is its own group
+      makeRow(5, null), // kept — NULL never collapses
+      makeRow(6, "bbb"), // dropped — dup of #2
     ]).map((x) => x.id);
     assert(
       JSON.stringify(keptIds) === JSON.stringify([1, 2, 4, 5]),
@@ -113,7 +113,7 @@ await runScript("test-content-signature", async () => {
     assert(collapseBySignature([]).length === 0, "empty input must collapse to empty");
   }
 
-  // 8) textArrayLiteral (F1c anti-join param): empty -> {}; md5-hex elements quote cleanly; backslash +
+  // 8) textArrayLiteral (anti-join param): empty -> {}; md5-hex elements quote cleanly; backslash +
   //    double-quote escape (defensive — md5 hex never contains them, but the helper is general).
   assert(textArrayLiteral([]) === "{}", "empty text array must render {}");
   assert(

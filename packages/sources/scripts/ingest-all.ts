@@ -10,8 +10,8 @@ import { embedPolicy } from "./ingest-shared";
 
 /**
  * Ingest every known company across all sources. A thin CLI shell over `runIngestion`
- * (packages/sources/src/ingest.ts) — the SAME library the Phase-8 Worker cron calls — so the
- * CLI and the cron can't drift. This script owns only the local concerns: argv parsing, the
+ * (packages/sources/src/ingest.ts) — the SAME library the Worker cron calls — so the CLI and
+ * the cron can't drift. This script owns only the local concerns: argv parsing, the
  * `process.env`-backed embed policy, and the per-board console output (via `onBoard`);
  * `runIngestion` owns the per-board loop, the `source_runs` row, and the summary log.
  *
@@ -48,16 +48,16 @@ async function main(): Promise<void> {
     // local VOYAGE_API_KEY (embedRequest's fallback); the Worker injects the key instead.
     embed: policy.enabled ? embed : undefined,
     // Real-time per-board output — the Worker omits this hook and stays quiet (its audit trail is
-    // source_runs). Restores the pre-Phase-8 per-board lines, incl. embed cost via formatEmbedCost.
-    onBoard: (b) => {
-      if (!b.ok) {
-        console.warn(`  ${b.source}:${b.slug} FAILED: ${b.error}`);
+    // source_runs).
+    onBoard: (board) => {
+      if (!board.ok) {
+        console.warn(`  ${board.source}:${board.slug} FAILED: ${board.error}`);
         return;
       }
       console.log(
-        `  ${b.source}:${b.slug} -> ${b.jobs} job(s), changed ${b.changed}` +
-          (b.embedded > 0 ? `, embedded ${b.embedded} (${formatEmbedCost(b.embedTokens)})` : "") +
-          (b.error ? ` [embed failed: ${b.error}]` : ""),
+        `  ${board.source}:${board.slug} -> ${board.jobs} job(s), changed ${board.changed}` +
+          (board.embedded > 0 ? `, embedded ${board.embedded} (${formatEmbedCost(board.embedTokens)})` : "") +
+          (board.error ? ` [embed failed: ${board.error}]` : ""),
       );
     },
   });

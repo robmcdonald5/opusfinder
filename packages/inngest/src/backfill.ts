@@ -1,16 +1,16 @@
 /**
- * Phase F8 — the async embedding-backfill drain, as an Inngest scheduled (cron) function.
+ * The async embedding-backfill drain, as an Inngest scheduled (cron) function.
  *
  * Every ingested job lands with `embedding` NULL (the Node-free scraper Worker can't run embed), and a
  * NULL-embedding job is invisible to matching. This cron function drains that backlog daily on the deployed
- * Node runtime (Phase-12 12a: inngest/sveltekit on Vercel), wrapping the SAME repo primitive the
- * `embeddings:backfill` CLI uses — no repo or schema change.
+ * Node runtime (inngest/sveltekit on Vercel), wrapping the SAME repo primitive the `embeddings:backfill` CLI
+ * uses — no repo or schema change.
  *
  * Why NOT call backfillJobEmbeddings directly: it runs an unbounded in-process loop to backlog exhaustion,
  * which would blow Vercel's maxDuration (the SvelteKit serve can't stream). So the drain pages the low-level
- * primitives ONE page per `step.run`, mirroring the digest's bounded poll loop (digest.ts): a per-page bound
- * keeps one step short, and MAX_PAGES_PER_RUN bounds the per-invocation step count (a deep backlog finishes
- * across subsequent daily runs — the drain is idempotent).
+ * primitives ONE page per `step.run`, mirroring the digest's bounded poll loop: a per-page bound keeps one
+ * step short, and MAX_PAGES_PER_RUN bounds the per-invocation step count (a deep backlog finishes across
+ * subsequent daily runs — the drain is idempotent).
  *
  * Paging is CURSORLESS — a written row drops out of `embedding IS NULL`, so the next no-offset query returns
  * the following rows.
@@ -25,12 +25,9 @@ import { NonRetriableError } from "inngest";
 
 import { inngest } from "./inngest";
 
-/**
- * The embedder shape the embed drain needs, declared structurally so this module need not import
- * `@opusfinder/embeddings` (kept injectable/portable, like `EmbedFn` in repos/embeddings.ts). The real
- * `embed` from `@opusfinder/embeddings` is structurally assignable (its extra `model` return field and
- * optional params are compatible), so `buildBackfillDeps()` passes it directly.
- */
+/** The embedder shape the embed drain needs, declared structurally so this module need not import
+ *  `@opusfinder/embeddings`. The real `embed` is structurally assignable, so `buildBackfillDeps()` passes it
+ *  directly. */
 type EmbedFn = (
   texts: string[],
   params: { inputType: "query" | "document" | null },
@@ -42,7 +39,6 @@ export interface BackfillDeps {
   embed: EmbedFn;
 }
 
-// --- Tunables ---------------------------------------------------------------------------------------
 /** Jobs embedded per page. ≤128 (Voyage's per-request item cap) ⇒ exactly one Voyage request per page; ≪
  *  writeJobEmbeddings' 1000-row chunk ⇒ one UPDATE per page. Matches the CLI default. */
 const EMBED_PAGE = 64;
@@ -52,10 +48,9 @@ const EMBED_PAGE = 64;
 const MAX_PAGES_PER_RUN = 200;
 
 /**
- * embed-backlog-drain — fill `jobs.embedding` daily (this gates matching). Cursorless paging: re-query the
- * NULL set each page, embed it, write it back; a written page leaves the filter so the next page is the next
- * rows. `singleton skip` (keyless ⇒ one global flight) drops a tick that fires while a deep-backlog run is
- * still draining, so there is no overlapping Voyage spend.
+ * embed-backlog-drain — fill `jobs.embedding` daily (this gates matching). `singleton skip` (keyless ⇒ one
+ * global flight) drops a tick that fires while a deep-backlog run is still draining, so there is no
+ * overlapping Voyage spend.
  */
 function makeEmbedDrain(deps: BackfillDeps) {
   return inngest.createFunction(
@@ -67,8 +62,8 @@ function makeEmbedDrain(deps: BackfillDeps) {
       let tokens = 0;
       let drained = false;
       for (let i = 0; i < MAX_PAGES_PER_RUN; i++) {
-        // Step id derives ONLY from the loop index (never ctx.attempt — that would orphan a retried step,
-        // per digest.ts). Each page is its own step.run = one Voyage request + one UPDATE.
+        // Step id derives ONLY from the loop index (never ctx.attempt — that would orphan a retried step).
+        // Each page is its own step.run = one Voyage request + one UPDATE.
         const page = await step.run(`embed-page-${i}`, async () => {
           const batch = await jobsNeedingEmbedding(deps.db, { limit: EMBED_PAGE });
           if (batch.length === 0) return { processed: 0, tokens: 0, done: true };
@@ -102,7 +97,7 @@ function makeEmbedDrain(deps: BackfillDeps) {
   );
 }
 
-/** The F8 backfill functions, built with injected deps — concatenated alongside the digest functions in the
+/** The backfill functions, built with injected deps — concatenated alongside the digest functions in the
  *  serve route. Mirrors `createDigestFunctions`. */
 export function createBackfillFunctions(deps: BackfillDeps) {
   return [makeEmbedDrain(deps)];

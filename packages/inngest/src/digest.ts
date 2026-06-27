@@ -30,15 +30,13 @@ import { deliverDigestEmail, type EmailSeam } from "./delivery";
 import { inngest } from "./inngest";
 import { probeDigestLiveness, type LivenessProbe } from "./probe";
 
-// --- Tunables (per-digest knobs) ---------------------------------------------------------------
+// Tunables (per-digest knobs)
 const RETRIEVE_LIMIT = 50; // vector candidates pulled per user
 const TOP_K = 12; // items reranked into the digest
-/** Quality floor (Phase F3 follow-up): drop reranked items scored below this BEFORE taking the top-K, so a
- *  thin/weak match set yields a SHORTER (or empty) digest instead of padding to TOP_K with roles the
- *  synthesis note only flags as bad fits (the trust problem). 0.5 = the rerank rubric's "moderate fit" band
- *  floor — below it is "weak/poor". A SILENT-DROP tunable (too high quietly empties digests), so it ships
- *  ENFORCE at a conservative 0.5 but should be tuned against real digests; a shadow `would-drop` tally is
- *  the proper follow-up (see FEATURE_TODO — "digest quality floor"). */
+/** Quality floor: drop reranked items scored below this BEFORE taking the top-K, so a thin/weak match set
+ *  yields a SHORTER (or empty) digest instead of padding TOP_K with bad-fit roles the synthesis note would
+ *  disown. 0.5 = the rerank rubric's "moderate fit" floor (below it is "weak/poor"). A SILENT-DROP tunable
+ *  (too high quietly empties digests), so tune it against real digests. */
 const MIN_SCORE = 0.5;
 const RECIPIENT_CHUNK = 200; // keyset page for the --all recipient sweep
 /** Step-state cap on a candidate's description. Keep ≥ the synthesis renderer's `descriptionChars`
@@ -59,7 +57,7 @@ const SYNTH_MAX_POLLS = SYNTH_FAST_POLLS + SYNTH_SLOW_POLLS;
 
 /** Matches the CLI's gate — the event schema is compile-time only, so the orchestrator re-checks at
  *  runtime (an empty string is falsy-shaped junk that must not widen into an all-recipients run). */
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** The rerank result the per-user function consumes: a global ordering, the score map, and the
  *  aggregated prompt-cache counters across the rerank's chunk calls (the "cache hit rate >0" gate). */
@@ -73,8 +71,8 @@ export interface RerankOutcome {
  * Injected seams for the digest functions — so the pipeline is testable with stubs and the heavy
  * `@opusfinder/llm` wiring stays out of this module. `buildDigestDeps()` (./deps) wires the real ones.
  * `rerank` runs the shared `@opusfinder/rerank` core (sync Haiku, prompt-cached); `batch` is the
- * Anthropic Message Batches lifecycle for synthesis; `email` is the Phase-11 Resend send +
- * delivery-state read (./delivery).
+ * Anthropic Message Batches lifecycle for synthesis; `email` is the Resend send + delivery-state
+ * read (./delivery).
  */
 export interface DigestDeps {
   db: Db;
@@ -89,13 +87,12 @@ export interface DigestDeps {
     collect: (batchId: string) => Promise<Map<string, BatchResult>>;
   };
   email: EmailSeam;
-  /** F2 Arm C — the pre-send apply-URL liveness probe (one URL → verdict); the per-digest fan-out lives
-   *  in `probeDigestLiveness`. Injected so the stub smoke drives it with a fake. */
+  /** The pre-send apply-URL liveness probe (one URL → verdict); the per-digest fan-out lives in
+   *  `probeDigestLiveness`. Injected so the stub smoke drives it with a fake. */
   probe: LivenessProbe;
-  /** F2 Arm C enforcement (the single F2 switch — see `parseEnforceFlag`). Default false = SHADOW: the
-   *  dead-link (404/410) DROP is always live, but the explicit-410 soft-CLOSE is suppressed and tallied.
-   *  buildDigestDeps sets this from `parseEnforceFlag(process.env.F2_ENFORCE)` — the same flag the Worker
-   *  reads for Arms A/B, so all three flip together. */
+  /** Lifecycle-close enforcement. Default false = SHADOW: the dead-link (404/410) DROP is always live, but
+   *  the explicit-410 soft-CLOSE is suppressed and tallied. buildDigestDeps sets this from
+   *  `parseEnforceFlag(process.env.LIFECYCLE_CLOSE_ENFORCE)` — shared with the Worker so they flip together. */
   enforceLifecycle?: boolean;
 }
 
@@ -107,12 +104,11 @@ interface FilterPrefs {
 }
 
 /** The digest's filter inputs off a preferences row (the filter columns are NOT NULL with schema
- *  defaults — the defaults live in ONE place, the schema). `dealbreakers` (Phase F3) are MERGED into the
- *  `exclusions` list here — they ride the same whole-word compileExclusions matcher in retrieval, so this
- *  is the single row→filter mapper and retrieval.ts needs no new predicate. minSalary/maxSalary are
- *  intentionally omitted: there is no job-side salary column (Phase F4 enrichment was built then removed,
- *  PR #31), so salary lives only in user_preferences and rides the soft prompt signal (toPromptPrefs) —
- *  it is never a hard retrieval filter. */
+ *  defaults — the defaults live in ONE place, the schema). `dealbreakers` are MERGED into the `exclusions`
+ *  list here — they ride the same whole-word compileExclusions matcher in retrieval, so this is the single
+ *  row→filter mapper and retrieval.ts needs no new predicate. minSalary/maxSalary are intentionally omitted:
+ *  there is no job-side salary column, so salary lives only in user_preferences and rides the soft prompt
+ *  signal (toPromptPrefs) — never a hard retrieval filter. */
 function toFilterPrefs(prefs: UserPreferencesRow): FilterPrefs {
   return {
     locationMode: prefs.locationMode,
@@ -122,12 +118,11 @@ function toFilterPrefs(prefs: UserPreferencesRow): FilterPrefs {
   };
 }
 
-/** The judgment-context subset (Phase F3) injected into the rerank + synthesis PROMPT — the YoE band /
- *  salary range / dealbreakers. Slim strings + numbers, so it is safe to carry in the memoized `load` step
- *  state (unlike the 1024-dim embedding, which is deliberately dropped). NEVER enters `RerankOutcome`
- *  (decision 8). `dealbreakers` ride BOTH this (a prompt "avoid" line, governed by the rubric/synthesis
- *  clauses) AND the `toFilterPrefs` exclusions drop. The YoE band is the declared-level signal (the
- *  too-senior fix) — a categorical target_level was dropped as redundant/ambiguous. */
+/** The judgment-context subset injected into the rerank + synthesis PROMPT — the YoE band / salary range /
+ *  dealbreakers. Slim strings + numbers, so it is safe to carry in the memoized `load` step state (unlike
+ *  the 1024-dim embedding, which is deliberately dropped). NEVER enters `RerankOutcome`. `dealbreakers` ride
+ *  BOTH this (a prompt "avoid" line) AND the `toFilterPrefs` exclusions drop. The YoE band is the
+ *  declared-level signal. */
 function toPromptPrefs(prefs: UserPreferencesRow): PromptPreferences {
   return {
     yoeMin: prefs.yoeMin,
@@ -146,7 +141,7 @@ function toPromptPrefs(prefs: UserPreferencesRow): PromptPreferences {
  * on `digests`). A step that exhausts its retries is caught and terminalized onto the run row
  * (`status: 'error'` + `error_sample`) before the failure is rethrown to Inngest — so a dead run never
  * sits `running` forever. The cadence cron (`makeCadenceOrchestrator`) emits this with `trigger: 'cron'`;
- * the orchestrator then filters the recipient sweep by cadence (`listDigestRecipients`' `cadenceDue`, 12a-2).
+ * the orchestrator then filters the recipient sweep by cadence (`listDigestRecipients`' `cadenceDue`).
  */
 function makeOrchestrator(deps: DigestDeps) {
   return inngest.createFunction(
@@ -162,7 +157,7 @@ function makeOrchestrator(deps: DigestDeps) {
             // Explicit undefined check + uuid gate: a truthiness check would silently widen a
             // malformed single-user payload (e.g. an empty string typed into the dev-server's
             // "Send event" form) into the all-recipients sweep below. Shape-only echo in the error.
-            if (!UUID_RE.test(userId)) {
+            if (!UUID_PATTERN.test(userId)) {
               throw new NonRetriableError(
                 `digest: event userId is not a uuid (${userId.length} chars) — refusing to run.`,
               );
@@ -180,7 +175,7 @@ function makeOrchestrator(deps: DigestDeps) {
               limit: RECIPIENT_CHUNK,
               cadenceDue,
             });
-            for (const r of page) ids.push(r.userId);
+            for (const recipient of page) ids.push(recipient.userId);
             const last = page[page.length - 1];
             if (page.length < RECIPIENT_CHUNK || !last) break;
             afterId = last.userId;
@@ -226,19 +221,16 @@ function makeOrchestrator(deps: DigestDeps) {
 /**
  * The per-user digest. Steps (each memoized; the synthesis batch wait is the durable part):
  * load → retrieve → rerank (sync Haiku) → submit synthesis batch → sleep → poll → collect → persist
- * → send email → bounded delivery poll → record delivery (the Phase-11 tail, ./delivery).
+ * → send email → bounded delivery poll → record delivery (./delivery).
  * `singleton` keyed on userId (mode `skip`) prevents overlapping runs for one user — `concurrency`
  * cannot: a run sleeping through the batch wait holds no concurrency slot, so a second run could read
  * the already-shown ids before the first persists. `skip` (not `cancel`) so an in-flight paid batch is
- * never abandoned. (Lock retention across `step.sleep` is undocumented but VERIFIED on the dev server
- * 2026-06-10: a second same-user event fired while run A slept in its batch wait produced no second
- * run, no second batch, and no duplicate digest — re-verify against Inngest Cloud when Phase 12's
- * production serve lands.) Phase 11 extends the held window PAST persist, through the delivery
- * sleeps (~2–12 min): a same-user re-trigger inside that tail is SKIPPED — the intended dedup, but a
+ * never abandoned. Lock retention across `step.sleep` is undocumented but held on the dev server
+ * (re-verify on Inngest Cloud). The held window extends PAST persist, through the delivery sleeps
+ * (~2–12 min): a same-user re-trigger inside that tail is SKIPPED — the intended dedup, but a
  * `pnpm digest --user` retry fired inside it will time out waiting for a digest that never starts;
- * re-trigger after the run finishes in the dashboard. Returns a small JSON summary; per-user
- * failures surface to Inngest (orchestrator failures additionally land on the run row's
- * `error_sample`).
+ * re-trigger after the run finishes in the dashboard. Returns a small JSON summary; per-user failures
+ * surface to Inngest (orchestrator failures additionally land on the run row's `error_sample`).
  */
 function makePerUser(deps: DigestDeps) {
   return inngest.createFunction(
@@ -250,10 +242,9 @@ function makePerUser(deps: DigestDeps) {
 
       // 1. Load + gate eligibility (four independent userId-keyed reads → one Promise.all round).
       //    The gate runs HERE so BOTH the --all sweep (already filtered by listDigestRecipients) and
-      //    the single-user/manual path skip a user who is unverified, NOT approved (the DB-native send
-      //    permit that replaced EMAIL_ALLOWLIST), has disabled digests, or is suppressed
-      //    (bounce/unsubscribe) — otherwise a manual trigger would spend tokens on, and pollute the
-      //    already-shown history of, a user the sweep would skip. The profile EMBEDDING is
+      //    the single-user/manual path skip a user who is unverified, NOT approved, has disabled digests,
+      //    or is suppressed (bounce/unsubscribe) — otherwise a manual trigger would spend tokens on, and
+      //    pollute the already-shown history of, a user the sweep would skip. The profile EMBEDDING is
       //    deliberately not returned: it is consumed once, in retrieve — a 1024-dim vector is dead
       //    weight in memoized step state that every poll-loop replay re-ships.
       const loaded = await step.run("load", async () => {
@@ -272,11 +263,11 @@ function makePerUser(deps: DigestDeps) {
         ) {
           return { skip: "ineligible" as const };
         }
-        // DB-native SEND PERMIT (replaced EMAIL_ALLOWLIST): an un-approved user is gated HERE — before
-        // retrieve/rerank/synthesis — so the manual `--user` path (which bypasses listDigestRecipients)
-        // burns ZERO paid spend. Truthy-negation so a NULL or a not-yet-migrated/undefined field both fail
-        // closed. Its own skip reason (not folded into "ineligible") for clearer diagnostics: a permit-miss
-        // is distinct from a verification/suppression miss in the run logs.
+        // DB-native SEND PERMIT: an un-approved user is gated HERE — before retrieve/rerank/synthesis — so
+        // the manual `--user` path (which bypasses listDigestRecipients) burns ZERO paid spend.
+        // Truthy-negation so a NULL or a not-yet-migrated/undefined field both fail closed. Its own skip
+        // reason (not folded into "ineligible") for clearer diagnostics: a permit-miss is distinct from a
+        // verification/suppression miss in the run logs.
         if (!prefs.digestApprovedAt) return { skip: "not-approved" as const };
         return {
           structured: profile.structured,
@@ -298,7 +289,7 @@ function makePerUser(deps: DigestDeps) {
         if (!profile?.embedding) {
           throw new Error(`digest: profile embedding disappeared mid-run (user ${userId}).`);
         }
-        const raw = await retrieveCandidatesForProfile(deps.db, profile.embedding, {
+        const rawCandidates = await retrieveCandidatesForProfile(deps.db, profile.embedding, {
           limit: RETRIEVE_LIMIT,
           locationMode: loaded.prefs.locationMode,
           locations: loaded.prefs.locations,
@@ -307,7 +298,7 @@ function makePerUser(deps: DigestDeps) {
           excludeJobIds: loaded.excludeJobIds,
           excludeSignatures: loaded.excludeSignatures,
         });
-        return raw.map((c) => ({
+        return rawCandidates.map((c) => ({
           id: c.id,
           title: c.title,
           // +1 so a description that EXCEEDED the cap still trips the renderers' strict `> max`
@@ -327,16 +318,14 @@ function makePerUser(deps: DigestDeps) {
       //    field here — persist re-ranks the reason-filtered survivors 1..N, and a rank in this shape
       //    would go stale the moment synthesis drops an item.
       const reranked = await step.run("rerank", async () => {
-        const rr = await deps.rerank(loaded.structured, candidates, loaded.promptPrefs);
-        // Apply the MIN_SCORE quality floor BEFORE the top-K cut: keep only items the reranker rated at
-        // least "moderate", then take up to TOP_K. Fewer than TOP_K (or zero) is intended — a short honest
-        // digest beats 12 padded with weak roles the note would disown. orderedIds is score-desc.
-        const topIds = rr.orderedIds
-          .filter((id) => (rr.scores.get(id) ?? 0) >= MIN_SCORE)
+        const rerankResult = await deps.rerank(loaded.structured, candidates, loaded.promptPrefs);
+        // Apply the MIN_SCORE floor, then take up to TOP_K (orderedIds is score-desc).
+        const topIds = rerankResult.orderedIds
+          .filter((id) => (rerankResult.scores.get(id) ?? 0) >= MIN_SCORE)
           .slice(0, TOP_K);
         return {
-          items: topIds.map((id) => ({ jobId: id, score: rr.scores.get(id) ?? 0 })),
-          cache: rr.cache,
+          items: topIds.map((id) => ({ jobId: id, score: rerankResult.scores.get(id) ?? 0 })),
+          cache: rerankResult.cache,
         };
       });
       // No candidate cleared the quality floor — skip rather than send a digest of weak/bad-fit roles (or
@@ -409,9 +398,10 @@ function makePerUser(deps: DigestDeps) {
       // 6. Collect results into a serializable record (Map can't cross a step boundary).
       const reasons = await step.run("collect-synthesis", async () => {
         const map = await deps.batch.collect(batchId);
-        const out: Record<string, { text: string; status: BatchResult["status"] }> = {};
-        for (const [cid, r] of map) out[cid] = { text: r.text, status: r.status };
-        return out;
+        const reasonsById: Record<string, { text: string; status: BatchResult["status"] }> = {};
+        for (const [customId, result] of map)
+          reasonsById[customId] = { text: result.text, status: result.status };
+        return reasonsById;
       });
 
       // 7. Persist (retry-idempotent: delete any prior digest for this (user, run) — the FK cascade
@@ -421,8 +411,8 @@ function makePerUser(deps: DigestDeps) {
         await deleteUserDigestForRun(deps.db, userId, digestRunId);
         const kept = reranked.items
           .map((it) => {
-            const r = reasons[synthId(it.jobId)];
-            const reason = r?.status === "succeeded" ? r.text.trim() : "";
+            const reasonRecord = reasons[synthId(it.jobId)];
+            const reason = reasonRecord?.status === "succeeded" ? reasonRecord.text.trim() : "";
             return { jobId: it.jobId, score: it.score, reason };
           })
           .filter((it) => it.reason.length > 0);
@@ -448,9 +438,9 @@ function makePerUser(deps: DigestDeps) {
             rerankCacheCreationTokens: reranked.cache.creationInputTokens,
           },
         });
-        // G3b: snapshot the kept jobs' display fields onto digest_items (fork G3-SNAPSHOT-SOURCE — one
-        // small SELECT over the ~12 kept ids, which the rerank/synthesis step state never carried). The
-        // jobs are live (just retrieved), so every kept id must resolve; a miss is an invariant break.
+        // Snapshot the kept jobs' display fields onto digest_items — one small SELECT over the ~12 kept ids,
+        // which the rerank/synthesis step state never carried. The jobs are live (just retrieved), so every
+        // kept id must resolve; a miss is an invariant break.
         const snapshots = await getJobSnapshots(
           deps.db,
           kept.map((it) => it.jobId),
@@ -472,14 +462,11 @@ function makePerUser(deps: DigestDeps) {
         return { userId, digestId, itemCount: kept.length };
       });
 
-      // 7.5 F2 Arm C: liveness-probe the persisted items' apply URLs before send. DROP dead links (404/410)
-      //     so the user never clicks Apply into a 404; soft-close on explicit 410 (count-only/shadow first —
-      //     F2-enforce flips it on); KEEP ambiguous (2xx/3xx/5xx/timeout — never lose a possibly-live match
-      //     over a blip). Re-reads applyUrl by digest id (not via step state). If EVERY item is dead, drop
-      //     the whole digest and skip the send — the graceful no-send success, not an empty email.
-      // F2 enforcement rides the ONE shared switch: deps.enforceLifecycle = parseEnforceFlag(F2_ENFORCE),
-      // the same flag the Worker reads for Arms A/B, so all three flip together — no partial-flip footgun.
-      // (Arm C's dead-link DROP is always live; only its explicit-410 soft-CLOSE is gated by this flag.)
+      // 7.5 Liveness-probe the persisted items' apply URLs before send. DROP dead links (404/410) so the user
+      //     never clicks Apply into a 404; soft-close on explicit 410 (count-only/shadow first; enforce flips
+      //     it on); KEEP ambiguous (2xx/3xx/5xx/timeout — never lose a possibly-live match over a blip).
+      //     Re-reads applyUrl by digest id (not via step state). If EVERY item is dead, drop the whole digest
+      //     and skip the send — the graceful no-send success, not an empty email.
       const liveness = await probeDigestLiveness(
         { run: async (id, fn) => (await step.run(id, fn)) as Awaited<ReturnType<typeof fn>> },
         deps.db,
@@ -503,11 +490,11 @@ function makePerUser(deps: DigestDeps) {
         };
       }
 
-      // 8. Email delivery (Phase 11): send (Idempotency-Key digest/<digestId>) → bounded delivery
-      //    poll → record. The step block lives in ./delivery so the stub smoke can drive it with a
-      //    fake step. The adapter below passes Inngest's tools through; the cast is sound — every
-      //    step return in that block (SendDigestResult, string, void) is a JSON fixed-point, so
-      //    Inngest's Jsonify memoization is the identity on them.
+      // 8. Email delivery: send (Idempotency-Key digest/<digestId>) → bounded delivery poll → record.
+      //    The step block lives in ./delivery so the stub smoke can drive it with a fake step. The adapter
+      //    below passes Inngest's tools through; the cast is sound — every step return in that block
+      //    (SendDigestResult, string, void) is a JSON fixed-point, so Inngest's Jsonify memoization is the
+      //    identity on them.
       const delivery = await deliverDigestEmail(
         {
           run: async (id, fn) => (await step.run(id, fn)) as Awaited<ReturnType<typeof fn>>,
@@ -525,11 +512,11 @@ function makePerUser(deps: DigestDeps) {
       if (delivery === "skipped-unapproved") {
         await step.run("mark-considered-unapproved", () => markDigestConsidered(deps.db, userId));
       } else if (delivery === "skipped-empty") {
-        // G1b: every item's job was lifecycle-closed between retrieval and send (the Arm A/B race spanning
-        // the synthesis wait — closed after retrieval, persisted anyway, kept by the probe's URL-only check),
-        // so the render filtered them all out and no email was sent. Like the all-dead and unapproved-skip
-        // paths, back the user off the cadence (no send stamped sent_at) so the daily cron doesn't re-run the
-        // paid pipeline for them next tick. The 0-item digest row stays as audit.
+        // Every item's job was lifecycle-closed between retrieval and send (closed after retrieval, persisted
+        // anyway, kept by the probe's URL-only check), so the render filtered them all out and no email was
+        // sent. Like the all-dead and unapproved-skip paths, back the user off the cadence (no send stamped
+        // sent_at) so the daily cron doesn't re-run the paid pipeline for them next tick. The 0-item digest
+        // row stays as audit.
         await step.run("mark-considered-all-closed", () => markDigestConsidered(deps.db, userId));
       }
       return { ...persisted, delivery };
@@ -538,12 +525,12 @@ function makePerUser(deps: DigestDeps) {
 }
 
 /**
- * The Phase-12 cadence cron (12a-2): a daily {cron} that EMITS `digest/run.requested {trigger:'cron'}`,
- * reusing the orchestrator's recipient sweep + fan-out. The orchestrator applies the cadence "due now"
- * predicate (only for trigger='cron'), so each user is sent on their own cadence (daily/weekly/monthly)
- * while the manual `pnpm digest --all` path stays cadence-agnostic. Emits only (no deps); all the work is
- * the orchestrator's. 13:00 UTC ≈ 8am US-Eastern (Inngest cron is UTC). The cadence WINDOWS that decide
- * "due" live in `listDigestRecipients` (db); change the FIRE TIME here.
+ * The cadence cron: a daily {cron} that EMITS `digest/run.requested {trigger:'cron'}`, reusing the
+ * orchestrator's recipient sweep + fan-out. The orchestrator applies the cadence "due now" predicate
+ * (only for trigger='cron'), so each user is sent on their own cadence (daily/weekly/monthly) while the
+ * manual `pnpm digest --all` path stays cadence-agnostic. Emits only (no deps); all the work is the
+ * orchestrator's. 13:00 UTC ≈ 8am US-Eastern (Inngest cron is UTC). The cadence WINDOWS that decide "due"
+ * live in `listDigestRecipients` (db); change the FIRE TIME here.
  */
 function makeCadenceOrchestrator() {
   return inngest.createFunction(

@@ -1,14 +1,11 @@
 import { z } from "zod";
 
 /**
- * The OUTPUT contract + candidate renderer for the Phase-10 rerank call. The scoring RUBRIC and the
+ * The OUTPUT contract + candidate renderer for the rerank call. The scoring RUBRIC and the
  * chunk/merge/backfill orchestration live in `@opusfinder/rerank` (shared with the eval harness); this
  * file holds only what the real LLM call needs that `@opusfinder/rerank` deliberately stays free of:
  * the structured-output schema for `generateObject`, and how a candidate chunk is rendered into the
- * user message. The digest pipeline (Phase 10f) wires the real call as
- * `(system, candidates) => generateObject({ model: 'haiku', system, cacheSystem: true,
- *   schema: RerankScoresSchema, messages: [{ role: 'user', content: renderRerankCandidates(candidates) }] })`
- * then maps the result to `RerankScore[]`.
+ * user message.
  */
 
 /** Structured output for the rerank call: one 0.0–1.0 relevance score per candidate id (the scale the

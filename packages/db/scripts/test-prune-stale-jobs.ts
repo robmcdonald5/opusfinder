@@ -11,14 +11,13 @@ import {
 } from "../src/repos/prune";
 
 /**
- * Stub smoke for the G2b prune (`pruneStaleJobs`) — the JS-decidable surface, NO creds, NO Postgres. A
+ * Stub smoke for the prune (`pruneStaleJobs`) — the JS-decidable surface, NO creds, NO Postgres. A
  * content-aware fake Db records every `execute()` and returns a canned result per query KIND (breakdown /
  * size / delete-batch), and the emitted SQL is rendered with PgDialect so the query shapes are asserted
  * without a live table. The SQL *semantics* (which rows actually match the gate) are only fully assertable
- * against a real table — that is the owner's dry-run gate (PHASE_G2_PLAN.md §3). Here we lock the
- * safety-critical contract:
+ * against a real table — that is the owner's dry-run gate. Here we lock the safety-critical contract:
  *   - the three-part eligibility gate is present (closed + window + NOT IN digest_items);
- *   - DRY RUN (default) issues ONLY the breakdown and NEVER a DELETE (decision 6);
+ *   - DRY RUN (default) issues ONLY the breakdown and NEVER a DELETE;
  *   - --apply issues the keyset DELETE loop, accumulates the RETURNING count across batches, and
  *     terminates on a short batch;
  *   - --apply with prunable=0 short-circuits (no DELETE);
@@ -79,7 +78,7 @@ await runScript("test-prune-stale-jobs", async () => {
     const { db, calls } = stubDb({
       breakdownRow: { closed_total: "10", closed_old: "7", prunable: "5" },
     });
-    const r = await pruneStaleJobs(db);
+    const pruneResult = await pruneStaleJobs(db);
     assert(
       calls.length === 1,
       `dry run must issue exactly the breakdown, got ${calls.length} calls`,
@@ -103,10 +102,10 @@ await runScript("test-prune-stale-jobs", async () => {
       calls.every((c) => !rendered(c).sql.includes("DELETE FROM")),
       "dry run must NOT DELETE",
     );
-    assert(!r.applied && r.deleted === 0, "dry run: applied=false, deleted=0");
+    assert(!pruneResult.applied && pruneResult.deleted === 0, "dry run: applied=false, deleted=0");
     assert(
-      r.closedTotal === 10 && r.closedOld === 7 && r.prunable === 5,
-      `dry run breakdown mapping wrong: ${JSON.stringify(r)}`,
+      pruneResult.closedTotal === 10 && pruneResult.closedOld === 7 && pruneResult.prunable === 5,
+      `dry run breakdown mapping wrong: ${JSON.stringify(pruneResult)}`,
     );
   }
 
@@ -120,21 +119,21 @@ await runScript("test-prune-stale-jobs", async () => {
       // the RETURNING count across them (not overwrites), and terminates on the short batch.
       deleteReturns: [arrayOf(PRUNE_BATCH), arrayOf(PRUNE_BATCH), arrayOf(5)],
     });
-    const r = await pruneStaleJobs(db, { apply: true });
+    const pruneResult = await pruneStaleJobs(db, { apply: true });
     const deletes = calls.filter((c) => rendered(c).sql.includes("DELETE FROM"));
     assert(
       deletes.length === 3,
       `expected 3 delete batches (full, full, short), got ${deletes.length}`,
     );
-    const { sql: dtext, params: dparams } = rendered(deletes[0]);
-    assert(dtext.includes("WITH batch AS"), "delete must be a keyset CTE");
-    assert(dtext.includes("ORDER BY id"), "delete batch must be id-ordered (keyset)");
-    assert(dtext.includes("DELETE FROM jobs"), "delete must target jobs");
-    assert(dtext.includes("RETURNING id"), "delete must RETURNING id to count the batch");
-    assert(dparams.includes(PRUNE_BATCH), "delete must bind the batch size as the LIMIT");
+    const { sql: deleteSql, params: deleteParams } = rendered(deletes[0]);
+    assert(deleteSql.includes("WITH batch AS"), "delete must be a keyset CTE");
+    assert(deleteSql.includes("ORDER BY id"), "delete batch must be id-ordered (keyset)");
+    assert(deleteSql.includes("DELETE FROM jobs"), "delete must target jobs");
+    assert(deleteSql.includes("RETURNING id"), "delete must RETURNING id to count the batch");
+    assert(deleteParams.includes(PRUNE_BATCH), "delete must bind the batch size as the LIMIT");
     assert(
-      r.applied && r.deleted === PRUNE_BATCH * 2 + 5,
-      `apply must accumulate the deleted count across batches: ${JSON.stringify(r)}`,
+      pruneResult.applied && pruneResult.deleted === PRUNE_BATCH * 2 + 5,
+      `apply must accumulate the deleted count across batches: ${JSON.stringify(pruneResult)}`,
     );
   }
 
@@ -143,12 +142,15 @@ await runScript("test-prune-stale-jobs", async () => {
     const { db, calls } = stubDb({
       breakdownRow: { closed_total: "4", closed_old: "0", prunable: "0" },
     });
-    const r = await pruneStaleJobs(db, { apply: true });
+    const pruneResult = await pruneStaleJobs(db, { apply: true });
     assert(
       calls.every((c) => !rendered(c).sql.includes("DELETE FROM")),
       "apply with prunable=0 must NOT DELETE",
     );
-    assert(r.applied && r.deleted === 0, "apply with prunable=0: applied=true, deleted=0");
+    assert(
+      pruneResult.applied && pruneResult.deleted === 0,
+      "apply with prunable=0: applied=true, deleted=0",
+    );
   }
 
   console.log(

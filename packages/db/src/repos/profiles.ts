@@ -1,5 +1,5 @@
 /**
- * Persistence for CV uploads + semantic profiles (Phase 9). Same functional style as the other
+ * Persistence for CV uploads + semantic profiles. Same functional style as the other
  * repos: the Drizzle client is injected, no module-level singleton.
  *
  * `user_cv_files` is append-only upload history; `user_profiles` is upserted one row per user
@@ -18,7 +18,7 @@ import { NUL, stripNul, VECTOR_CAST, vectorLiteral } from "./sql";
 /** Cap on a stored `error_sample` — truncated and NUL-stripped; callers must pass a non-PII message
  * (a CV's contact info IS PII), same discipline as source_runs. */
 const MAX_ERROR_SAMPLE = 500;
-function truncateError(message: string): string {
+function sanitizeErrorSample(message: string): string {
   return message.replaceAll(NUL, "").slice(0, MAX_ERROR_SAMPLE);
 }
 
@@ -50,12 +50,10 @@ export async function insertCvFile(db: Db, file: NewCvFile): Promise<{ id: numbe
   return row;
 }
 
-// NOTE (ownership, Phase 9.5): patchCvFileExtracted / markCvFileFailed take the owning `userId` and
-// scope their UPDATE to `id AND user_id` — defense-in-depth so a Phase-12 HTTP route that accepts a
-// request-supplied id can't mutate another user's row. This predicate is NECESSARY but not sufficient
-// on its own: real authorization still requires the `userId` to come from the session, not the request.
-// In Phase 9 the id was internal-only (no exposure); the predicate is added now, before any request
-// surface exists.
+// NOTE (ownership): patchCvFileExtracted / markCvFileFailed take the owning `userId` and scope their
+// UPDATE to `id AND user_id` — defense-in-depth so an HTTP route that accepts a request-supplied id
+// can't mutate another user's row. This predicate is NECESSARY but not sufficient on its own: real
+// authorization still requires the `userId` to come from the session, not the request.
 
 /** Mark a CV file successfully transcribed: record its R2 text key and flip status to `extracted`. */
 export async function patchCvFileExtracted(
@@ -72,8 +70,8 @@ export async function patchCvFileExtracted(
 
 /** Mark a CV file failed (the default state for the provisional row), optionally recording a
  * truncated, non-PII error sample. No profile is written for a failed file. The `status <> 'extracted'`
- * guard means a late/duplicate error path (e.g. 9c's try/catch firing after the transcript was
- * cached) can't regress an already-extracted row — which still holds a valid r2_text_key — to 'failed'. */
+ * guard means a late/duplicate error path (firing after the transcript was cached) can't regress an
+ * already-extracted row — which still holds a valid r2_text_key — to 'failed'. */
 export async function markCvFileFailed(
   db: Db,
   id: number,
@@ -81,7 +79,7 @@ export async function markCvFileFailed(
   errorSample?: string,
 ): Promise<void> {
   const set: { status: CvFileStatus; errorSample?: string } = { status: "failed" };
-  if (errorSample !== undefined) set.errorSample = truncateError(errorSample);
+  if (errorSample !== undefined) set.errorSample = sanitizeErrorSample(errorSample);
   await db
     .update(userCvFiles)
     .set(set)

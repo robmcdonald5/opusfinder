@@ -8,8 +8,8 @@ import { firstPathSegment, segmentAfter } from "./url-match";
 
 const WIDGET_API = "https://apply.workable.com/api/v1/widget/accounts";
 const WIDGET_API_URL = new URL(WIDGET_API);
-const WIDGET_API_HOST = WIDGET_API_URL.hostname; // "apply.workable.com"
-const WIDGET_API_PATH = WIDGET_API_URL.pathname; // "/api/v1/widget/accounts"
+const WIDGET_API_HOST = WIDGET_API_URL.hostname;
+const WIDGET_API_PATH = WIDGET_API_URL.pathname;
 // First-path-segment tokens on apply.workable.com that are NOT a board slug (API version paths,
 // the /j/ short-link, the /jobs alias). A bare /{slug} outside these IS a board slug. v1/v2/v3
 // cover the widget-API version prefixes so a version token is never mistaken for a tenant.
@@ -36,8 +36,8 @@ export const workableAdapter: SourceAdapter = {
   matchUrl: (url) => {
     if (url.hostname !== WIDGET_API_HOST) return null;
     if (url.pathname.startsWith(WIDGET_API_PATH + "/")) return segmentAfter(url, "accounts");
-    const first = firstPathSegment(url);
-    return first && !RESERVED_FIRST_SEGMENTS.has(first) ? first : null;
+    const firstSegment = firstPathSegment(url);
+    return firstSegment && !RESERVED_FIRST_SEGMENTS.has(firstSegment) ? firstSegment : null;
   },
 
   jobsRequest: (ctx) => ({ url: `${WIDGET_API}/${ctx.slug}?details=true` }),
@@ -99,17 +99,17 @@ function toNormalizedJob(raw: unknown, ctx: SourceContext): NormalizedJob | null
  * hidden ones); fall back to the flat top-level city/state/country. `[]` if none.
  */
 function extractLocations(raw: Record<string, unknown>): string[] {
-  const out: string[] = [];
+  const locations: string[] = [];
   if (Array.isArray(raw.locations)) {
     for (const loc of raw.locations) {
       if (!isRecord(loc) || loc.hidden === true) continue;
       const composed = joinParts([loc.city, loc.region, loc.country]);
-      if (composed) out.push(composed);
+      if (composed) locations.push(composed);
     }
   }
-  if (out.length === 0) {
-    const flat = joinParts([raw.city, raw.state, raw.country]);
-    if (flat) out.push(flat);
+  if (locations.length === 0) {
+    const flatLocation = joinParts([raw.city, raw.state, raw.country]);
+    if (flatLocation) locations.push(flatLocation);
   }
-  return out;
+  return locations;
 }

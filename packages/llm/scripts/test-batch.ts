@@ -1,5 +1,5 @@
 /**
- * Phase-10 batchGenerate smoke: submit a real 2-request Message Batch (Haiku 4.5, 50% discount), poll
+ * batchGenerate smoke: submit a real 2-request Message Batch (Haiku 4.5, 50% discount), poll
  * to completion, and confirm results map back by custom_id with the cache counters observable. The
  * shared system prompt is padded past Haiku's ~4096-token cache minimum so caching CAN engage — but
  * intra-batch hits are best-effort (concurrent processing), so the counters are LOGGED, not asserted.
@@ -34,18 +34,18 @@ async function main(): Promise<void> {
     {
       pollIntervalMs: 5_000,
       maxWaitMs: 15 * 60 * 1000,
-      onPoll: (p) =>
-        console.log(`poll: status=${p.status} processing=${p.counts.processing} succeeded=${p.counts.succeeded}`),
+      onPoll: (progress) =>
+        console.log(`poll: status=${progress.status} processing=${progress.counts.processing} succeeded=${progress.counts.succeeded}`),
     },
   );
 
-  const byId = new Map(results.map((r) => [r.customId, r]));
+  const byId = new Map(results.map((result) => [result.customId, result]));
   for (const id of ["smoke-1", "smoke-2"]) {
-    const r = byId.get(id);
+    const result = byId.get(id);
     console.log(
-      `${id}: status=${r?.status} text="${(r?.text ?? "").slice(0, 60)}" ` +
-        `cacheRead=${r?.usage?.cacheReadInputTokens ?? "-"} cacheCreate=${r?.usage?.cacheCreationInputTokens ?? "-"} ` +
-        `in=${r?.usage?.inputTokens ?? "-"}`,
+      `${id}: status=${result?.status} text="${(result?.text ?? "").slice(0, 60)}" ` +
+        `cacheRead=${result?.usage?.cacheReadInputTokens ?? "-"} cacheCreate=${result?.usage?.cacheCreationInputTokens ?? "-"} ` +
+        `in=${result?.usage?.inputTokens ?? "-"}`,
     );
   }
 

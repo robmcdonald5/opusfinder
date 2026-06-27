@@ -6,13 +6,13 @@ import {
 } from "@opusfinder/db/repos";
 
 /**
- * Phase F2 Arm C — the pre-send liveness probe of `digest-user`. Before the email goes out, HEAD/GET the
- * ≤TOP_K persisted items' apply URLs and DROP the dead links so the user never clicks Apply into a 404 (the
- * phase's worst case). Conservative scope (ratified F2-ARM-C-SCOPE):
+ * The pre-send liveness probe of `digest-user`. Before the email goes out, HEAD/GET the ≤TOP_K persisted
+ * items' apply URLs and DROP the dead links so the user never clicks Apply into a 404 (the worst case).
+ * Conservative scope:
  *   - 2xx/3xx → KEEP (live).
  *   - 404      → DROP from this digest, do NOT close (a bare 404 can be a CDN/geo blip).
- *   - 410 Gone → DROP and soft-close the job (definitive, intended-permanent). Count-only first
- *                (F2-SHADOW: tally `probed410WouldClose`); F2-enforce flips the close write on.
+ *   - 410 Gone → DROP and soft-close the job (definitive, intended-permanent). Count-only first (shadow);
+ *                enforce flips the close write on.
  *   - 5xx / timeout / network / other 4xx → KEEP (ambiguous — never lose a possibly-live match over a blip,
  *                and never close).
  * Runs in the Node Inngest runtime (Worker-isolation-free — `@opusfinder/inngest` is barred from the scraper
@@ -31,8 +31,7 @@ export interface LivenessOutcome {
  *  the smoke. One URL in, one verdict out; the per-digest fan-out + DB writes live in `probeDigestLiveness`. */
 export type LivenessProbe = (url: string) => Promise<LivenessOutcome>;
 
-/** The one step primitive this module uses — structural, so the stub smoke drives it with a fake step that
- *  records ids and runs `fn` inline, while Inngest's real `step.run` passes straight through. */
+/** The one step primitive this module uses — structural, so the stub smoke can pass a fake `step.run`. */
 export interface ProbeStepTools {
   run<T>(id: string, fn: () => Promise<T>): Promise<T>;
 }
@@ -41,7 +40,7 @@ export interface ProbeStepTools {
  *  db `RunCounts` = Record<string, number>). */
 export interface ProbeCounts {
   [key: string]: number;
-  probedChecked: number; // items probed
+  probedChecked: number;
   probedOk: number; // 2xx/3xx — kept
   probed404Dropped: number; // 404 — dropped, not closed
   probed410: number; // 410 — dropped (and closed/would-close)
@@ -92,11 +91,11 @@ async function fetchStatus(url: string, method: "HEAD" | "GET"): Promise<number 
 
 /**
  * Probe one digest's items and apply the drop/close split, in ONE memoized step. Re-reads the items' apply
- * URLs by digest id (not threaded through step state — the embedding-re-read discipline), probes them in
- * parallel (≤TOP_K, each with its own timeout, so a slow ATS can't stall the send), closes the explicit-410
- * jobs (enforce-gated), and drops the dead links from `digest_items` (keeping the persisted items equal to
- * what is sent). Returns the survivor count — when it is 0 the caller drops the whole digest and sends no
- * email. `opts.enforce` is false by default (F2-SHADOW count-only first); F2-enforce flips it on.
+ * URLs by digest id (not threaded through step state), probes them in parallel (≤TOP_K, each with its own
+ * timeout, so a slow ATS can't stall the send), closes the explicit-410 jobs (enforce-gated), and drops the
+ * dead links from `digest_items` (keeping the persisted items equal to what is sent). Returns the survivor
+ * count — when it is 0 the caller drops the whole digest and sends no email. `opts.enforce` is false by
+ * default (shadow count-only first); enforce flips it on.
  */
 export async function probeDigestLiveness(
   step: ProbeStepTools,
@@ -112,11 +111,11 @@ export async function probeDigestLiveness(
     if (targets.length === 0) return { survivors: 0, counts };
 
     const results = await Promise.all(
-      targets.map(async (t) => ({
-        jobId: t.jobId,
+      targets.map(async (target) => ({
+        jobId: target.jobId,
         // A misbehaving/stub seam that REJECTS (the real probeLiveness never does — it catches internally)
         // must not fail the whole memoized step and block the send; treat a throw as ambiguous 'error' (keep).
-        outcome: await probe(t.applyUrl).catch((): LivenessOutcome => ({ verdict: "error" })),
+        outcome: await probe(target.applyUrl).catch((): LivenessOutcome => ({ verdict: "error" })),
       })),
     );
 
@@ -130,11 +129,7 @@ export async function probeDigestLiveness(
         case "missing":
           // 404 → drop from THIS digest but never close (may be a transient blip). NB this also removes the
           // job from shown-history (digest_items), so a persistently-404-but-active job can re-surface on a
-          // later digest until Arm A / recency clears it — see dropDigestItemsAndRecount's coupling caveat.
-          // NO same-signature SIBLING fallback (F1–F8 review B1): the F1b collapse (db/retrieval.ts
-          // collapseBySignature) already discarded this role's other cross-posts before retrieval returned,
-          // so a live sibling can't be promoted here — the whole role is lost from this digest. Accepted
-          // low-sev; the re-surface above is the self-heal. (Same applies to the 410 'gone' drop below.)
+          // later digest until recency clears it (the self-heal). (Same applies to the 410 'gone' drop below.)
           counts.probed404Dropped++;
           droppedJobIds.push(jobId);
           break;
@@ -156,13 +151,11 @@ export async function probeDigestLiveness(
     }
 
     const survivors = targets.length - droppedJobIds.length;
-    // Always record — even when every item is dead: drop the dead digest_items, set item_count (= survivors),
-    // and fold the probe counts into digests.counts. This keeps the F2-SHADOW analysis visible on the all-dead
-    // digests too (the worst case the enforce decision most needs to see). On all-dead the caller keeps the
-    // 0-item row (audit) and simply skips the send.
+    // Always record even when every item is dead: drop the dead digest_items, set item_count (= survivors),
+    // fold the probe counts into digests.counts.
     await dropDigestItemsAndRecount(db, digestId, droppedJobIds, survivors, counts);
 
-    // Shape-only (counts, never titles/URLs) — the item-6 health signal.
+    // Shape-only (counts, never titles/URLs).
     console.log(
       `digest ${digestId} liveness: checked ${counts.probedChecked}, ok ${counts.probedOk}, ` +
         `404-drop ${counts.probed404Dropped}, 410 ${counts.probed410} ` +

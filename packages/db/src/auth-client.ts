@@ -6,7 +6,7 @@ import * as schema from "./schema";
  * Drizzle client over Neon's WebSocket (serverless) driver — TRANSACTION-CAPABLE, unlike the neon-http
  * `createDb`. Better Auth's `signUpEmail` wraps the `user`+`account` inserts in an interactive
  * transaction, which neon-http refuses ("No transactions support in neon-http driver", neon #4747) —
- * so `@opusfinder/auth`'s adapter MUST use this handle (Phase 9.5, decision B1).
+ * so `@opusfinder/auth`'s adapter MUST use this handle.
  *
  * Lives in its OWN subpath (`@opusfinder/db/auth-client`), NOT in `client.ts`, so the scrapers Worker
  * — which imports only `createDb` from the package root — never pulls neon-serverless/WebSocket into

@@ -12,8 +12,7 @@ import { SEED_LANES } from "../src/seed";
  *
  *   pnpm discover [--source=<name>] [--limit=<n>] [--lanes=<a,b>] [--dry-run]
  *
- * `--dry-run` is a read-only preview (writes nothing). Moves to a Cloudflare Worker in Phase 8 —
- * `runDiscovery` is already argv-free for that.
+ * `--dry-run` is a read-only preview (writes nothing).
  */
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
@@ -24,18 +23,18 @@ async function main(): Promise<void> {
   // silently falling back to the broad all-source pass — which would run the UNSCOPED
   // deactivateStale sweep the operator never intended.
   const flagValue = (name: string): { present: boolean; value: string | undefined } => {
-    const eq = `--${name}=`;
+    const eqPrefix = `--${name}=`;
     for (let i = 0; i < args.length; i++) {
-      const a = args[i];
-      if (a === undefined) continue;
-      if (a === `--${name}`) {
+      const arg = args[i];
+      if (arg === undefined) continue;
+      if (arg === `--${name}`) {
         const next = args[i + 1];
         return {
           present: true,
           value: next !== undefined && !next.startsWith("--") ? next : undefined,
         };
       }
-      if (a.startsWith(eq)) return { present: true, value: a.slice(eq.length) };
+      if (arg.startsWith(eqPrefix)) return { present: true, value: arg.slice(eqPrefix.length) };
     }
     return { present: false, value: undefined };
   };

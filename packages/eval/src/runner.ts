@@ -1,5 +1,5 @@
 /**
- * Shared eval orchestration (Phase 5): score a ranker over the labeled set, aggregate, and the
+ * Shared eval orchestration: score a ranker over the labeled set, aggregate, and the
  * report path conventions. Extracted so `scripts/eval.ts` and `scripts/compare.ts` score through
  * the IDENTICAL path — if the comparison scored differently from the single-ranker run, the
  * Voyage-vs-OpenAI numbers would be meaningless.
@@ -35,8 +35,8 @@ export function defaultReportPath(
   datasetPath: string,
 ): string {
   const name = embedderLabel ? `${label}-${embedderLabel}` : label;
-  const ds = basename(datasetPath).replace(/\.jsonl?$/, "");
-  return join(PKG_ROOT, "reports", `${name}.${ds}.json`);
+  const datasetName = basename(datasetPath).replace(/\.jsonl?$/, "");
+  return join(PKG_ROOT, "reports", `${name}.${datasetName}.json`);
 }
 
 /** A ranker must return a permutation of the candidate ids — guard so a buggy ranker can't inflate

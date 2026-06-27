@@ -11,7 +11,7 @@
  * NEEDS: DATABASE_URL + ANTHROPIC_API_KEY (the per-user fn calls Haiku rerank + the Sonnet synthesis
  * batch), and a CV-ingested, eligible user. Real, batch-discounted Anthropic spend; runs a few minutes.
  * The SERVE process additionally needs RESEND_API_KEY / RESEND_API_KEY_FULL / EMAIL_FROM
- * (packages/email/.env) for the Phase-11 send tail — without them the digest still
+ * (packages/email/.env) for the send tail — without them the digest still
  * persists, then the send step terminalizes to delivery_status='failed' (a send-only key breaks just
  * the poll: the run fails AFTER a successful send). NOTE: this CLI's verdict prints when the digest ROW lands
  * (persist); the send + bounded delivery poll run ~2–12 min longer — watch the dev dashboard.
@@ -28,7 +28,7 @@ import type { UserId } from "@opusfinder/shared";
 import { inngest } from "../src/index.ts";
 
 const USAGE = "Usage: pnpm digest [--all | --user <uuid>] [--timeout-ms <n>] [--poll-ms <n>]";
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /** How many recipients this CLI watches in --all mode. The ORCHESTRATOR keyset-sweeps the full list
  *  regardless — past this cap the CLI's report is partial, and says so. */
 const WATCH_LIMIT = 100;
@@ -62,7 +62,7 @@ async function main(): Promise<void> {
     process.exitCode = 1;
     return;
   }
-  if (values.user && !UUID_RE.test(values.user)) {
+  if (values.user && !UUID_PATTERN.test(values.user)) {
     console.error(`--user "${values.user}" is not a valid uuid.\n${USAGE}`);
     process.exitCode = 1;
     return;
@@ -106,7 +106,6 @@ async function main(): Promise<void> {
   const target = values.user ? `user ${String(values.user).slice(0, 8)}…` : `all eligible (${recipients.length})`;
   console.log(`Sent digest/run.requested for ${target}. Polling up to ${timeoutMs}ms…`);
 
-  // Poll for a NEW digest per recipient.
   const done = new Map<UserId, DigestView>();
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs && done.size < recipients.length) {
@@ -123,7 +122,6 @@ async function main(): Promise<void> {
   }
   process.stdout.write("\n");
 
-  // Report.
   let ok = true;
   for (const u of recipients) {
     const d = done.get(u);
@@ -133,10 +131,10 @@ async function main(): Promise<void> {
       ok = false;
       continue;
     }
-    const read = d.counts.rerankCacheReadTokens ?? 0;
+    const readTokens = d.counts.rerankCacheReadTokens ?? 0;
     const create = d.counts.rerankCacheCreationTokens ?? 0;
     console.log(
-      `user ${short}…: digest #${d.id} (run ${d.digestRunId}) — ${d.itemCount} item(s); rerank cache read=${read} create=${create}`,
+      `user ${short}…: digest #${d.id} (run ${d.digestRunId}) — ${d.itemCount} item(s); rerank cache read=${readTokens} create=${create}`,
     );
     for (const it of d.items.slice(0, 5)) {
       console.log(`   #${it.rank} job ${it.jobId} (score ${it.score.toFixed(2)}): ${it.reason.slice(0, 100)}`);

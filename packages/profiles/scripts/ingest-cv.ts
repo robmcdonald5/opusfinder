@@ -30,7 +30,7 @@ async function main(): Promise<void> {
   try {
     const bytes = await readFile(pdfPath);
     // Resolve a REAL user.id — creates a verified user + default prefs on first sight, idempotent on
-    // email (Phase 9.5; replaces the retired mintUserId placeholder). ingestCv's signature is unchanged.
+    // email.
     const { userId } = await getOrCreateUserByEmail(db, auth, email);
     const result = await ingestCv(db, {
       userId,

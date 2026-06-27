@@ -4,14 +4,13 @@ import { resolveUrl } from "../resolve";
 import type { CompanyRecord } from "../seed";
 
 /**
- * The HN "Who is Hiring" seed lane (F5c). Hacker News' monthly "Ask HN: Who is hiring?" thread is the
- * highest yield-per-effort free source of covered ATS board URLs (Greenhouse/Lever/Ashby/… apply links
- * pasted in hiring comments). This lane makes TWO fetch-only Algolia JSON calls — one to find the latest
- * thread, one to pull its comment tree — then a regex/string pass extracts the covered board URLs. No
- * HTML/DOM parser, no Node builtins, so it stays Worker-safe (workerSafe:true) and bundle-clean. It is an
- * ISOLATED lane (SeedLane.failLoud omitted): an Algolia hiccup is tallied as lane_hn_error and skipped,
- * never zeroing a run. Historical-thread backfill (hnrss / firebase thread ids) is deferred unless yield
- * is thin (PHASE_F5_PLAN §4 / slug-sources.md:56-57).
+ * The HN "Who is Hiring" seed lane. Hacker News' monthly "Ask HN: Who is hiring?" thread is the highest
+ * yield-per-effort free source of covered ATS board URLs (Greenhouse/Lever/Ashby/… apply links pasted in
+ * hiring comments). This lane makes TWO fetch-only Algolia JSON calls — one to find the latest thread, one
+ * to pull its comment tree — then a regex/string pass extracts the covered board URLs. No HTML/DOM parser,
+ * no Node builtins, so it stays Worker-safe (workerSafe:true) and bundle-clean. It is an ISOLATED lane
+ * (SeedLane.failLoud omitted): an Algolia hiccup is tallied as lane_hn_error and skipped, never zeroing a
+ * run.
  */
 
 const HN_ALGOLIA = "https://hn.algolia.com/api/v1";
@@ -76,8 +75,8 @@ const URL_RE = /https?:\/\/[^\s"'<>)\]]+/g;
  * trailing prose punctuation (incl. an author ellipsis), and keeps ONLY URLs an adapter's matchUrl claims
  * (resolveUrl) — homepages / GitHub / uncovered ATSes are dropped. DEDUPED by the resolved (source, rawSlug)
  * so HN's truncated display copy of a link (`…/c58c17` beside the full `…/c58c1714c2f0`) collapses onto the
- * full href (kept first) WITHOUT discarding a real board URL that merely ends in "..." (the prior `...`-skip
- * bug). A clipped path-slug that resolves to a different slug stays distinct → a harmless absent probe.
+ * full href (kept first) WITHOUT discarding a real board URL that merely ends in "...". A clipped
+ * path-slug that resolves to a different slug stays distinct → a harmless absent probe.
  */
 function atsUrlsFromComment(text: string): string[] {
   const byKey = new Map<string, string>(); // resolved "source:rawSlug" -> the first (full-href) URL
@@ -90,7 +89,7 @@ function atsUrlsFromComment(text: string): string[] {
       continue;
     }
     const hit = resolveUrl(url);
-    if (hit === null) continue; // not a covered ATS board — skip
+    if (hit === null) continue;
     const key = `${hit.source}:${hit.rawSlug}`;
     if (!byKey.has(key)) byKey.set(key, cleaned); // first occurrence wins = the full href (precedes its display copy)
   }

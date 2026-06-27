@@ -1,9 +1,7 @@
 /**
- * Voyage-vs-OpenAI embedding comparison (Phase 5). Runs the embedding ranker over the labeled set
- * with EACH provider through the same scoring path (src/runner), prints retrieval@k side-by-side
- * plus the delta, and writes each provider's committed report. This is what resolves the open
- * embeddings decision in research/specs/OPEN_DECISIONS.md — preliminarily, at the current (small)
- * dataset size; the spec wants ~50 labeled examples for a confident verdict.
+ * Voyage-vs-OpenAI embedding comparison. Runs the embedding ranker over the labeled set with EACH
+ * provider through the same scoring path (src/runner), prints retrieval@k side-by-side plus the
+ * delta, and writes each provider's committed report.
  *
  *   pnpm eval:compare
  *   pnpm eval:compare -- --dataset data/fixture.jsonl
@@ -58,9 +56,7 @@ async function main(): Promise<void> {
         metrics: aggregate(perExample),
       };
       const reportPath = defaultReportPath("embedding", provider, datasetPath);
-      // Capture the prior committed numbers BEFORE overwriting, so each provider also gets a
-      // "vs last committed run" delta — a per-provider regression, not just the cross-provider gap
-      // (eval.ts diffs its single ranker the same way; compare.ts had no baseline diff at all).
+      // Capture the prior committed numbers BEFORE overwriting, so each provider gets its own "vs last committed run" delta.
       prevByProvider.set(provider, readReport(reportPath));
       reports.push(report);
       writeReport(reportPath, report);

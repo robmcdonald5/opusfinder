@@ -1,5 +1,5 @@
 /**
- * Shared run-row lifecycle helper. Both the discovery/ingestion `source_runs` lane and the Phase-10
+ * Shared run-row lifecycle helper. Both the discovery/ingestion `source_runs` lane and the
  * `digest_runs` lane track a run the same way: insert a `running` row, then patch it to a terminal
  * state exactly once. The FINISH half is identical across the two tables (same once-only terminalize
  * guard, a subtle invariant worth a single definition), so it lives here; the START halves differ

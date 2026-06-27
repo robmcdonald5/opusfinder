@@ -59,8 +59,7 @@ export function maskEmail(email: string): string {
 
 /** Build a UserPreferences patch from the (already string-typed) preference flags; omits unset ones. The
  *  nullable bounds (min/max salary, min/max yoe) accept "clear" to write NULL; "" empties an array
- *  (dealbreakers/exclusions). Phase F3 added location-mode/max-salary/min-yoe/max-yoe/dealbreakers +
- *  closed the long-standing exclusions CLI gap. */
+ *  (dealbreakers/exclusions). */
 export function prefsFromFlags(
   values: Record<string, string | undefined>,
 ): Partial<UserPreferences> {

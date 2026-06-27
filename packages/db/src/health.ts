@@ -4,14 +4,12 @@ import type { Db } from "./client";
 import { resultRows } from "./repos/sql";
 
 /**
- * Pipeline health checker (Phase F6) — "kill silent failure". Health data is recorded across five
- * tables but read by nobody on a schedule; this module is the watcher. It computes seven liveness
- * checks + a cost rollup from EXISTING columns (pure Neon reads, no migration) and returns a
- * shape-only {@link HealthReport} the `pnpm health` CLI prints/alerts on AND a future Phase-12 dev
- * panel renders.
+ * Pipeline health checker — "kill silent failure". Health data is recorded across five tables but
+ * read by nobody on a schedule; this module is the watcher. It computes seven liveness checks + a
+ * cost rollup from EXISTING columns (pure Neon reads, no migration) and returns a shape-only
+ * {@link HealthReport} the `pnpm health` CLI prints/alerts on AND a future dev panel renders.
  *
- * DESIGN (the panel foundation, F6 owner decision 2026-06-14): the module is split so the alerting
- * "now" and the panel "later" share ONE core.
+ * The module is split so the alerting "now" and the panel "later" share ONE core:
  *   - {@link gatherHealthSignals} does the db reads (the only impure part) → raw numbers.
  *   - {@link evaluateHealth} is PURE (no db / env / console / Date / process) → applies thresholds +
  *     `off|shadow|enforce` modes and decides `unhealthy`. This is the logic the smoke test exercises
@@ -24,18 +22,18 @@ import { resultRows } from "./repos/sql";
  * No secrets / no PII: every metric is a count / age / ratio; nothing here reads job or user text.
  */
 
-/** The seven F6 checks (stable ids — the panel + env modes key off these). */
+/** The seven checks (stable ids — the panel + env modes key off these). */
 export type HealthCheckId =
-  | "ingestion_staleness" // (a) last successful ingestion age
-  | "board_fail_ratio" // (b) within-run failed/companies — the status='ok' trap
-  | "discovery_window" // (c) discovery last-run age
-  | "embedding_backlog" // (d) jobs WHERE embedding IS NULL
-  | "digest_health" // (e) any digest_runs with status='error' in the window
-  | "bounce_suppression" // (f) hard-bounced / suppressed users
-  | "discovery_lane_errors"; // (h) lane_<name>_error tallies on the latest discovery run (F5f)
+  | "ingestion_staleness" // last successful ingestion age
+  | "board_fail_ratio" // within-run failed/companies — the status='ok' trap
+  | "discovery_window" // discovery last-run age
+  | "embedding_backlog" // jobs WHERE embedding IS NULL
+  | "digest_health" // any digest_runs with status='error' in the window
+  | "bounce_suppression" // hard-bounced / suppressed users
+  | "discovery_lane_errors"; // lane_<name>_error tallies on the latest discovery run
 
-/** Per-check posture (`[[shadow-validate-tunable-filters]]`): `off` = don't compute; `shadow` =
- *  compute + log but never page (never sets `unhealthy`); `enforce` = a firing check sets `unhealthy`. */
+/** Per-check posture: `off` = don't compute; `shadow` = compute + log but never page (never sets
+ *  `unhealthy`); `enforce` = a firing check sets `unhealthy`. */
 export type HealthMode = "off" | "shadow" | "enforce";
 
 /** Env-tunable numeric thresholds. Defaults seed the watermark; real values are validated on live
@@ -48,8 +46,7 @@ export interface HealthThresholds {
   /** (b) within-run `counts.failed / counts.companies` ratio that fires the board-failure check. */
   failRatio: number;
   /** (c) days since the last successful discovery run before the window fires. Default 13 ≈ ~2× the weekly
-   *  Sunday cron period — tolerates a late/jittered run but still fires on a fully missed week (~14d).
-   *  (Was 8 while discovery was paused; F5f resumed the weekly cron, so 8d would flap on normal jitter.) */
+   *  Sunday cron period — tolerates a late/jittered run but still fires on a fully missed week (~14d). */
   discoveryMaxAgeD: number;
   /** (d) un-embedded backlog (`jobs.embedding IS NULL`) watermark. */
   backlogMax: number;
@@ -91,9 +88,9 @@ export interface HealthCheck {
 }
 
 /** Cost rollup — a read-only trend, NOT an alert in v1 (digest volume is too thin to threshold).
- *  Rerank-cache tokens only: synthesis (Sonnet) usage is persisted nowhere (`digest.ts`), so total
- *  LLM spend is deferred to `F6-COST` / the dev panel. Reads NAMED keys, tolerating the extra
- *  `digests.counts` keys F2's pre-send probe folds in. */
+ *  Rerank-cache tokens only: synthesis (Sonnet) usage is persisted nowhere, so total LLM spend is
+ *  deferred to the dev panel. Reads only the NAMED rerank-cache keys, tolerating the extra
+ *  `digests.counts` keys the pre-send probe folds in. */
 export interface HealthCost {
   /** How many recent `digests` rows the rollup summed (≤ `costRollupN`). */
   digestsConsidered: number;
@@ -109,10 +106,9 @@ export interface HealthSignals {
   ingestionAgeH: number | null;
   /** (b) the latest ingestion run's status + `counts.failed` over the boards actually ATTEMPTED
    *  (`counts.processed`), falling back to `counts.companies` (the chunk size) when `processed` is
-   *  absent/0. Dividing by processed — not companies — keeps the ratio exact on a budget-truncated tick
-   *  (`maxRunMs` stopped the loop early ⇒ `processed < companies`), where `failed/companies` dilutes the
-   *  real failure rate among attempted boards. `status` lets the check fire on an errored run that
-   *  attempted 0 boards — which the ratio alone (a 0/0 → 0) would read as healthy. */
+   *  absent/0. Divide by processed — not companies — to keep the ratio exact on a budget-truncated tick
+   *  (`processed < companies`), where `failed/companies` dilutes the real failure rate. `status` also lets
+   *  the check fire on an errored run that attempted 0 boards (a 0/0 ratio would read as healthy). */
   latestIngestStatus: string | null;
   latestIngestFailed: number;
   latestIngestProcessed: number;
@@ -127,10 +123,8 @@ export interface HealthSignals {
   discoveryLaneErrors: number;
   /** (d) un-embedded backlog. */
   embeddingBacklog: number;
-  /** (e) count of recent digest runs with `status='error'` in the window. (Per-user shortfall was
-   *  dropped — dispatch != completion AND the digest pipeline legitimately persists no row for
-   *  no-candidate / below-quality-floor recipients, so `dispatched > persisted` cannot distinguish a
-   *  failure from a normal no-op; delivery failures are caught by (f).) */
+  /** (e) count of recent digest runs with `status='error'` in the window; delivery failures are caught
+   *  by (f). */
   digestErrors: number;
   /** (f) hard-bounced and suppressed user counts. */
   hardBounces: number;
@@ -146,9 +140,8 @@ export interface HealthReport {
   unhealthy: boolean;
 }
 
-/** A check that should page: `enforce` mode AND `firing`. The single source of truth for both
- *  `HealthReport.unhealthy` and any consumer (the CLI alert body, the future panel) that re-derives the
- *  firing-enforce list — so the alert can never drift from the report's own verdict. */
+/** A check that should page: `enforce` mode AND `firing`. Single source of truth so the alert can
+ *  never drift from the report's own verdict. */
 export const isEnforceFiring = (c: HealthCheck): boolean => c.mode === "enforce" && c.state === "firing";
 
 const CHECK_LABELS: Record<HealthCheckId, string> = {
@@ -180,23 +173,25 @@ export async function gatherHealthSignals(
   const digestWindowN = Math.max(1, opts?.digestWindowN ?? DEFAULT_HEALTH_THRESHOLDS.digestWindowN);
   const costRollupN = Math.max(1, opts?.costRollupN ?? DEFAULT_HEALTH_THRESHOLDS.costRollupN);
 
-  // Issue all eight independent reads concurrently — each db.execute is a separate neon-http round-trip
-  // and none depends on another's result, so Promise.all bounds total latency by the slowest single
-  // query (matters for the serverless dev-panel caller under a function time budget), not their sum.
-  const [ingestAgeR, latestIngestR, discoveryAgeR, backlogsR, digestErrR, bounceR, costR, discoveryLaneR] =
-    await Promise.all([
+  // Issue all reads concurrently so total latency is bounded by the slowest query, not their sum
+  // (matters for the serverless dev-panel caller under a function time budget).
+  const [
+    ingestAgeResult,
+    latestIngestResult,
+    discoveryAgeResult,
+    backlogResult,
+    digestErrorResult,
+    bounceResult,
+    costResult,
+    discoveryLaneResult,
+  ] = await Promise.all([
       // (a) last successful ingestion age (index source_runs_pipeline_started_idx).
       db.execute(sql`
         SELECT extract(epoch FROM (now() - max(finished_at))) / 3600.0 AS age_h
         FROM source_runs WHERE pipeline = 'ingestion' AND status = 'ok'
       `),
-      // (b) latest ingestion run's status + fail-ratio inputs. Read `counts`, NOT `status` ALONE (a run
-      //     where every board 404'd stays status='ok' while incrementing counts.failed) — but ALSO carry
-      //     `status` so an errored run that attempted 0 boards (processed=0 → a 0/0 ratio that would read
-      //     healthy) still fires. `processed` (boards actually attempted) is the exact ratio denominator —
-      //     on a budget-truncated tick it is < companies, so failed/companies would under-report.
-      //     `::numeric` (not `::int`) so a non-integer value can never abort the query and take the
-      //     checker dark.
+      // (b) latest ingestion run's status + fail-ratio inputs (see latestIngestStatus). `::numeric` (not
+      //     `::int`) so a non-integer value can never abort the query and take the checker dark.
       db.execute(sql`
         SELECT status,
                coalesce((counts->>'failed')::numeric, 0)     AS failed,
@@ -204,8 +199,7 @@ export async function gatherHealthSignals(
                coalesce((counts->>'companies')::numeric, 0)  AS companies
         FROM source_runs WHERE pipeline = 'ingestion' ORDER BY started_at DESC LIMIT 1
       `),
-      // (c) discovery window — last SUCCESS (finished_at WHERE status='ok'), mirroring (a), so a
-      //     crash-looping discovery that keeps STARTING (started_at=now each tick) does not read fresh.
+      // (c) discovery window — last SUCCESS (finished_at WHERE status='ok'), mirroring (a).
       db.execute(sql`
         SELECT extract(epoch FROM (now() - max(finished_at))) / 86400.0 AS age_d
         FROM source_runs WHERE pipeline = 'discovery' AND status = 'ok'
@@ -215,10 +209,7 @@ export async function gatherHealthSignals(
         SELECT count(*) FILTER (WHERE embedding IS NULL) AS embedding_backlog
         FROM jobs
       `),
-      // (e) digest health — count error-status runs in the recent window. (Per-user shortfall was
-      //     dropped: digest_runs finalizes right after the fire-and-forget dispatch, AND the pipeline
-      //     legitimately persists no digests row for no-candidate / below-quality-floor recipients, so
-      //     dispatched>persisted cannot distinguish a failure from a normal no-op; (f) catches delivery.)
+      // (e) digest health — count error-status runs in the recent window.
       db.execute(sql`
         SELECT count(*) FILTER (WHERE status = 'error')::int AS errors
         FROM (SELECT status FROM digest_runs ORDER BY started_at DESC LIMIT ${digestWindowN}) t
@@ -233,27 +224,26 @@ export async function gatherHealthSignals(
       db.execute(sql`
         SELECT counts FROM digests ORDER BY created_at DESC LIMIT ${costRollupN}
       `),
-      // (h) latest discovery run's per-lane error tallies — read its counts bag, sum lane_*_error in JS
-      //     (dynamic keys). ANY status: an isolated lane failure leaves the run status='ok', so the age
-      //     check (c) can't see it. `source IS NULL` scopes to the unattended all-source weekly sweep (the
-      //     cron passes no source), so an ad-hoc `pnpm discover --source=X` run can't shadow it. Newest first.
+      // (h) latest discovery run's per-lane error tallies — sum lane_*_error in JS (dynamic keys).
+      //     `source IS NULL` scopes to the all-source weekly sweep so an ad-hoc `pnpm discover --source=X`
+      //     run can't shadow it.
       db.execute(sql`
         SELECT counts FROM source_runs
         WHERE pipeline = 'discovery' AND source IS NULL ORDER BY started_at DESC LIMIT 1
       `),
     ]);
 
-  const ingestAge = resultRows(ingestAgeR)[0] as { age_h: unknown } | undefined;
-  const latestIngest = resultRows(latestIngestR)[0] as
+  const ingestAge = resultRows(ingestAgeResult)[0] as { age_h: unknown } | undefined;
+  const latestIngest = resultRows(latestIngestResult)[0] as
     | { status: unknown; failed: unknown; processed: unknown; companies: unknown }
     | undefined;
-  const discoveryAge = resultRows(discoveryAgeR)[0] as { age_d: unknown } | undefined;
-  const backlogs = resultRows(backlogsR)[0] as
+  const discoveryAge = resultRows(discoveryAgeResult)[0] as { age_d: unknown } | undefined;
+  const backlogs = resultRows(backlogResult)[0] as
     | { embedding_backlog: unknown }
     | undefined;
-  const digestErr = resultRows(digestErrR)[0] as { errors: unknown } | undefined;
-  const bounce = resultRows(bounceR)[0] as { hard_bounced: unknown; suppressed: unknown } | undefined;
-  const costRows = resultRows(costR) as Array<{ counts: Record<string, unknown> | null }>;
+  const digestErr = resultRows(digestErrorResult)[0] as { errors: unknown } | undefined;
+  const bounce = resultRows(bounceResult)[0] as { hard_bounced: unknown; suppressed: unknown } | undefined;
+  const costRows = resultRows(costResult) as Array<{ counts: Record<string, unknown> | null }>;
 
   let rerankCacheReadTokens = 0;
   let rerankCacheCreationTokens = 0;
@@ -262,7 +252,7 @@ export async function gatherHealthSignals(
     rerankCacheCreationTokens += num(r.counts?.rerankCacheCreationTokens);
   }
 
-  const discoveryCountsRow = resultRows(discoveryLaneR)[0] as
+  const discoveryCountsRow = resultRows(discoveryLaneResult)[0] as
     | { counts: Record<string, unknown> | null }
     | undefined;
   let discoveryLaneErrors = 0;
@@ -292,7 +282,7 @@ export async function gatherHealthSignals(
  * `enforce`-mode check fires; `shadow` firings are reported but never set it.
  */
 export function evaluateHealth(signals: HealthSignals, opts?: HealthOptions): HealthReport {
-  const t = { ...DEFAULT_HEALTH_THRESHOLDS, ...opts?.thresholds };
+  const thresholds = { ...DEFAULT_HEALTH_THRESHOLDS, ...opts?.thresholds };
   const modes = opts?.modes;
 
   const make = (
@@ -306,9 +296,8 @@ export function evaluateHealth(signals: HealthSignals, opts?: HealthOptions): He
     return { id, label: CHECK_LABELS[id], state, metric, threshold, mode };
   };
 
-  // Divide by the boards actually ATTEMPTED (processed), not the whole chunk (companies): on a
-  // budget-truncated tick (processed < companies) failed/companies dilutes the real failure rate. Fall
-  // back to companies when processed is 0/absent (e.g. an older run's counts) so the check never goes dark.
+  // Divide by boards attempted (processed), falling back to companies when processed is 0/absent so the
+  // check never goes dark (see latestIngestStatus for the budget-truncated-tick rationale).
   const failDenom = signals.latestIngestProcessed > 0 ? signals.latestIngestProcessed : signals.latestIngestCompanies;
   const failRatio = failDenom > 0 ? signals.latestIngestFailed / failDenom : 0;
   const bounceTotal = signals.hardBounces + signals.suppressed;
@@ -318,25 +307,30 @@ export function evaluateHealth(signals: HealthSignals, opts?: HealthOptions): He
     make(
       "ingestion_staleness",
       signals.ingestionAgeH,
-      t.ingestMaxAgeH,
-      signals.ingestionAgeH === null || signals.ingestionAgeH > t.ingestMaxAgeH,
+      thresholds.ingestMaxAgeH,
+      signals.ingestionAgeH === null || signals.ingestionAgeH > thresholds.ingestMaxAgeH,
     ),
     // (b) fire if the latest run errored outright, OR (when it attempted boards) the fail-ratio breaches.
     //     The status arm catches a full-run abort (processed=0 → a 0/0 ratio that would read healthy).
     make(
       "board_fail_ratio",
       failRatio,
-      t.failRatio,
-      signals.latestIngestStatus === "error" || (failDenom > 0 && failRatio > t.failRatio),
+      thresholds.failRatio,
+      signals.latestIngestStatus === "error" || (failDenom > 0 && failRatio > thresholds.failRatio),
     ),
     // (c) null age (no discovery run) → firing.
     make(
       "discovery_window",
       signals.discoveryAgeD,
-      t.discoveryMaxAgeD,
-      signals.discoveryAgeD === null || signals.discoveryAgeD > t.discoveryMaxAgeD,
+      thresholds.discoveryMaxAgeD,
+      signals.discoveryAgeD === null || signals.discoveryAgeD > thresholds.discoveryMaxAgeD,
     ),
-    make("embedding_backlog", signals.embeddingBacklog, t.backlogMax, signals.embeddingBacklog > t.backlogMax),
+    make(
+      "embedding_backlog",
+      signals.embeddingBacklog,
+      thresholds.backlogMax,
+      signals.embeddingBacklog > thresholds.backlogMax,
+    ),
     // (e)/(f) fire on any occurrence (threshold null = boolean condition).
     make("digest_health", signals.digestErrors, null, signals.digestErrors > 0),
     make("bounce_suppression", bounceTotal, null, bounceTotal > 0),
@@ -358,9 +352,8 @@ export function evaluateHealth(signals: HealthSignals, opts?: HealthOptions): He
 }
 
 /**
- * Compose the reads + the pure evaluation. PURE of env/console/process — callable verbatim from a
- * Node CLI, a Vercel serverless route (the dev panel), or any neon-http `Db`. Pass `opts` explicitly;
- * use {@link healthOptionsFromEnv} at the call site if you want env-driven thresholds/modes.
+ * Compose the reads + the pure evaluation. Pass `opts` explicitly; use {@link healthOptionsFromEnv} at
+ * the call site if you want env-driven thresholds/modes.
  */
 export async function checkHealth(db: Db, opts?: HealthOptions): Promise<HealthReport> {
   const signals = await gatherHealthSignals(db, {
@@ -379,7 +372,7 @@ export async function checkHealth(db: Db, opts?: HealthOptions): Promise<HealthR
 export function healthOptionsFromEnv(
   env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {},
 ): HealthOptions {
-  const n = (key: string): number | undefined => {
+  const parseEnvNumber = (key: string): number | undefined => {
     const v = env[key];
     if (v === undefined || v.trim() === "") return undefined;
     const parsed = Number(v);
@@ -389,12 +382,12 @@ export function healthOptionsFromEnv(
     return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
   };
   const thresholds: Partial<HealthThresholds> = {
-    ingestMaxAgeH: n("HEALTH_INGEST_MAX_AGE_H"),
-    failRatio: n("HEALTH_FAIL_RATIO"),
-    discoveryMaxAgeD: n("HEALTH_DISCOVERY_MAX_AGE_D"),
-    backlogMax: n("HEALTH_BACKLOG_MAX"),
-    digestWindowN: n("HEALTH_DIGEST_WINDOW_N"),
-    costRollupN: n("HEALTH_COST_ROLLUP_N"),
+    ingestMaxAgeH: parseEnvNumber("HEALTH_INGEST_MAX_AGE_H"),
+    failRatio: parseEnvNumber("HEALTH_FAIL_RATIO"),
+    discoveryMaxAgeD: parseEnvNumber("HEALTH_DISCOVERY_MAX_AGE_D"),
+    backlogMax: parseEnvNumber("HEALTH_BACKLOG_MAX"),
+    digestWindowN: parseEnvNumber("HEALTH_DIGEST_WINDOW_N"),
+    costRollupN: parseEnvNumber("HEALTH_COST_ROLLUP_N"),
   };
   // Drop undefined keys so they don't overwrite the defaults in the {...defaults, ...thresholds} merge.
   for (const k of Object.keys(thresholds) as (keyof HealthThresholds)[]) {

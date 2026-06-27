@@ -1,5 +1,5 @@
 /**
- * Unit tests for the seed resolver (Phase 7, sub-phase v): `resolveUrl` + `resolveSeed` over synthetic
+ * Unit tests for the seed resolver: `resolveUrl` + `resolveSeed` over synthetic
  * records (offline, deterministic). Pass `--live` to ALSO fetch the pinned outscal seed and assert it
  * yields candidates > 0 (a network integration check). Run with
  * `pnpm --filter @opusfinder/discovery test:resolve`. node:assert/strict → non-zero exit on failure.
@@ -9,7 +9,6 @@ import assert from "node:assert/strict";
 import { resolveSeed, resolveUrl } from "../src/resolve";
 import { loadSeed, type CompanyRecord } from "../src/seed";
 
-// --- resolveUrl: first adapter whose matchUrl claims the URL; null when none does -----------
 assert.deepEqual(resolveUrl(new URL("https://boards.greenhouse.io/acme")), {
   source: "greenhouse",
   rawSlug: "acme",
@@ -21,7 +20,6 @@ assert.equal(
 );
 assert.equal(resolveUrl(new URL("https://www.cusmat.com/careers/")), null, "vanity → no adapter");
 
-// --- resolveSeed: per-reason drop tally + dedup --------------------------------------------
 const records: CompanyRecord[] = [
   {
     name: "Acme",
@@ -61,7 +59,6 @@ assert.equal(scoped.candidates[0]?.source, "greenhouse");
 
 console.log("resolve: offline assertions passed.");
 
-// --- opt-in live integration check against the pinned seed ---------------------------------
 if (process.argv.includes("--live")) {
   const live = await loadSeed();
   const resolved = resolveSeed(live);

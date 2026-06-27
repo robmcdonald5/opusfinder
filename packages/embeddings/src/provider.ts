@@ -3,23 +3,16 @@ import { getVoyageApiKey } from "./env";
 
 /**
  * Voyage retrieval hint. Embed the corpus (jobs) as "document" and the search text
- * (the user profile, Phase 9) as "query"; Voyage prepends a model-specific prompt per
+ * (the user profile) as "query"; Voyage prepends a model-specific prompt per
  * type and the asymmetry measurably improves retrieval. `null` prepends nothing.
  */
 export type VoyageInputType = "query" | "document" | null;
 
 // --- Provider swap point ------------------------------------------------------------
-// All Voyage-specific wiring lives in this file: the endpoint, model id, output
-// dimensions, list price, and the request/response mapping in `embedRequest`. Swapping
-// to OpenAI (the Phase-5 eval comparison) means changing these constants + the body and
-// parsing below PLUS the key guard in env.ts (getVoyageApiKey -> an OpenAI key) — but
-// nothing in embed.ts, which stays provider-agnostic and only calls embedRequest(). e.g.
-//
-//   const URL = "https://api.openai.com/v1/embeddings";
-//   const EMBED_MODEL = "text-embedding-3-small";
-//   // body: { model, input, dimensions: 1024 }  // MUST request 1024 dims to reuse the
-//   //                                            // jobs.embedding vector(1024) column
-//
+// All Voyage-specific wiring lives in this file: the endpoint, model id, output dimensions,
+// list price, and the request/response mapping in `embedRequest`. A provider swap changes
+// these constants + the request body and parsing below PLUS the key guard in env.ts — but
+// nothing in embed.ts, which stays provider-agnostic and only calls embedRequest().
 const VOYAGE_URL = "https://api.voyageai.com/v1/embeddings";
 export const EMBED_MODEL = "voyage-4-large";
 // Must match the jobs.embedding column width (EMBEDDING_DIMENSIONS in @opusfinder/db).
@@ -70,7 +63,7 @@ export interface VoyageEmbedResponse {
  * items and the per-request token budget) — chunking is embed()'s job, not this layer's.
  * Returns vectors aligned to input order plus usage for cost accounting.
  *
- * `apiKey` is the Phase-8 injection seam: a caller without `process.env` (the Cloudflare
+ * `apiKey` is the injection seam: a caller without `process.env` (the Cloudflare
  * Worker) passes the key explicitly; omit it (or pass an empty string) and we fall back to
  * `getVoyageApiKey()` (the local-script / env path). An empty injected key is treated as
  * absent — not sent as `Bearer ` — so a misconfigured secret surfaces the env path's

@@ -25,7 +25,7 @@ export function embedPolicy(noEmbed: boolean): { enabled: boolean; reason?: stri
 }
 
 /**
- * Best-effort inline embedding of a board's just-persisted postings (Phase 4 path): the
+ * Best-effort inline embedding of a board's just-persisted postings: the
  * freshly-inserted jobs plus any whose content changed (upsertJobs nulls the embedding on a
  * real change). A Voyage failure is caught and warned — jobs are already persisted, so a
  * hiccup never fails the ingest; the next run's inline embed or `pnpm embeddings:backfill`

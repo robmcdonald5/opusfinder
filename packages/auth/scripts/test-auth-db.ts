@@ -7,13 +7,13 @@ import { runScript } from "@opusfinder/shared/script";
 import { getAuthBaseURL, getAuthSecret } from "../src/env";
 import { createAuth } from "../src/index";
 
-// 9.5b gate. Proves two things WITHOUT needing the auth tables (those land in 9.5c):
+// Proves two things WITHOUT needing the auth tables:
 //   1. The package wires together — better-auth imports, the Drizzle adapter binds, and `createAuth`
 //      constructs with our config (generateId:"uuid", autoSignIn:false).
-//   2. The auth DB driver is TRANSACTION-CAPABLE — the B1 blocker. `signUpEmail` (exercised in 9.5d)
-//      needs an interactive transaction; neon-http throws "No transactions support in neon-http
-//      driver", neon-serverless (`createAuthDb`) succeeds. A `select 1` inside a transaction is the
-//      precise, table-free probe — it fails loudly here if the wrong driver was wired.
+//   2. The auth DB driver is TRANSACTION-CAPABLE. `signUpEmail` needs an interactive transaction;
+//      neon-http throws "No transactions support in neon-http driver", neon-serverless (`createAuthDb`)
+//      succeeds. A `select 1` inside a transaction is the precise, table-free probe — it fails loudly
+//      here if the wrong driver was wired.
 // Run: pnpm --filter @opusfinder/auth test:auth   (needs DATABASE_URL + BETTER_AUTH_SECRET)
 async function main(): Promise<void> {
   const authDb = createAuthDb(getDatabaseUrl());
@@ -22,10 +22,10 @@ async function main(): Promise<void> {
     if (typeof auth.handler !== "function") throw new Error("createAuth produced no handler");
     console.log(`createAuth: constructed OK (baseURL ${getAuthBaseURL()})`);
 
-    // The B1 probe — an interactive transaction. Throws on neon-http; resolves on neon-serverless.
+    // An interactive transaction. Throws on neon-http; resolves on neon-serverless.
     const rows = await authDb.transaction(async (tx) => {
-      const res = await tx.execute(sql`select 1 as ok`);
-      return res.rows;
+      const probeResult = await tx.execute(sql`select 1 as ok`);
+      return probeResult.rows;
     });
     if (rows[0]?.ok !== 1) throw new Error(`unexpected probe result: ${JSON.stringify(rows)}`);
 

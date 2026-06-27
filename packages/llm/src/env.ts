@@ -1,8 +1,7 @@
 import { loadPackageEnv, requireEnv } from "@opusfinder/shared/env";
 
 // Load packages/llm/.env relative to THIS module (see loadPackageEnv), so cross-package
-// callers (Phase 9 CV ingest, Phase 10 digest pipeline) pick up the key from their own
-// directories too.
+// callers pick up the key from their own directories too.
 loadPackageEnv(import.meta.url);
 
 /**
@@ -12,7 +11,7 @@ loadPackageEnv(import.meta.url);
  */
 export const getAnthropicApiKey = requireEnv({
   name: "ANTHROPIC_API_KEY",
-  notSet:
+  notSetMessage:
     "ANTHROPIC_API_KEY is not set. Paste your Anthropic API key into packages/llm/.env " +
     "(ANTHROPIC_API_KEY=sk-ant-...), or export it as an environment variable.",
   prefix: "sk-ant-",

@@ -7,9 +7,9 @@ import type { Cursor, FetchJson, ProbeOutcome, SourceAdapter, SourceContext } fr
 import { firstPathSegment, segmentAfter } from "./url-match";
 
 const API = "https://api.smartrecruiters.com/v1/companies";
-const PUBLIC = "https://jobs.smartrecruiters.com";
-const API_HOST = new URL(API).hostname; // "api.smartrecruiters.com"
-const PUBLIC_HOST = new URL(PUBLIC).hostname; // "jobs.smartrecruiters.com"
+const PUBLIC_BASE = "https://jobs.smartrecruiters.com";
+const API_HOST = new URL(API).hostname;
+const PUBLIC_HOST = new URL(PUBLIC_BASE).hostname;
 const CAREERS_HOST = "careers.smartrecruiters.com";
 
 // SmartRecruiters clamps `limit` at 100 server-side; 100 minimizes round-trips.
@@ -24,15 +24,14 @@ const SECTION_ORDER = [
 ] as const;
 
 /**
- * SmartRecruiters company adapter — the only Launch-5 source that is BOTH offset-paginated
- * AND requires an N+1 hydrate. The list item carries neither a description nor a public
- * apply URL, so `mapItem` emits a fully-valid job (reconstructed apply URL, empty
- * description) that `hydrate` then patches; a hydrate failure therefore keeps a usable job.
- * Company IDs are case-sensitive, so `normalizeSlug` preserves casing.
+ * SmartRecruiters company adapter — BOTH offset-paginated AND requires an N+1 hydrate. The list
+ * item carries neither a description nor a public apply URL, so `mapItem` emits a fully-valid job
+ * (reconstructed apply URL, empty description) that `hydrate` then patches; a hydrate failure
+ * therefore keeps a usable job. Company IDs are case-sensitive, so `normalizeSlug` preserves casing.
  *
- * Pagination uses `body.totalFound`; `nextCursor` and `locate` both read the same envelope
- * (one is the array, the other the count) — an accepted seam. NOTE for Phase 7: an unknown
- * slug returns 200 + `totalFound:0` (NOT 404), so slug existence cannot be asserted here.
+ * Pagination uses `body.totalFound`; `nextCursor` and `locate` both read the same envelope (one is
+ * the array, the other the count) — an accepted seam. An unknown slug returns 200 + `totalFound:0`
+ * (NOT 404), so slug existence cannot be asserted here.
  */
 export const smartRecruitersAdapter: SourceAdapter = {
   source: "smartrecruiters",
@@ -121,7 +120,7 @@ function toNormalizedJob(raw: unknown, ctx: SourceContext): NormalizedJob | null
     locations: extractLocation(raw.location),
     remote: isRemoteLocation(raw.location),
     descriptionText: "",
-    applyUrl: `${PUBLIC}/${ctx.slug}/${externalId}`, // hydrate overwrites with the real applyUrl
+    applyUrl: `${PUBLIC_BASE}/${ctx.slug}/${externalId}`, // hydrate overwrites with the real applyUrl
     postedAt,
     raw,
   };

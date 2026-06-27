@@ -1,5 +1,5 @@
 /**
- * Persistence for the slug-discovery pipeline (Phase 7): run-tracking via `source_runs` and
+ * Persistence for the slug-discovery pipeline: run-tracking via `source_runs` and
  * the `companies` staleness lifecycle. Same functional style as ./jobs and ./embeddings — the
  * Drizzle client is injected, every mutation is a single neon-http round-trip, and all time +
  * counter math happens SQL-side (`now()`, `failures + 1`) so it is race-free and Worker-forward
@@ -24,8 +24,8 @@ const DEFAULT_STALE_RUN_MINUTES = 60;
  * Sweep zombie `source_runs` rows. A hard Worker kill / timeout leaves a row stuck `running` — NO
  * code runs to call `finishRun` (a `finally` can't help a terminated isolate), so the only recovery
  * is to clean it up on a later run. Mark any `running` row older than `olderThanMinutes` as `error`
- * with a clear sample. Returns the count swept. Called from `startRun` (Phase-7/8 deferred item —
- * relevant now that the deployed Worker cron can time out). The window protects a live concurrent run.
+ * with a clear sample. Returns the count swept. Called from `startRun`. The window protects a live
+ * concurrent run.
  */
 export async function failStaleRuns(
   db: Db,
@@ -71,14 +71,7 @@ export async function startRun(
   return row.id;
 }
 
-/**
- * Close a run: stamp `finished_at`, write the terminal status + the metric bag, and (on error)
- * a truncated, SECRET-FREE sample. Typed to a terminal status only (`running` can't be a
- * finish state). Meant to run in a `finally` so a thrown pipeline still records its outcome.
- * The WHERE includes `status = 'running'` so a run terminalizes exactly ONCE: a double finish
- * (e.g. an inner error handler plus an outer finally) is a no-op and never clobbers the recorded
- * status / counts / error_sample.
- */
+/** Close a `source_runs` run: delegates to {@link finishRunRow} (the shared once-only terminalize). */
 export async function finishRun(
   db: Db,
   runId: number,
@@ -187,13 +180,12 @@ export async function markProbed(db: Db, companyId: number): Promise<void> {
  * `olderThanDays` can be swept on its FIRST confirmed-absent reprobe (its created_at clock is
  * already past). That is acceptable: `absent` is a definitive 404/400 (transients classify as
  * `indeterminate` and never increment the streak), and deactivation is reversible — a later live
- * probe reactivates the row. A true first-failure clock (a `first_failed_at` column) is deferred to
- * the Phase-8 worker. A never-failed row (streak 0) is untouched, so a source whose absence can't be
- * asserted — SmartRecruiters' ambiguous 200, which never increments the streak — never wrongly
- * deactivates.
+ * probe reactivates the row. A never-failed row (streak 0) is untouched, so a source whose absence
+ * can't be asserted — SmartRecruiters' ambiguous 200, which never increments the streak — never
+ * wrongly deactivates.
  * `opts.source` scopes the sweep to one source so a `--source` run doesn't deactivate rows of an
  * unrelated source it never re-probed; omit it (the broader pass) to sweep all sources. Returns the
- * ids of the rows flipped (the caller derives the count via `.length`, and F2 Arm B closes their jobs via
+ * ids of the rows flipped (the caller derives the count via `.length`, and closes their jobs via
  * `closeJobsForCompanies`). `days` is the trunc of an in-code number, never user input.
  */
 export async function deactivateStale(

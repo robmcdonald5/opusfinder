@@ -41,7 +41,7 @@ export function isSourceName(value: string): value is SourceName {
 /**
  * Fetch + normalize all live postings for one board on `source`. The single public entry
  * point: `runAdapter` drives the descriptor (slug normalization → pagination → fetch →
- * map → hydrate). Replaces the Phase-1 single-arg `fetchJobs(slug)`.
+ * map → hydrate).
  */
 export function fetchJobs(
   source: SourceName,

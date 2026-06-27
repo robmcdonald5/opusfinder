@@ -5,9 +5,8 @@ export type { ProbeOutcome };
 
 /**
  * A resolved discovery candidate — a (source, slug) pair the prober can validate, plus provenance.
- * The seed resolver (a later sub-phase) produces these: `slug` is the canonical post-`normalizeSlug`
- * form, `rawSlug` is the segment/label `matchUrl` returned (pre-normalize), and `sourceUrl` is the
- * seed URL it was resolved from.
+ * The seed resolver produces these: `slug` is the canonical post-`normalizeSlug` form, `rawSlug` is the
+ * segment/label `matchUrl` returned (pre-normalize), and `sourceUrl` is the seed URL it was resolved from.
  */
 export interface Candidate {
   source: SourceName;

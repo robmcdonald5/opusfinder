@@ -6,9 +6,9 @@ import { getAlertTo, getEmailFrom, getResendApiKey, getResendApiKeyFull } from "
 import { renderDigestEmail } from "./render";
 
 /**
- * The Resend transport — the ONLY file that imports the `resend` SDK, so the end-of-phase
- * "Resend vs alternative" evaluation swaps one file, not a package. Errors echo SHAPE only
- * (error name + status code) — Resend's `error.message` can quote the recipient address.
+ * The Resend transport — the ONLY file that imports the `resend` SDK, so swapping providers touches
+ * one file, not a package. Errors echo SHAPE only (error name + status code) — Resend's
+ * `error.message` can quote the recipient address.
  *
  * TWO clients, least-privilege: sends go through RESEND_API_KEY (may be a sending-only key); the
  * delivery-poll read goes through RESEND_API_KEY_FULL (`GET /emails/:id` 401s on a restricted key).
@@ -30,22 +30,17 @@ function getReadClient(): Resend {
 }
 
 /**
- * The ONE idempotency-key definition (the `synthId` discipline): `digest/<digestId>`. Resend keeps
- * keys 24h; a step-retry replay returns the SAME email id without a second send — but only if the
- * rendered payload is byte-identical (see render.ts). Exported so the stub smoke locks the shape.
+ * The ONE idempotency-key definition: `digest/<digestId>`. Resend keeps keys 24h; a step-retry replay
+ * returns the SAME email id only if the rendered payload is byte-identical (see render.ts).
  */
 export const emailIdempotencyKey = (digestId: number): string => `digest/${digestId}`;
 
 export type SendDigestResult = { emailId: string };
 
 /**
- * Render + send one digest email. This is a PURE transport — the SEND PERMIT is enforced UPSTREAM (the
- * DB-native `user_preferences.digest_approved_at` gate, checked at recipient resolution + the digest load
- * step + re-asserted at the send boundary in deliverDigestEmail), so by the time a payload reaches here the
- * recipient is already approved; this function just renders + sends. API errors become thrown Errors so the
- * Inngest step owns retries (transient 429/5xx) or exhausts into the caller's terminalize catch; a 409
- * `concurrent_idempotent_requests` is safe to retry by Resend's own contract, so the plain throw → step
- * retry is exactly right.
+ * Render + send one digest email. PURE transport — the SEND PERMIT is enforced UPSTREAM, so by the
+ * time a payload reaches here the recipient is already approved. API errors become thrown Errors so
+ * the Inngest step owns retries; a 409 `concurrent_idempotent_requests` is safe to retry.
  */
 export async function sendDigestEmail(payload: DigestEmailPayload): Promise<SendDigestResult> {
   const rendered = renderDigestEmail(payload);
@@ -89,13 +84,10 @@ export async function getEmailLastEvent(emailId: string): Promise<string> {
 }
 
 /**
- * Send a plain-text operator health alert (Phase F6) — the `pnpm health` CLI calls this when an
- * enforce-mode check fires. Reuses the lazy send client (RESEND_API_KEY — the SEND key, never the FULL
- * read key) + the verified EMAIL_FROM, and goes to the dedicated ALERT_TO operator address (NOT the
- * digest allowlist — decoupled so the alert can never be the silently-broken thing). NO idempotency
- * key: unlike a digest, an alert is not replay-idempotent — each run's verdict is its own event. The
- * body is whatever the caller passes (shape-only by construction at the call site); errors echo SHAPE
- * only (name + statusCode), never error.message.
+ * Send a plain-text operator health alert. Goes to the dedicated ALERT_TO operator address via the
+ * SEND key (RESEND_API_KEY) + verified EMAIL_FROM. NO idempotency key: unlike a digest, an alert is
+ * not replay-idempotent — each run's verdict is its own event. Errors echo SHAPE only (name +
+ * statusCode), never error.message.
  */
 export async function sendHealthAlert(subject: string, text: string): Promise<{ emailId: string }> {
   const { data, error } = await getSendClient().emails.send({

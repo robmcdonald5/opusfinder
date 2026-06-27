@@ -9,10 +9,10 @@ import { getDatabaseUrl } from "../src/env";
 import { digests, userPreferences } from "../src/schema";
 
 /**
- * The Phase-11 live-gate delivery checks as a runnable script (spec §10's two SQL gates): the
- * newest digest's per-send state (`email_id` / `delivery_status` / `sent_at`) + the owner row's
- * user-level delivery state. Shape-only output — the recipient address is never echoed (the Resend
- * email id is an opaque, non-sensitive handle and IS printed for dashboard cross-reference).
+ * The delivery checks as a runnable script: the newest digest's per-send state (`email_id` /
+ * `delivery_status` / `sent_at`) + the owner row's user-level delivery state. Shape-only output — the
+ * recipient address is never echoed (the Resend email id is an opaque, non-sensitive handle and IS
+ * printed for dashboard cross-reference).
  *
  *   pnpm --filter @opusfinder/db delivery [--digest <id>]   (default: newest digest)
  */
@@ -43,16 +43,16 @@ await runScript("show-digest-delivery", async () => {
     .where(digestId !== undefined ? eq(digests.id, digestId) : undefined)
     .orderBy(desc(digests.id))
     .limit(1);
-  const d = header[0];
-  if (!d) {
+  const digestRow = header[0];
+  if (!digestRow) {
     console.log("(no digests rows)");
     return;
   }
 
   console.log(
-    `digest #${d.id}: items=${d.itemCount} delivery_status=${d.deliveryStatus} ` +
-      `email_id=${d.emailId ?? "(null)"} sent_at=${formatTs(d.sentAt)} ` +
-      `created_at=${formatTs(d.createdAt)}`,
+    `digest #${digestRow.id}: items=${digestRow.itemCount} delivery_status=${digestRow.deliveryStatus} ` +
+      `email_id=${digestRow.emailId ?? "(null)"} sent_at=${formatTs(digestRow.sentAt)} ` +
+      `created_at=${formatTs(digestRow.createdAt)}`,
   );
 
   const prefs = await db
@@ -63,21 +63,21 @@ await runScript("show-digest-delivery", async () => {
       digestSuppressedAt: userPreferences.digestSuppressedAt,
     })
     .from(userPreferences)
-    .where(eq(userPreferences.userId, d.userId))
+    .where(eq(userPreferences.userId, digestRow.userId))
     .limit(1);
-  const p = prefs[0];
-  if (!p) {
+  const prefsRow = prefs[0];
+  if (!prefsRow) {
     console.log("(no user_preferences row for the digest's user — eligibility invariant broken)");
     return;
   }
   console.log(
-    `user prefs: last_digest_sent_at=${formatTs(p.lastDigestSentAt)} ` +
-      `last_digest_email_id=${p.lastDigestEmailId ?? "(null)"} ` +
-      `bounce_status=${p.digestBounceStatus} suppressed_at=${formatTs(p.digestSuppressedAt)}`,
+    `user prefs: last_digest_sent_at=${formatTs(prefsRow.lastDigestSentAt)} ` +
+      `last_digest_email_id=${prefsRow.lastDigestEmailId ?? "(null)"} ` +
+      `bounce_status=${prefsRow.digestBounceStatus} suppressed_at=${formatTs(prefsRow.digestSuppressedAt)}`,
   );
 });
 
-/** ISO timestamp for a Date column value; "(null)" for a NULL (show-runs.ts's formatTs shape). */
+/** ISO timestamp for a Date column value; "(null)" for a NULL. */
 function formatTs(value: Date | null): string {
   return value === null ? "(null)" : value.toISOString();
 }

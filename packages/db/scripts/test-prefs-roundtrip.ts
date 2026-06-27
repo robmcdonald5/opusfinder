@@ -4,11 +4,11 @@ import type { Db } from "../src/client";
 import { getPreferences, updatePreferences } from "../src/repos/preferences";
 
 /**
- * Stub smoke for the `user_preferences` write path (F3 sub-block 2) — NO creds, NO Postgres. It locks the
+ * Stub smoke for the `user_preferences` write path — NO creds, NO Postgres. It locks the
  * THREE-EDIT COUPLING that the schema warns about: a settable field present in the {@link UserPreferences}
  * contract but missing a `toRow` line is silently dropped with no error. A fake Db captures the `.set()`
- * payload `updatePreferences` builds (which is `toRow(patch)` + `updatedAt`), so we assert every F3 field
- * maps, that explicit `null` is preserved (a "clear the bound" write), that a falsy `0` survives (NOT
+ * payload `updatePreferences` builds (which is `toRow(patch)` + `updatedAt`), so we assert every settable
+ * field maps, that explicit `null` is preserved (a "clear the bound" write), that a falsy `0` survives (NOT
  * treated as unset), that an omitted field is left untouched, and that an empty patch short-circuits to a
  * SELECT (never an UPDATE). The SQL *semantics* of the round-trip against a real table are the owner's
  * post-migrate check (needs DATABASE_URL + a user FK fixture); this locks the JS mapping with no creds.

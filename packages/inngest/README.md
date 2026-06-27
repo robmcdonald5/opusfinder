@@ -83,8 +83,8 @@ integration (email ships in Phase 11 on the local dev runtime — locked at Phas
   `deps.ts`); tallies onto `digests.counts` (`probedOk` / `probed404Dropped` / `probed410` / `probedErrorKept`
   …). An all-dropped set → 0 survivors → the caller keeps the 0-item audit row and sends no email. Shipped
   SHADOW: the `410` close is tallied as `probed410WouldClose`, not yet written. Enforcement is the single
-  `F2_ENFORCE` switch — `buildDigestDeps` sets `DigestDeps.enforceLifecycle` from
-  `parseEnforceFlag(process.env.F2_ENFORCE)` (the same flag that flips Arm A + Arm B in the Worker).
+  `LIFECYCLE_CLOSE_ENFORCE` switch — `buildDigestDeps` sets `DigestDeps.enforceLifecycle` from
+  `parseEnforceFlag(process.env.LIFECYCLE_CLOSE_ENFORCE)` (the same flag that flips Arm A + Arm B in the Worker).
 - `src/delivery.ts` (Phase 11) — `deliverDigestEmail(step, db, email, digestId)`, the post-persist
   step block: ONE `send-email` step (payload read → permit-gated Resend send with
   `Idempotency-Key: digest/<digestId>` → `recordDigestSent`) wrapped in the fail-run discipline (retry

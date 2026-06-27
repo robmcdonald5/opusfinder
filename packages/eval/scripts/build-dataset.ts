@@ -1,18 +1,16 @@
 /**
- * Build the real labeled set (Phase 5) from the gitignored candidates export + the profiles
- * and labels below, writing data/dataset.jsonl (the committed, hermetic source of truth).
+ * Build the real labeled set from the gitignored candidates export + the profiles and labels
+ * below, writing data/dataset.jsonl (the committed, hermetic source of truth).
  *
  * Why a generator instead of hand-authoring: each example's candidate pool is the FULL ingested
- * board (all jobs, no curation bias), so the pool is too large to hand-type and must stay in
- * sync with real jobs.id values. This script is the regeneration path (re-run export:candidates,
- * then this); the committed dataset.jsonl is what `pnpm eval` reads.
+ * board (all jobs, no curation bias) — too large to hand-type and must stay in sync with real
+ * jobs.id values. Regeneration path: re-run export:candidates, then this.
  *
  * PROFILES are anonymized from real CVs — NO PII (no names, contact, employers, schools, URLs),
  * only role focus / skills / target roles, per the package README's PII rule.
  *
  * LABELS are agent-drafted; the CV owner is the authority and may refine `goodIds` directly in
- * dataset.jsonl (or here + re-run). Relevance is binary: "would a job digest genuinely recommend
- * this posting to this person?" — judged on role type + seniority + skill fit, not title alone.
+ * dataset.jsonl (or here + re-run).
  *
  *   pnpm --filter @opusfinder/eval build:dataset
  */
@@ -202,15 +200,15 @@ function main(): void {
   const lines: string[] = [];
   for (const { profile, goodIds, notes } of LABELS) {
     console.error(`\n[${profile.id}] ${goodIds.length} good of ${candidateJobs.length}:`);
-    for (const gid of goodIds) {
-      const j = byId.get(gid);
+    for (const goodId of goodIds) {
+      const j = byId.get(goodId);
       if (!j) {
         throw new Error(
-          `good id ${gid} (${profile.id}) is not in the embeddable export — stale id, or a ` +
+          `good id ${goodId} (${profile.id}) is not in the embeddable export — stale id, or a ` +
             `contentless job that was dropped?`,
         );
       }
-      console.error(`  ${String(gid).padStart(3)}  ${j.title.trim()}`);
+      console.error(`  ${String(goodId).padStart(3)}  ${j.title.trim()}`);
     }
     const example: EvalExample = { profile, candidateJobs, expectedGoodIds: goodIds, notes };
     lines.push(JSON.stringify(example));

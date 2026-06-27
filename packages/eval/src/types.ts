@@ -1,32 +1,28 @@
 /**
- * Eval harness types (Phase 5).
+ * Eval harness types.
  *
  * The harness scores a *ranking* of candidate jobs against a labeled relevance set. The
- * load-bearing idea: vector retrieval and the (Phase 10) LLM rerank both emit a ranking,
- * so ONE metrics core scores both — they differ only in the `Ranker` implementation. The
- * embedding-model comparison (Voyage vs OpenAI) is likewise just two `Ranker`s built from
- * different `embed` functions, so it reuses the entire scoring path for free.
+ * load-bearing idea: vector retrieval and the LLM rerank both emit a ranking, so ONE metrics
+ * core scores both — they differ only in the `Ranker` implementation. The embedding-model
+ * comparison (Voyage vs OpenAI) is likewise just two `Ranker`s built from different `embed`
+ * functions, so it reuses the entire scoring path for free.
  */
 
 import type { StructuredProfile } from "@opusfinder/shared";
 
 /**
- * Eval-time stand-in for a user profile. PROVISIONAL: Phase 9 introduces the real
- * `user_profiles` row (PDF → structured JSONB + embedding); this mirrors that planned
- * `{ summary, skills, target roles, preferences }` shape so the harness can score matching
- * today, and Phase 9 can later feed real extracted profiles through the same `EvalExample`
- * format. Holds NO PII (no name / contact / employer) even when derived from a real CV —
+ * Eval-time stand-in for a user profile. Mirrors the production `user_profiles` row shape
+ * (`{ summary, skills, target roles, preferences }`) so the harness can score matching and the
+ * two can't drift. Holds NO PII (no name / contact / employer) even when derived from a real CV —
  * see the package README.
  */
 export interface EvalProfile extends StructuredProfile {
   /** Stable, non-identifying handle for the example (e.g. "backend-ic-1"). */
   id: string;
-  // summary / skills / targetRoles are inherited from StructuredProfile (@opusfinder/shared) — the
-  // SAME shape production `user_profiles.structured` uses — so the two can't drift. EvalProfile adds
-  // only the eval-local handle (`id`) and labeling `preferences`.
+  // These fields mirror production `user_profiles.structured`, so the two can't drift.
   /**
-   * Hard-ish preferences. NOT enforced as filters in Phase 5 (the Phase 10 deterministic
-   * filter will use them); kept here so labeled examples carry them forward unchanged.
+   * Hard-ish preferences. NOT enforced as filters yet; kept here so labeled examples carry them
+   * forward unchanged.
    */
   preferences?: {
     remote?: boolean;
@@ -65,9 +61,9 @@ export interface EvalExample {
 
 /**
  * Orders candidate ids best-first. The harness's central abstraction: the random stub, the
- * embedding ranker (Voyage / OpenAI), and the Phase-10 LLM rerank are all `Ranker`s, so they
- * run through the identical scoring path. Async because real rankers hit a network (embeddings
- * API / LLM). MUST return a permutation of the candidate ids it was given — the runner
- * validates this so a buggy ranker can't silently inflate its score by dropping hard items.
+ * embedding ranker (Voyage / OpenAI), and the LLM rerank are all `Ranker`s, so they run through
+ * the identical scoring path. Async because real rankers hit a network (embeddings API / LLM).
+ * MUST return a permutation of the candidate ids it was given — the runner validates this so a
+ * buggy ranker can't silently inflate its score by dropping hard items.
  */
 export type Ranker = (profile: EvalProfile, candidates: EvalJob[]) => Promise<number[]>;

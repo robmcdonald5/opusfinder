@@ -1,24 +1,20 @@
 // `URL` is imported from node:url (not the ambient global) so this Node-only module still
-// type-checks when it is pulled into a Cloudflare Workers typecheck context (Phase 8: the Worker
-// bundles @opusfinder/embeddings → this env module). There the global `URL` is the Workers one,
-// which doesn't match node:url's `fileURLToPath(string | url.URL)`; the explicit import keeps the
-// Node URL type. Runtime is unchanged — in Node the two URLs are identical.
+// type-checks when pulled into a Cloudflare Workers typecheck context: there the global `URL` is
+// the Workers one, which doesn't match node:url's `fileURLToPath(string | url.URL)`. The explicit
+// import keeps the Node URL type; runtime is unchanged (in Node the two URLs are identical).
 import { fileURLToPath, URL } from "node:url";
 
 import { config } from "dotenv";
 
 /**
- * Load a package's own `.env`, resolved relative to the CALLING module (pass
- * `import.meta.url` from a file in the package's `src/`), NOT the cwd. A package's own
- * scripts run with that package as cwd, but cross-package callers import these guards
- * from their own directories — a cwd-relative load would silently miss the file and
- * leave the var undefined. `fileURLToPath` (not a raw `file://` string) keeps the
- * Windows drive-letter path valid. `quiet` silences dotenv@17's load banner. dotenv
- * does NOT override an already-set process env var, so a real value in the shell wins.
+ * Load a package's own `.env`, resolved relative to the CALLING module (pass `import.meta.url`
+ * from a file in the package's `src/`), NOT the cwd — a cwd-relative load would silently miss the
+ * file when a cross-package caller imports this guard. `fileURLToPath` keeps the Windows
+ * drive-letter path valid; dotenv does NOT override an already-set var, so a shell value wins.
  *
- * Assumes the caller lives one level below the package root (`src/env.ts`), so `../.env`
- * lands on `packages/<pkg>/.env`. A file AT the package root (e.g. drizzle.config.ts)
- * must NOT use this — it would resolve `../.env` one directory too high.
+ * Assumes the caller lives one level below the package root (`src/env.ts`), so `../.env` lands on
+ * `packages/<pkg>/.env`. A file AT the package root (e.g. drizzle.config.ts) must NOT use this — it
+ * would resolve `../.env` one directory too high.
  */
 export function loadPackageEnv(metaUrl: string): void {
   // Best-effort. In Node this loads the package's own `.env`. In a Cloudflare Worker there is no
@@ -40,7 +36,7 @@ export interface RequireEnvOptions {
   /** The environment variable name, e.g. "DATABASE_URL". */
   name: string;
   /** Friendly, actionable message thrown when the var is missing or blank. */
-  notSet: string;
+  notSetMessage: string;
   /**
    * Optional hard format check, run after the presence check. Throw (with a
    * secret-free message — echo only non-sensitive shape) to reject a malformed value;
@@ -68,7 +64,7 @@ export interface RequireEnvOptions {
 export function requireEnv(opts: RequireEnvOptions): () => string {
   return () => {
     const value = process.env[opts.name]?.trim();
-    if (!value) throw new Error(opts.notSet);
+    if (!value) throw new Error(opts.notSetMessage);
     opts.validate?.(value);
     if (opts.prefix && !value.startsWith(opts.prefix)) {
       console.warn(

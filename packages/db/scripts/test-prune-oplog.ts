@@ -6,7 +6,7 @@ import type { Db } from "../src/client";
 import { OPLOG_PRUNE_BATCH, OPLOG_RETENTION_DAYS, pruneOplog } from "../src/repos/prune-oplog";
 
 /**
- * Stub smoke for the G3g oplog retention prune (`pruneOplog`) — the JS-decidable surface, NO creds, NO
+ * Stub smoke for the oplog retention prune (`pruneOplog`) — the JS-decidable surface, NO creds, NO
  * Postgres. A content-aware fake Db dispatches on the rendered query KIND (per-table count / per-table
  * delete-batch), and the emitted SQL is rendered with PgDialect so the query shapes are asserted without a
  * live table. The row SEMANTICS (which rows actually match) are the owner's dry-run gate. Here we lock the
@@ -86,17 +86,18 @@ await runScript("test-prune-oplog", async () => {
     }
     const countOf = (t: TableName) =>
       calls.map((c) => rendered(c).sql).find((s) => tableOf(s) === t);
-    const sr = countOf("source_runs") ?? "";
-    const ha = countOf("health_alerts") ?? "";
-    const dr = countOf("digest_runs") ?? "";
-    assert(sr.includes('"started_at"'), "source_runs gate must use started_at");
-    assert(ha.includes('"created_at"'), "health_alerts gate must use created_at");
+    const sourceRunsGate = countOf("source_runs") ?? "";
+    const healthAlertsGate = countOf("health_alerts") ?? "";
+    const digestRunsGate = countOf("digest_runs") ?? "";
+    assert(sourceRunsGate.includes('"started_at"'), "source_runs gate must use started_at");
+    assert(healthAlertsGate.includes('"created_at"'), "health_alerts gate must use created_at");
     assert(
-      dr.includes("NOT EXISTS") && dr.includes("FROM digests"),
+      digestRunsGate.includes("NOT EXISTS") && digestRunsGate.includes("FROM digests"),
       "digest_runs gate MUST carry the FK-safety NOT EXISTS (… digests …) clause",
     );
     assert(
-      !sr.toLowerCase().includes("not exists") && !ha.toLowerCase().includes("not exists"),
+      !sourceRunsGate.toLowerCase().includes("not exists") &&
+        !healthAlertsGate.toLowerCase().includes("not exists"),
       "source_runs / health_alerts must NOT carry the NOT EXISTS clause (no dependents)",
     );
     assert(!r.applied && r.totalDeleted === 0, "dry run: applied=false, totalDeleted=0");
@@ -136,7 +137,6 @@ await runScript("test-prune-oplog", async () => {
       r.perTable.find((t) => t.table === "source_runs")?.deleted === OPLOG_PRUNE_BATCH * 2 + 5,
       `source_runs apply must accumulate across batches: ${JSON.stringify(r.perTable)}`,
     );
-    // health_alerts had eligible=0 → NO delete issued for it.
     assert(
       !calls.some(
         (c) =>

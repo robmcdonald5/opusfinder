@@ -129,9 +129,9 @@ Run from the repo root via the workspace filter so the cwd is `packages/db`:
   Arm B can close their jobs. Soft-close only — never a row DELETE (F1 reads the closed row's signature;
   `digest_items.job_id` is `ON DELETE NO ACTION`). Smoke: `pnpm --filter @opusfinder/db test:lifecycle` (no
   creds). **Ships SHADOW / count-only by DEFAULT** — the `'closed'` flip is suppressed and tallied as
-  `wouldClose` unless a SINGLE `F2_ENFORCE` switch (`parseEnforceFlag` in `@opusfinder/shared`) is on; it's
-  threaded through all three arms with no multi-site code edit — the scrapers Worker reads `env.F2_ENFORCE`
-  (wrangler `[vars]`) for Arms A/B, and the digest runtime reads `process.env.F2_ENFORCE` for Arm C.
+  `wouldClose` unless a SINGLE `LIFECYCLE_CLOSE_ENFORCE` switch (`parseEnforceFlag` in `@opusfinder/shared`) is on; it's
+  threaded through all three arms with no multi-site code edit — the scrapers Worker reads `env.LIFECYCLE_CLOSE_ENFORCE`
+  (wrangler `[vars]`) for Arms A/B, and the digest runtime reads `process.env.LIFECYCLE_CLOSE_ENFORCE` for Arm C.
   Note for `sweepLifecycle` (Arm A): "shadow" here means
   "no `'closed'` WRITE", NOT "no write at all" — it still persists the `consecutive_absences` streak
   (capped at the threshold) and revives reappearing rows by design, so the streak is warm when enforce

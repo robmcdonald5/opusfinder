@@ -89,8 +89,8 @@ on a `total > 0` upsert) after each successful board: postings absent from a hea
 `consecutive_absences` streak and soft-close at the threshold, reviving on reappearance — tallied onto
 `IngestionCounts` (`revived` / `swept` / `closed` / `wouldClose` / `sweepFailed`) and the `logSummary` line.
 Shipped SHADOW (count-only): the close is tallied as `wouldClose`, not yet written. Enforcement is the
-single `F2_ENFORCE` switch — `runIngestion`'s `enforceLifecycle` option, which the Worker sets from
-`parseEnforceFlag(env.F2_ENFORCE)` (the same flag flips Arm B + Arm C); set it to `enforce` once the
+single `LIFECYCLE_CLOSE_ENFORCE` switch — `runIngestion`'s `enforceLifecycle` option, which the Worker sets from
+`parseEnforceFlag(env.LIFECYCLE_CLOSE_ENFORCE)` (the same flag flips Arm B + Arm C); set it to `enforce` once the
 shadow counters are reviewed.
 
 ## Per-adapter quirks (institutional memory)

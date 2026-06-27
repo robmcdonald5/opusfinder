@@ -1,5 +1,5 @@
 /**
- * Unit tests for the F5c HN/Algolia lane PARSER (`parseHnThread`) over a captured-shape Algolia /items
+ * Unit tests for the HN/Algolia lane PARSER (`parseHnThread`) over a captured-shape Algolia /items
  * payload — offline, deterministic, no network. Asserts the parser: extracts covered ATS board URLs into
  * ats_links (one CompanyRecord per hiring comment that carries ≥1 covered URL); SKIPS non-ATS links
  * (homepages, GitHub) and uncovered ATSes (BambooHR); decodes the `&amp;` HN emits in hrefs; strips
@@ -36,8 +36,8 @@ const fixture: HnItem = {
       text: `Epsilon | <a href="https:&#x2F;&#x2F;jobs.lever.co&#x2F;epsilon&#x2F;1234-5678-90ab" rel="nofollow">https:&#x2F;&#x2F;jobs.lever.co&#x2F;epsilon&#x2F;1234-5...</a>`,
       children: [],
     },
-    // Bare board URL ending in an AUTHOR ellipsis (no full-href twin) — must be CLEANED, not dropped
-    // (the prior `raw.includes("...")` skip lost it). The trailing strip recovers greenhouse:zeta.
+    // Bare board URL ending in an AUTHOR ellipsis (no full-href twin) — must be CLEANED, not dropped.
+    // The trailing strip recovers greenhouse:zeta.
     { text: `Zeta | apply at https:&#x2F;&#x2F;boards.greenhouse.io&#x2F;zeta...`, children: [] },
     { text: null, children: [] },
     { text: `no links here, just prose`, children: [] },

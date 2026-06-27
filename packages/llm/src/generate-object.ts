@@ -88,11 +88,11 @@ export async function generateObject<T>(
     ...(temperature === undefined ? {} : { temperature }),
   }).catch((err: unknown) => {
     if (NoObjectGeneratedError.isInstance(err)) {
-      const fr = err.finishReason;
+      const finishReason = err.finishReason;
       const why =
-        fr === "length"
+        finishReason === "length"
           ? `output was truncated at maxOutputTokens=${effectiveMax}; raise maxOutputTokens (set by the caller, e.g. scripts/seams.ts)`
-          : `the model did not return schema-valid JSON (finishReason=${fr ?? "unknown"})`;
+          : `the model did not return schema-valid JSON (finishReason=${finishReason ?? "unknown"})`;
       throw new Error(`generateObject(): ${why}.`, { cause: err });
     }
     throw err;

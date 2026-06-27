@@ -19,11 +19,11 @@ import { probeLiveness } from "./probe";
 /**
  * Build the production digest deps: a neon-http db + the real synchronous Haiku rerank (the shared
  * `@opusfinder/rerank` core wired to `generateObject`) + the Anthropic Message Batches primitives for
- * synthesis + the Phase-11 Resend email send/last_event pair. NODE/server-only — it reads env via the
- * `/env` subpaths; the serve + CLI scripts call it. Never reached from a Worker (`guard:worker` keeps
+ * synthesis + the Resend email send/last_event pair. NODE/server-only — it reads env via the `/env`
+ * subpaths; the serve + CLI scripts call it. Never reached from a Worker (`guard:worker` keeps
  * `@opusfinder/inngest` out of the scraper bundle). Importing `@opusfinder/email` here pulls only its
- * `loadPackageEnv` side effect — the Resend getters throw at CALL time, so the serve process still
- * boots without email creds (an unconfigured send then terminalizes to `delivery_status='failed'`).
+ * `loadPackageEnv` side effect — the Resend getters throw at CALL time, so the serve process still boots
+ * without email creds (an unconfigured send then terminalizes to `delivery_status='failed'`).
  */
 export function buildDigestDeps(): DigestDeps {
   const db = createDb(getDatabaseUrl());
@@ -40,9 +40,9 @@ export function buildDigestDeps(): DigestDeps {
       lastEvent: (emailId) => getEmailLastEvent(emailId),
     },
     probe: probeLiveness,
-    // F2 Arm C enforcement — the same single switch the Worker reads for Arms A/B (parseEnforceFlag),
-    // here off process.env since the digest pipeline is Node-hosted. Default false = shadow.
-    enforceLifecycle: parseEnforceFlag(process.env.F2_ENFORCE),
+    // Lifecycle-close enforcement — reads LIFECYCLE_CLOSE_ENFORCE from process.env (Node-hosted), the same switch the
+    // Worker reads. Default false = shadow.
+    enforceLifecycle: parseEnforceFlag(process.env.LIFECYCLE_CLOSE_ENFORCE),
   };
 }
 

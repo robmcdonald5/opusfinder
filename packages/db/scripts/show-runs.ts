@@ -7,10 +7,9 @@ import { getDatabaseUrl } from "../src/env";
 import { sourceRuns } from "../src/schema";
 
 /**
- * Print the most recent `source_runs` rows (default 5) — pipeline health at a glance for the Phase-8
- * cron Workers (the plan's "monitor source_runs for failure trends" posture). Shows only run metadata
- * (pipeline / source / status / counts / timestamps / error sample); the error sample is truncated +
- * secret-free by construction, so nothing sensitive is echoed.
+ * Print the most recent `source_runs` rows (default 5) — pipeline health at a glance. Shows only run
+ * metadata (pipeline / source / status / counts / timestamps / error sample); the error sample is
+ * truncated + secret-free by construction, so nothing sensitive is echoed.
  *
  *   pnpm --filter @opusfinder/db runs [N]
  */

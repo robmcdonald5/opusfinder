@@ -10,11 +10,11 @@ import { getDigestEmailPayload } from "../src/repos/digests";
 import { digests } from "../src/schema";
 
 /**
- * Smoke check for `getDigestEmailPayload` (Phase 11b) against a REAL Phase-10 digest row: the joined
- * read must return the header + every ACTIVE ranked item with the render fields populated. (G1b filters
- * items to `lifecycle_state='active'` app-side, so the payload may carry FEWER than `item_count` — even
- * zero, if all jobs closed after persist; the count check is `<=`, not `===`.) Echoes counts and lengths
- * only — never an address, a title, or a reason (scraped content + PII stay out of logs).
+ * Smoke check for `getDigestEmailPayload` against a REAL digest row: the joined
+ * read must return the header + every ACTIVE ranked item with the render fields populated. (The render
+ * filters items to `lifecycle_state='active'` app-side, so the payload may carry FEWER than `item_count` —
+ * even zero, if all jobs closed after persist; the count check is `<=`, not `===`.) Echoes counts and
+ * lengths only — never an address, a title, or a reason (scraped content + PII stay out of logs).
  *
  *   pnpm --filter @opusfinder/db test:digest-payload [--digest <id>]   (default: newest digest)
  */
@@ -51,7 +51,7 @@ await runScript("test-digest-payload", async () => {
     .where(eq(digests.id, digestId))
     .limit(1);
   const expected = header[0]?.itemCount;
-  // G1b: the render filters items to active, so the payload count is ≤ item_count (a job closed after
+  // The render filters items to active, so the payload count is ≤ item_count (a job closed after
   // persist drops out; all-closed → 0). In the common case (no post-persist close) it still equals it.
   assert(
     typeof expected === "number" && payload.items.length <= expected,

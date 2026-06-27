@@ -1,5 +1,5 @@
 /**
- * OpenAI embedder for the Phase-5 Voyage-vs-OpenAI comparison. Eval-local on purpose:
+ * OpenAI embedder for the Voyage-vs-OpenAI comparison. Eval-local on purpose:
  * @opusfinder/embeddings stays committed to Voyage as the single shipped provider; OpenAI is an
  * evaluation alternative, quarantined here until evidence justifies promoting it. Uses
  * text-embedding-3-small at EMBED_DIMENSIONS (OpenAI's Matryoshka `dimensions` param) so vectors
@@ -25,7 +25,7 @@ const MODEL = "text-embedding-3-small";
 // Conservative chars/token estimate (dense text) — keeps each input under OpenAI's 8192-token
 // per-input hard limit and budgets tokens per request, mirroring the embeddings chunker.
 const CHARS_PER_TOKEN = 3;
-const MAX_TOKENS_PER_INPUT = 8000; // < 8192 hard cap
+const MAX_TOKENS_PER_INPUT = 8000;
 const MAX_CHARS_PER_INPUT = MAX_TOKENS_PER_INPUT * CHARS_PER_TOKEN;
 // OpenAI allows up to 2048 inputs and ~300K tokens per request; stay well under both.
 const MAX_ITEMS_PER_REQUEST = 128;

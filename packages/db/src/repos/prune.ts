@@ -1,10 +1,9 @@
 /**
- * Phase G2b — the TTL hard-delete prune (the reclaim half of the lifecycle: F2/G1 soft-CLOSE jobs,
+ * The TTL hard-delete prune (the reclaim half of the lifecycle: the soft-CLOSE writers mark jobs closed,
  * this physically DELETEs the long-closed, history-unreferenced ones so the table + its 1024-dim HNSW
  * index stop growing monotonically). Pure neon-http SQL (db.execute), Worker-safe by construction — but
  * NOT imported by the Worker (only the Node `prune-stale-jobs.ts` script + its smoke use it). Lives here,
- * beside lifecycle.ts, so the prune SQL is tested code (test-prune-stale-jobs.ts) rather than untested
- * inline-in-a-script — the close machinery's pattern. See PHASE_G2_PLAN.md.
+ * beside lifecycle.ts, so the prune SQL is tested code rather than untested inline-in-a-script.
  *
  * Deleting a row is FREE (no Voyage call — only ADDING a job costs an embedding) and the space + ANN
  * graph come back via an OUT-OF-BAND VACUUM (neon-http can't VACUUM; the script reminds the owner). The
@@ -16,36 +15,30 @@ import { sql, type SQL } from "drizzle-orm";
 import type { Db } from "../client";
 import { resultRows } from "./sql";
 
-/** Closed-for-this-many-days before a row is prunable (fork G2-WINDOW). One-line tunable; 30 is well past
- *  the 14-day retrieval recency, so no job a digest could still surface is ever in scope. */
+/** Closed-for-this-many-days before a row is prunable. One-line tunable; 30 is well past the 14-day
+ *  retrieval recency, so no job a digest could still surface is ever in scope. */
 export const PRUNE_WINDOW_DAYS = 30;
 
-/** id-keyset batch size for the DELETE loop — the reclaim-raw.ts precedent. */
+/** id-keyset batch size for the DELETE loop. */
 export const PRUNE_BATCH = 2000;
 
 /**
- * The prunable predicate — the conservative THREE-PART eligibility gate (PHASE_G2_PLAN.md decision 2),
- * defined ONCE so the dry-run `prunable` count and the --apply DELETE filter on a BYTE-IDENTICAL
- * condition (the count exactly predicts what --apply removes — the signatureSql parity discipline). A row
- * is prunable IFF all three hold:
+ * The prunable predicate — the conservative THREE-PART eligibility gate, defined ONCE so the dry-run
+ * `prunable` count and the --apply DELETE filter run on a BYTE-IDENTICAL condition (the count exactly
+ * predicts what --apply removes). A row is prunable IFF all three hold:
  *
  *   1. lifecycle_state = 'closed'                  — never touch an active/retrievable job.
  *   2. closed_at < now() - PRUNE_WINDOW_DAYS       — closed long enough. A NULL closed_at (every active
- *                                                    row, plus any row closed before the 0018 backfill)
- *                                                    fails this comparison and is CONSERVATIVELY skipped.
- *   3. id NOT IN (SELECT job_id FROM digest_items) — referenced by NO digest history. NB the
- *                                                    digest_items.job_id FK was DROPPED in G3 (migration
- *                                                    0019, decision 5), so deleting a referenced job no
- *                                                    longer FK-VIOLATES — this clause is now retained ON
- *                                                    PURPOSE as G2's conservatism, and it is the EXACT
- *                                                    clause G3e deliberately relaxes (the gated, destructive
- *                                                    "prune recommended-but-stale jobs too" step — do that
- *                                                    via G3e, never by silently editing here). Its surviving
+ *                                                    row, plus any row closed before the backfill) fails
+ *                                                    this comparison and is CONSERVATIVELY skipped.
+ *   3. id NOT IN (SELECT job_id FROM digest_items) — referenced by NO digest history. The
+ *                                                    digest_items.job_id FK was dropped, so deleting a
+ *                                                    referenced job no longer FK-VIOLATES; this clause is
+ *                                                    retained ON PURPOSE as conservatism. Its surviving
  *                                                    correctness reason: a still-live referenced row's
  *                                                    content_signature is the proof alreadyShownSignatures
- *                                                    uses to suppress a repost (digests.ts); G3 makes that
- *                                                    suppression last only until the row is pruned (the
- *                                                    re-recommend-after-relist cooldown, decision 4).
+ *                                                    uses to suppress a repost (digests.ts), so the
+ *                                                    suppression lasts only until the row is pruned.
  *                                                    NULL-safe because digest_items.job_id is NOT NULL (no
  *                                                    NOT-IN three-valued-logic trap). (NOT EXISTS over
  *                                                    digest_items_user_id_job_id_idx is an index-friendlier
@@ -53,8 +46,8 @@ export const PRUNE_BATCH = 2000;
  *                                                    fine at friends-scale.)
  *
  * Returns a FRESH fragment per call so it can be embedded in multiple statements (the breakdown FILTER and
- * the DELETE CTE) without aliasing a shared instance. The `${n} * interval '1 day'` form is the repo idiom
- * (retrieval.ts / discovery.ts) and binds the window as a param.
+ * the DELETE CTE) without aliasing a shared instance. The `${n} * interval '1 day'` form binds the window
+ * as a param.
  */
 export function prunablePredicate(): SQL {
   return sql`lifecycle_state = 'closed'
@@ -64,7 +57,7 @@ export function prunablePredicate(): SQL {
 
 /** What a prune run did — returned for the script's logging + the smoke's assertions. */
 export interface PruneResult {
-  /** All closed jobs (the soft-close population F2/G1 produces). */
+  /** All closed jobs (the soft-close population). */
   closedTotal: number;
   /** Closed jobs past the staleness window — but still possibly digest-referenced. */
   closedOld: number;
@@ -78,22 +71,21 @@ export interface PruneResult {
 
 /**
  * Run the prune. Default (`apply: false`) is a DRY RUN: it computes + logs the closed_total / closed_old /
- * prunable breakdown and writes NOTHING (PHASE_G2_PLAN.md decision 6 — eyeball `prunable` before the first
- * real delete). With `apply: true` it id-keyset-DELETEs the prunable rows in PRUNE_BATCH chunks until a
- * short batch (the reclaim-raw.ts loop shape; a deleted row trivially no longer matches the predicate, so
- * it always terminates), then logs the DB size delta + the out-of-band VACUUM reminder.
+ * prunable breakdown and writes NOTHING (eyeball `prunable` before the first real delete). With
+ * `apply: true` it id-keyset-DELETEs the prunable rows in PRUNE_BATCH chunks until a short batch (a deleted
+ * row trivially no longer matches the predicate, so it always terminates), then logs the DB size delta +
+ * the out-of-band VACUUM reminder.
  *
- * IRREVERSIBLE (decision 3): a deleted row is gone (unlike a soft-close, which a revival un-closes). The
- * gate is conservative, and a wrongly-pruned-but-live posting SELF-HEALS — the next ingest re-creates it as
- * a NEW row (new id, re-embedded once); the only loss is row identity, which clause 3 guaranteed was
- * unreferenced. Logs counts + pg_size_pretty ONLY — never a job title/description (the no-PII rule).
+ * IRREVERSIBLE: a deleted row is gone (unlike a soft-close, which a revival un-closes). The gate is
+ * conservative, and a wrongly-pruned-but-live posting SELF-HEALS — the next ingest re-creates it as a NEW
+ * row (new id, re-embedded once); the only loss is row identity, which clause 3 guaranteed was
+ * unreferenced. Logs counts + pg_size_pretty ONLY — never a job title/description (no-PII).
  */
 export async function pruneStaleJobs(db: Db, opts: { apply?: boolean } = {}): Promise<PruneResult> {
   const apply = opts.apply ?? false;
 
   // 1) ALWAYS the breakdown first — the gate the owner reads. closed_total ⊇ closed_old ⊇ prunable; the
-  //    closed_old − prunable gap is the still-referenced closed rows G2 pins forever by design (a later
-  //    G-track candidate — fork G2-SHOWN-HISTORY in PHASE_G2_PLAN.md).
+  //    closed_old − prunable gap is the still-referenced closed rows pinned forever by design.
   const breakdown = await db.execute(sql`
     SELECT
       count(*) FILTER (WHERE lifecycle_state = 'closed')                                AS closed_total,
@@ -146,7 +138,7 @@ export async function pruneStaleJobs(db: Db, opts: { apply?: boolean } = {}): Pr
   return { closedTotal, closedOld, prunable, applied: true, deleted };
 }
 
-/** pg_size_pretty(pg_database_size(...)) as a string, for the before/after log lines (reclaim-raw.ts). */
+/** pg_size_pretty(pg_database_size(...)) as a string, for the before/after log lines. */
 async function dbSize(db: Db): Promise<string> {
   const res = await db.execute(
     sql`SELECT pg_size_pretty(pg_database_size(current_database())) AS db_size`,

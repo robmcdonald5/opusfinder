@@ -1,14 +1,13 @@
 /**
- * Phase H1b — the first writer + reader of `health_alerts` (the F6-reserved migration 0014 table;
- * `schema.ts`). Two small primitives over the append-only event log that together give page-once-per-
- * cooldown dedup:
+ * The first writer + reader of `health_alerts` (`schema.ts`). Two small primitives over the append-only
+ * event log that together give page-once-per-cooldown dedup:
  *   - {@link recordHealthAlert}: insert ONE row for a firing check that actually paged.
  *   - {@link shouldNotify}: `true` iff NO prior row for this check within the cooldown window.
  * The caller (the `pnpm health` CLI and the scheduled Inngest fn) gates on `shouldNotify` first and only
  * records when it actually sends, so a row means "paged recently" → the next run suppresses. Both paths
  * share these two primitives so the manual and scheduled runs dedup identically.
  *
- * Shape-only (the F6 no-secrets/PII invariant): `check_id`/`mode` + numeric `metric`/`threshold` mirror a
+ * Shape-only (no-secrets/PII invariant): `check_id`/`mode` + numeric `metric`/`threshold` mirror a
  * {@link HealthCheck}, and `detail` is a shape-only line the caller renders (an age/ratio/count, never job
  * or user text). Pure Neon reads/writes — no env/console/Date. The alert ORCHESTRATION (filter → notify →
  * send email → record) lives in `@opusfinder/inngest` (Node, where the email seam is); this is DB-only so
@@ -21,8 +20,7 @@ import { healthAlerts } from "../schema";
 import { resultRows } from "./sql";
 
 /** Default re-page cooldown (hours); env `HEALTH_ALERT_COOLDOWN_H` overrides at the call site. A firing
- *  check pages at most once per this window, so a persistently-firing check pages once/day, not every run
- *  (PHASE_H1_PLAN.md decision 5). */
+ *  check pages at most once per this window, so a persistently-firing check pages once/day, not every run. */
 export const DEFAULT_HEALTH_ALERT_COOLDOWN_H = 24;
 
 /**

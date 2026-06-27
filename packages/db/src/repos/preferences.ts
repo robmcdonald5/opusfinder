@@ -1,8 +1,8 @@
 /**
- * Persistence for `user_preferences` (Phase 9.5) — the 1:1 settings row per user. Same functional
+ * Persistence for `user_preferences` — the 1:1 settings row per user. Same functional
  * style as the other repos: the Drizzle client is injected, no module-level singleton. The user-
  * settable subset is typed by `UserPreferences` (@opusfinder/shared); delivery STATE columns
- * (`digestSuppressedAt`/`digestBounceStatus`/`lastDigest*`) are written by the Phase-11 send path, not
+ * (`digestSuppressedAt`/`digestBounceStatus`/`lastDigest*`) are written by the send path, not
  * here. `unsubscribeToken` is generated ONCE by the caller (generateUnsubscribeToken) at creation and
  * never rotated by these functions.
  */
@@ -85,13 +85,13 @@ export async function updatePreferences(
 }
 
 /**
- * Grant or revoke the digest SEND PERMIT (migration 0022) — the operator-written `digest_approved_at`
- * gate that replaces the env-var EMAIL_ALLOWLIST. Lives HERE (not in updatePreferences/toRow) because it
- * is operator/pipeline STATE, not a user-settable preference — the exact posture of `digest_suppressed_at`,
- * which is likewise never in toRow. `approve=true` stamps `now()` but COALESCEs onto any existing value so a
- * re-approve is idempotent and PRESERVES the original grant instant (the audit timestamp); `approve=false`
- * clears it back to NULL (un-approved = fail-closed, no send). Single idempotent write; throws if the user
- * has no preferences row (created at user creation, so a missing row is a real error, not a silent insert).
+ * Grant or revoke the digest SEND PERMIT — the operator-written `digest_approved_at` gate. Lives HERE
+ * (not in updatePreferences/toRow) because it is operator/pipeline STATE, not a user-settable preference —
+ * the exact posture of `digest_suppressed_at`, which is likewise never in toRow. `approve=true` stamps
+ * `now()` but COALESCEs onto any existing value so a re-approve is idempotent and PRESERVES the original
+ * grant instant (the audit timestamp); `approve=false` clears it back to NULL (un-approved = fail-closed,
+ * no send). Single idempotent write; throws if the user has no preferences row (created at user creation,
+ * so a missing row is a real error, not a silent insert).
  */
 export async function setDigestApproval(
   db: Db,

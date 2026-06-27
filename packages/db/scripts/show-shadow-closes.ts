@@ -8,22 +8,21 @@ import { DEFAULT_STALE_TTL_DAYS } from "../src/repos/lifecycle";
 import { digests, sourceRuns } from "../src/schema";
 
 /**
- * G1a pre-flip observation — read the standing F2 SHADOW close tallies on real traffic BEFORE flipping
- * `F2_ENFORCE` to "enforce". The clean signal is "`wouldClose` is a small, believable staleness trickle",
- * NOT "a large fraction of active jobs": a spike means a transient-incompleteness / empty-fetch bug to fix
- * BEFORE enforce (enabling would then mass-close live jobs), not after. This is the
- * shadow-validate-tunable-filters discipline F2 was built around (PHASE_G1_PLAN §2; the same bags surfaced
- * by `pnpm runs` / `pnpm health`, focused on the close counters in one shot).
+ * Read the standing SHADOW close tallies on real traffic BEFORE flipping `LIFECYCLE_CLOSE_ENFORCE` to "enforce". The
+ * clean signal is "`wouldClose` is a small, believable staleness trickle", NOT "a large fraction of active
+ * jobs": a spike means a transient-incompleteness / empty-fetch bug to fix BEFORE enforce (enabling would
+ * then mass-close live jobs), not after.
  *
  * Read-only; echoes only run metadata + integer counters (no titles / PII / secrets). Owner-run against
  * the real DB (the agent can only typecheck it).
  *
  *   pnpm --filter @opusfinder/db shadow-closes [N]      (last N runs + N digests; default 10)
  */
-// Arm A (sweepLifecycle, per board) + Arm B (closeJobsForCompanies, board death) tally onto source_runs.counts.
-// NB the two arms name their ENFORCE-closed counter differently: Arm A → `closed` (ingest.ts), Arm B →
-// `jobsClosedOnDeactivation` (discover.ts). Read BOTH so a post-flip discovery run's Arm B closes aren't missed.
-const ARM_AB_KEYS = [
+// sweepLifecycle (per board) + closeJobsForCompanies (board death) tally onto source_runs.counts.
+// The two close paths name their ENFORCE-closed counter differently: sweepLifecycle → `closed` (ingest.ts),
+// closeJobsForCompanies → `jobsClosedOnDeactivation` (discover.ts). Read BOTH so a discovery run's closes
+// aren't missed.
+const CLOSE_COUNTER_KEYS = [
   "wouldClose",
   "swept",
   "revived",
@@ -31,12 +30,12 @@ const ARM_AB_KEYS = [
   "closed",
   "jobsClosedOnDeactivation",
 ] as const;
-// Arm C (probeDigestLiveness, pre-send 410 probe) tallies onto digests.counts.
-const ARM_C_KEYS = ["probed410WouldClose", "probed410Closed", "probed404Dropped"] as const;
-// Tier-1 universal staleness timer (sweepStaleJobs, its OWN STALE_SWEEP switch) + capped-board observability,
-// both tallied onto an ingestion run's source_runs.counts. `staleWouldClose` is the standing population the
-// owner reads BEFORE flipping STALE_SWEEP=enforce; `cappedBoards` is how many boards skip Arm A per tick.
-const TIER1_KEYS = ["cappedBoards", "staleWouldClose", "staleClosed", "staleSweepFailed"] as const;
+// probeDigestLiveness (pre-send 410 probe) tallies onto digests.counts.
+const PROBE_COUNTER_KEYS = ["probed410WouldClose", "probed410Closed", "probed404Dropped"] as const;
+// sweepStaleJobs (its OWN STALE_SWEEP switch) + capped-board observability, both tallied onto an ingestion
+// run's source_runs.counts. `staleWouldClose` is the standing population the owner reads BEFORE flipping
+// STALE_SWEEP=enforce; `cappedBoards` is how many boards skip the per-board sweep per tick.
+const STALE_SWEEP_KEYS = ["cappedBoards", "staleWouldClose", "staleClosed", "staleSweepFailed"] as const;
 
 await runScript("ShowShadowCloses", async () => {
   const limitArg = Number(process.argv[2]);
@@ -44,7 +43,7 @@ await runScript("ShowShadowCloses", async () => {
 
   const db = createDb(getDatabaseUrl());
 
-  // Arm A/B — recent ingestion + discovery would-close tallies.
+  // Recent ingestion + discovery would-close tallies.
   const runs = await db
     .select({
       id: sourceRuns.id,
@@ -68,13 +67,13 @@ await runScript("ShowShadowCloses", async () => {
     staleWouldCloseTotal += num(r.counts, "staleWouldClose");
     staleClosedTotal += num(r.counts, "staleClosed");
     console.log(
-      `#${r.id} ${r.pipeline} started=${iso(r.startedAt)} ${pick(r.counts, ARM_AB_KEYS)} | ` +
-        `${pick(r.counts, TIER1_KEYS)}`,
+      `#${r.id} ${r.pipeline} started=${iso(r.startedAt)} ${pick(r.counts, CLOSE_COUNTER_KEYS)} | ` +
+        `${pick(r.counts, STALE_SWEEP_KEYS)}`,
     );
   }
   if (runs.length === 0) console.log("(no ingestion/discovery runs yet)");
 
-  // Arm C — recent per-digest 410-probe tallies.
+  // Recent per-digest 410-probe tallies.
   const digestRows = await db
     .select({ id: digests.id, createdAt: digests.createdAt, counts: digests.counts })
     .from(digests)
@@ -83,7 +82,7 @@ await runScript("ShowShadowCloses", async () => {
 
   console.log(`\n=== Arm C — last ${digestRows.length} digest(s) ===`);
   for (const d of digestRows) {
-    console.log(`#${d.id} createdAt=${iso(d.createdAt)} ${pick(d.counts, ARM_C_KEYS)}`);
+    console.log(`#${d.id} createdAt=${iso(d.createdAt)} ${pick(d.counts, PROBE_COUNTER_KEYS)}`);
   }
   if (digestRows.length === 0) console.log("(no digests yet)");
 
@@ -108,11 +107,11 @@ await runScript("ShowShadowCloses", async () => {
   );
   console.log(
     closedTotal > 0 || closed > 0
-      ? "NOTE: closed > 0 — F2_ENFORCE may ALREADY be 'enforce' (shadow never writes 'closed')."
+      ? "NOTE: closed > 0 — LIFECYCLE_CLOSE_ENFORCE may ALREADY be 'enforce' (shadow never writes 'closed')."
       : "Gate: wouldClose should be a small, believable staleness trickle — NOT a large fraction of active jobs.",
   );
 
-  // Tier-1 universal staleness timer (sweepStaleJobs) — its OWN STALE_SWEEP switch, read BEFORE flipping it.
+  // Universal staleness timer (sweepStaleJobs) — its OWN STALE_SWEEP switch, read BEFORE flipping it.
   const stalePct = active > 0 ? `${((staleWouldCloseTotal / active) * 100).toFixed(2)}%` : "n/a";
   console.log(
     `\n=== Tier-1 stale timer ===\n` +
@@ -128,9 +127,8 @@ await runScript("ShowShadowCloses", async () => {
 
   // Per-board attribution for the stale timer — the gate's key calibration aid. Replicates sweepStaleJobs'
   // board-health-guarded predicate at the DEFAULT TTL (the deployed STALE_SWEEP_TTL_DAYS may differ). A
-  // healthy capped mega-board (boschgroup) topping this is EXPECTED (its aged-out tail). A cluster of small
-  // boards would signal the failing-board case — but the guard (c.last_ingested_at >= cutoff) already excludes
-  // any board down > TTL, so a down board's jobs never appear here at all.
+  // healthy capped mega-board topping this is EXPECTED (its aged-out tail); the guard
+  // (c.last_ingested_at >= cutoff) already excludes any board down > TTL, so a down board's jobs never appear.
   const byBoard = rows(
     await db.execute(sql`
       SELECT c.source, c.slug, count(*)::int AS would_close, max(c.last_ingested_at) AS last_ingested

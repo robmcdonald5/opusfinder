@@ -5,13 +5,13 @@ import { getDatabaseUrl } from "@opusfinder/db/env";
 import { setDigestApproval } from "@opusfinder/db/repos";
 import { runScript } from "@opusfinder/shared/script";
 
-import { findUserByEmail } from "../src/index";
+import { findUserIdByEmail } from "../src/index";
 import { maskEmail } from "./cli-utils";
 
 // pnpm user:approve --email <email> [--revoke]
-// The operator SEND PERMIT (migration 0022) — grants (or with --revoke clears) `digest_approved_at`, the
-// DB-native gate that replaces the env-var EMAIL_ALLOWLIST. Granting is a single write effective on the next
-// cadence tick (no redeploy). Onboarding a friend: user:create → ingest-cv → user:set-prefs → user:approve.
+// The operator SEND PERMIT — grants (or with --revoke clears) `digest_approved_at`, the DB-native gate
+// on digest sends. Granting is a single write effective on the next cadence tick (no redeploy).
+// Onboarding a friend: user:create → ingest-cv → user:set-prefs → user:approve.
 // db-only (no auth/secret needed — like user:list); emails are masked (PII discipline).
 const USAGE = "Usage: pnpm user:approve --email <email> [--revoke]";
 
@@ -32,7 +32,7 @@ async function main(): Promise<void> {
   }
 
   const db = createDb(getDatabaseUrl());
-  const userId = await findUserByEmail(db, email);
+  const userId = await findUserIdByEmail(db, email);
   if (!userId) {
     console.error(`No user with email ${maskEmail(email)}.`);
     process.exitCode = 1;

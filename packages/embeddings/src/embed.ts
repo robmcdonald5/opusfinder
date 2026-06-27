@@ -18,7 +18,7 @@ export interface EmbedParams {
    */
   inputType?: VoyageInputType;
   /**
-   * Injected Voyage API key (Phase-8 Worker path, where there is no `process.env`). Omit in
+   * Injected Voyage API key (Worker path, where there is no `process.env`). Omit in
    * local scripts to fall back to `getVoyageApiKey()`. Threaded straight through to
    * `embedRequest`; never logged.
    */
