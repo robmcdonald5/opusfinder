@@ -18,8 +18,8 @@ export interface RenderedEmail {
 }
 
 /** `& < > " '` — covers element text AND double-quoted attribute values. */
-function escapeHtml(s: string): string {
-  return s
+function escapeHtml(text: string): string {
+  return text
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")
@@ -48,30 +48,29 @@ function formatWhere(locations: string[], remote: boolean): string {
 export function renderDigestEmail(payload: DigestEmailPayload): RenderedEmail {
   const n = payload.items.length;
   const date = payload.createdAt.toISOString().slice(0, 10); // UTC — no host-timezone drift
-  const roles = `${n} matched role${n === 1 ? "" : "s"}`;
-  const subject = `Your opusfinder digest — ${roles} (${date})`;
+  const rolesSummary = `${n} matched role${n === 1 ? "" : "s"}`;
+  const subject = `Your opusfinder digest — ${rolesSummary} (${date})`;
 
   const itemsHtml = payload.items
-    .map((it) => {
-      const url = safeHttpUrl(it.applyUrl);
+    .map((item) => {
+      const url = safeHttpUrl(item.applyUrl);
       const apply = url
         ? `<a href="${escapeHtml(url)}" style="color:#1a73e8;">Apply</a>`
         : // Non-http(s) scheme: show it inert as text so a hostile link is never clickable.
-          `<span style="color:#888;">apply URL withheld (non-http): ${escapeHtml(it.applyUrl)}</span>`;
+          `<span style="color:#888;">apply URL withheld (non-http): ${escapeHtml(item.applyUrl)}</span>`;
       return [
         `<tr><td style="padding:14px 0;border-bottom:1px solid #e3e3e3;">`,
-        `<div style="font-size:16px;font-weight:bold;color:#222;">${it.rank}. ${escapeHtml(it.title)} — ${escapeHtml(it.companySlug)}</div>`,
-        `<div style="font-size:13px;color:#555;margin:4px 0;">${escapeHtml(formatWhere(it.locations, it.remote))}</div>`,
-        `<div style="font-size:14px;color:#222;margin:4px 0;">${escapeHtml(it.reason)}</div>`,
+        `<div style="font-size:16px;font-weight:bold;color:#222;">${item.rank}. ${escapeHtml(item.title)} — ${escapeHtml(item.companySlug)}</div>`,
+        `<div style="font-size:13px;color:#555;margin:4px 0;">${escapeHtml(formatWhere(item.locations, item.remote))}</div>`,
+        `<div style="font-size:14px;color:#222;margin:4px 0;">${escapeHtml(item.reason)}</div>`,
         `<div style="font-size:14px;">${apply}</div>`,
         `</td></tr>`,
       ].join("");
     })
     .join("\n");
 
-  // One column, inline styles, no assets — minimal HTML per the locked template decision; the
-  // design pass arrives with the Phase-12 frontend. NO unsubscribe link (a dead link is worse than
-  // none; the public endpoint + RFC 8058 headers land in Phase 12).
+  // One column, inline styles, no assets — minimal HTML. NO unsubscribe link (a dead link is worse
+  // than none).
   const html = `<!doctype html>
 <html>
 <body style="margin:0;padding:0;background:#f6f6f6;font-family:Arial,Helvetica,sans-serif;">
@@ -79,7 +78,7 @@ export function renderDigestEmail(payload: DigestEmailPayload): RenderedEmail {
 <table role="presentation" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background:#ffffff;border-radius:6px;padding:24px;">
 <tr><td>
 <h1 style="font-size:20px;margin:0 0 4px;color:#222;">Your opusfinder digest</h1>
-<div style="font-size:13px;color:#555;margin-bottom:8px;">${escapeHtml(date)} — ${roles} for ${escapeHtml(payload.recipient.name)}</div>
+<div style="font-size:13px;color:#555;margin-bottom:8px;">${escapeHtml(date)} — ${rolesSummary} for ${escapeHtml(payload.recipient.name)}</div>
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
 ${itemsHtml}
 </table>
@@ -91,18 +90,18 @@ ${itemsHtml}
 </html>`;
 
   const itemsText = payload.items
-    .map((it) =>
+    .map((item) =>
       [
-        `${it.rank}. ${it.title} — ${it.companySlug}`,
-        `   ${formatWhere(it.locations, it.remote)}`,
-        `   ${it.reason}`,
-        `   Apply: ${it.applyUrl}`,
+        `${item.rank}. ${item.title} — ${item.companySlug}`,
+        `   ${formatWhere(item.locations, item.remote)}`,
+        `   ${item.reason}`,
+        `   Apply: ${item.applyUrl}`,
       ].join("\n"),
     )
     .join("\n\n");
 
   const text = [
-    `Your opusfinder digest — ${roles} (${date})`,
+    `Your opusfinder digest — ${rolesSummary} (${date})`,
     `For ${payload.recipient.name}`,
     ``,
     itemsText,

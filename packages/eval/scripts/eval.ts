@@ -1,8 +1,8 @@
 /**
- * Eval runner CLI (Phase 5). Runs a ranker over the labeled set, prints a metrics table + the
- * delta vs the last committed report, and rewrites that report. The committed report is the
- * BASELINE you diff future runs against — the whole point of the harness: any rerank / model /
- * embedding change replays through here and surfaces as a metric movement before it ships.
+ * Eval runner CLI. Runs a ranker over the labeled set, prints a metrics table + the delta vs the
+ * last committed report, and rewrites that report. The committed report is the BASELINE you diff
+ * future runs against: any rerank / model / embedding change replays through here and surfaces as
+ * a metric movement before it ships.
  *
  *   pnpm eval                                               # random baseline over the real dataset
  *   pnpm eval -- --ranker embedding --embedder voyage       # vector retrieval (Voyage)
@@ -74,8 +74,7 @@ async function resolveRanker(
     if (embedder !== undefined) {
       console.warn(`Note: --embedder "${embedder}" is ignored by the llm-rerank ranker.`);
     }
-    // Dynamic import keeps @opusfinder/rerank off the plain `pnpm eval` path. Uses the deterministic
-    // stub call (no API key); the real Haiku call is wired by the Phase-10 digest pipeline.
+    // Dynamic import keeps @opusfinder/rerank off the plain `pnpm eval` path; uses the deterministic stub call (no API key).
     const { llmRerankRanker } = await import("../src/rankers/llm-rerank");
     return { ranker: llmRerankRanker(), label: "llm-rerank", embedderLabel: null };
   }

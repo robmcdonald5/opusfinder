@@ -1,8 +1,7 @@
-// Smoke check for parseEnforceFlag (Phase F2 review, Group A) — the SINGLE switch that flips all three
-// F2 lifecycle-close arms (sweepLifecycle / closeJobsForCompanies / probeDigestLiveness) from shadow to
-// enforce. The whole point of the switch is that exactly ONE value enables the 'closed' write, so these
-// checks lock which strings are affirmative and (critically) that the safe/default values stay shadow.
-// A regression that made "shadow"/""/undefined enforce would silently start closing jobs in production.
+// Smoke check for parseEnforceFlag — the lifecycle-close enforcement switch. The whole point is that
+// exactly ONE value enables the 'closed' write, so these checks lock which strings are affirmative
+// and (critically) that the safe/default values stay shadow: a regression that made
+// "shadow"/""/undefined enforce would silently start closing jobs in production.
 // Run: pnpm --filter @opusfinder/shared test:enforce-flag
 import { parseEnforceFlag } from "../src/index";
 import { runScript } from "../src/script";

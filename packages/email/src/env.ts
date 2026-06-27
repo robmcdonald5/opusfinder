@@ -13,7 +13,7 @@ loadPackageEnv(import.meta.url);
  */
 export const getResendApiKey = requireEnv({
   name: "RESEND_API_KEY",
-  notSet:
+  notSetMessage:
     "RESEND_API_KEY is not set. Paste your Resend API key into packages/email/.env " +
     "(RESEND_API_KEY=re_...), or export it as an environment variable.",
   prefix: "re_",
@@ -21,14 +21,13 @@ export const getResendApiKey = requireEnv({
 
 /**
  * Read + validate RESEND_API_KEY_FULL — the READ key for the post-send delivery poll
- * (`GET /emails/:id`). A restricted sending-only key 401s (`restricted_api_key`) on that endpoint —
- * observed live at the Phase-11 gate — so the poll requires a FULL-access key, explicitly named.
- * (Single-key setups just put the same full-access value in both vars.) Phase 12's webhooks replace
- * the poll and need no read access; this var retires with it.
+ * (`GET /emails/:id`). A restricted sending-only key 401s (`restricted_api_key`) on that endpoint, so
+ * the poll requires a FULL-access key, explicitly named. (Single-key setups just put the same
+ * full-access value in both vars.)
  */
 export const getResendApiKeyFull = requireEnv({
   name: "RESEND_API_KEY_FULL",
-  notSet:
+  notSetMessage:
     "RESEND_API_KEY_FULL is not set. The delivery poll reads email status back, which a " +
     "sending-only key cannot (Resend 401 restricted_api_key) — create a FULL-access key and put it " +
     "in packages/email/.env (RESEND_API_KEY_FULL=re_...).",
@@ -39,24 +38,22 @@ export const getResendApiKeyFull = requireEnv({
  *  The domain must be verified on Resend (SPF/DKIM/DMARC) or every send 403s. */
 export const getEmailFrom = requireEnv({
   name: "EMAIL_FROM",
-  notSet:
+  notSetMessage:
     "EMAIL_FROM is not set. Set the verified sender in packages/email/.env, " +
     "e.g. EMAIL_FROM=opusfinder digest <digest@send.opusfinder.ai>.",
 });
 
 /**
- * The operator address Phase-F6 health alerts go to ({@link import("./transport").sendHealthAlert}).
- * A DEDICATED operator address — the owner AS operator, not a product user. FAIL-LOUD: requireEnv throws
- * if unset, so `pnpm health` logs + exits non-zero rather than silently dropping an alert.
+ * The dedicated operator address health alerts go to ({@link import("./transport").sendHealthAlert}) —
+ * the owner AS operator, not a product user. FAIL-LOUD: requireEnv throws if unset, never silently
+ * drops an alert.
  */
 export const getAlertTo = requireEnv({
   name: "ALERT_TO",
-  notSet:
+  notSetMessage:
     "ALERT_TO is not set — the operator address health alerts are sent to. Set ALERT_TO=you@example.com " +
     "in packages/email/.env (a dedicated operator address).",
 });
 
-// The digest SEND PERMIT is no longer an env allowlist: it moved to the DB-native, per-user
-// `user_preferences.digest_approved_at` gate (migration 0022), checked at recipient resolution + the
-// digest load step (before any paid spend) and re-asserted at the send boundary in @opusfinder/inngest's
-// deliverDigestEmail. See packages/db/src/repos/preferences.ts `setDigestApproval` + `pnpm user:approve`.
+// The digest SEND PERMIT lives in the DB: the per-user `user_preferences.digest_approved_at` gate
+// (see packages/db/src/repos/preferences.ts `setDigestApproval`).

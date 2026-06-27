@@ -1,8 +1,8 @@
 /**
- * Persistence for the Phase-10 digest pipeline: the eligible-recipient query, the already-shown
- * anti-join, and the run/header/item writes. Same functional style as ./jobs and ./discovery — the
- * Drizzle client is injected, every mutation is a single neon-http round-trip, and time math is
- * SQL-side (`now()`). The run helpers mirror ./discovery's `startRun`/`finishRun` against `digest_runs`.
+ * Persistence for the digest pipeline: the eligible-recipient query, the already-shown anti-join, and the
+ * run/header/item writes. The Drizzle client is injected, every mutation is a single neon-http round-trip,
+ * and time math is SQL-side (`now()`). The run helpers mirror ./discovery's `startRun`/`finishRun` against
+ * `digest_runs`.
  */
 import { and, desc, eq, gt, inArray, isNotNull, isNull, sql, type SQL } from "drizzle-orm";
 
@@ -32,7 +32,7 @@ export interface DigestRecipient {
 }
 
 /**
- * The Phase-12 cadence "due now" predicate, applied ONLY for the cadence cron (trigger='cron', via
+ * The cadence "due now" predicate, applied ONLY for the cadence cron (trigger='cron', via
  * `listDigestRecipients`'s `cadenceDue`). A user is due when enough time has elapsed since their last send
  * for their cadence. `last_digest_sent_at` is stamped `now()` on every successful send (`recordDigestSent`),
  * so NULL = never-sent = always due. The windows sit a little UNDER the nominal period (daily 20h / weekly
@@ -54,15 +54,14 @@ function cadenceDuePredicate(): SQL {
  * The next batch of users eligible for a digest, id-keyset paginated (matching `listCompanies`):
  * `WHERE id > afterId ORDER BY id LIMIT limit`. Eligibility = delivery on (`digest_enabled`), a
  * verified email (`user.email_verified`), the operator SEND PERMIT granted (`digest_approved_at IS NOT
- * NULL` — the DB-native gate that replaced the env-var EMAIL_ALLOWLIST, so an un-approved user is dropped
- * HERE, before any paid rerank/synthesis spend), not suppressed (`digest_suppressed_at IS NULL`), AND a
- * usable profile vector (INNER JOIN `user_profiles` + `embedding IS NOT NULL`, so a user with no CV / no
- * embedding is skipped — they can't be matched). The keyset orders by `user.id` (uuid) — an arbitrary but
- * total, stable order, all that chunked iteration needs.
+ * NULL`, so an un-approved user is dropped HERE, before any paid rerank/synthesis spend), not suppressed
+ * (`digest_suppressed_at IS NULL`), AND a usable profile vector (INNER JOIN `user_profiles` + `embedding
+ * IS NOT NULL`, so a user with no CV / no embedding is skipped — they can't be matched). The keyset
+ * orders by `user.id` (uuid) — an arbitrary but total, stable order, all that chunked iteration needs.
  *
- * `cadenceDue` (Phase-12 cadence cron) is OPT-IN: when true, also require the user's cadence window to
- * have elapsed ({@link cadenceDuePredicate}). Default/omitted = NO cadence filter, so the manual
- * `pnpm digest --all` sweep (and the CLI's watch-list call) send to ALL eligible — unchanged.
+ * `cadenceDue` is OPT-IN: when true, also require the user's cadence window to have elapsed
+ * ({@link cadenceDuePredicate}). Default/omitted = NO cadence filter, so the manual `pnpm digest --all`
+ * sweep (and the CLI's watch-list call) send to ALL eligible — unchanged.
  */
 export function listDigestRecipients(
   db: Db,
@@ -105,16 +104,16 @@ export async function alreadyShownJobIds(db: Db, userId: UserId): Promise<number
  * The distinct content signatures of every job already shown to a user — the signature sibling of
  * `alreadyShownJobIds`, fed to retrieval's `excludeSignatures` so a RE-LISTED role (fresh external_id →
  * a new job_id the id anti-join can't see, but the SAME content_signature) is suppressed. Joins
- * `digest_items → jobs` and keeps only non-NULL signatures. NO `lifecycle_state` filter on the jobs side
- * (decision 5): F2 soft-closes a repost's predecessor (`lifecycle_state='closed'`, never deleted —
- * `digest_items.job_id` is ON DELETE NO ACTION, 0007:53), and the closed original's signature is the
- * proof the user already saw the role. Empty for a first-time recipient.
+ * `digest_items → jobs` and keeps only non-NULL signatures. NO `lifecycle_state` filter on the jobs side:
+ * a soft-closed repost predecessor (`lifecycle_state='closed'`, never deleted — `digest_items.job_id` is
+ * ON DELETE NO ACTION) still holds the signature that proves the user already saw the role. Empty for a
+ * first-time recipient.
  *
- * KNOWN GAP (accepted, owner-ratified 2026-06-13): F2 Arm C's `dropDigestItemsAndRecount` DIRECT-deletes
- * a `digest_items` row for a probe-time 404 (NO ACTION blocks only parent-delete CASCADES, not a direct
- * child delete), so a 404-dropped-but-still-active job loses its shown record here and its repost can
- * re-surface. Narrow (probe-time 404s only); a same-signature repost on a NEW row is still caught. See
- * `dropDigestItemsAndRecount` below for the matching F2-side note.
+ * KNOWN GAP (accepted): `dropDigestItemsAndRecount` DIRECT-deletes a `digest_items` row for a probe-time
+ * 404 (NO ACTION blocks only parent-delete CASCADES, not a direct child delete), so a 404-dropped-but-
+ * still-active job loses its shown record here and its repost can re-surface. Narrow (probe-time 404s
+ * only); a same-signature repost on a NEW row is still caught. See `dropDigestItemsAndRecount` below for
+ * the matching note.
  */
 export async function alreadyShownSignatures(db: Db, userId: UserId): Promise<string[]> {
   const rows = await db
@@ -129,9 +128,7 @@ export async function alreadyShownSignatures(db: Db, userId: UserId): Promise<st
  * Open a digest run: insert a `running` row (status + started_at from column defaults) and return its
  * id. Mirrors ./discovery `startRun`. Call BEFORE fan-out so a crash leaves a visible `running` row;
  * `finishDigestRun` patches it to a terminal state — the orchestrator calls it on success AND from its
- * catch (status 'error' + `error_sample`) when a step exhausts its retries. (A stale-`running` sweep
- * like `failStaleRuns` — covering a serve process killed outside a step — is deferred to Phase 12 with
- * the cadence cron: an unattended-runtime problem, not a watched-manual-run one.)
+ * catch (status 'error' + `error_sample`) when a step exhausts its retries.
  */
 export async function startDigestRun(db: Db, trigger: DigestTrigger): Promise<number> {
   const rows = await db.insert(digestRuns).values({ trigger }).returning({ id: digestRuns.id });
@@ -163,9 +160,9 @@ export interface NewDigest {
 
 /**
  * Insert a per-user digest header and return its id. A plain INSERT: the `(user_id, digest_run_id)`
- * UNIQUE constraint is the guard against a double-write. NOTE: the Phase-10f persist step makes itself
- * retry-idempotent by deleting any prior digest for this (user, run) first — the digest→items FK
- * cascade clears its items — then inserting fresh; that delete helper lands with the persist step.
+ * UNIQUE constraint is the guard against a double-write. The persist step makes itself retry-idempotent
+ * by deleting any prior digest for this (user, run) first (the digest→items FK cascade clears its items)
+ * then inserting fresh.
  */
 export async function insertDigest(db: Db, input: NewDigest): Promise<{ id: number }> {
   const rows = await db
@@ -184,7 +181,7 @@ export async function insertDigest(db: Db, input: NewDigest): Promise<{ id: numb
 
 /**
  * A ranked digest item to write. `rank`/`score` come from the rerank; `reason` from synthesis. The
- * display SNAPSHOT (`jobTitle`/`companySlug`/`applyUrl`/`locations`/`remote`, G3) is copied off the live
+ * display SNAPSHOT (`jobTitle`/`companySlug`/`applyUrl`/`locations`/`remote`) is copied off the live
  * job at persist (via {@link getJobSnapshots}) so the row renders + survives the job's prune — see
  * {@link DigestItemSnapshot}. The persist step throws if a snapshot is missing, so these are non-null.
  */
@@ -195,9 +192,9 @@ export interface NewDigestItem extends DigestItemSnapshot {
   reason: string;
 }
 
-/** The display fields a digest_items row snapshots from its job's live `jobs`/`companies` row (G3,
- *  migration 0019). The render/history reads these instead of joining live `jobs`, so the record is
- *  self-contained and survives the job's prune. Mirrors what `getDigestEmailPayload` projects. */
+/** The display fields a digest_items row snapshots from its job's live `jobs`/`companies` row. The
+ *  render/history reads these instead of joining live `jobs`, so the record is self-contained and
+ *  survives the job's prune. Mirrors what `getDigestEmailPayload` projects. */
 export interface DigestItemSnapshot {
   jobTitle: string;
   companySlug: string;
@@ -207,12 +204,12 @@ export interface DigestItemSnapshot {
 }
 
 /**
- * The display snapshot for each of `jobIds`, keyed by job id — the persist step's source for the G3
- * `digest_items` snapshot columns (fork G3-SNAPSHOT-SOURCE: one small SELECT over the ~12 kept ids rather
- * than threading the fields through the rerank/synthesis step state, which never carried apply_url /
- * company_slug). INNER JOIN is sound: the kept jobs were JUST retrieved (so `lifecycle_state='active'`,
- * present in `jobs`) and every job has a `companies` row. A job pruned later (G3e) is irrelevant here —
- * it is live NOW. Empty input → empty map (no query). Callers treat a MISSING id as an invariant break.
+ * The display snapshot for each of `jobIds`, keyed by job id — the persist step's source for the
+ * `digest_items` snapshot columns (one small SELECT over the ~12 kept ids rather than threading the
+ * fields through the rerank/synthesis step state, which never carried apply_url / company_slug). INNER
+ * JOIN is sound: the kept jobs were JUST retrieved (so `lifecycle_state='active'`, present in `jobs`) and
+ * every job has a `companies` row. A job pruned later is irrelevant here — it is live NOW. Empty input →
+ * empty map (no query). Callers treat a MISSING id as an invariant break.
  */
 export async function getJobSnapshots(
   db: Db,
@@ -247,7 +244,7 @@ export async function getJobSnapshots(
 
 /**
  * Batch-insert a digest's ranked items in one statement. `userId` is denormalized onto each row (the
- * already-shown anti-join keys on it). `reason` AND the G3 display snapshot (`jobTitle`/`companySlug`/
+ * already-shown anti-join keys on it). `reason` AND the display snapshot (`jobTitle`/`companySlug`/
  * `applyUrl`/`locations`) are NUL-stripped (Postgres text/jsonb can't store U+0000), same discipline as
  * the other text writes — the snapshot is sourced from already-NUL-clean `jobs` rows, but stripping here
  * is belt-and-suspenders. An empty list is a no-op. Top-K is small (~12), well under the bind-param
@@ -278,10 +275,10 @@ export async function insertDigestItems(
 }
 
 /**
- * Delete a user's digest for one run — the retry-idempotency primitive for the Phase-10f persist step.
- * The digest→items FK cascade removes its `digest_items` too, so a retried per-user run deletes-then-
- * inserts fresh instead of colliding with the `(user_id, digest_run_id)` unique constraint (a header-
- * only upsert would leave stale items behind). No-op if no digest exists yet.
+ * Delete a user's digest for one run — the retry-idempotency primitive for the persist step. The
+ * digest→items FK cascade removes its `digest_items` too, so a retried per-user run deletes-then-inserts
+ * fresh instead of colliding with the `(user_id, digest_run_id)` unique constraint (a header-only upsert
+ * would leave stale items behind). No-op if no digest exists yet.
  */
 export async function deleteUserDigestForRun(
   db: Db,
@@ -293,8 +290,8 @@ export async function deleteUserDigestForRun(
     .where(and(eq(digests.userId, userId), eq(digests.digestRunId, digestRunId)));
 }
 
-/** A user's most-recent digest header + its ranked items — read by the trigger CLI (and the Phase-12
- *  history view). Newest by created_at then id. `null` if the user has no digest yet. */
+/** A user's most-recent digest header + its ranked items — read by the trigger CLI (and the history
+ *  view). Newest by created_at then id. `null` if the user has no digest yet. */
 export interface DigestView {
   id: number;
   digestRunId: number;
@@ -311,8 +308,8 @@ export async function getLatestDigestForUser(db: Db, userId: UserId): Promise<Di
     .where(eq(digests.userId, userId))
     .orderBy(desc(digests.createdAt), desc(digests.id))
     .limit(1);
-  const d = rows[0];
-  if (!d) return null;
+  const digest = rows[0];
+  if (!digest) return null;
   const items = await db
     .select({
       jobId: digestItems.jobId,
@@ -321,19 +318,19 @@ export async function getLatestDigestForUser(db: Db, userId: UserId): Promise<Di
       reason: digestItems.reason,
     })
     .from(digestItems)
-    .where(eq(digestItems.digestId, d.id))
+    .where(eq(digestItems.digestId, digest.id))
     .orderBy(digestItems.rank);
   return {
-    id: d.id,
-    digestRunId: d.digestRunId,
-    itemCount: d.itemCount,
-    counts: d.counts,
-    createdAt: d.createdAt,
+    id: digest.id,
+    digestRunId: digest.digestRunId,
+    itemCount: digest.itemCount,
+    counts: digest.counts,
+    createdAt: digest.createdAt,
     items,
   };
 }
 
-// --- Phase F2 Arm C: the pre-send liveness probe's apply-URL read + the drop-dead-items write -----
+// --- Pre-send liveness probe: the apply-URL read + the drop-dead-items write -----
 
 /** One persisted digest item's job id + apply URL — the liveness probe's input (re-read by digest id,
  *  not threaded through Inngest step state, mirroring the embedding-re-read discipline). */
@@ -343,17 +340,17 @@ export interface DigestApplyTarget {
 }
 
 /**
- * The (jobId, applyUrl) of every item in one digest — Arm C HEAD/GET-probes these before send. INNER JOIN
- * is safe AND correct here: this only ever runs on the JUST-PERSISTED current digest (step 7.5, immediately
- * after persist), whose jobs are all `active` (never pruned — the prune targets only closed+30d jobs), so
- * the live `jobs` row always matches. Ordered by rank for a stable probe order.
+ * The (jobId, applyUrl) of every item in one digest — HEAD/GET-probed before send. INNER JOIN is safe AND
+ * correct here: this only ever runs on the JUST-PERSISTED current digest (immediately after persist), whose
+ * jobs are all `active` (never pruned — the prune targets only closed+30d jobs), so the live `jobs` row
+ * always matches. Ordered by rank for a stable probe order.
  *
- * G3 NOTE — apply_url source: this deliberately reads the LIVE `jobs.apply_url`, while the email render
- * (getDigestEmailPayload) now reads the FROZEN snapshot `digest_items.apply_url`. They are captured the same
+ * apply_url source: this deliberately reads the LIVE `jobs.apply_url`, while the email render
+ * (getDigestEmailPayload) reads the FROZEN snapshot `digest_items.apply_url`. They are captured the same
  * instant (persist) and the probe is the very next step, so they diverge ONLY if a re-ingest UPDATEs
- * `jobs.apply_url` in that seconds-wide window — an accepted, bounded gap (worst case: one dead link, the
- * pre-Arm-C baseline). Reading LIVE here is the RIGHT choice for the 410→close decision (close on the job's
- * CURRENT url, never a stale snapshot that a re-ingest may already have replaced with a working one).
+ * `jobs.apply_url` in that seconds-wide window — an accepted, bounded gap (worst case: one dead link).
+ * Reading LIVE here is the RIGHT choice for the 410→close decision (close on the job's CURRENT url, never a
+ * stale snapshot that a re-ingest may already have replaced with a working one).
  */
 export function getDigestApplyTargets(db: Db, digestId: number): Promise<DigestApplyTarget[]> {
   return db
@@ -365,21 +362,21 @@ export function getDigestApplyTargets(db: Db, digestId: number): Promise<DigestA
 }
 
 /**
- * Drop the dead-link items (Arm C: a 404/410 apply URL) from a digest and fold the probe tallies into its
+ * Drop the dead-link items (a 404/410 apply URL) from a digest and fold the probe tallies into its
  * `counts`, in ONE statement: a data-modifying CTE deletes the dropped `digest_items` (always runs, even
  * when none are dropped — Postgres executes an unreferenced data-modifying CTE to completion), then the
  * UPDATE sets `item_count` to the survivor count (passed in, since the CTE's delete is not visible to a
  * same-statement `count(*)`) and merges the probe counts via jsonb `||`. This keeps the persisted
  * `digest_items` equal to what the user is actually SENT (the email render reads only the survivors).
  *
- * CAVEAT — Arm C / shown-history coupling: `alreadyShownJobIds` derives the next run's dedup anti-join from
+ * CAVEAT — shown-history coupling: `alreadyShownJobIds` derives the next run's dedup anti-join from
  * `digest_items`, so a DROPPED job is also removed from shown-history. For a 410 that is fine (the job is
  * also soft-closed, so retrieval excludes it anyway). For a 404 — dropped but NOT closed (it may be a CDN
  * blip) — the job stays retrieval-eligible AND loses its shown record, so it can re-surface and re-pay
- * synthesis on a later digest until Arm A's streak or recency clears it. Bounded (≤TOP_K, ~daily cadence)
- * and accepted for v1; if `probed404Dropped` trends high on the same jobs at the F2f live gate, switch to a
- * tombstone (keep the row with a `dropped` flag, exclude only at render) so the anti-join stays intact.
- * Empty `droppedJobIds` still records the counts; ranks are left with gaps (the email orders by rank — inert).
+ * synthesis on a later digest until its absence streak or recency clears it. Bounded (≤TOP_K, ~daily
+ * cadence) and accepted for v1; if `probed404Dropped` trends high on the same jobs, switch to a tombstone
+ * (keep the row with a `dropped` flag, exclude only at render) so the anti-join stays intact. Empty
+ * `droppedJobIds` still records the counts; ranks are left with gaps (the email orders by rank — inert).
  */
 export async function dropDigestItemsAndRecount(
   db: Db,
@@ -401,14 +398,14 @@ export async function dropDigestItemsAndRecount(
   `);
 }
 
-// --- Phase 11 email delivery: the render read + the per-send / user-level state writes -----------
+// --- Email delivery: the render read + the per-send / user-level state writes -----------
 
 /**
  * Everything the email render needs for one digest — ONE round trip:
  * `digests ⋈ user ⋈ digest_items ⋈ jobs ⋈ companies`, ORDER BY rank. INNER JOINs are safe: the
  * persist step throws on zero kept items, so an existing digest always has ≥1 item row here.
  * `companySlug` is `companies.slug` — there is NO name column (metadata jsonb is unpopulated).
- * `items` may be EMPTY when every item's job was lifecycle-closed after persist (G1b — see
+ * `items` may be EMPTY when every item's job was lifecycle-closed after persist (see
  * `getDigestEmailPayload`); the send step treats that as a clean no-send.
  */
 export interface DigestEmailPayload {
@@ -419,9 +416,9 @@ export interface DigestEmailPayload {
    *  (Resend Idempotency-Key replays reject a changed payload with 409), so no `new Date()`. */
   createdAt: Date;
   /** The DB-native SEND PERMIT (`user_preferences.digest_approved_at`), re-read at the send boundary as
-   *  defense-in-depth (it replaced the env-var EMAIL_ALLOWLIST). GATE-ONLY: `deliverDigestEmail` refuses to
-   *  send when this is falsy (NULL = un-approved); it is DELIBERATELY NOT passed to `renderDigestEmail`, so it
-   *  never enters the rendered bytes and the Resend idempotency-key replay contract is untouched. */
+   *  defense-in-depth. GATE-ONLY: `deliverDigestEmail` refuses to send when this is falsy (NULL =
+   *  un-approved); it is DELIBERATELY NOT passed to `renderDigestEmail`, so it never enters the rendered
+   *  bytes and the Resend idempotency-key replay contract is untouched. */
   approvedAt: Date | null;
   items: {
     rank: number;
@@ -438,29 +435,28 @@ export interface DigestEmailPayload {
  * The email payload for one digest, recipient resolved from `user` (the row is the truth — never
  * event data).
  *
- * Display fields read from the G3 SNAPSHOT (digest_items.*) with a COALESCE fallback to the live
- * jobs/companies row for un-backfilled pre-G3 rows; the jobs/companies joins are LEFT so the row
- * survives the job's prune (G3e). The output shape is unchanged.
+ * Display fields read from the SNAPSHOT (digest_items.*) with a COALESCE fallback to the live
+ * jobs/companies row for un-backfilled rows; the jobs/companies joins are LEFT so the row survives the
+ * job's prune. The output shape is unchanged.
  *
- * Two distinct empty shapes the caller must tell apart (G1b — close the email-render lifecycle gap
- * that turning F2_ENFORCE on exposes):
+ * Two distinct empty shapes the caller must tell apart:
  *   - `null` — NO digest_items row at all. Persist guarantees ≥1 (it throws on zero kept items), and
  *     digest_items is never deleted by the prune (only the LEFT-joined jobs row may be), so zero rows
  *     means the digest row itself vanished. The send step treats this as an invariant break and throws
  *     (same posture as the rerank-permutation check).
  *   - `{ items: [] }` — the digest exists, but every item's job is now `lifecycle_state != 'active'`
  *     (closed) or pruned (LEFT-miss → NULL state). A job CLOSED between this digest's retrieval and its
- *     send (an Arm A/B Worker cron tick landing during the multi-hour synthesis batch wait — closed
- *     AFTER retrieval, persisted anyway, then kept by the step-7.5 probe, which checks only the apply
- *     URL's HTTP liveness, never `lifecycle_state`) must NOT render in an inbox: retrieval.ts already
- *     excludes closed jobs, and this is the one render-time gap. The send step treats an empty `items`
- *     as a clean no-send.
+ *     send (a Worker cron tick landing during the multi-hour synthesis batch wait — closed AFTER
+ *     retrieval, persisted anyway, then kept by the pre-send probe, which checks only the apply URL's
+ *     HTTP liveness, never `lifecycle_state`) must NOT render in an inbox: retrieval.ts already excludes
+ *     closed jobs, and this is the one render-time gap. The send step treats an empty `items` as a clean
+ *     no-send.
  *
  * The lifecycle filter is applied APP-SIDE on the LIVE `lifecycle_state` (closed/pruned rows are still
  * fetched — ≤TOP_K of them) rather than in the SQL join, so a single round trip keeps the
  * header/recipient available from any row and lets us distinguish "no digest" (null) from "all items
  * closed/pruned" (empty). `lifecycle_state` is deliberately read live, NOT snapshotted (it is mutable —
- * snapshotting it would re-open the very race G1b closed).
+ * snapshotting it would re-open the very race this guards).
  */
 export async function getDigestEmailPayload(
   db: Db,
@@ -474,28 +470,24 @@ export async function getDigestEmailPayload(
       name: user.name,
       rank: digestItems.rank,
       reason: digestItems.reason,
-      // G3c (phase 1): read the display fields from the digest_items SNAPSHOT, COALESCE-falling-back to
-      // the live jobs/companies row for pre-G3 rows whose snapshot is still NULL (the backfill gap). The
-      // joins are LEFT so a future PRUNED job (G3e) keeps its digest_items row in the result rendering
-      // from the snapshot, instead of the INNER join dropping it. `lifecycle_state` is STILL read LIVE
-      // (NOT snapshotted — it is mutable) so the G1b active-filter below is unchanged; a pruned job's
-      // LEFT-miss yields NULL state → filtered out (correct: never email a delisted/pruned role). Phase 2
-      // ("drop the live join entirely", PHASE_G3_PLAN.md §4) is DEFERRED — it would remove this live
-      // lifecycle read and so REVERSE G1b; it needs an explicit decision at the backfill-complete cutover.
-      // The `sql<string>`/`sql<boolean>` types are non-null by ASSERTION: a row that is BOTH pruned (LEFT-miss
-      // → live NULL) and un-backfilled (snapshot NULL) would COALESCE to NULL, but it also has NULL
-      // lifecycle_state and is dropped by the active-filter below BEFORE these fields are read — so every
-      // RENDERED row resolves a real value. (Pre-G3e this combination can't even arise — the backfill is
-      // gated to reach 0-NULL first.)
+      // Read the display fields from the digest_items SNAPSHOT, COALESCE-falling-back to the live
+      // jobs/companies row for rows whose snapshot is still NULL (the backfill gap). The joins are LEFT so
+      // a future PRUNED job keeps its digest_items row in the result, rendering from the snapshot, instead
+      // of the INNER join dropping it. `lifecycle_state` is STILL read LIVE (NOT snapshotted — it is
+      // mutable) so the active-filter below is unchanged; a pruned job's LEFT-miss yields NULL state →
+      // filtered out (correct: never email a delisted/pruned role). The `sql<string>`/`sql<boolean>` types
+      // are non-null by ASSERTION: a row that is BOTH pruned (LEFT-miss → live NULL) and un-backfilled
+      // (snapshot NULL) would COALESCE to NULL, but it also has NULL lifecycle_state and is dropped by the
+      // active-filter below BEFORE these fields are read — so every RENDERED row resolves a real value.
       title: sql<string>`COALESCE(${digestItems.jobTitle}, ${jobs.title})`,
       companySlug: sql<string>`COALESCE(${digestItems.companySlug}, ${companies.slug})`,
       applyUrl: sql<string>`COALESCE(${digestItems.applyUrl}, ${jobs.applyUrl})`,
       locations: sql<string[]>`COALESCE(${digestItems.locations}, ${jobs.locations})`,
       remote: sql<boolean>`COALESCE(${digestItems.remote}, ${jobs.remote})`,
       lifecycleState: jobs.lifecycleState,
-      // The DB-native send permit, re-read at the send boundary (replaces EMAIL_ALLOWLIST). INNER JOIN to
-      // user_preferences is sound: the 1:1 row is created at user creation and is a hard invariant for any
-      // enrolled user (its absence yields the same null-payload invariant break the send step already throws on).
+      // The DB-native send permit, re-read at the send boundary. INNER JOIN to user_preferences is sound:
+      // the 1:1 row is created at user creation and is a hard invariant for any enrolled user (its absence
+      // yields the same null-payload invariant break the send step already throws on).
       approvedAt: userPreferences.digestApprovedAt,
     })
     .from(digests)
@@ -549,10 +541,10 @@ export async function recordDigestSent(db: Db, digestId: number, emailId: string
 }
 
 /**
- * Cadence backoff (Phase-12 12a-2): stamp `last_digest_sent_at = now()` WITHOUT an email id, for a user a
- * cadence run CONSIDERED but did not email (no candidates / nothing above the score floor / all apply-URLs
- * dead / the send permit was revoked mid-run). This backs the user off until their next cadence period, so the
- * daily cadence cron does NOT re-run the full (paid) pipeline for a perpetually-thin or just-un-approved user
+ * Cadence backoff: stamp `last_digest_sent_at = now()` WITHOUT an email id, for a user a cadence run
+ * CONSIDERED but did not email (no candidates / nothing above the score floor / all apply-URLs dead / the
+ * send permit was revoked mid-run). This backs the user off until their next cadence period, so the daily
+ * cadence cron does NOT re-run the full (paid) pipeline for a perpetually-thin or just-un-approved user
  * every tick. Deliberately NOT called on ERROR paths (those throw and SHOULD retry next tick), and it
  * NULLs `last_digest_email_id` (no email was sent this consideration) so the row unambiguously reads
  * "considered, not delivered" — without the null, a user who previously received a REAL digest would keep

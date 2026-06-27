@@ -1,8 +1,7 @@
 /**
- * Self-test for the metrics math (Phase 5). The harness's whole job is measuring quality, so
- * its ruler is pinned here against hand-computed cases. Run with `pnpm --filter @opusfinder/eval
- * test:metrics`. A tsx assertion script rather than a test framework — one file doesn't justify
- * pulling in vitest; node:assert/strict gives a non-zero exit on failure, which is all CI needs.
+ * Self-test for the metrics math, pinned against hand-computed cases. A tsx assertion script
+ * rather than a test framework — one file doesn't justify vitest; node:assert/strict's non-zero
+ * exit on failure is all CI needs. Run: `pnpm --filter @opusfinder/eval test:metrics`.
  */
 import assert from "node:assert/strict";
 import { rmSync, writeFileSync } from "node:fs";
@@ -85,7 +84,6 @@ const IDCG3 = 1 + 1 / (Math.log(3) / Math.LN2) + 0.5; // ≈ 2.1309297535714573
   assert.equal(agg.counts.ndcg, 1, "agg ndcg count (NaN dropped)");
 }
 
-// --- cosineSimilarity ---------------------------------------------------------------------
 {
   approx(cosineSimilarity([1, 0], [1, 0]), 1, "cosine identical");
   approx(cosineSimilarity([1, 0], [0, 1]), 0, "cosine orthogonal");
@@ -110,7 +108,6 @@ const IDCG3 = 1 + 1 / (Math.log(3) / Math.LN2) + 0.5; // ≈ 2.1309297535714573
     '{"profile":{"id":"p1","summary":"s","skills":[],"targetRoles":[]},' +
     '"candidateJobs":[{"id":1,"title":"t","descriptionText":"d"}],"expectedGoodIds":[2]}';
   assert.throws(() => parseDatasetLines(outOfPool), "loader rejects out-of-pool good id");
-  // a missing required field is a structural error — must throw.
   const missing =
     '{"profile":{"id":"p1","skills":[],"targetRoles":[]},"candidateJobs":[],"expectedGoodIds":[]}';
   assert.throws(() => parseDatasetLines(missing), "loader rejects a profile missing summary");

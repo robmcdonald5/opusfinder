@@ -7,7 +7,7 @@ import type { Cursor, ProbeOutcome, SourceAdapter, SourceContext } from "./types
 import { subdomainLabel } from "./url-match";
 
 const API = "https://jsapi.recruiterbox.com/v1/openings/";
-const API_HOST = new URL(API).hostname; // "jsapi.recruiterbox.com"
+const API_HOST = new URL(API).hostname;
 const TRAKSTAR_HOST = "hire.trakstar.com";
 const RECRUITERBOX_HOST = "recruiterbox.com";
 
@@ -17,19 +17,15 @@ const RECRUITERBOX_HOST = "recruiterbox.com";
 const PAGE_LIMIT = 20;
 
 /**
- * Trakstar Hire (Recruiterbox) adapter (Phase 6.5 Wave A). The board API is OFFSET-paginated
- * via `&limit=&offset=` over `{ meta: { offset, limit, total }, objects: [...] }`, which maps
- * directly onto the existing `{ kind: "offset" }` Cursor — no new Cursor member. Descriptions
- * are inline (no hydrate).
+ * Trakstar Hire (Recruiterbox) adapter. The board API is OFFSET-paginated via `&limit=&offset=`
+ * over `{ meta: { offset, limit, total }, objects: [...] }`, which maps directly onto the existing
+ * `{ kind: "offset" }` Cursor. Descriptions are inline (no hydrate).
  *
  * Quirks: the host is case-INSENSITIVE and echoes `client_name` lowercased, so `normalizeSlug`
- * lowercases to the canonical form. `id` is already a string (e.g. "fk0745"). `location` is a
- * single OBJECT (`{ city, state, country, zipcode }`), composed into one string. `remote` is
- * the structured `allows_remote` (true | false | null) — `true`/`false` are BOTH authoritative;
- * only `null`/absent infers from the location text (no "Hybrid" string exists, so no Hybrid trap). There is NO
- * posted/created date (only `close_date`, an EXPIRY date), so `postedAt` is always null. An
- * unknown slug returns HTTP 400 (handled loud by runAdapter); a real-but-empty board returns
- * 200 with `meta.total: 0`.
+ * lowercases. `id` is already a string (e.g. "fk0745"). `remote` is the structured `allows_remote`
+ * tri-state (see mapItem). There is NO posted/created date (only `close_date`, an EXPIRY date), so
+ * `postedAt` is always null. An unknown slug returns HTTP 400 (handled loud by runAdapter); a
+ * real-but-empty board returns 200 with `meta.total: 0`.
  */
 export const trakstarAdapter: SourceAdapter = {
   source: "trakstar",

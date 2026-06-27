@@ -7,22 +7,15 @@ import type { SourceAdapter, SourceContext } from "./types";
 import { firstPathSegment, segmentAfter } from "./url-match";
 
 const JOB_BOARD_API = "https://api.gem.com/job_board/v0";
-const API_HOST = new URL(JOB_BOARD_API).hostname; // "api.gem.com"
+const API_HOST = new URL(JOB_BOARD_API).hostname;
 const PUBLIC_HOST = "jobs.gem.com";
 
 /**
- * Gem job-board adapter (Phase 6.5 Wave A). Gem white-labels a Greenhouse-style board but
- * serves it as a BARE top-level array (like Lever), so `locate` accepts an array and throws
- * if it isn't one — there is no `{ jobs }` envelope. Returns the whole board in one response
- * (no pagination, `nextCursor` omitted) with descriptions inline (no hydrate).
- *
- * Quirks: the endpoint REQUIRES the trailing slash on `/job_posts/`. The host is case-
- * SENSITIVE (an uppercased slug 404s), so `normalizeSlug` PRESERVES casing. `id` is already a
- * string (mixed legacy numeric-strings + opaque tokens), so no String() coercion. `remote`
- * comes from the structured `location_type` enum (remote/hybrid/in_office) — there is no
- * boolean isRemote field, so the classic Hybrid-true trap does not apply. Description prefers
- * the genuine plain-text `content_plain` (collapse only); the single-encoded HTML `content`
- * is the fallback only when content_plain is empty.
+ * Gem job-board adapter. Gem white-labels a Greenhouse-style board but serves it as a BARE
+ * top-level array (like Lever), so `locate` accepts an array and throws if it isn't one — there
+ * is no `{ jobs }` envelope. Returns the whole board in one response (no pagination, `nextCursor`
+ * omitted) with descriptions inline (no hydrate). See the inline comments for the per-field quirks
+ * (case-sensitive host, required trailing slash, string `id`, `location_type` enum, `content_plain`).
  */
 export const gemAdapter: SourceAdapter = {
   source: "gem",

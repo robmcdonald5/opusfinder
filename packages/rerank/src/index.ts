@@ -1,19 +1,10 @@
 /**
- * The pure, shared rerank core (Phase 10). Turns a user profile + a candidate pool into a ranked
- * ordering by asking an LLM to SCORE candidates for relevance — but it owns only the orchestration and
- * the prompt SKELETON: the stable scoring rubric + the per-user profile composed into one cacheable
- * `system` string, chunking the candidates, merging the per-chunk scores into a global order, and
- * backfilling any omitted ids into a full permutation. The actual LLM round-trip is an INJECTED
- * {@link RerankCall}, so this module depends ONLY on `@opusfinder/shared` types — NO `@opusfinder/llm`,
- * NO db, NO Inngest at the top level. That injection is what lets the SAME function run in the digest
- * pipeline (call = a real Haiku `generateObject` with `cacheSystem`) and in the eval harness (call = a
- * deterministic stub), so eval scores exactly what production runs. Mirrors the `embeddingRanker(embed)`
- * injection blueprint in `packages/eval`.
- *
- * Design note (resolves a PHASE_10_PLAN §5 wording conflict): the core BUILDS the `system` string
- * (rubric + profile) rather than receiving it pre-rendered, so the prompt prefix is shared between the
- * digest and a real-LLM eval run by construction. Only the candidate LIST (the variable tail) is the
- * injected call's concern — keeping the cached prefix stable AND the core free of any LLM dependency.
+ * The pure, shared rerank core: turns a user profile + a candidate pool into a ranked ordering by asking
+ * an LLM to SCORE candidates, owning only the orchestration and the prompt skeleton (rubric + profile in
+ * one cacheable `system`, chunking, merging scores, backfilling omissions into a full permutation). The
+ * LLM round-trip is an INJECTED {@link RerankCall}, so this module depends ONLY on `@opusfinder/shared` —
+ * no llm/db/Inngest — which lets the SAME function run in the digest (a real Haiku `generateObject` with
+ * `cacheSystem`) and in eval (a deterministic stub), so eval scores exactly what production runs.
  */
 import {
   composeProfileText,
@@ -53,8 +44,7 @@ export interface RerankResult {
   scores: Map<number, number>;
 }
 
-/** Default candidates per call — the spec's "10–20 jobs per call". Small enough to keep each listwise
- *  scoring prompt focused, large enough that the cached system+profile prefix dominates the cost. */
+/** Default candidates per call — small enough to keep each scoring prompt focused, large enough that the cached system+profile prefix dominates the cost. */
 export const DEFAULT_CHUNK_SIZE = 13;
 
 /**
@@ -161,12 +151,12 @@ RULES (must follow)
 export function buildRerankSystem(profile: StructuredProfile, prefs?: PromptPreferences): string {
   const base = `${RERANK_RUBRIC}\n\n=== Candidate profile ===\n${composeProfileText(profile)}`;
   // The judgment-context preferences (YoE band / salary range / dealbreakers) ride a labeled block AFTER
-  // the profile, inside the SAME cached system string (Phase F3). composePromptPrefs
-  // returns "" for an unset/all-empty PromptPreferences, so an un-answered user's prefix is byte-identical
-  // to the no-prefs path — no per-user prompt-cache bust on deploy. NEVER fed through composeProfileText
-  // (that is the embedding text, which must stay prefs-free).
-  const ctx = composePromptPrefs(prefs);
-  return ctx ? `${base}\n\n=== Candidate stated preferences ===\n${ctx}` : base;
+  // the profile, inside the SAME cached system string. composePromptPrefs returns "" for an unset/all-empty
+  // PromptPreferences, so an un-answered user's prefix is byte-identical to the no-prefs path — no per-user
+  // prompt-cache bust on deploy. NEVER fed through composeProfileText (that is the embedding text, which
+  // must stay prefs-free).
+  const prefsBlock = composePromptPrefs(prefs);
+  return prefsBlock ? `${base}\n\n=== Candidate stated preferences ===\n${prefsBlock}` : base;
 }
 
 /**

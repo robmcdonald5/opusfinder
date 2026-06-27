@@ -3,11 +3,9 @@ import { runScript } from "@opusfinder/shared/script";
 import { geoMatches } from "../src/repos/retrieval";
 
 /**
- * Stub smoke for the Phase-F3 location filter — the pure geoMatches truth table, NO creds, NO Postgres.
- * geoMatches is the ONE deterministic filter F3 ships now (salary/YoE are stored + soft-prompt only), so
- * a wrong branch silently drops or keeps the wrong jobs. This locks the full mode × job-shape matrix:
- *   - remote job:  any → keep, remote_only → keep, onsite_only → DROP;
- *   - on-site job: remote_only → DROP; any/onsite_only → subject to the locations allowlist;
+ * Stub smoke for the location filter — the pure geoMatches truth table, NO creds, NO Postgres.
+ * geoMatches is the ONE deterministic filter shipped now (salary/YoE are stored + soft-prompt only), so
+ * a wrong branch silently drops or keeps the wrong jobs. Two non-obvious rules:
  *   - the unknown-location-passes rule (job has no location data → keep) holds under any/onsite_only;
  *   - the legacy boolean mapping is preserved: remote_ok=true ≡ 'any', remote_ok=false ≡ 'onsite_only'.
  *

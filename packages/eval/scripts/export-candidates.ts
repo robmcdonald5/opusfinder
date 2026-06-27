@@ -1,10 +1,7 @@
 /**
- * Dump real ingested jobs from Neon to a working JSON file, so the labeled candidate pools in
- * dataset.jsonl are built from REAL postings (the Phase-5 requirement) rather than invented.
- * Read-only — a plain SELECT, no writes. The output is a hand-curation aid: when authoring an
- * example you copy the relevant subset (relevant + distractor jobs) into dataset.jsonl as the
- * candidate pool, then label `expectedGoodIds`. The export is gitignored; only the curated,
- * frozen dataset is committed.
+ * Dump real ingested jobs from Neon to a working JSON file — read-only (a plain SELECT); a
+ * hand-curation aid for building dataset.jsonl candidate pools from REAL postings. Gitignored;
+ * only the curated, frozen dataset is committed.
  *
  *   pnpm --filter @opusfinder/eval export:candidates                 # all jobs -> data/candidates-export.json
  *   pnpm --filter @opusfinder/eval export:candidates -- --limit 200

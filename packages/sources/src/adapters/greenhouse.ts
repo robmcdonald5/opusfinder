@@ -6,7 +6,7 @@ import type { SourceAdapter, SourceContext } from "./types";
 import { firstPathSegment, segmentAfter } from "./url-match";
 
 const BOARDS_API = "https://boards-api.greenhouse.io/v1/boards";
-const BOARDS_API_HOST = new URL(BOARDS_API).hostname; // "boards-api.greenhouse.io"
+const BOARDS_API_HOST = new URL(BOARDS_API).hostname;
 // Public board hosts (US + EU) that carry the slug as the first path segment. Distinct
 // hostnames, NOT ".greenhouse.io" with an ".eu" path segment.
 const BOARD_HOSTS = new Set([
@@ -17,10 +17,9 @@ const BOARD_HOSTS = new Set([
 ]);
 
 /**
- * Greenhouse board adapter (the Phase-1 reference, now a descriptor). The board API
- * returns every posting in one `{ jobs, meta }` response, so there is no pagination
- * (`nextCursor` omitted) and no hydration. Board tokens are lowercase, so `normalizeSlug`
- * lowercases before branding.
+ * Greenhouse board adapter. The board API returns every posting in one `{ jobs, meta }`
+ * response, so there is no pagination (`nextCursor` omitted) and no hydration. Board tokens are
+ * lowercase, so `normalizeSlug` lowercases before branding.
  */
 export const greenhouseAdapter: SourceAdapter = {
   source: "greenhouse",

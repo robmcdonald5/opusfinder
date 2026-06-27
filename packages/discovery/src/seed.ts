@@ -1,11 +1,11 @@
 import { fetchHnAlgoliaLane } from "./lanes/hn";
 
 /**
- * The discovery seed: outscal/OpenJobs `data/companies_v2.json` — ~12k gaming/tech companies, each
- * with an `ats_links[]` of public job-board URLs (lane B1). Pinned to a commit SHA so a local
- * bootstrap run is deterministic and immune to an upstream schema/file move; bump SEED_SHA to refresh.
- * CC-BY-NC dataset — we read only the public board URLs to validate slugs. Many `ats_links` are vanity
- * careers pages rather than recognizable ATS boards, so most records resolve to no adapter (expected).
+ * The discovery seed: outscal/OpenJobs `data/companies_v2.json` — ~12k gaming/tech companies, each with
+ * an `ats_links[]` of public job-board URLs. Pinned to a commit SHA so a bootstrap run is deterministic
+ * and immune to an upstream schema/file move; bump SEED_SHA to refresh. CC-BY-NC dataset — we read only
+ * the public board URLs to validate slugs; many `ats_links` are vanity careers pages, so most records
+ * resolve to no adapter (expected).
  */
 const SEED_SHA = "cdcc533521afb61f4e60657b3dbe06e484ccddcf"; // outscal/OpenJobs main @ 2026-04-22
 export const SEED_URL = `https://raw.githubusercontent.com/outscal/OpenJobs/${SEED_SHA}/data/companies_v2.json`;
@@ -43,15 +43,15 @@ export async function loadSeed(url: string = SEED_URL): Promise<CompanyRecord[]>
  * A discovery SEED LANE: a named source of `CompanyRecord[]` that plugs in BEFORE `resolveSeed`. Each lane
  * OWNS mapping its raw fetch output into `{ name?, ats_links? }`; `resolveSeed` owns URL→(source, slug). The
  * `name` is the `lane_<name>_*` counter prefix + log label (lowercase, no spaces); `workerSafe` gates the
- * Worker loop — a fetch-only, bundle-safe lane is `true`, a Node-only lane (passive DNS / Common Crawl,
- * F5-LANES-2) is `false` and runs CLI-only.
+ * Worker loop — a fetch-only, bundle-safe lane is `true`, a Node-only lane (passive DNS / Common Crawl) is
+ * `false` and runs CLI-only.
  */
 export interface SeedLane {
   name: string;
   workerSafe: boolean;
   /**
-   * true = a fetch failure is RUN-FATAL (re-thrown) — the core seed's fail-loud floor (decision 7): a
-   * broken outscal seed should fail the run loudly, not silently yield zero. Omit/false = ISOLATED (the
+   * true = a fetch failure is RUN-FATAL (re-thrown) — the core seed's fail-loud floor: a broken outscal
+   * seed should fail the run loudly, not silently yield zero. Omit/false = ISOLATED (the
    * failure is tallied as `lane_<name>_error` and the loop continues), so one flaky external lane can't
    * zero a run a reliable lane would have fed. New external lanes (HN, …) default to isolated.
    */
@@ -60,9 +60,9 @@ export interface SeedLane {
 }
 
 /**
- * The lane registry — discovery supply's single extension point. F5b ships `outscal` (the SHA-pinned seed
- * above) as the sole lane; F5c adds `hn`. Node runs every lane; the Worker filters to `workerSafe` ones via
- * `runDiscovery`'s `opts.workerOnly`. Grow supply by adding a lane HERE, not by touching the pipeline.
+ * The lane registry — discovery supply's single extension point. Node runs every lane; the Worker filters
+ * to `workerSafe` ones via `runDiscovery`'s `opts.workerOnly`. Grow supply by adding a lane HERE, not by
+ * touching the pipeline.
  */
 export const SEED_LANES: SeedLane[] = [
   { name: "outscal", workerSafe: true, failLoud: true, fetch: () => loadSeed() },

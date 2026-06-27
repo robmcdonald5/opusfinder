@@ -4,8 +4,7 @@
  * share, so the rule lives once; the per-source VARIATION (which fields feed in, which enum
  * spellings count as remote) stays in each adapter's `mapItem`.
  *
- * Pure string/array operations only — no Node APIs — so these run unchanged in a Cloudflare
- * Worker (Phase 8).
+ * Pure string/array operations only — no Node APIs — so these run unchanged in a Cloudflare Worker.
  */
 
 /**

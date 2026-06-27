@@ -1,9 +1,9 @@
 /**
  * Tiny SQL/text primitives shared across the repo modules (jobs, embeddings, profiles): NUL
  * stripping for Postgres text/jsonb, the pgvector literal + `::vector(N)` cast built from the
- * single dimension constant, and the content-dedup signature expression (Phase F1). Centralized
- * here (Phase 9, when profiles became a third consumer) so the NUL rule, the vector cast, and the
- * signature normalization each have ONE definition instead of a per-file copy.
+ * single dimension constant, and the content-dedup signature expression. Centralized here so the
+ * NUL rule, the vector cast, and the signature normalization each have ONE definition instead of a
+ * per-file copy.
  */
 import { sql, type SQL } from "drizzle-orm";
 
@@ -73,25 +73,22 @@ export function textArrayLiteral(values: string[]): string {
 }
 
 /**
- * The SINGLE definition of the content-dedup signature EXPRESSION (Phase F1): md5 over an
- * aggressively-NORMALIZED title + description (lower → whitespace runs collapsed to a single space →
- * trimmed). Built as a `sql` fragment from two sub-expressions so the SAME normalization is reused at
- * all three write call sites — the upsertJobs INSERT VALUES (bound, NUL-stripped title/desc), the ON
- * CONFLICT SET (`excluded.*`), and the F1d backfill UPDATE (column refs) — eliminating any
- * write/backfill parity hazard (a JS write path + a SQL backfill could emit non-byte-identical output
- * and silently split signature groups). `md5` is Postgres-core (no pgcrypto, no `node:crypto`, no
- * async), so this stays one round-trip and Worker-safe by construction.
+ * The SINGLE definition of the content-dedup signature EXPRESSION: md5 over an aggressively-NORMALIZED
+ * title + description (lower → whitespace runs collapsed to a single space → trimmed). Built as a `sql`
+ * fragment from two sub-expressions so the SAME normalization is reused at all three write call sites —
+ * the upsertJobs INSERT VALUES (bound, NUL-stripped title/desc), the ON CONFLICT SET (`excluded.*`), and
+ * the backfill UPDATE (column refs) — eliminating any write/backfill parity hazard (a JS write path + a
+ * SQL backfill could emit non-byte-identical output and silently split signature groups). `md5` is
+ * Postgres-core (no pgcrypto, no `node:crypto`, no async), so this stays one round-trip and Worker-safe.
  *
- * DISTINCT from jobEmbeddingText (embeddings.ts:197): that joins these same two fields RAW for a
- * SEMANTIC embedding; this FOLDS them into an EXACT-MATCH key. Same two fields, OPPOSITE purpose —
- * never merge the two. The `chr(10)` separator keeps a whitespace boundary between title and
- * description. v1 normalization is MINIMAL — NO punctuation stripping (PHASE_F1_PLAN.md decision 7),
- * to avoid false-merging short distinct titles.
+ * DISTINCT from jobEmbeddingText: that joins these same two fields RAW for a SEMANTIC embedding; this
+ * FOLDS them into an EXACT-MATCH key. Same two fields, OPPOSITE purpose — never merge the two. The
+ * `chr(10)` separator keeps a whitespace boundary between title and description. Normalization is MINIMAL
+ * — NO punctuation stripping, to avoid false-merging short distinct titles.
  *
  * IMPLEMENTATION NOTE: the whitespace pattern is the POSIX class `[[:space:]]+`, NOT `\s+` — inside a
  * `sql` tagged TEMPLATE LITERAL the cooked escape `\s` would collapse to a bare `s` and silently match
- * the letter 's' instead of whitespace. `[[:space:]]` is backslash-free (same idiom as embeddings.ts:61)
- * and equivalent to Postgres `\s`. The F1a smoke render-asserts the pattern to lock this in.
+ * the letter 's' instead of whitespace. `[[:space:]]` is backslash-free and equivalent to Postgres `\s`.
  */
 export function signatureSql(titleExpr: SQL, descExpr: SQL): SQL {
   return sql`md5(btrim(regexp_replace(lower(${titleExpr} || chr(10) || ${descExpr}), '[[:space:]]+', ' ', 'g')))`;
@@ -99,13 +96,13 @@ export function signatureSql(titleExpr: SQL, descExpr: SQL): SQL {
 
 /**
  * JS mirror of signatureSql's NORMALIZATION (lower + whitespace-collapse + btrim), returning the
- * normalized string the SQL `md5` hashes. EXISTS SOLELY to compute the expected value in the F1a smoke
+ * normalized string the SQL `md5` hashes. EXISTS SOLELY to compute the expected value in the smoke
  * test — it is NEVER a production write path. Production signs EXCLUSIVELY via signatureSql, so a
- * JS/SQL divergence can never split a production signature group (decision 2). Caveat, same as
- * embeddings.ts:54-58: JS `\s` matches a broader Unicode whitespace set than Postgres's, so the two
- * can diverge on exotic whitespace (e.g. NBSP) — negligible for ATS data, and harmless here because
- * only the smoke consults this. A smoke wanting the literal md5 hex can hash the returned string with
- * `node:crypto` (a test-only import, never bundled into the Worker).
+ * JS/SQL divergence can never split a production signature group. Caveat: JS `\s` matches a broader
+ * Unicode whitespace set than Postgres's, so the two can diverge on exotic whitespace (e.g. NBSP) —
+ * negligible for ATS data, and harmless here because only the smoke consults this. A smoke wanting the
+ * literal md5 hex can hash the returned string with `node:crypto` (a test-only import, never bundled
+ * into the Worker).
  */
 export function normalizeSignatureText(title: string, desc: string): string {
   return `${title}\n${desc}`.toLowerCase().replace(/\s+/g, " ").trim();

@@ -8,9 +8,8 @@ import { embedBoard, embedPolicy } from "./ingest-shared";
 
 /**
  * Ad-hoc single-board ingestion across any ATS: fetch + normalize one board, upsert it
- * through @opusfinder/db, and (best-effort) embed the new/changed postings. Replaces the
- * per-source fetch-*.ts scripts. (Named `ingest`, not `fetch`, to avoid pnpm's built-in
- * `fetch` command; pairs with `ingest:all`.)
+ * through @opusfinder/db, and (best-effort) embed the new/changed postings. (Named `ingest`,
+ * not `fetch`, to avoid pnpm's built-in `fetch` command; pairs with `ingest:all`.)
  *
  *   pnpm --filter @opusfinder/sources ingest <source> <slug> [--no-embed]
  */

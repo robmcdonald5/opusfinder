@@ -6,8 +6,8 @@ import {
 } from "@opusfinder/shared";
 
 /**
- * The Phase-10 digest SYNTHESIS prompt — one short "why this matches you" note per ranked job. Run via
- * the Message Batches API (Sonnet 4.6, 50% discount) one request per kept item; the system (rubric +
+ * The digest SYNTHESIS prompt — one short "why this matches you" note per ranked job. Run via the
+ * Message Batches API (Sonnet 4.6, 50% discount) one request per kept item; the system (rubric +
  * profile) is the cached prefix shared across a user's items, the per-job text is the variable tail
  * ({@link renderDigestJob}). Synthesis writes the REASON only — it must NOT re-rank (order comes from
  * the rerank step). Output is plain text (no structured schema), so it avoids any
@@ -37,10 +37,10 @@ Output ONLY the note text — no preamble, no heading, no quotation marks, no ma
  */
 export function buildDigestSystem(profile: StructuredProfile, prefs?: PromptPreferences): string {
   const base = `${DIGEST_SYNTHESIS_SYSTEM}\n\n=== Candidate profile ===\n${composeProfileText(profile)}`;
-  // Same prefs block as the rerank system (Phase F3) so the note can ground level-fit honestly. The salary
-  // line, if present, is INERT here — the system rule above forbids mentioning salary in the note; it rides
-  // along only because composePromptPrefs is the one shared renderer. Empty/unset → "" → byte-identical to
-  // the no-prefs system (no per-user cache bust).
+  // Same prefs block as the rerank system so the note can ground level-fit honestly. The salary line,
+  // if present, is INERT here — the system rule above forbids mentioning salary in the note; it rides
+  // along only because composePromptPrefs is the one shared renderer. Empty/unset → "" → byte-identical
+  // to the no-prefs system (no per-user cache bust).
   const ctx = composePromptPrefs(prefs);
   return ctx ? `${base}\n\n=== Candidate stated preferences ===\n${ctx}` : base;
 }

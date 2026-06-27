@@ -1,8 +1,8 @@
 /**
- * The storage seam for Phase 9 CV artifacts (the durable original PDF + the cached transcript). A
- * thin interface so the pipeline (packages/profiles) depends on this CONTRACT, not on a concrete
- * client: Phase 9 ships the S3-compatible R2 client (createS3StorageClient, Node-only); Phase 12 can
- * drop in a Workers R2-binding implementation behind the SAME interface with no pipeline change.
+ * The storage seam for CV artifacts (the durable original PDF + the cached transcript). A thin
+ * interface so the pipeline (packages/profiles) depends on this CONTRACT, not on a concrete client —
+ * the S3-compatible R2 client (createS3StorageClient) or any other implementation behind the SAME
+ * interface, with no pipeline change.
  */
 
 /** A single object write. `body` is raw bytes (the PDF) or a string (the transcript). */

@@ -15,17 +15,16 @@ import {
 } from "../src/health-alert.ts";
 
 /**
- * Phase F6 health verdict — the verdict layer over the human-dump readers (`pnpm runs` / `delivery`).
- * Runs `checkHealth` (from @opusfinder/db, the pure/serverless-safe core) over live Neon, prints every
- * check (shadow + enforce + ok) and the cost rollup, and — if any ENFORCE-mode check is firing — pages the
- * operator via the SHARED `alertOnHealth` path (H1b). Shadow firings are printed but never page
- * (`[[shadow-validate-tunable-filters]]`).
+ * Health verdict — the verdict layer over the human-dump readers (`pnpm runs` / `delivery`). Runs
+ * `checkHealth` (from @opusfinder/db, the pure/serverless-safe core) over live Neon, prints every check
+ * (shadow + enforce + ok) and the cost rollup, and — if any ENFORCE-mode check is firing — pages the
+ * operator via the SHARED `alertOnHealth` path. Shadow firings are printed but never page.
  *
- * H1b: the alert send is the SAME deduped path the scheduled Inngest fn uses (`../src/health-alert`), so the
- * manual and scheduled runs page-once-per-`HEALTH_ALERT_COOLDOWN_H` consistently and BOTH populate the
- * `health_alerts` history (the Phase-12 panel reads it). This means `pnpm health` is no longer purely
- * read-only: an enforce-firing check that clears the cooldown WRITES one `health_alerts` row + sends one
- * email. Exit is non-zero whenever the report is unhealthy, even if the email was cooldown-suppressed.
+ * The alert send is the SAME deduped path the scheduled Inngest fn uses (`../src/health-alert`), so manual
+ * and scheduled runs page-once-per-`HEALTH_ALERT_COOLDOWN_H` consistently and BOTH populate the
+ * `health_alerts` history. So `pnpm health` is no longer purely read-only: an enforce-firing check that
+ * clears the cooldown WRITES one `health_alerts` row + sends one email. Exit is non-zero whenever the
+ * report is unhealthy, even if the email was cooldown-suppressed.
  *
  * Lives in @opusfinder/inngest (not @opusfinder/db) because it both READS (db) and SENDS (email). Needs
  * DATABASE_URL (packages/db/.env); thresholds/modes come from HEALTH_* env (see healthOptionsFromEnv), the

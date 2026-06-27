@@ -3,9 +3,9 @@ import { z } from "zod";
 import type { StructuredProfile } from "@opusfinder/shared";
 
 /**
- * The two prompts for Phase 9 CV ingestion, exported so the eval harness (Phase 5) runs the SAME
- * prompts production does. Layer 1 (transcribe) and Layer 2 (structure) are deliberately separate
- * calls so the structured extraction can re-run from cached text without re-paying the vision call.
+ * The two prompts for CV ingestion, exported so the eval harness runs the SAME prompts production
+ * does. Layer 1 (transcribe) and Layer 2 (structure) are deliberately separate calls so the
+ * structured extraction can re-run from cached text without re-paying the vision call.
  */
 
 /**
@@ -53,8 +53,8 @@ Extraction rules:
 
 /**
  * Layer-2 output schema — the same `{ summary, skills, targetRoles }` shape as `StructuredProfile`
- * (@opusfinder/shared). The CV pipeline (9e) types its `structure()` seam as returning
- * `StructuredProfile`, so any drift between this schema and that type fails the pipeline's typecheck.
+ * (@opusfinder/shared). The CV pipeline types its `structure()` seam as returning `StructuredProfile`,
+ * so any drift between this schema and that type fails the pipeline's typecheck.
  */
 export const CvProfileSchema = z.object({
   summary: z
@@ -72,7 +72,7 @@ export const CvProfileSchema = z.object({
 export type CvProfile = z.infer<typeof CvProfileSchema>;
 
 // Compile-time tripwire: CvProfileSchema must infer EXACTLY StructuredProfile (summary, skills[],
-// targetRoles[]). A drift in either fails `pnpm --filter @opusfinder/llm typecheck` NOW — not silently
-// until the 9e pipeline wires its `structure()` seam (which is typed to return StructuredProfile).
+// targetRoles[]). A drift in either fails `pnpm --filter @opusfinder/llm typecheck` NOW, not silently
+// when the CV pipeline wires its `structure()` seam (which is typed to return StructuredProfile).
 type Equal<A, B> = [A] extends [B] ? ([B] extends [A] ? true : never) : never;
 const _cvProfileMatchesStructuredProfile: Equal<CvProfile, StructuredProfile> = true;

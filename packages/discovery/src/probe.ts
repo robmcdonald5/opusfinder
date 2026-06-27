@@ -98,7 +98,7 @@ function contextOf(c: Candidate): SourceContext {
   return { slug: c.slug, rawSlug: c.rawSlug };
 }
 
-/** The probe request for a candidate — REUSES the Phase-6 `jobsRequest` (first page, no cursor). */
+/** The probe request for a candidate — reuses `jobsRequest` (first page, no cursor). */
 function requestOf(c: Candidate): JobsRequest {
   return adapters[c.source].jobsRequest(contextOf(c), null);
 }

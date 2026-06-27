@@ -1,6 +1,4 @@
-// Public surface of @opusfinder/discovery (Phase 7 slug discovery). Sub-phases (iv)+(v) ship the
-// non-throwing per-host-throttled probe layer plus the seed loader + URL→(source,slug) resolver; the
-// runDiscovery pipeline + scripts/discover.ts land in later sub-phases.
+// Public surface of @opusfinder/discovery.
 export { probeFetch, probeCandidate, probeCandidates, defaultClassify } from "./probe";
 export type { ProbeFetchResult, ProbeOptions } from "./probe";
 export { loadSeed, SEED_URL, SEED_LANES } from "./seed";

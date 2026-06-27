@@ -1,5 +1,5 @@
 /**
- * Unit tests for the F5b per-lane discovery loop (`selectLanes` + `resolveLanes`) over stub lanes —
+ * Unit tests for the per-lane discovery loop (`selectLanes` + `resolveLanes`) over stub lanes —
  * offline, deterministic, no network, no db. Covers: lane SELECTION (opts.lanes restrict; []/omit = all,
  * NOT zero; unknown name → empty; workerOnly → workerSafe only); the two N>1 RESOLUTION traps (cross-lane
  * dedupe collapses a shared (source,slug); named drop tallies SUM, not clobber); per-lane counters
@@ -43,10 +43,9 @@ const laneFatal: SeedLane = {
 };
 const laneNode: SeedLane = { name: "node", workerSafe: false, fetch: async () => [] };
 
-// --- selectLanes: restriction, []/omit = all, unknown → empty, workerOnly -------------------
 {
   const registry = [laneA, laneB, laneNode];
-  const names = (ls: SeedLane[]) => ls.map((l) => l.name);
+  const names = (lanes: SeedLane[]) => lanes.map((l) => l.name);
   assert.deepEqual(names(selectLanes(registry, {})), ["a", "b", "node"], "omit = all lanes");
   assert.deepEqual(names(selectLanes(registry, { lanes: [] })), ["a", "b", "node"], "[] = all (NOT zero)");
   assert.deepEqual(names(selectLanes(registry, { lanes: ["a"] })), ["a"], "restrict by name");
@@ -54,7 +53,6 @@ const laneNode: SeedLane = { name: "node", workerSafe: false, fetch: async () =>
   assert.deepEqual(names(selectLanes(registry, { workerOnly: true })), ["a", "b"], "workerOnly drops workerSafe:false");
 }
 
-// --- cross-lane dedupe + counts SUM (not clobber) ------------------------------------------
 {
   const counts = emptyCounts();
   const candidates = await resolveLanes([laneA, laneB], counts, {});
@@ -70,7 +68,6 @@ const laneNode: SeedLane = { name: "node", workerSafe: false, fetch: async () =>
   assert.equal(counts.lane_b_candidates, 1, "lane b contributed 1 (shared greenhouse:acme deduped out)");
 }
 
-// --- opts.source scopes the resolve through to resolveSeed ---------------------------------
 {
   const counts = emptyCounts();
   const candidates = await resolveLanes([laneA], counts, { source: "greenhouse" });
@@ -81,7 +78,6 @@ const laneNode: SeedLane = { name: "node", workerSafe: false, fetch: async () =>
   );
 }
 
-// --- an ISOLATED (non-failLoud) throwing lane is caught; healthy lanes still contribute -----
 {
   const counts = emptyCounts();
   const candidates = await resolveLanes([laneBoom, laneA], counts, {});
@@ -90,7 +86,6 @@ const laneNode: SeedLane = { name: "node", workerSafe: false, fetch: async () =>
   assert.equal(counts.candidates, 2, "counts.candidates reflects only the healthy lane");
 }
 
-// --- a FAIL-LOUD lane (the core seed) re-throws: a broken core seed FAILS the run ----------
 {
   const counts = emptyCounts();
   await assert.rejects(
@@ -101,7 +96,6 @@ const laneNode: SeedLane = { name: "node", workerSafe: false, fetch: async () =>
   assert.equal(counts.lane_fatal_error, 1, "the error is still tallied before the re-throw");
 }
 
-// --- per-lane candidate counter ACCUMULATES (symmetric with the error counter) -------------
 {
   const counts = emptyCounts();
   await resolveLanes([laneA, laneA], counts, {});

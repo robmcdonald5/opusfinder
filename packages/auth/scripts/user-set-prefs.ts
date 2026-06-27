@@ -5,7 +5,7 @@ import { getDatabaseUrl } from "@opusfinder/db/env";
 import { updatePreferences } from "@opusfinder/db/repos";
 import { runScript } from "@opusfinder/shared/script";
 
-import { findUserByEmail } from "../src/index";
+import { findUserIdByEmail } from "../src/index";
 import { maskEmail, prefsFromFlags } from "./cli-utils";
 
 const USAGE =
@@ -40,7 +40,7 @@ async function main(): Promise<void> {
   }
 
   const db = createDb(getDatabaseUrl());
-  const userId = await findUserByEmail(db, email);
+  const userId = await findUserIdByEmail(db, email);
   if (!userId) {
     console.error(`No user with email ${maskEmail(email)}.`);
     process.exitCode = 1;

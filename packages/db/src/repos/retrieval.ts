@@ -1,7 +1,7 @@
 /**
- * Phase-10 digest retrieval: the deterministic filter + cosine nearest-neighbour query that turns a
- * user's profile embedding into a ranked candidate set. Kept separate from the Phase-4 embeddings
- * backfill machinery (embeddings.ts) so the digest read path is self-contained.
+ * Digest retrieval: the deterministic filter + cosine nearest-neighbour query that turns a user's profile
+ * embedding into a ranked candidate set. Kept separate from the embeddings backfill machinery
+ * (embeddings.ts) so the digest read path is self-contained.
  *
  * Reuses nearestJobs's exact cosine pattern (bind the query vector ONCE, compute `<=>` in the
  * projection, ORDER BY the distance alias so the HNSW path still matches at scale) and layers the
@@ -36,7 +36,7 @@ export interface RetrieveOpts {
   overFetch?: number;
   /** From user_preferences: Indeed/LinkedIn-style location mode (default "any"). `remote_only` keeps only
    *  remote jobs; `onsite_only` keeps only on-site jobs (subject to `locations`); `any` keeps both. Applied
-   *  app-side in geoMatches. SUBSUMES the former `remoteOk` boolean. */
+   *  app-side in geoMatches. */
   locationMode?: LocationMode;
   /** From user_preferences: preferred location strings; empty = no location constraint. */
   locations?: string[];
@@ -48,7 +48,7 @@ export interface RetrieveOpts {
   exclusions?: string[];
   /** Already-shown job ids to exclude (the digest_items anti-join feeds this). */
   excludeJobIds?: number[];
-  /** Already-shown content signatures to exclude — the F1 repost anti-join (alreadyShownSignatures feeds
+  /** Already-shown content signatures to exclude — the repost anti-join (alreadyShownSignatures feeds
    *  this). A re-listed role gets a fresh external_id → a new job_id the id anti-join can't see, but the
    *  SAME content_signature; this suppresses it. A NULL-signature candidate is never excluded by it. */
   excludeSignatures?: string[];
@@ -60,9 +60,9 @@ export interface JobCandidate {
   descriptionText: string;
   locations: string[];
   remote: boolean;
-  /** The F1 content-dedup signature (md5 of normalized title+desc), or NULL until backfilled. Drives the
+  /** The content-dedup signature (md5 of normalized title+desc), or NULL until backfilled. Drives the
    *  same-signature display collapse. NOT forwarded into Inngest step state — the retrieve step
-   *  deliberately returns only id/title/description (decision 4); this stays a local retrieval field. */
+   *  deliberately returns only id/title/description; this stays a local retrieval field. */
   contentSignature: string | null;
   /** Cosine distance from the profile vector (`<=>`); smaller is closer. */
   distance: number;
@@ -70,7 +70,7 @@ export interface JobCandidate {
 
 /**
  * The top candidate jobs for a profile embedding, deterministically filtered then cosine-ranked.
- * `minSalary` is intentionally NOT a filter — jobs carry no salary column (Phase-10 decision).
+ * `minSalary` is intentionally NOT a filter — jobs carry no salary column.
  */
 export async function retrieveCandidatesForProfile(
   db: Db,
@@ -103,9 +103,9 @@ export async function retrieveCandidatesForProfile(
     conditions.push(sql`id <> ALL(${arrayLiteral}::int[])`);
   }
   if (excludeSignatures.length > 0) {
-    // Additive repost anti-join (F1c): drop a candidate whose content_signature the user has already
-    // seen, but KEEP NULL-signature (un-backfilled) candidates — they behave exactly as pre-F1. One
-    // bound text param cast to text[] (md5 hex is brace/comma/NUL-free), mirroring the int[] idiom.
+    // Additive repost anti-join: drop a candidate whose content_signature the user has already seen, but
+    // KEEP NULL-signature (un-backfilled) candidates. One bound text param cast to text[] (md5 hex is
+    // brace/comma/NUL-free), mirroring the int[] idiom.
     const sigLiteral = textArrayLiteral(excludeSignatures);
     conditions.push(sql`(content_signature IS NULL OR content_signature <> ALL(${sigLiteral}::text[]))`);
   }
@@ -143,9 +143,9 @@ export async function retrieveCandidatesForProfile(
   // apply_url/company. No-op for distinct distances (distance still decides), so the HNSW ordering stands.
   candidates.sort((a, b) => a.distance - b.distance || a.id - b.id);
 
-  // App-side geo + exclusion filters, then the same-signature display collapse (F1b), then trim to
-  // `limit` (see the file header for why app-side). Running the collapse on the over-fetch buffer means
-  // a dropped cross-post frees a slot the trim back-fills from the remaining buffer.
+  // App-side geo + exclusion filters, then the same-signature display collapse, then trim to `limit`.
+  // Running the collapse on the over-fetch buffer means a dropped cross-post frees a slot the trim
+  // back-fills from the remaining buffer.
   const displayable = candidates.filter(
     (c) => geoMatches(c, locationMode, locations) && !isExcluded(c, exclusions),
   );
@@ -153,20 +153,20 @@ export async function retrieveCandidatesForProfile(
 }
 
 /**
- * Same-signature display collapse (F1b): from a DISTANCE-SORTED candidate list, keep the first member of
- * each content_signature group and drop later same-signature members, so a cross-posted role occupies
- * ONE digest slot (the closest-to-profile member wins). NULL signatures are each their own group — an
+ * Same-signature display collapse: from a DISTANCE-SORTED candidate list, keep the first member of each
+ * content_signature group and drop later same-signature members, so a cross-posted role occupies ONE
+ * digest slot (the closest-to-profile member wins). NULL signatures are each their own group — an
  * un-backfilled row is never collapsed. Pure + order-preserving; the `Set` is declared OUTSIDE the
  * predicate so state persists across the scan. Generic + exported so the smoke can drive it with minimal
  * `{contentSignature}` objects.
  *
- * CAVEAT (F1b × F2 Arm C — F1–F8 review B1): the dropped siblings are gone from the candidate set BEFORE
- * the pre-send liveness probe (inngest/probe.ts) runs. So if the kept representative's apply_url is later
+ * CAVEAT (collapse × pre-send probe): the dropped siblings are gone from the candidate set BEFORE the
+ * pre-send liveness probe (inngest/probe.ts) runs. So if the kept representative's apply_url is later
  * dead (404/410), the probe drops the WHOLE role with no fallback to a live same-signature sibling — and
  * if it was the digest's only item, no email is sent. Reachable because content_signature excludes the
  * apply_url, so cross-board siblings have DISTINCT urls. Bounded (≤ the retrieved slot count) and usually
  * self-healing next run (the dead member re-surfaces, or a live sibling wins once the dead posting
- * changes); a persistent-404-but-active representative re-loses it until Arm A's absence streak closes it.
+ * changes); a persistent-404-but-active representative re-loses it until its absence streak closes it.
  * ACCEPTED as low-severity — recover via a probe-time same-signature fallback only if dead-link cross-post
  * recall becomes a real problem.
  */
@@ -202,21 +202,20 @@ function compileExclusions(exclusions: string[]): RegExp[] {
 
 function isExcluded(job: JobCandidate, exclusions: RegExp[]): boolean {
   if (exclusions.length === 0) return false;
-  const hay = `${job.title}\n${job.descriptionText}`;
-  return exclusions.some((re) => re.test(hay));
+  const haystack = `${job.title}\n${job.descriptionText}`;
+  return exclusions.some((re) => re.test(haystack));
 }
 
 /**
- * Indeed/LinkedIn-style geo match (Phase F3), branching on the user's {@link LocationMode}:
+ * Indeed/LinkedIn-style geo match, branching on the user's {@link LocationMode}:
  * - a REMOTE job passes unless the mode is `onsite_only` (so `any`/`remote_only` keep it);
  * - an ON-SITE job is dropped under `remote_only`; otherwise (`any`/`onsite_only`) it passes iff the user
  *   set no location constraint, OR the job has no location data (unknown ≠ mismatch — ATS feeds often
  *   leave locations empty, putting it in the description; dropping these would silently tank recall, so
  *   include and let rerank/synthesis judge), OR one of the user's locations overlaps a job location.
- * SUBSUMES the former boolean: `remote_ok=true`→`any`, `false`→`onsite_only`. The exact on-site rule still
- * firms up with the Phase-12 onboarding form. `onsite_only` is the only mode that drops jobs the prior
- * filter kept (all remote) — it inherits the unknown-location-passes rule above. Generic + exported so the
- * smoke can drive the truth table with minimal `{remote, locations}` objects.
+ * `onsite_only` is the only mode that drops jobs the prior filter kept (all remote) — it inherits the
+ * unknown-location-passes rule above. Generic + exported so the smoke can drive the truth table with
+ * minimal `{remote, locations}` objects.
  */
 export function geoMatches<T extends { remote: boolean; locations: string[] }>(
   job: T,
@@ -224,7 +223,7 @@ export function geoMatches<T extends { remote: boolean; locations: string[] }>(
   locations: string[],
 ): boolean {
   if (job.remote) return mode !== "onsite_only";
-  if (mode === "remote_only") return false; // on-site job, remote-only user
+  if (mode === "remote_only") return false;
   const wanted = locations.map((l) => l.toLowerCase().trim()).filter((l) => l.length > 0);
   if (wanted.length === 0) return true;
   const have = job.locations.map((l) => l.toLowerCase().trim());

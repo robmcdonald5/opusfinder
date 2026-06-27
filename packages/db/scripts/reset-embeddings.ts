@@ -9,10 +9,10 @@ import { getDatabaseUrl } from "../src/env";
  * One-time reset of `jobs.embedding` ahead of an embedding-model swap (e.g. voyage-3-large →
  * voyage-4-large). The two models produce vectors in DIFFERENT embedding spaces, so an existing
  * voyage-3 vector cannot be cosine-compared against a new voyage-4 query vector — the whole corpus
- * must be re-embedded. This NULLs every embedding in id-keyset batches (the same shape as
- * reclaim-raw.ts). Flushing leaves ZERO old-model vectors, so the jobs corpus can safely refill
- * with the CURRENT model (EMBED_MODEL in @opusfinder/embeddings) gradually — `nearestJobs` skips
- * NULL rows, so it only ever sees the refilled (new-model) subset. Idempotent: a second run finds 0.
+ * must be re-embedded. This NULLs every embedding in id-keyset batches. Flushing leaves ZERO old-model
+ * vectors, so the jobs corpus can safely refill with the CURRENT model (EMBED_MODEL in
+ * @opusfinder/embeddings) gradually — `nearestJobs` skips NULL rows, so it only ever sees the refilled
+ * (new-model) subset. Idempotent: a second run finds 0.
  *
  * Refill jobs over time on the next embedding run, OR `pnpm embeddings:backfill` to refill all now.
  * EITHER WAY, re-embed the QUERY side once first: the stored user-profile vector does NOT drift, so

@@ -15,9 +15,9 @@ import type { EvalProfile } from "../src/types";
 
 /**
  * Generate an `EvalProfile` from a real CV PDF via the SAME cv-extract prompts + quality gates the
- * production pipeline uses (transcribe → structure → PII-scrub), so the Phase-5 eval harness exercises
- * the Phase-9 extraction prompt. Prints a paste-ready, PII-free profile to stdout; the CV owner (the
- * labeling authority) adds `goodIds` for it in build-dataset.ts's LABELS and re-runs build:dataset.
+ * production pipeline uses (transcribe → structure → PII-scrub). Prints a paste-ready, PII-free
+ * profile to stdout; the CV owner (the labeling authority) adds `goodIds` for it in
+ * build-dataset.ts's LABELS and re-runs build:dataset.
  *
  * The LLM wiring + guards mirror packages/profiles (scripts/seams.ts + ingestCv's gates) — kept
  * separate because those seams are script-local and the @opusfinder/profiles index stays

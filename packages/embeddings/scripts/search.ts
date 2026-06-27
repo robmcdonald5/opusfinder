@@ -6,8 +6,8 @@ import { runScript } from "@opusfinder/shared/script";
 import { embed } from "../src/index";
 
 /**
- * Embed a query string and print the nearest jobs by cosine distance — the Phase-4
- * retrieval smoke test. The query is embedded as `"query"` (the asymmetric counterpart
+ * Embed a query string and print the nearest jobs by cosine distance — the retrieval
+ * smoke test. The query is embedded as `"query"` (the asymmetric counterpart
  * to jobs' `"document"`), then matched via the HNSW index.
  */
 async function main(): Promise<void> {

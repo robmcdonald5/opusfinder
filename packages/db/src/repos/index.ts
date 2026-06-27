@@ -44,10 +44,10 @@ export {
   setDigestApproval,
 } from "./preferences";
 export type { UserPreferencesRow, CreatePreferencesInput } from "./preferences";
-// Phase 10 digest retrieval — the deterministic filter + cosine ranking over a profile vector.
+// Digest retrieval — the deterministic filter + cosine ranking over a profile vector.
 export { retrieveCandidatesForProfile } from "./retrieval";
 export type { RetrieveOpts, JobCandidate } from "./retrieval";
-// Phase F2 lifecycle closing — the first writers of lifecycle_state='closed' (feed-absence sweep + board-death + Arm C 410).
+// Lifecycle closing — the first writers of lifecycle_state='closed' (feed-absence sweep + board-death + 410-close).
 export {
   sweepLifecycle,
   closeJobsForCompanies,
@@ -59,7 +59,7 @@ export {
   DEFAULT_STALE_TTL_DAYS,
 } from "./lifecycle";
 export type { SweepResult, SweepOptions, CloseResult } from "./lifecycle";
-// Phase 10 digest persistence — recipient list, already-shown anti-join, run/header/item writes.
+// Digest persistence — recipient list, already-shown anti-join, run/header/item writes.
 export {
   listDigestRecipients,
   alreadyShownJobIds,
@@ -80,7 +80,7 @@ export type {
   DigestItemSnapshot,
   DigestView,
 } from "./digests";
-// Phase 11 email delivery — the render payload read + per-send / user-level delivery-state writes.
+// Email delivery — the render payload read + per-send / user-level delivery-state writes.
 export {
   getDigestEmailPayload,
   recordDigestSent,
@@ -88,8 +88,8 @@ export {
   recordDigestSendFailure,
 } from "./digests";
 export type { DigestEmailPayload, DigestDeliveryOutcome } from "./digests";
-// Phase F2 Arm C — the pre-send liveness probe's apply-URL read + dead-link drop.
+// Pre-send liveness probe — the apply-URL read + dead-link drop.
 export { getDigestApplyTargets, dropDigestItemsAndRecount } from "./digests";
 export type { DigestApplyTarget } from "./digests";
-// Phase H1b — first writer/reader of health_alerts (cooldown page-once dedup over the F6 checker).
+// First writer/reader of health_alerts (cooldown page-once dedup over the health checker).
 export { recordHealthAlert, shouldNotify, DEFAULT_HEALTH_ALERT_COOLDOWN_H } from "./health-alerts";

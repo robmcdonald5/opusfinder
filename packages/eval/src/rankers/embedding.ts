@@ -8,7 +8,7 @@ import type { Ranker } from "../types";
 /**
  * Vector-retrieval ranker: embed the profile as a "query" and each candidate as a "document",
  * then order candidates by cosine similarity (descending). This is the SAME computation the
- * Phase-10 digest pipeline runs against the pgvector HNSW index — done IN MEMORY here over the
+ * digest pipeline runs against the pgvector HNSW index — done IN MEMORY here over the
  * small labeled pool, so the Voyage-vs-OpenAI comparison is just two `embeddingRanker`s built
  * from different `Embedder`s, and the production `jobs.embedding` column is never touched.
  *
@@ -26,7 +26,7 @@ export function embeddingRanker(embed: Embedder): Ranker {
   const docCache = new Map<string, number[]>();
   return async (profile, candidates) => {
     // composeProfileText (@opusfinder/shared) is the single source of truth for the profile query
-    // text — eval embeds profiles exactly as the Phase-9 ingest pipeline does.
+    // text — eval embeds profiles exactly as the ingest pipeline does.
     const profileVecs = await embed([composeProfileText(profile)], "query");
     const queryVec = profileVecs[0];
     if (!queryVec) throw new Error("embedder returned no vector for the profile.");

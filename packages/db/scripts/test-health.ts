@@ -14,7 +14,7 @@ import {
 import { recordHealthAlert, shouldNotify } from "../src/repos/health-alerts";
 
 /**
- * Stub smoke for the Phase-F6 health checker (F6b) — the JS-decidable surface, NO creds, NO Postgres.
+ * Stub smoke for the health checker — the JS-decidable surface, NO creds, NO Postgres.
  * Exercises the PURE evaluator `evaluateHealth(signals, opts)` directly with canned signal shapes (the
  * point of the gather/evaluate split: no db stub needed), plus `healthOptionsFromEnv` parsing. Asserts:
  *   - a healthy signal set fires nothing and is not `unhealthy`;
@@ -24,7 +24,7 @@ import { recordHealthAlert, shouldNotify } from "../src/repos/health-alerts";
  *   - the board fail-ratio does not divide by zero on an empty (0-company) tick;
  *   - null ages (pipeline never ran) fire the staleness/window checks;
  *   - the cost rollup computes cache-hit-rate (and null when there is no rerank traffic).
- * The live verdict over real Neon (`pnpm health`) is F6c's job.
+ * The live verdict over real Neon is `pnpm health`.
  *
  *   pnpm --filter @opusfinder/db test:health
  */
@@ -63,7 +63,7 @@ const find = (r: HealthReport, id: HealthCheckId) => {
 };
 
 await runScript("test-health", async () => {
-  // 1) Healthy signals: nothing fires, not unhealthy, all seven checks present.
+  // 1) Healthy signals.
   {
     const r = evaluateHealth(HEALTHY);
     assert(r.checks.length === 7, `expected 7 checks, got ${r.checks.length}`);
@@ -75,7 +75,6 @@ await runScript("test-health", async () => {
   for (const { id, over } of BREACHES) {
     const signals = { ...HEALTHY, ...over };
 
-    // shadow (default): the check fires, but unhealthy stays false; no OTHER check fires.
     const shadow = evaluateHealth(signals);
     assert(find(shadow, id).state === "firing", `${id}: must fire on its breach shape`);
     assert(!shadow.unhealthy, `${id}: a shadow firing must NOT set unhealthy`);
@@ -84,12 +83,10 @@ await runScript("test-health", async () => {
       `${id}: breach must trip exactly one check, not others`,
     );
 
-    // enforce: the same breach now sets unhealthy.
     const enforce = evaluateHealth(signals, { modes: { [id]: "enforce" } });
     assert(find(enforce, id).state === "firing", `${id}: still fires under enforce`);
     assert(enforce.unhealthy, `${id}: an enforce firing MUST set unhealthy`);
 
-    // off: the check is skipped and cannot contribute to unhealthy.
     const off = evaluateHealth(signals, { modes: { [id]: "off" } });
     assert(find(off, id).state === "skipped", `${id}: off mode must skip the check`);
     assert(!off.unhealthy, `${id}: an off check must never set unhealthy`);
@@ -217,10 +214,10 @@ await runScript("test-health", async () => {
     assert(both.modes?.embedding_backlog === "enforce", "enforce must win over off when an id is in both lists");
   }
 
-  // 7) H1b dedup primitives (stubbed db, NO creds, NO Postgres): shouldNotify gates purely on the
+  // 7) Dedup primitives (stubbed db, NO creds, NO Postgres): shouldNotify gates purely on the
   //    recent-row count, and recordHealthAlert writes the shape-only fields. Drives the full page-once
   //    cycle — clear → page+record → suppressed within cooldown → re-armed after — by setting the count
-  //    the stub returns. (The real time-window SEMANTICS are the H1d live gate's job, like prune-oplog.)
+  //    the stub returns. (The real time-window SEMANTICS are the live gate's job.)
   {
     const { db, inserts, setRecent, lastExecuteQuery } = stubAlertDb();
     const check: HealthCheck = {

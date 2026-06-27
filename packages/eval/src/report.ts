@@ -1,7 +1,7 @@
 /**
- * The committed metrics snapshot and its human-readable formatting (Phase 5). One report
- * file per ranker configuration is the BASELINE; the next run diffs against it and prints
- * the per-k deltas, so any prompt / model / embedding change shows up as a metric movement.
+ * The committed metrics snapshot and its human-readable formatting. One report file per ranker
+ * configuration is the BASELINE; the next run diffs against it and prints the per-k deltas, so any
+ * prompt / model / embedding change shows up as a metric movement.
  *
  * The persisted shape is deliberately DETERMINISTIC — no timestamp — so re-running with
  * unchanged metrics produces a byte-identical file (clean snapshot semantics, no git churn).
@@ -89,11 +89,11 @@ const pct = (x: number): string =>
   Number.isNaN(x) ? "n/a".padStart(6) : `${(x * 100).toFixed(1)}%`.padStart(6);
 
 /** A fixed-width table of precision / recall / ndcg per k. */
-export function formatReport(r: EvalReport): string {
+export function formatReport(report: EvalReport): string {
   const head =
-    `ranker=${r.ranker}${r.embedder ? ` embedder=${r.embedder}` : ""}` +
-    `  examples=${r.exampleCount}  dataset=${r.dataset}`;
-  const rows = r.metrics.map(
+    `ranker=${report.ranker}${report.embedder ? ` embedder=${report.embedder}` : ""}` +
+    `  examples=${report.exampleCount}  dataset=${report.dataset}`;
+  const rows = report.metrics.map(
     (m) =>
       `  @${String(m.k).padEnd(2)}  P ${pct(m.precision)}  R ${pct(m.recall)}  NDCG ${pct(m.ndcg)}`,
   );

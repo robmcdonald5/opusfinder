@@ -4,18 +4,17 @@ import { backoff } from "@opusfinder/shared/async";
 import type { Cursor, FetchJson, JobsRequest, SourceAdapter, SourceContext } from "./types";
 
 /**
- * The invariant ATS-ingestion plumbing, EXTRACTED (Phase 6) from the concrete Greenhouse,
- * Lever, and SmartRecruiters adapters. Everything that is the SAME across sources lives
- * here; everything that DIFFERS lives on the per-source `SourceAdapter` descriptor.
+ * The invariant ATS-ingestion plumbing. Everything that is the SAME across sources lives here;
+ * everything that DIFFERS lives on the per-source `SourceAdapter` descriptor.
  *
  * runAdapter owns: slug normalization → the pagination loop (jobsRequest → fetch → locate →
  * map) → the single resilient fetch (retry/backoff/Retry-After + non-JSON guard) → two-tier
  * resilience (locate fails LOUD on a bad envelope; mapItem fails SOFT, skipping one bad
- * posting) → the optional bounded-concurrency hydrate pool → per-board accounting. It returns
- * `NormalizedJob[]`, the same contract the per-source `fetchJobs(slug)` used to expose.
+ * posting) → the optional bounded-concurrency hydrate pool → per-board accounting. Returns
+ * `NormalizedJob[]`.
  *
- * Worker-forward (Phase 8): global `fetch`/`RequestInit` only, `setTimeout`-based backoff,
- * `Math.random` jitter, no Node-only APIs and no `process.env` reads.
+ * Worker-forward: global `fetch`/`RequestInit` only, `setTimeout`-based backoff, `Math.random`
+ * jitter, no Node-only APIs and no `process.env` reads.
  */
 export interface RunAdapterOptions {
   /** Max concurrent `hydrate` calls (Worker subrequest budgets may want this lower). */
@@ -91,9 +90,7 @@ export async function runAdapter(
         skipped++;
       }
     }
-    // Per-board cap (Worker-only — see RunAdapterOptions.maxItems): stop paginating once enough valid
-    // postings are mapped, trimming any final-page overshoot. Bounds the list-fetch count, the hydrate
-    // pool, AND the in-memory array, so a mega-board can't exhaust the Worker's per-invocation budget.
+    // Per-board cap — see RunAdapterOptions.maxItems.
     if (maxItems !== undefined && mapped.length >= maxItems) {
       mapped.length = maxItems;
       break;

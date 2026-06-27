@@ -9,19 +9,18 @@ import { subdomainLabel } from "./url-match";
 const POSTINGS_HOST = "pinpointhq.com";
 
 /**
- * Pinpoint job-board adapter (Phase 6.5 Wave A). Each tenant is a subdomain
- * (`{slug}.pinpointhq.com`) and the public `postings.json` returns the WHOLE board in one
- * `{ data: [...] }` response — no pagination (the `?page` param is silently IGNORED, so a
- * naive page loop would never terminate; `nextCursor` is omitted). Descriptions are inline,
- * so no hydrate.
+ * Pinpoint job-board adapter. Each tenant is a subdomain (`{slug}.pinpointhq.com`) and the
+ * public `postings.json` returns the WHOLE board in one `{ data: [...] }` response — no
+ * pagination (the `?page` param is silently IGNORED, so a naive page loop would never terminate;
+ * `nextCursor` is omitted). Descriptions are inline, so no hydrate.
  *
  * Quirks: the host is case-INSENSITIVE and the apply URL is an explicit `url` field (NOT
- * reconstructed from the slug), so `normalizeSlug` lowercases for clean Phase-7 dedupe (same
- * rationale as Workable). The posting `id` is a STRING — distinct from the nested `job.id`
- * AND from the UUID in `url`. `location.name` is an internal office LABEL (sometimes literally
- * "Remote") — a trap — so locations compose from `location.city` + `location.province` and
- * `remote` comes from the structured `workplace_type` enum. There is NO posted/created date on
- * the posting (only `deadline_at`, an application-CLOSE date), so `postedAt` is always null.
+ * reconstructed from the slug), so `normalizeSlug` lowercases. The posting `id` is a STRING —
+ * distinct from the nested `job.id` AND from the UUID in `url`. `location.name` is an internal
+ * office LABEL (sometimes literally "Remote") — a trap — so locations compose from `location.city`
+ * + `location.province` and `remote` comes from the structured `workplace_type` enum. There is NO
+ * posted/created date on the posting (only `deadline_at`, an application-CLOSE date), so `postedAt`
+ * is always null.
  */
 export const pinpointAdapter: SourceAdapter = {
   source: "pinpoint",
@@ -78,8 +77,7 @@ function toNormalizedJob(raw: unknown, ctx: SourceContext): NormalizedJob | null
     remote,
     // `description` is raw HTML tags (incl. <!--block--> markers, removed by the tag regex)
     // plus SINGLE-encoded entities: strip → decode once → collapse. The richer
-    // key_responsibilities / skills_knowledge_expertise / benefits sections stay on `raw`
-    // (primary body only for now; revisit under the Phase-5 eval).
+    // key_responsibilities / skills_knowledge_expertise / benefits sections stay on `raw`.
     descriptionText: htmlToText(raw.description),
     applyUrl,
     // No posted/created date on the posting — only deadline_at (an application-CLOSE date),

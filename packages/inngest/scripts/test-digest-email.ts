@@ -1,9 +1,9 @@
 /**
- * Stub-seam smoke for the Phase-11 email-delivery tail (src/delivery.ts + @opusfinder/email) — NO
- * creds, NO network, NO real DB. Locks: render determinism + escaping, the ONE idempotency-key
- * shape, the full last_event→status mapping (incl. bounce→hard-suppress and complaint→suppress-
- * without-bounce), the DB-native send-permit (digest_approved_at) skip behavior, and the step sequences of the failure /
- * skip / happy / slow-poll paths (driven through a fake `step` + a chainable-thenable stub Db).
+ * Stub-seam smoke for the email-delivery tail (src/delivery.ts + @opusfinder/email) — NO creds, NO
+ * network, NO real DB. Locks render determinism + escaping, the idempotency-key shape, the full
+ * last_event→status mapping (incl. bounce→hard-suppress, complaint→suppress-without-bounce), the
+ * DB-native send-permit (digest_approved_at) skip behavior, and the failure / skip / happy / slow-poll
+ * step sequences (via a fake `step` + a chainable-thenable stub Db).
  *
  *   pnpm --filter @opusfinder/inngest test:digest-email
  */
@@ -57,9 +57,8 @@ const FIXTURE: DigestEmailPayload = {
   ],
 };
 
-/** Rows shaped like getDigestEmailPayload's joined select projection (2 items). `states` sets each
- *  item's `lifecycle_state` (default all 'active') so the G1b render-time lifecycle filter — which runs
- *  app-side, so the stub's real `.filter` exercises it — can be driven with closed items. */
+/** Rows shaped like getDigestEmailPayload's joined projection (2 items); `states` drives each item's
+ *  `lifecycle_state` so the stub's real `.filter` exercises the app-side render-time lifecycle filter. */
 function joinedPayloadRows(
   states: string[] = FIXTURE.items.map(() => "active"),
   approved = true,
@@ -78,24 +77,26 @@ function joinedPayloadRows(
 
 await runScript("test-digest-email", async () => {
   // 1. Render determinism + escaping: byte-identical across renders; hostile input inert.
-  const a = renderDigestEmail(FIXTURE);
-  const b = renderDigestEmail(FIXTURE);
+  const firstRender = renderDigestEmail(FIXTURE);
+  const secondRender = renderDigestEmail(FIXTURE);
   assert(
-    a.subject === b.subject && a.html === b.html && a.text === b.text,
+    firstRender.subject === secondRender.subject &&
+      firstRender.html === secondRender.html &&
+      firstRender.text === secondRender.text,
     "render not deterministic",
   );
-  assert(!a.html.includes("<script"), "raw <script survived escaping");
-  assert(a.html.includes("&lt;script&gt;"), "escaped script tag missing from html");
-  assert(!/href="javascript:/i.test(a.html), "javascript: URL became an href");
-  assert(a.html.includes('href="https://example.com/jobs/2"'), "safe https href missing");
-  assert(!a.subject.includes("<"), "subject carries markup");
+  assert(!firstRender.html.includes("<script"), "raw <script survived escaping");
+  assert(firstRender.html.includes("&lt;script&gt;"), "escaped script tag missing from html");
+  assert(!/href="javascript:/i.test(firstRender.html), "javascript: URL became an href");
+  assert(firstRender.html.includes('href="https://example.com/jobs/2"'), "safe https href missing");
+  assert(!firstRender.subject.includes("<"), "subject carries markup");
   console.log("1. render determinism + escaping OK");
 
   // 2. The ONE idempotency-key definition.
   assert(emailIdempotencyKey(123) === "digest/123", `key shape: ${emailIdempotencyKey(123)}`);
   console.log("2. idempotency-key shape OK");
 
-  // 3. Event mapping + terminal set (the §7 policy table).
+  // 3. Event mapping + terminal set.
   assert(mapDeliveryEvent("delivered").status === "delivered", "delivered→delivered");
   assert(mapDeliveryEvent("opened").status === "delivered", "opened→delivered");
   assert(mapDeliveryEvent("clicked").status === "delivered", "clicked→delivered");
@@ -107,19 +108,19 @@ await runScript("test-digest-email", async () => {
   assert(complained.suppress !== undefined, "complained must suppress");
   assert(complained.suppress.bounce === undefined, "complained must NOT touch bounce status");
   assert(mapDeliveryEvent("failed").status === "failed", "failed→failed");
-  for (const e of ["queued", "scheduled", "sent", "delivery_delayed", "suppressed", "garbage"]) {
-    assert(mapDeliveryEvent(e).status === "sent", `${e} must stay sent`);
-    assert(mapDeliveryEvent(e).suppress === undefined, `${e} must not suppress`);
+  for (const event of ["queued", "scheduled", "sent", "delivery_delayed", "suppressed", "garbage"]) {
+    assert(mapDeliveryEvent(event).status === "sent", `${event} must stay sent`);
+    assert(mapDeliveryEvent(event).suppress === undefined, `${event} must not suppress`);
   }
   const terminal = ["delivered", "opened", "clicked", "bounced", "complained", "failed"];
-  for (const e of terminal) assert(isTerminalEvent(e), `${e} must be terminal`);
-  for (const e of ["queued", "scheduled", "sent", "delivery_delayed", "suppressed", "received"]) {
-    assert(!isTerminalEvent(e), `${e} must NOT be terminal`);
+  for (const event of terminal) assert(isTerminalEvent(event), `${event} must be terminal`);
+  for (const event of ["queued", "scheduled", "sent", "delivery_delayed", "suppressed", "received"]) {
+    assert(!isTerminalEvent(event), `${event} must NOT be terminal`);
   }
   console.log("3. event mapping + terminal set OK");
 
-  // 4. DB-native send permit (replaced EMAIL_ALLOWLIST): an UN-APPROVED recipient (digest_approved_at NULL,
-  //    re-read at the send boundary) is a clean no-send — NO email.send, NO poll, ONE step. No creds/network.
+  // 4. DB-native send permit: an UN-APPROVED recipient (digest_approved_at NULL, re-read at the send
+  //    boundary) is a clean no-send — NO email.send, NO poll, ONE step. No creds/network.
   {
     const { runs, sleeps, tools } = recordingStep();
     const db = stubDb([joinedPayloadRows(undefined, false)]); // ONLY the payload read; approvedAt = null
@@ -252,7 +253,7 @@ await runScript("test-digest-email", async () => {
   }
   console.log("7. slow-poll + bounce suppression OK");
 
-  // 8. G1b — all items lifecycle-closed between persist and send: the render filters every item, so
+  // 8. All items lifecycle-closed between persist and send: the render filters every item, so
   //    deliverDigestEmail must clean no-send ("skipped-empty") — NO email.send, NO poll, ONE step.
   {
     const { runs, sleeps, tools } = recordingStep();
@@ -277,7 +278,7 @@ await runScript("test-digest-email", async () => {
   }
   console.log("8. G1b all-closed → clean no-send OK");
 
-  // 9. G1b — mixed active+closed: the closed item is filtered out at render, the active one still sends.
+  // 9. Mixed active+closed: the closed item is filtered out at render, the active one still sends.
   {
     const { runs, sleeps, tools } = recordingStep();
     const db = stubDb([

@@ -14,10 +14,10 @@ call. **No UI** — the HTTP handler, auth-client, and forms land in Phase 12.
   adapter. `authDb` MUST be the **neon-serverless** `createAuthDb` (`@opusfinder/db/auth-client`) —
   `signUpEmail` wraps the `user`+`account` inserts in a transaction the neon-http driver can't run
   (#4747). Config: `generateId: "uuid"`, `autoSignIn: false`, `requireEmailVerification: false`.
-- `src/service.ts` — `createUserWithProfile(db, auth, input)` (signUpEmail → seed-only `emailVerified`
+- `src/service.ts` — `createUserWithPreferences(db, auth, input)` (signUpEmail → seed-only `emailVerified`
   flip → seed `user_preferences` with a random unsubscribe token); `getOrCreateUserByEmail(db, auth,
 email)` (the CV-ingest path — creates a verified user with a throwaway random password, idempotent on
-  normalized email); `findUserByEmail`.
+  normalized email); `findUserIdByEmail`.
 - `src/env.ts` — node-only `getAuthSecret()` / `getAuthBaseURL()` behind the `./env` subpath (never
   bundled into the Worker, same discipline as `@opusfinder/storage/env`).
 - `scripts/` — `user:create` / `user:set-prefs` / `user:list` CLIs, plus `test:auth` (driver/B1 probe)

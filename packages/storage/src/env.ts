@@ -8,21 +8,21 @@ loadPackageEnv(import.meta.url);
 
 const getR2AccessKeyId = requireEnv({
   name: "R2_ACCESS_KEY_ID",
-  notSet:
+  notSetMessage:
     "R2_ACCESS_KEY_ID is not set. Create an R2 API token (Object Read & Write) and paste its Access Key ID into packages/storage/.env.",
 });
 const getR2SecretAccessKey = requireEnv({
   name: "R2_SECRET_ACCESS_KEY",
-  notSet:
+  notSetMessage:
     "R2_SECRET_ACCESS_KEY is not set. Paste the R2 token's Secret Access Key into packages/storage/.env.",
 });
 const getR2BucketName = requireEnv({
   name: "R2_BUCKET_NAME",
-  notSet: "R2_BUCKET_NAME is not set. Paste your R2 bucket name into packages/storage/.env.",
+  notSetMessage: "R2_BUCKET_NAME is not set. Paste your R2 bucket name into packages/storage/.env.",
 });
 const getR2AccountId = requireEnv({
   name: "R2_ACCOUNT_ID",
-  notSet:
+  notSetMessage:
     "Neither S3_ENDPOINT_URL nor R2_ACCOUNT_ID is set. Set one in packages/storage/.env (the S3 endpoint URL, or the account id to derive it).",
 });
 

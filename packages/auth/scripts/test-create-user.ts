@@ -8,12 +8,12 @@ import { generateUnsubscribeToken } from "@opusfinder/shared";
 import { runScript } from "@opusfinder/shared/script";
 
 import { getAuthBaseURL, getAuthSecret } from "../src/env";
-import { createAuth, createUserWithProfile, getOrCreateUserByEmail } from "../src/index";
+import { createAuth, createUserWithPreferences, getOrCreateUserByEmail } from "../src/index";
 
-// 9.5d gate — the FULL user-creation path end to end against Neon: signUpEmail (B1 transaction) →
-// emailVerified flip → user_preferences seed; then idempotency via getOrCreateUserByEmail. Self-
-// cleaning (deletes the throwaway user, cascade-removing account/session/prefs) so it leaves no trace
-// and can re-run. Run: pnpm --filter @opusfinder/auth test:create-user  (needs DATABASE_URL + BETTER_AUTH_SECRET)
+// The FULL user-creation path end to end against Neon: signUpEmail → emailVerified flip →
+// user_preferences seed; then idempotency via getOrCreateUserByEmail. Self-cleaning (deletes the
+// throwaway user, cascade-removing account/session/prefs) so it leaves no trace and can re-run.
+// Run: pnpm --filter @opusfinder/auth test:create-user  (needs DATABASE_URL + BETTER_AUTH_SECRET)
 const EMAIL = "phase95-create-smoke@example.com";
 
 let failures = 0;
@@ -34,7 +34,7 @@ async function main(): Promise<void> {
     // Clean any leftover from an interrupted prior run (cascade removes account/prefs/session).
     await db.delete(user).where(eq(user.email, EMAIL));
 
-    const { userId } = await createUserWithProfile(db, auth, {
+    const { userId } = await createUserWithPreferences(db, auth, {
       email: EMAIL,
       password: generateUnsubscribeToken(),
       name: "Smoke",
@@ -43,10 +43,10 @@ async function main(): Promise<void> {
     });
     check("returns a userId", typeof userId === "string" && userId.length > 0, String(userId));
 
-    const u = (await db.select().from(user).where(eq(user.id, userId)).limit(1))[0];
-    check("user row created", !!u);
-    check("email stored", u?.email === EMAIL, u?.email);
-    check("emailVerified flipped true", u?.emailVerified === true);
+    const userRow = (await db.select().from(user).where(eq(user.id, userId)).limit(1))[0];
+    check("user row created", !!userRow);
+    check("email stored", userRow?.email === EMAIL, userRow?.email);
+    check("emailVerified flipped true", userRow?.emailVerified === true);
 
     const acct = (await db.select().from(account).where(eq(account.userId, userId)).limit(1))[0];
     check("account row exists (credential)", acct?.providerId === "credential", acct?.providerId);

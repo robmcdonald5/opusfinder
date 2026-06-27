@@ -7,7 +7,7 @@ import type { SourceAdapter, SourceContext } from "./types";
 import { firstPathSegment, segmentAfter } from "./url-match";
 
 const JOB_BOARD_API = "https://api.ashbyhq.com/posting-api/job-board";
-const API_HOST = new URL(JOB_BOARD_API).hostname; // "api.ashbyhq.com"
+const API_HOST = new URL(JOB_BOARD_API).hostname;
 const PUBLIC_HOST = "jobs.ashbyhq.com";
 
 /**
@@ -16,9 +16,8 @@ const PUBLIC_HOST = "jobs.ashbyhq.com";
  * is present inline.
  *
  * Quirks: the server is case-INSENSITIVE but apply URLs echo the input casing and boards
- * are conventionally capitalized, so `normalizeSlug` PRESERVES casing (Phase 6 seeding
- * supplies one canonical casing per board; Phase 7 owns dedupe). `isRemote` is a TRAP — it
- * is `true` on Hybrid postings — so `remote` is derived from `workplaceType`, which can be
+ * are conventionally capitalized, so `normalizeSlug` PRESERVES casing. `isRemote` is a TRAP —
+ * it is `true` on Hybrid postings — so `remote` is derived from `workplaceType`, which can be
  * null (then fall back to inferring from the location text).
  */
 export const ashbyAdapter: SourceAdapter = {
@@ -107,9 +106,9 @@ function extractLocations(raw: Record<string, unknown>): string[] {
     locations.push(raw.location.trim());
   }
   if (Array.isArray(raw.secondaryLocations)) {
-    for (const sl of raw.secondaryLocations) {
-      if (isRecord(sl) && typeof sl.location === "string" && sl.location.trim()) {
-        locations.push(sl.location.trim());
+    for (const loc of raw.secondaryLocations) {
+      if (isRecord(loc) && typeof loc.location === "string" && loc.location.trim()) {
+        locations.push(loc.location.trim());
       }
     }
   }

@@ -3,10 +3,8 @@ import { runScript } from "@opusfinder/shared/script";
 import { parseLocationMode, prefsFromFlags } from "./cli-utils";
 
 /**
- * Stub smoke for the F3 CLI flag parsing — NO creds, NO DB. prefsFromFlags is a pure
- * Record<string,string> → Partial<UserPreferences> mapper; this locks the F3 additions without a live
- * user: the new union validators, the `clear` sentinel for nullable bounds, the partial min≤max guard,
- * array clearing, falsy-zero survival, and the removal of the old `--remote` flag.
+ * Stub smoke for the CLI flag parsing — NO creds, NO DB. prefsFromFlags is a pure
+ * Record<string,string> → Partial<UserPreferences> mapper.
  *
  *   pnpm --filter @opusfinder/auth test:prefs-flags
  */
@@ -52,11 +50,11 @@ await runScript("test-prefs-flags", async () => {
   // 5) Omitted flags → absent keys (the toRow undefined-drop contract); empty input → empty patch.
   assert(Object.keys(prefsFromFlags({})).length === 0, "no flags → empty patch");
   {
-    const p = prefsFromFlags({ "min-salary": "5" });
-    assert("minSalary" in p && !("maxSalary" in p) && !("yoeMin" in p), "only the passed flag appears");
+    const patch = prefsFromFlags({ "min-salary": "5" });
+    assert("minSalary" in patch && !("maxSalary" in patch) && !("yoeMin" in patch), "only the passed flag appears");
   }
 
-  // 6) The removed `--remote` flag is ignored — it no longer maps to anything (subsumed by location-mode).
+  // 6) The retired --remote flag no longer maps (subsumed by location-mode).
   assert(!("remoteOk" in prefsFromFlags({ remote: "true" })), "the retired --remote flag must not map");
 
   console.log(

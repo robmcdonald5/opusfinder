@@ -5,13 +5,13 @@ import { runScript } from "@opusfinder/shared/script";
 import { embeddableContentSql, jobEmbeddingText } from "../src/repos/embeddings";
 
 /**
- * Stub smoke for the embedding-backlog PARITY invariant (F8 review finding E4) — JS-decidable, NO creds,
- * NO Postgres. The F8 embed-backlog-drain (and backfillJobEmbeddings) terminate WITHOUT a keyset cursor
+ * Stub smoke for the embedding-backlog PARITY invariant — JS-decidable, NO creds,
+ * NO Postgres. The embed-backlog-drain (and backfillJobEmbeddings) terminate WITHOUT a keyset cursor
  * only because jobsNeedingEmbedding's SQL predicate excludes exactly the rows jobEmbeddingText would render
  * empty: a contentless row is never selected AND would never reach embed() (Voyage 400s on ""). If those
  * two notions ever drift, an un-embeddable row gets re-selected every run and burns a Voyage request/day
- * (bounded by MAX_PAGES_PER_RUN, but wasteful) — or, the inverse, a row with content jobEmbeddingText
- * embeds but the SQL excludes is silently never embedded. This locks BOTH halves of that contract:
+ * (wasteful) — or, the inverse, a row with content jobEmbeddingText embeds but the SQL excludes is
+ * silently never embedded. This locks BOTH halves of that contract:
  *   - the JS empty-notion: jobEmbeddingText (→ composeEmbeddingText, parts.filter(trim().length>0)) is
  *     empty IFF neither title nor description has a non-whitespace char.
  *   - the SQL predicate: embeddableContentSql (the SINGLE SOURCE jobsNeedingEmbedding uses) tests BOTH

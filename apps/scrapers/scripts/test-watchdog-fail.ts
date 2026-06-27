@@ -3,13 +3,13 @@ import { runScript } from "@opusfinder/shared/script";
 import { pingWatchdogFail } from "../src/index.ts";
 
 /**
- * H1a smoke (NO network, NO creds) for the Worker failure ping. Stubs the global `fetch` + a fake
+ * Smoke (NO network, NO creds) for the Worker failure ping. Stubs the global `fetch` + a fake
  * `ExecutionContext` to capture the call without leaving the process, and asserts the published-surface
- * contract from PHASE_H1_PLAN.md:
+ * contract:
  *   - a NO-OP (no fetch, no ctx.waitUntil) when HEALTH_PING_URL is unset (redeploy-before-watchdog);
  *   - otherwise a fire-and-forget POST to `${HEALTH_PING_URL}/fail` carrying the message as the body;
- *   - the body is capped at 500 chars (the shape-safe cap on a surface that lands in healthchecks.io).
- * The actual DOWN-with-cause behaviour is the H1d live gate's job; this locks the wiring.
+ *   - the body is capped at 500 chars (the shape-safe published-surface cap);
+ *   - a multi-line message ships its FIRST LINE only (no bound-param `params:` tail).
  *
  * Run from the repo root via tsx (apps/scrapers carries no test runner): `pnpm test:watchdog`.
  */
@@ -30,12 +30,10 @@ await runScript("test-watchdog-fail", async () => {
   const setEnv = { HEALTH_PING_URL: "https://watchdog.invalid/abc123" } as Env;
 
   try {
-    // 1) Unset HEALTH_PING_URL ⇒ no-op (no fetch, no scheduled work).
     pingWatchdogFail(unsetEnv, ctx, "scheduled(0 * * * *) failed: boom");
     assert(calls.length === 0, "unset HEALTH_PING_URL must not fetch");
     assert(waited.length === 0, "unset HEALTH_PING_URL must not schedule waitUntil");
 
-    // 2) Set URL ⇒ fire-and-forget POST to `${url}/fail` with the message body.
     pingWatchdogFail(setEnv, ctx, "scheduled(0 * * * *) failed: kaboom");
     assert(calls.length === 1, "set HEALTH_PING_URL must fetch exactly once");
     assert(
@@ -49,14 +47,13 @@ await runScript("test-watchdog-fail", async () => {
     );
     assert(waited.length === 1, "the ping is fire-and-forget via ctx.waitUntil");
 
-    // 3) A long message is capped at 500 chars (the shape-safe published-surface cap).
     pingWatchdogFail(setEnv, ctx, "x".repeat(5000));
     const longBody = calls[1].init?.body;
     assert(typeof longBody === "string", "body must be a string");
     assert((longBody as string).length === 500, `body must be capped at 500 chars, got ${(longBody as string).length}`);
 
-    // 4) A MULTI-LINE message (the drizzle `DrizzleQueryError` shape) ships its FIRST LINE only — the
-    //    `params:` array on line 2 must NOT reach the published surface (decision 3 / the SQL-leak guard).
+    // A MULTI-LINE message (the drizzle `DrizzleQueryError` shape) ships its FIRST LINE only — the
+    // `params:` array on line 2 must NOT reach the published surface.
     pingWatchdogFail(
       setEnv,
       ctx,

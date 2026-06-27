@@ -33,7 +33,7 @@ export interface GenerateParams {
   cacheSystem?: boolean;
   /**
    * Max tokens to generate. Defaults to {@link DEFAULT_MAX_OUTPUT_TOKENS}. The default
-   * is small: long outputs (e.g. Phase 10 synthesis) MUST raise it and should check
+   * is small: long outputs MUST raise it and should check
    * {@link GenerateResult.finishReason} for `"length"` to detect truncation.
    */
   maxOutputTokens?: number;
@@ -53,9 +53,9 @@ export interface GenerateResult {
   /** Token usage for the call. */
   usage: { inputTokens?: number; outputTokens?: number; totalTokens?: number };
   /**
-   * Anthropic prompt-cache accounting, surfaced first-class so callers (and the Phase
-   * 3 test) can see caching working. Both default to 0 when the call neither wrote nor
-   * read cache, or for a non-Anthropic provider.
+   * Anthropic prompt-cache accounting, surfaced first-class so callers can see caching
+   * working. Both default to 0 when the call neither wrote nor read cache, or for a
+   * non-Anthropic provider.
    */
   cache: { creationInputTokens: number; readInputTokens: number };
 }
@@ -68,19 +68,12 @@ const DEFAULT_MAX_OUTPUT_TOKENS = 1024;
  * as a cache-marked system message (a plain `system` string cannot carry a cache
  * breakpoint), and the Anthropic cache token counts are normalized onto the result.
  *
- * Intentionally a minimal surface for Phase 3 (model / messages / system / cacheSystem
- * / maxOutputTokens / temperature). Tools + structured output (Phase 9), abort signals
- * and retry/backoff tuning (Phase 10) get added when a consumer needs them — until
- * then provider errors propagate unwrapped and retries are the caller's concern.
- *
- * Batch generation (50% discount, for Phase 10 rerank/synthesis) is a separate helper —
- * see {@link batchGenerate}.
+ * Provider errors propagate unwrapped; retries are the caller's concern.
  */
 export async function generate(params: GenerateParams): Promise<GenerateResult> {
   const { model, messages, system, cacheSystem, maxOutputTokens, temperature } = params;
 
-  // The system-in-`messages` guard, the cache-promotion trick, and the cache accounting are shared
-  // with generateObject — see ./cache-plumbing.
+  // Guards, cache-promotion, and cache accounting are shared with generateObject — see ./cache-plumbing.
   assertSystemNotInMessages("generate", messages);
   assertMaxOutputTokens("generate", maxOutputTokens);
 

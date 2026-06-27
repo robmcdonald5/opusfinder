@@ -1,10 +1,10 @@
 /**
- * The Phase-10 LLM-rerank `Ranker` for the eval harness — the SAME shared core the digest pipeline
- * runs (`rerankCandidates` from `@opusfinder/rerank`), wired here with a DETERMINISTIC stub call so the
- * committed report is byte-stable and the gate needs no API key. The real Haiku `generateObject` call is
- * wired by the digest pipeline (Phase 10f); pass it to `llmRerankRanker(realCall)` to measure true
- * rerank quality on the labeled set. Imported dynamically by scripts/eval.ts's resolveRanker, so a
- * plain `pnpm eval` never loads `@opusfinder/rerank`.
+ * The LLM-rerank `Ranker` for the eval harness — the SAME shared core the digest pipeline runs
+ * (`rerankCandidates` from `@opusfinder/rerank`), wired here with a DETERMINISTIC stub call so the
+ * committed report is byte-stable and the gate needs no API key. The real Haiku `generateObject` call
+ * is wired by the digest pipeline; pass it to `llmRerankRanker(realCall)` to measure true rerank
+ * quality on the labeled set. Imported dynamically by scripts/eval.ts's resolveRanker, so a plain
+ * `pnpm eval` never loads `@opusfinder/rerank`.
  */
 import { rerankCandidates, type RerankCall, type RerankCandidate } from "@opusfinder/rerank";
 

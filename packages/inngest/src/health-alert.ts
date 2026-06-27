@@ -1,15 +1,14 @@
 /**
- * Phase H1b — the shared health-ALERT orchestration: turn a {@link HealthReport} into at most ONE
- * shape-only operator email, deduped so a persistently-firing check pages once per cooldown, not every
- * run. Lives in `@opusfinder/inngest` (which already depends on both `@opusfinder/db` and the Node-only
- * `@opusfinder/email`) so the manual `pnpm health` CLI and the scheduled fn run the SAME logic — they
- * cannot drift on which checks page, how the body reads, or when the cooldown suppresses.
+ * The shared health-ALERT orchestration: turn a {@link HealthReport} into at most ONE shape-only operator
+ * email, deduped so a persistently-firing check pages once per cooldown, not every run. Lives in
+ * `@opusfinder/inngest` (which already depends on both `@opusfinder/db` and the Node-only `@opusfinder/email`)
+ * so the manual `pnpm health` CLI and the scheduled fn run the SAME logic — they cannot drift on which checks
+ * page, how the body reads, or when the cooldown suppresses.
  *
  * The email SEND is injected (`AlertSend`) rather than imported, so this module stays send-agnostic and
- * unit-testable, and the CLI vs scheduled-fn each pass their own `sendHealthAlert`-shaped seam. The DB
- * dedup primitives (`shouldNotify`/`recordHealthAlert`) come from `@opusfinder/db`. Everything echoed is
- * shape-only (the F6 no-secrets/PII invariant) — `checkDetail` renders an age/ratio/count, never job or
- * user text.
+ * unit-testable, and the CLI vs scheduled-fn each pass their own `sendHealthAlert`-shaped seam. The DB dedup
+ * primitives (`shouldNotify`/`recordHealthAlert`) come from `@opusfinder/db`. Everything echoed is shape-only
+ * (no-secrets/PII invariant) — `checkDetail` renders an age/ratio/count, never job or user text.
  */
 import type { Db } from "@opusfinder/db";
 import {
@@ -25,52 +24,51 @@ export { DEFAULT_HEALTH_ALERT_COOLDOWN_H };
 export type AlertSend = (subject: string, text: string) => Promise<{ emailId: string }>;
 
 /**
- * Parse `HEALTH_ALERT_COOLDOWN_H` (hours) from env, falling back to the default. Rejects NaN/negatives the
- * same way `healthOptionsFromEnv` rejects bad thresholds (an out-of-range value falls through rather than
- * silently disabling/inverting the cooldown). Kept here (Node, reads `process.env`) — NOT in the pure
- * `@opusfinder/db/health` core — for the same reason `healthOptionsFromEnv` is its own function.
+ * Parse `HEALTH_ALERT_COOLDOWN_H` (hours) from env, falling back to the default. Rejects NaN/negatives (an
+ * out-of-range value falls through rather than silently disabling/inverting the cooldown). Kept here (Node,
+ * reads `process.env`) — NOT in the pure `@opusfinder/db/health` core.
  */
 export function getHealthAlertCooldownH(
   env: Record<string, string | undefined> = process.env,
 ): number {
-  const v = env.HEALTH_ALERT_COOLDOWN_H;
-  if (v === undefined || v.trim() === "") return DEFAULT_HEALTH_ALERT_COOLDOWN_H;
-  const n = Number(v);
-  return Number.isFinite(n) && n >= 0 ? n : DEFAULT_HEALTH_ALERT_COOLDOWN_H;
+  const rawCooldown = env.HEALTH_ALERT_COOLDOWN_H;
+  if (rawCooldown === undefined || rawCooldown.trim() === "") return DEFAULT_HEALTH_ALERT_COOLDOWN_H;
+  const cooldownH = Number(rawCooldown);
+  return Number.isFinite(cooldownH) && cooldownH >= 0 ? cooldownH : DEFAULT_HEALTH_ALERT_COOLDOWN_H;
 }
 
 /** The `[threshold N]` suffix (empty for boolean checks). */
-export function thresholdSuffix(c: HealthCheck): string {
-  return c.threshold === null ? "" : ` [threshold ${c.threshold}]`;
+export function thresholdSuffix(check: HealthCheck): string {
+  return check.threshold === null ? "" : ` [threshold ${check.threshold}]`;
 }
 
 /** Shape-only metric formatting per check id — counts / ages / ratios, never job/user text. */
-export function formatMetric(c: HealthCheck): string {
-  if (c.metric === null) return "no data";
-  switch (c.id) {
+export function formatMetric(check: HealthCheck): string {
+  if (check.metric === null) return "no data";
+  switch (check.id) {
     case "ingestion_staleness":
-      return `${c.metric.toFixed(1)}h since last ok`;
+      return `${check.metric.toFixed(1)}h since last ok`;
     case "discovery_window":
-      return `${c.metric.toFixed(1)}d since last ok`;
+      return `${check.metric.toFixed(1)}d since last ok`;
     case "board_fail_ratio":
-      return `${(c.metric * 100).toFixed(0)}% boards failed`;
+      return `${(check.metric * 100).toFixed(0)}% boards failed`;
     case "embedding_backlog":
-      return `${c.metric} rows`;
+      return `${check.metric} rows`;
     case "digest_health":
-      return `${c.metric} errored run(s)`;
+      return `${check.metric} errored run(s)`;
     case "bounce_suppression":
-      return `${c.metric} affected user(s)`;
+      return `${check.metric} affected user(s)`;
     case "discovery_lane_errors":
-      return `${c.metric} lane error(s)`;
+      return `${check.metric} lane error(s)`;
     default:
-      return String(c.metric);
+      return String(check.metric);
   }
 }
 
 /** One shape-only line per check — the alert body line AND the `health_alerts.detail` value (kept identical
  *  so the email and the stored history can't drift). */
-export function checkDetail(c: HealthCheck): string {
-  return `${c.label} (${c.id}): ${formatMetric(c)}${thresholdSuffix(c)}`;
+export function checkDetail(check: HealthCheck): string {
+  return `${check.label} (${check.id}): ${formatMetric(check)}${thresholdSuffix(check)}`;
 }
 
 export interface HealthAlertOutcome {
@@ -105,22 +103,22 @@ export async function alertOnHealth(
   const firing = report.checks.filter(isEnforceFiring);
   const notified: HealthCheck[] = [];
   const suppressed: HealthCheck[] = [];
-  for (const c of firing) {
-    if (await shouldNotify(db, c.id, cooldownH)) notified.push(c);
-    else suppressed.push(c);
+  for (const check of firing) {
+    if (await shouldNotify(db, check.id, cooldownH)) notified.push(check);
+    else suppressed.push(check);
   }
   if (notified.length === 0) return { firing, notified, suppressed };
 
   const subject = `[opusfinder] health alert — ${notified.length} check(s) firing`;
   const body =
     "opusfinder pipeline health — enforce-mode check(s) firing:\n\n" +
-    notified.map((c) => `- ${checkDetail(c)}`).join("\n") +
+    notified.map((check) => `- ${checkDetail(check)}`).join("\n") +
     "\n\nShape-only; run `pnpm health` for the full report." +
     (suppressed.length > 0
       ? `\n(${suppressed.length} further firing check(s) suppressed within the ${cooldownH}h cooldown.)`
       : "");
 
   const { emailId } = await send(subject, body);
-  for (const c of notified) await recordHealthAlert(db, c, checkDetail(c));
+  for (const check of notified) await recordHealthAlert(db, check, checkDetail(check));
   return { firing, notified, suppressed, emailId };
 }

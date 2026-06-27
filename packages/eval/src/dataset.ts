@@ -1,5 +1,5 @@
 /**
- * Labeled-set loader + validator (Phase 5). The dataset is JSONL — one `EvalExample` per
+ * Labeled-set loader + validator. The dataset is JSONL — one `EvalExample` per
  * line — chosen over a single JSON array or YAML so the set grows by APPENDING (a clean
  * one-line git diff per added label) with no parser dependency. The validator is the guard
  * against hand-authoring mistakes: it runs at the boundary and throws with a line number, so
@@ -152,12 +152,10 @@ function validateJob(value: unknown, at: string): EvalJob {
   if (typeof value.descriptionText !== "string") {
     throw new Error(`${at}: descriptionText must be a string.`);
   }
-  // Every candidate must have embeddable content (blank on BOTH title and description composes to
-  // "" and the embedder 400s). Uses the shared composeEmbeddingText so the "empty" notion matches
-  // jobEmbeddingText's composition — but stays db-free (it lists the fields locally rather than
-  // importing jobEmbeddingText), so loadDataset never pulls @opusfinder/db onto the random / fixture
-  // path. The AUTHORITATIVE check against jobEmbeddingText's ACTUAL output (which also catches a
-  // future field-list change) lives in embeddingRanker, where the composer is loaded only when embedding.
+  // Every candidate must have embeddable content (blank title AND description composes to "" and the
+  // embedder 400s). A db-free mirror of jobEmbeddingText's composition (lists the fields locally) so
+  // loadDataset never pulls @opusfinder/db onto the fixture path; the authoritative check against
+  // jobEmbeddingText's actual output lives in embeddingRanker, where the composer is loaded.
   if (composeEmbeddingText([value.title, value.descriptionText]) === "") {
     throw new Error(
       `${at}: job ${value.id} has no embeddable content (title and descriptionText are both empty).`,

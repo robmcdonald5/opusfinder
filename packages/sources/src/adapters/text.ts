@@ -13,8 +13,7 @@
  *   - SmartRecruiters/Workable:  ["strip", "decode", "collapse"]   (raw tags, single-encoded)
  *   - Lever/Ashby (plain text):  ["collapse"]                      (already plain)
  *
- * Pure string operations only — no Node APIs — so this runs unchanged in a Cloudflare
- * Worker (Phase 8).
+ * Pure string operations only — no Node APIs — so this runs unchanged in a Cloudflare Worker.
  */
 export type CleanStep = "decode" | "strip" | "collapse";
 

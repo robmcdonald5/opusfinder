@@ -3,7 +3,7 @@
 // Runtime types generated with workerd@1.20260616.1 2026-06-03 
 interface __BaseEnv_Env {
 	INGEST_CURSOR: KVNamespace;
-	F2_ENFORCE: "enforce";
+	LIFECYCLE_CLOSE_ENFORCE: "enforce";
 	DATABASE_URL: string;
 	INGEST_LIMIT: string;
 }

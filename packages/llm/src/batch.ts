@@ -7,13 +7,13 @@ import { getAnthropicApiKey } from "./env";
 import { modelId, type ModelAlias } from "./provider";
 
 /**
- * Anthropic Message Batches API (50% token discount) — the cost lever Phase 10 synthesis relies on.
+ * Anthropic Message Batches API (50% token discount) — the cost lever for digest synthesis.
  * The Vercel AI SDK has NO batch support, so this is the ONE place that talks to the raw
  * `@anthropic-ai/sdk`. Two layers:
  *
  *   - Low-level primitives — {@link submitBatch} / {@link pollBatch} / {@link collectBatchResults} —
- *     for a DURABLE caller (the Phase-10 Inngest digest function drives them across `step.run` +
- *     `step.sleep`, so the hours-long batch wait suspends at zero compute cost).
+ *     for a DURABLE caller (the Inngest digest function drives them across `step.run` + `step.sleep`,
+ *     so the hours-long batch wait suspends at zero compute cost).
  *   - {@link batchGenerate} — a blocking submit→poll→collect convenience composing the primitives, for
  *     non-durable callers (the eval harness, the CLI smoke).
  *
@@ -23,9 +23,8 @@ import { modelId, type ModelAlias } from "./provider";
  */
 
 /** One request in a batch. Mirrors {@link GenerateParams} inputs plus a caller-supplied `customId` to
- *  correlate results (Anthropic returns batch results unordered). `customId` must match
- *  `^[a-zA-Z0-9_-]{1,64}$` (Anthropic's constraint). Generic on purpose — the job-specific shape (the
- *  rendered synthesis prompt) is assembled by the Phase-10 caller, not here. */
+ *  correlate results (Anthropic returns batch results unordered); `customId` must match
+ *  `^[a-zA-Z0-9_-]{1,64}$` (Anthropic's constraint). */
 export interface BatchRequest {
   customId: string;
   model: ModelAlias;
@@ -69,11 +68,10 @@ export interface BatchPoll {
 }
 
 const DEFAULT_MAX_OUTPUT_TOKENS = 1024;
-const CUSTOM_ID_RE = /^[a-zA-Z0-9_-]{1,64}$/;
+const CUSTOM_ID_PATTERN = /^[a-zA-Z0-9_-]{1,64}$/;
 
 let memoizedClient: Anthropic | undefined;
 function getClient(): Anthropic {
-  // One env-keyed client memoized for the process (like provider.ts's lazy provider).
   memoizedClient ??= new Anthropic({ apiKey: getAnthropicApiKey() });
   return memoizedClient;
 }
@@ -121,8 +119,8 @@ function toContent(content: string | readonly unknown[]): string | Anthropic.Tex
 function assertCustomIds(requests: BatchRequest[]): void {
   const seen = new Set<string>();
   for (const r of requests) {
-    if (!CUSTOM_ID_RE.test(r.customId)) {
-      throw new Error(`batchGenerate: customId "${r.customId}" must match ${CUSTOM_ID_RE.source}.`);
+    if (!CUSTOM_ID_PATTERN.test(r.customId)) {
+      throw new Error(`batchGenerate: customId "${r.customId}" must match ${CUSTOM_ID_PATTERN.source}.`);
     }
     // Duplicates would be rejected by the API (opaque 400) AND collapse the customId->result map,
     // mis-correlating one request's result onto another — fail fast and clearly here instead.
@@ -162,15 +160,15 @@ export async function submitBatch(requests: BatchRequest[]): Promise<string> {
 export async function pollBatch(batchId: string): Promise<BatchPoll> {
   const client = getClient();
   const batch = await client.messages.batches.retrieve(batchId);
-  const c = batch.request_counts;
+  const counts = batch.request_counts;
   return {
     status: batch.processing_status,
     counts: {
-      processing: c.processing,
-      succeeded: c.succeeded,
-      errored: c.errored,
-      canceled: c.canceled,
-      expired: c.expired,
+      processing: counts.processing,
+      succeeded: counts.succeeded,
+      errored: counts.errored,
+      canceled: counts.canceled,
+      expired: counts.expired,
     },
   };
 }
@@ -200,8 +198,9 @@ function mapResult(customId: string, result: Anthropic.Messages.MessageBatchResu
       // The error envelope nesting has varied across versions ({type} vs {error:{type}}); extract
       // defensively. Only the error TYPE is surfaced (SECRET-free), never a raw body.
       const e = result.error as { type?: unknown; error?: { type?: unknown } };
-      const t = (typeof e.error?.type === "string" && e.error.type) || (typeof e.type === "string" && e.type);
-      return { customId, status: "errored", text: "", error: t || "errored" };
+      const errorType =
+        (typeof e.error?.type === "string" && e.error.type) || (typeof e.type === "string" && e.type);
+      return { customId, status: "errored", text: "", error: errorType || "errored" };
     }
     case "expired":
       return { customId, status: "expired", text: "", error: "expired" };
@@ -225,12 +224,12 @@ function extractText(message: Anthropic.Message): string {
 }
 
 function extractUsage(message: Anthropic.Message): BatchUsage {
-  const u = message.usage;
+  const usage = message.usage;
   return {
-    inputTokens: u.input_tokens,
-    outputTokens: u.output_tokens,
-    cacheCreationInputTokens: u.cache_creation_input_tokens ?? 0,
-    cacheReadInputTokens: u.cache_read_input_tokens ?? 0,
+    inputTokens: usage.input_tokens,
+    outputTokens: usage.output_tokens,
+    cacheCreationInputTokens: usage.cache_creation_input_tokens ?? 0,
+    cacheReadInputTokens: usage.cache_read_input_tokens ?? 0,
   };
 }
 

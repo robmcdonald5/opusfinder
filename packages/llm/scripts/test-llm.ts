@@ -8,8 +8,7 @@ import type { GenerateResult } from "../src/index";
 // Anthropic only caches a prompt prefix once it clears a per-model minimum (a few
 // thousand input tokens, model-dependent; highest for the Haiku 4.x tier). Below that
 // the cacheControl marker is silently ignored and there is no cache hit to observe. So
-// the system prompt below is deliberately large. Rough rule of thumb: ~4 characters per
-// token, so this targets well past 16k characters.
+// the system prompt below is deliberately large.
 function buildSystemPrompt(): string {
   const intro = [
     // Per-run nonce: makes the cached system prompt unique each run, so the cache is
@@ -69,9 +68,7 @@ async function main(): Promise<void> {
       "Calling Haiku twice with a cached system prompt...",
   );
 
-  // First call populates the cache (expect cache_creation > 0); the second reads it
-  // (expect cache_read > 0). Sequential so the cache exists before call two, and well
-  // within the 5-minute ephemeral TTL. The per-run nonce keeps the cache cold at call 1.
+  // Sequential so the cache exists before call two, and well within the 5-minute ephemeral TTL.
   const first = await runOnce("call 1 - expect cache creation");
   const second = await runOnce("call 2 - expect cache read");
 

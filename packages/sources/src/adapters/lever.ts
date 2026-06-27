@@ -6,10 +6,9 @@ import { cleanHtml } from "./text";
 import type { SourceAdapter, SourceContext } from "./types";
 import { firstPathSegment, segmentAfter } from "./url-match";
 
-// US host only. EU tenants live on api.eu.lever.co (the .co host 404s them); EU support
-// is deferred to Phase 7 (needs a per-company region channel).
+// US host only. EU tenants live on api.eu.lever.co (the .co host 404s them).
 const POSTINGS_API = "https://api.lever.co/v0/postings";
-const API_HOST = new URL(POSTINGS_API).hostname; // "api.lever.co"
+const API_HOST = new URL(POSTINGS_API).hostname;
 const PUBLIC_HOST = "jobs.lever.co";
 
 /**
@@ -88,8 +87,7 @@ function toNormalizedJob(raw: unknown, ctx: SourceContext): NormalizedJob | null
     locations,
     remote,
     // `descriptionPlain` is pre-stripped plain text (opening + body), so only collapse is
-    // needed. The richer `lists[]`/`additional` sections + the HTML `description` stay on
-    // `raw` (primary-only body for now; revisit under the Phase-5 eval).
+    // needed. The richer `lists[]`/`additional` sections + the HTML `description` stay on `raw`.
     descriptionText: cleanHtml(
       typeof raw.descriptionPlain === "string" ? raw.descriptionPlain : "",
       ["collapse"],

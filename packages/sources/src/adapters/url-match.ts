@@ -1,8 +1,8 @@
 /**
- * Pure URL → raw-slug parsing primitives shared by the adapters' Phase-7 `matchUrl`. Each
- * adapter still owns its host set and its rule; these only factor out the mechanical path/host
- * parsing so nine `matchUrl`s don't each re-implement "first path segment" / "subdomain label".
- * WHATWG `URL` only — Worker-safe — and none throw (a non-matching shape returns `null`/`[]`).
+ * Pure URL → raw-slug parsing primitives shared by the adapters' `matchUrl`. Each adapter still
+ * owns its host set and its rule; these only factor out the mechanical path/host parsing so nine
+ * `matchUrl`s don't each re-implement "first path segment" / "subdomain label". WHATWG `URL` only
+ * — Worker-safe — and none throw (a non-matching shape returns `null`/`[]`).
  */
 
 /** Non-empty path segments: `/v1/boards/acme/jobs` → `["v1","boards","acme","jobs"]`; `/` → `[]`. */
@@ -38,7 +38,6 @@ export function segmentAfter(url: URL, marker: string): string | null {
  * false-negative cost of avoiding the far more common phantom-tenant false-positive.
  */
 const RESERVED_SUBDOMAINS = new Set([
-  // Generic web infrastructure.
   "www",
   "api",
   "app",

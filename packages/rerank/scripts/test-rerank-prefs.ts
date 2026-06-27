@@ -4,18 +4,16 @@ import { runScript } from "@opusfinder/shared/script";
 import { buildRerankSystem, rerankCandidates, type RerankCall, type RerankCandidate } from "../src/index";
 
 /**
- * Stub smoke for the Phase-F3 prompt-prefs injection — NO creds, NO LLM. It locks the cache-safety and
- * wiring properties of the prefs block without a real model:
- *   - EMPTY/UNSET prefs produce a BYTE-IDENTICAL system to the no-prefs path (so an un-answered user's
- *     prompt-cache prefix does not bust on deploy — the single most load-bearing F3 cache claim);
- *   - non-empty prefs append a labeled "=== Candidate stated preferences ===" block with the YoE band /
- *     salary range / dealbreakers rendered (and only the set ones);
- *   - the system is built ONCE and passed IDENTICALLY to every chunk (so a caching call still hits the
- *     cache on chunks 2..N — the Phase-10 "cache read > 0" gate);
- *   - prefs are WIRED into the scoring path: with a stub that MODELS the rubric's declared-level rule, a
- *     low declared YoE band makes an over-leveled role rank BELOW a level-matched one. The stub is a
- *     test-only model of intent, NOT the LLM — it proves prefs reach the `system` the scorer reads and the
- *     intended DIRECTION; true semantic correctness is the live gate (PHASE_F3_PLAN.md §9, 3h).
+ * Stub smoke for the prompt-prefs injection — NO creds, NO LLM. Locks four properties of the prefs block:
+ *   - EMPTY/UNSET prefs produce a BYTE-IDENTICAL system to the no-prefs path (no prompt-cache bust for an
+ *     un-answered user);
+ *   - non-empty prefs append a labeled "=== Candidate stated preferences ===" block with only the set
+ *     fields (YoE band / salary range / dealbreakers) rendered;
+ *   - the system is built ONCE and passed IDENTICALLY to every chunk (so a caching call hits the cache on
+ *     chunks 2..N);
+ *   - prefs are WIRED into scoring: a stub modeling the declared-level rule makes a low YoE band rank an
+ *     over-leveled role BELOW a level-matched one (proves prefs reach the `system`; semantic correctness
+ *     is the live gate).
  *
  *   pnpm --filter @opusfinder/rerank test:prefs
  */
@@ -33,8 +31,7 @@ const EMPTY_PREFS: PromptPreferences = {
   dealbreakers: [],
 };
 
-// A low target YoE band (0-2 yrs) — the declared-level signal (the too-senior fix). There is no categorical
-// target_level; the band IS the level statement.
+// A low target YoE band (0-2 yrs) — the declared-level signal. No categorical target_level; the band IS the level statement.
 const JUNIOR_PREFS: PromptPreferences = {
   yoeMin: 0,
   yoeMax: 2,
@@ -43,7 +40,7 @@ const JUNIOR_PREFS: PromptPreferences = {
   dealbreakers: ["crypto"],
 };
 
-const CANDS: RerankCandidate[] = [
+const CANDIDATES: RerankCandidate[] = [
   { id: 1, title: "Staff Software Engineer", descriptionText: "Own org-wide technical strategy, 10+ yrs." },
   { id: 2, title: "Software Engineer I", descriptionText: "New-grad backend role, Node + Postgres, mentorship." },
   { id: 3, title: "Senior Platform Engineer", descriptionText: "Lead platform work, 6+ yrs." },
@@ -66,13 +63,11 @@ function levelAwareStub(): { call: RerankCall; systems: string[] } {
 }
 
 await runScript("test-rerank-prefs", async () => {
-  // 1) Empty/unset prefs → BYTE-IDENTICAL system to the no-prefs path (no per-user cache bust).
   const noPrefs = buildRerankSystem(PROFILE);
   assert(noPrefs === buildRerankSystem(PROFILE, undefined), "undefined prefs must equal the no-arg system");
   assert(noPrefs === buildRerankSystem(PROFILE, EMPTY_PREFS), "all-empty prefs must be byte-identical to no-prefs");
   assert(!noPrefs.includes("Candidate stated preferences"), "no-prefs system must omit the prefs block");
 
-  // 2) Non-empty prefs append the labeled block with only the set fields rendered.
   const withPrefs = buildRerankSystem(PROFILE, JUNIOR_PREFS);
   assert(withPrefs.startsWith(noPrefs), "the prefs system must be the no-prefs system PLUS an appended block");
   assert(withPrefs.includes("=== Candidate stated preferences ==="), "must label the prefs block");
@@ -87,7 +82,7 @@ await runScript("test-rerank-prefs", async () => {
   //    calls, all handed the SAME system, equal to buildRerankSystem(profile, prefs).
   {
     const { call, systems } = levelAwareStub();
-    await rerankCandidates(PROFILE, CANDS, call, { prefs: JUNIOR_PREFS, chunkSize: 1 });
+    await rerankCandidates(PROFILE, CANDIDATES, call, { prefs: JUNIOR_PREFS, chunkSize: 1 });
     assert(systems.length === 3, `expected one call per candidate, got ${systems.length}`);
     assert(new Set(systems).size === 1, "every chunk must receive the IDENTICAL system string");
     assert(systems[0] === withPrefs, "the per-chunk system must equal buildRerankSystem(profile, prefs)");
@@ -98,8 +93,8 @@ await runScript("test-rerank-prefs", async () => {
   //    prefs the stub can't see a band, so the over-leveled role keeps its original lead. The ORDER must
   //    differ — proving the declared YoE band reaches the reranker.
   {
-    const withLow = await rerankCandidates(PROFILE, CANDS, levelAwareStub().call, { prefs: JUNIOR_PREFS });
-    const noLevel = await rerankCandidates(PROFILE, CANDS, levelAwareStub().call, { prefs: EMPTY_PREFS });
+    const withLow = await rerankCandidates(PROFILE, CANDIDATES, levelAwareStub().call, { prefs: JUNIOR_PREFS });
+    const noLevel = await rerankCandidates(PROFILE, CANDIDATES, levelAwareStub().call, { prefs: EMPTY_PREFS });
     assert(withLow.orderedIds[0] === 2, "with a low YoE band, the level-matched role (id 2) must rank first");
     assert(
       withLow.orderedIds.indexOf(1) > withLow.orderedIds.indexOf(2),

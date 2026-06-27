@@ -43,9 +43,8 @@ export interface DiscoveryOptions {
   /** Worker filter: when true, run only `workerSafe` (fetch-only, bundle-safe) lanes. */
   workerOnly?: boolean;
   /**
-   * F2 Arm B enforcement (the single F2 switch — see `parseEnforceFlag`). Default false = SHADOW (tally
-   * `wouldCloseOnDeactivation`, write no `'closed'`). The Worker passes `parseEnforceFlag(env.F2_ENFORCE)`;
-   * the same flag flips all three F2 arms together once the shadow counters are reviewed.
+   * Board-death close enforcement. Default false = SHADOW (tally `wouldCloseOnDeactivation`, write no
+   * `'closed'`); true enforces the close. The Worker sets it via `parseEnforceFlag(env.LIFECYCLE_CLOSE_ENFORCE)`.
    */
   enforceLifecycle?: boolean;
 }
@@ -56,7 +55,6 @@ export interface DiscoveryOptions {
  */
 export interface DiscoveryCounts {
   [key: string]: number;
-  // Resolve phase (seed → candidates).
   seedRecords: number;
   atsLinks: number;
   badUrl: number;
@@ -80,9 +78,8 @@ export interface DiscoveryCounts {
   refreshedLive: number;
   markedFailed: number;
   reprobeInconclusive: number;
-  // Staleness sweep.
   deactivated: number;
-  // F2 Arm B board-death close (count-only/shadow → wouldCloseOnDeactivation; F2-enforce writes closed).
+  // Board-death close: count-only/shadow → wouldCloseOnDeactivation; enforce writes closed.
   jobsClosedOnDeactivation: number; // active jobs of deactivated boards flipped to 'closed' (enforce; 0 in shadow)
   wouldCloseOnDeactivation: number; // active jobs of deactivated boards that WOULD close (shadow; 0 in enforce)
 }
@@ -90,17 +87,16 @@ export interface DiscoveryCounts {
 /**
  * The slug-discovery pipeline: seed → resolve → partition → probe NEW/INACTIVE → upsert the live subset
  * → reprobe ACTIVE companies → deactivate the stale ones, all under one `source_runs` row. `db` is
- * injected and there is no argv read, so the Phase-8 Worker calls this directly. The PARTITION is the
- * review fix for the reactivation lock-out (#7/#8): a candidate that is KNOWN-but-INACTIVE joins the
- * probe path (not skipped as "already seen"), so a live probe reactivates it via markProbeResult; only
- * KNOWN-and-ACTIVE rows are left to the reprobe pass. `dryRun` is a pure read-only preview — it writes
- * nothing (no run row, upsert, reprobe, or sweep) but still probes + tallies what it WOULD do.
+ * injected and there is no argv read, so the Worker calls this directly. The PARTITION fixes the
+ * reactivation lock-out: a candidate that is KNOWN-but-INACTIVE joins the probe path (not skipped as
+ * "already seen"), so a live probe reactivates it via markProbeResult; only KNOWN-and-ACTIVE rows are
+ * left to the reprobe pass. `dryRun` is a pure read-only preview — it writes nothing (no run row,
+ * upsert, reprobe, or sweep) but still probes + tallies what it WOULD do.
  */
 export async function runDiscovery(db: Db, opts: DiscoveryOptions = {}): Promise<DiscoveryCounts> {
   const dryRun = opts.dryRun ?? false;
   // Coerce a non-positive window to the default: a 0/negative `olderThanDays` makes deactivateStale
-  // sweep EVERY failing row (COALESCE(...) < now() - 0). Plain `?? DEFAULT` would preserve a passed
-  // 0 — and the Phase-8 worker calls runDiscovery directly — so the guard lives here, not just `??`.
+  // sweep EVERY failing row (COALESCE(...) < now() - 0), which a plain `?? DEFAULT` would not catch.
   const olderThanDays =
     opts.olderThanDays !== undefined && opts.olderThanDays > 0
       ? opts.olderThanDays
@@ -133,8 +129,7 @@ export async function runDiscovery(db: Db, opts: DiscoveryOptions = {}): Promise
     const scoped = opts.limit !== undefined ? worklist.slice(0, opts.limit) : worklist;
     counts.probeWorklist = scoped.length;
 
-    // 4-6. PROBE the worklist + ACT (live/live-empty ⇒ upsert + markLive; absent ⇒ drop; indeterminate
-    // / transient ⇒ leave for next run). Returns the ids written, so the reprobe pass can skip them.
+    // PROBE the worklist + ACT; returns the upserted ids so the reprobe pass can skip them.
     const upsertedIds = await probeAndUpsert(db, scoped, counts, dryRun, opts.probe);
 
     // 7. REPROBE ACTIVE companies + 8. STALENESS SWEEP (writes — skipped on dry-run). The sweep is
@@ -150,10 +145,9 @@ export async function runDiscovery(db: Db, opts: DiscoveryOptions = {}): Promise
       );
       const deactivatedIds = await deactivateStale(db, olderThanDays, { source: opts.source });
       counts.deactivated = deactivatedIds.length;
-      // F2 Arm B: soft-close every still-active job of a just-deactivated (board-death) company — the
-      // orphan Arm A is blind to (activeOnly:true never re-fetches a dead board). Default count-only
-      // (F2-SHADOW: tally wouldCloseOnDeactivation, write no 'closed'). Enforcement rides the ONE shared
-      // switch: opts.enforceLifecycle = parseEnforceFlag(F2_ENFORCE), threaded to all three arms together.
+      // Soft-close every still-active job of a just-deactivated (board-death) company — the reprobe path
+      // can't see them (activeOnly:true never re-fetches a dead board). Default count-only/shadow (tally
+      // wouldCloseOnDeactivation, write no 'closed'); enforcement rides opts.enforceLifecycle.
       const boardClose = await closeJobsForCompanies(db, deactivatedIds, {
         enforce: opts.enforceLifecycle ?? false,
       });
@@ -225,13 +219,13 @@ async function reprobeActive(
     (row) => !exclude.has(row.id),
   );
   if (rows.length === 0) return;
-  const cands: Candidate[] = rows.map((row) => ({
+  const candidates: Candidate[] = rows.map((row) => ({
     source: row.source,
     slug: row.slug,
     rawSlug: row.slug, // stored slug is already canonical; jobsRequest uses ctx.slug
     sourceUrl: "",
   }));
-  const results = await probeCandidates(cands, probeOpts);
+  const results = await probeCandidates(candidates, probeOpts);
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i];
     const r = results[i];
@@ -281,29 +275,29 @@ export function selectLanes(
 /**
  * Step 1+2 for N lanes: fetch each lane (a `failLoud` lane — the core seed — re-throws to FAIL THE RUN;
  * others isolate the failure as a `lane_<name>_error` tally so one flaky external lane can't zero a run),
- * resolve its records to candidates,
- * accumulate the drop-reason counts field-wise (NOT Object.assign — that clobbers across lanes), and
- * cross-lane-dedupe by (source, slug) — resolveSeed's own `seen` is per-call (resolve.ts:66) and the
- * partition only drops already-ACTIVE rows, so two lanes emitting the same pair would otherwise both enter
- * the worklist and double-probe. Mutates `counts` (drop tallies + lane_<name>_candidates/_error +
- * candidates); returns the merged, deduped candidates. Pure of db/probe → unit-testable with stub lanes.
+ * resolve its records to candidates, accumulate the drop-reason counts field-wise (NOT Object.assign —
+ * that clobbers across lanes), and cross-lane-dedupe by (source, slug) — resolveSeed's own `seen` is
+ * per-call and the partition only drops already-ACTIVE rows, so two lanes emitting the same pair would
+ * otherwise both enter the worklist and double-probe. Mutates `counts` (drop tallies +
+ * lane_<name>_candidates/_error + candidates); returns the merged, deduped candidates. Pure of db/probe
+ * → unit-testable with stub lanes.
  */
 export async function resolveLanes(
   lanes: SeedLane[],
   counts: DiscoveryCounts,
   opts: { source?: SourceName },
 ): Promise<Candidate[]> {
-  const seen = new Set<string>(); // cross-lane key set (same idiom as resolve.ts:96 / keyOf below)
+  const seen = new Set<string>(); // cross-lane key set
   const candidates: Candidate[] = [];
   for (const lane of lanes) {
     let records: CompanyRecord[];
     try {
       records = await lane.fetch();
     } catch (err) {
-      // F5-FAILMODE (decision 7): tally the error, then either FAIL LOUD (a failLoud lane — the core
-      // outscal seed — re-throws into runDiscovery's catch → finishRun status:error) or ISOLATE the new
-      // external lanes (continue, so one flaky third party can't zero a run). Echo name + message shape
-      // only (public URLs / status text, never a body or cred — see secrets-not-in-errors-or-logs).
+      // Tally the error, then either FAIL LOUD (a failLoud lane — the core outscal seed — re-throws into
+      // runDiscovery's catch → finishRun status:error) or ISOLATE the new external lanes (continue, so
+      // one flaky third party can't zero a run). Echo name + message shape only (public URLs / status
+      // text, never a body or cred).
       counts[`lane_${lane.name}_error`] = (counts[`lane_${lane.name}_error`] ?? 0) + 1;
       if (lane.failLoud) throw err;
       console.error(
@@ -312,10 +306,10 @@ export async function resolveLanes(
       );
       continue;
     }
-    const r = resolveSeed(records, { source: opts.source });
-    accumulateCounts(counts, r.counts);
+    const resolved = resolveSeed(records, { source: opts.source });
+    accumulateCounts(counts, resolved.counts);
     let laneNew = 0;
-    for (const c of r.candidates) {
+    for (const c of resolved.candidates) {
       const k = keyOf(c.source, c.slug);
       if (seen.has(k)) continue;
       seen.add(k);
@@ -330,10 +324,10 @@ export async function resolveLanes(
 }
 
 /**
- * Field-wise accumulate a lane's ResolveCounts drop tallies into the run counts bag — replacing the
- * single-call Object.assign, which in an N-lane loop would CLOBBER (last-lane-wins) each prior lane's
- * named totals. `candidates` is NOT summed here: it is set once, post cross-lane dedupe, to the merged
- * length (summing would re-count a (source, slug) two lanes both emit).
+ * Field-wise accumulate a lane's ResolveCounts drop tallies into the run counts bag — a single
+ * Object.assign in an N-lane loop would CLOBBER (last-lane-wins) each prior lane's named totals.
+ * `candidates` is NOT summed here: it is set once, post cross-lane dedupe, to the merged length
+ * (summing would re-count a (source, slug) two lanes both emit).
  */
 function accumulateCounts(counts: DiscoveryCounts, r: ResolveCounts): void {
   counts.seedRecords += r.seedRecords;

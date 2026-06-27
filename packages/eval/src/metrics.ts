@@ -1,9 +1,8 @@
 /**
- * Ranking-quality metrics (Phase 5). Pure, dependency-free, and the single source of truth
- * every ranker is judged by — retrieval, the Voyage-vs-OpenAI comparison, and the Phase-10
- * LLM rerank all score through here. Relevance is BINARY: an id is relevant iff it is in the
- * example's `expectedGoodIds`. `scripts/test-metrics.ts` pins this math against hand-computed
- * cases, so a refactor that breaks it fails loudly.
+ * Ranking-quality metrics. Pure, dependency-free, and the single source of truth every ranker
+ * is judged by. Relevance is BINARY: an id is relevant iff it is in the example's
+ * `expectedGoodIds`. `scripts/test-metrics.ts` pins this math against hand-computed cases, so a
+ * refactor that breaks it fails loudly.
  */
 
 /** Default ranking cutoffs reported by the harness. Small pools (~20-40 candidates). */
@@ -77,14 +76,14 @@ export function aggregateAtK(perExample: MetricsAtK[], k: number): AggregateMetr
     if (defined.length === 0) return { mean: NaN, count: 0 };
     return { mean: defined.reduce((a, b) => a + b, 0) / defined.length, count: defined.length };
   };
-  const p = meanOf(at.map((m) => m.precision));
-  const r = meanOf(at.map((m) => m.recall));
-  const n = meanOf(at.map((m) => m.ndcg));
+  const precisionAgg = meanOf(at.map((m) => m.precision));
+  const recallAgg = meanOf(at.map((m) => m.recall));
+  const ndcgAgg = meanOf(at.map((m) => m.ndcg));
   return {
     k,
-    precision: p.mean,
-    recall: r.mean,
-    ndcg: n.mean,
-    counts: { precision: p.count, recall: r.count, ndcg: n.count },
+    precision: precisionAgg.mean,
+    recall: recallAgg.mean,
+    ndcg: ndcgAgg.mean,
+    counts: { precision: precisionAgg.count, recall: recallAgg.count, ndcg: ndcgAgg.count },
   };
 }

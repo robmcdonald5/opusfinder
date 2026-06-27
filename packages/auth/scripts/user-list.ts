@@ -16,8 +16,7 @@ async function main(): Promise<void> {
       id: user.id,
       email: user.email,
       verified: user.emailVerified,
-      // The DB-native send permit (migration 0022) — NULL = un-approved = fail-closed (no send). The read-side
-      // counterpart to `pnpm user:approve`, so the roster can audit who the cadence sweep will actually email.
+      // The DB-native send permit — NULL = un-approved = fail-closed (no send).
       approvedAt: userPreferences.digestApprovedAt,
       cadence: userPreferences.digestCadence,
       enabled: userPreferences.digestEnabled,
@@ -33,10 +32,10 @@ async function main(): Promise<void> {
     return;
   }
   console.log(`${rows.length} user(s):`);
-  for (const r of rows) {
+  for (const row of rows) {
     console.log(
-      `  ${maskEmail(r.email)}  verified=${r.verified}  approved=${r.approvedAt !== null}  ` +
-        `cadence=${r.cadence ?? "—"}  enabled=${r.enabled ?? "—"}  profile=${r.profileId !== null}  id=${r.id}`,
+      `  ${maskEmail(row.email)}  verified=${row.verified}  approved=${row.approvedAt !== null}  ` +
+        `cadence=${row.cadence ?? "—"}  enabled=${row.enabled ?? "—"}  profile=${row.profileId !== null}  id=${row.id}`,
     );
   }
 }

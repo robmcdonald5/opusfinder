@@ -45,7 +45,7 @@ guarantee**, not a seam contract — `src/` stays free of `@opusfinder/llm`.
   path (the script runs with cwd = `packages/profiles`). Needs `BETTER_AUTH_SECRET` (`packages/auth/.env`)
   in addition to the DB / R2 / LLM / Voyage keys, because it now creates/looks up a real user.
 - `pnpm profiles:restructure <email>` — re-structure a profile from its cached transcript. Resolves an
-  **existing** user via `findUserByEmail` and errors cleanly if none exists (it does not create a user),
+  **existing** user via `findUserIdByEmail` and errors cleanly if none exists (it does not create a user),
   so unlike `ingest-cv` it needs no `BETTER_AUTH_SECRET`.
 - `pnpm --filter @opusfinder/profiles test:ingest` — smoke-test `ingestCv` with stub seams + an
   in-memory store (no LLM / Voyage / R2 spend); seeds a real `user` row for its fixed test id (so the

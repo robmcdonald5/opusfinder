@@ -1,7 +1,7 @@
 // Exercises generateObject end-to-end against Anthropic: (1) extraction of a valid CvProfileSchema
 // profile from sample CV text, (2) prompt-cache plumbing (created on call 1, read on call 2), and
 // (3) truncation surfaces as an actionable Error (not an opaque SDK throw). Requires
-// ANTHROPIC_API_KEY in packages/llm/.env. (The PII scrub now lives in @opusfinder/shared — see test:userid.)
+// ANTHROPIC_API_KEY in packages/llm/.env.
 // Run: pnpm --filter @opusfinder/llm test:generate-object
 import { randomUUID } from "node:crypto";
 
@@ -45,21 +45,21 @@ function buildLargeSystemPrompt(): string {
 }
 
 async function testExtraction(): Promise<void> {
-  const r = await generateObject({
+  const result = await generateObject({
     model: "haiku",
     schema: CvProfileSchema,
     system: CV_STRUCTURE_SYSTEM,
     messages: [{ role: "user", content: SAMPLE_CV_TEXT }],
   });
   console.log("\n[extraction]");
-  console.log(`  summary:     ${r.object.summary.slice(0, 100)}...`);
-  console.log(`  skills:      ${r.object.skills.join(", ")}`);
-  console.log(`  targetRoles: ${r.object.targetRoles.join(", ")}`);
+  console.log(`  summary:     ${result.object.summary.slice(0, 100)}...`);
+  console.log(`  skills:      ${result.object.skills.join(", ")}`);
+  console.log(`  targetRoles: ${result.object.targetRoles.join(", ")}`);
   // Getting a result at all means the JSON parsed + validated (a truncated/invalid response would
   // have thrown — see testTruncation), so just assert the shape is non-empty.
-  assert(r.object.summary.trim().length > 0, "summary is non-empty");
-  assert(r.object.skills.length > 0, "skills is non-empty");
-  assert(r.object.targetRoles.length > 0, "targetRoles is non-empty");
+  assert(result.object.summary.trim().length > 0, "summary is non-empty");
+  assert(result.object.skills.length > 0, "skills is non-empty");
+  assert(result.object.targetRoles.length > 0, "targetRoles is non-empty");
 }
 
 async function testCachePlumbing(): Promise<void> {

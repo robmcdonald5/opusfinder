@@ -8,11 +8,10 @@ import type { UserId } from "@opusfinder/shared";
 import { renderDigestEmail } from "../src/render";
 
 /**
- * Credential-free render preview (Phase 11c gate): a built-in fixture payload → `email-preview.html`
- * (open it in a browser) + the text part on stdout. No creds, no DB, no network. The fixture
- * deliberately carries HOSTILE scraped input — a `<script>` title, a `javascript:` apply URL, quotes
- * in the reason — so an escaping/scheme-gate regression is VISIBLE in this gate, not just in the 11d
- * smoke assertions.
+ * Credential-free render preview: a built-in fixture payload → `email-preview.html` (open it in a
+ * browser) + the text part on stdout. No creds, no DB, no network. The fixture deliberately carries
+ * HOSTILE scraped input — a `<script>` title, a `javascript:` apply URL, quotes in the reason — so an
+ * escaping/scheme-gate regression is VISIBLE here.
  *
  *   pnpm email:preview
  */
@@ -34,7 +33,7 @@ const FIXTURE: DigestEmailPayload = {
       remote: false,
     },
     {
-      // HOSTILE item: script tag in the title, javascript: URL, quotes + entities in the reason.
+      // HOSTILE item.
       rank: 2,
       reason: `They want someone who's shipped "real-time" pipelines — your <profile> says you have & more.`,
       title: `<script>alert("xss")</script> Staff Engineer`,

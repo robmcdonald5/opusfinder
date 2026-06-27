@@ -156,10 +156,10 @@ is the sole declared-level signal. Migration 0012 applied; backend-only; live se
 `main` (PR #20).
 
 Phase F2 added **stale-job lifecycle close** — three arms (feed-absence sweep, board-death close,
-pre-send liveness probe) that ship **SHADOW** (count-only) by default behind a SINGLE `F2_ENFORCE` env
-switch (`parseEnforceFlag` in `@opusfinder/shared`): the scrapers Worker reads `env.F2_ENFORCE`
+pre-send liveness probe) that ship **SHADOW** (count-only) by default behind a SINGLE `LIFECYCLE_CLOSE_ENFORCE` env
+switch (`parseEnforceFlag` in `@opusfinder/shared`): the scrapers Worker reads `env.LIFECYCLE_CLOSE_ENFORCE`
 (`wrangler [vars]`) for Arm A (`sweepLifecycle`) + Arm B (`closeJobsForCompanies`), and the digest
-runtime reads `process.env.F2_ENFORCE` for Arm C (`probeDigestLiveness`). Merged to `main` (PR #18).
+runtime reads `process.env.LIFECYCLE_CLOSE_ENFORCE` for Arm C (`probeDigestLiveness`). Merged to `main` (PR #18).
 
 Phase 11 adds **email delivery** on **Resend**: the per-user digest function now ends with a send →
 bounded-delivery-poll → record tail (`packages/inngest/src/delivery.ts`). A new **`@opusfinder/email`**
@@ -192,7 +192,7 @@ Phase 9.5 added the **user & identity foundation** (backend/CLI only — no UI).
 (email+password) owns `user` / `session` / `account` / `verification` in Neon via the Drizzle adapter,
 alongside a typed **`user_preferences`** table (filter + digest/delivery settings) and FKs from
 `user_cv_files` / `user_profiles` onto `user.id`. A new **`@opusfinder/auth`** package exposes
-`createUserWithProfile` / `getOrCreateUserByEmail` — the one creation path the CLI now and the Phase-12
+`createUserWithPreferences` / `getOrCreateUserByEmail` — the one creation path the CLI now and the Phase-12
 signup form will both call — plus `pnpm user:create` / `user:set-prefs` / `user:list`. The throwaway
 email-derived `mintUserId` placeholder is retired from the live path (`ingest-cv` now resolves a real
 `user.id`), and a latent IDOR in the cv-file repo is closed. Better Auth needs a transaction-capable

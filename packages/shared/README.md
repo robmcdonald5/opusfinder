@@ -135,8 +135,8 @@ used to copy:
   the calling `src/` module (not the cwd), so cross-package callers find it however
   they're invoked. (A file at the package root, e.g. `drizzle.config.ts`, must not use
   it — it would resolve one directory too high.)
-- `requireEnv({ name, notSet, validate?, prefix? })` returns a getter that trims, throws
-  the friendly `notSet` message if absent, runs an optional hard `validate` (e.g. a URL
+- `requireEnv({ name, notSetMessage, validate?, prefix? })` returns a getter that trims, throws
+  the friendly `notSetMessage` message if absent, runs an optional hard `validate` (e.g. a URL
   scheme check), and emits an optional soft `prefix` warning. Errors and warnings echo
   only non-sensitive shape (presence, length, scheme/prefix) — never the value.
 
@@ -147,7 +147,7 @@ loadPackageEnv(import.meta.url);
 
 export const getVoyageApiKey = requireEnv({
   name: "VOYAGE_API_KEY",
-  notSet: "VOYAGE_API_KEY is not set. Paste it into packages/embeddings/.env ...",
+  notSetMessage: "VOYAGE_API_KEY is not set. Paste it into packages/embeddings/.env ...",
   prefix: "pa-",
 });
 ```
@@ -158,7 +158,7 @@ export const getVoyageApiKey = requireEnv({
 `user` table (`@opusfinder/auth`) — a random `user.id`. The deterministic `mintUserId(email)` (UUIDv5
 over a fixed namespace + normalized email, in the node-only `@opusfinder/shared/userid` subpath) is
 **retired from the live path**: `ingest-cv` / `profiles-restructure` now resolve a real `user.id` via
-`getOrCreateUserByEmail` / `findUserByEmail`. `mintUserId` is kept ONLY as a deterministic id source for
+`getOrCreateUserByEmail` / `findUserIdByEmail`. `mintUserId` is kept ONLY as a deterministic id source for
 the offline `test-ingest` smoke and is locked by the golden-vector test
 (`pnpm --filter @opusfinder/shared test:userid`); email-derived ids are not reintroduced on the live
 path (email is PII → reversible ids are a debt being paid down). It stays on its own subpath because it

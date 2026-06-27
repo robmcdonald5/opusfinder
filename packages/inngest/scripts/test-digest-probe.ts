@@ -1,10 +1,10 @@
 /**
- * Stub-seam smoke for the F2 Arm C pre-send liveness probe (src/probe.ts) — NO creds, NO network, NO real
- * DB. Locks the drop/close SPLIT and the conservative classification: 2xx/3xx keep; 404 drops (no close);
+ * Stub-seam smoke for the pre-send liveness probe (src/probe.ts) — NO creds, NO network, NO real DB.
+ * Locks the drop/close SPLIT and the conservative classification: 2xx/3xx keep; 404 drops (no close);
  * 410 drops AND closes (enforce) / would-close (shadow); 5xx + timeout/error KEEP; an all-dead digest yields
  * survivors 0 but STILL records (empties items + folds the probe counts), while the caller keeps the 0-item
- * row and skips the send. The probe seam + a chainable-thenable Db stub drive it; the SQL round-trip itself is
- * the F2f live gate. The enforce-vs-shadow SQL shape is locked by `pnpm --filter @opusfinder/db test:lifecycle`.
+ * row and skips the send. The probe seam + a chainable-thenable Db stub drive it; the enforce-vs-shadow SQL
+ * shape is locked by `pnpm --filter @opusfinder/db test:lifecycle`.
  *
  *   pnpm --filter @opusfinder/inngest test:probe
  */
@@ -121,8 +121,8 @@ await runScript("test-digest-probe", async () => {
     assert(r.survivors === 3, `error-keep survivors: ${r.survivors}`);
   }
 
-  // F) Every item dead → survivors 0, the 410 still closes, AND the recount still records (review fix: the
-  //    all-dead case stays visible to the shadow analysis; the caller keeps the 0-item row and skips the send).
+  // F) Every item dead → survivors 0, the 410 still closes, AND the recount still records (the all-dead
+  //    case stays visible to the shadow analysis; the caller keeps the 0-item row and skips the send).
   {
     const { tools } = recordingStep();
     const db = stubDb([

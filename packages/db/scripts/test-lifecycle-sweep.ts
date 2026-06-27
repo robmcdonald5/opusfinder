@@ -14,12 +14,12 @@ import {
 } from "../src/repos/lifecycle";
 
 /**
- * Stub smoke for `sweepLifecycle` (F2b) — the JS-decidable surface, NO creds, NO Postgres. A fake Db
+ * Stub smoke for `sweepLifecycle` — the JS-decidable surface, NO creds, NO Postgres. A fake Db
  * records every `execute()` call and returns a canned aggregate row; the emitted SQL is rendered with
  * PgDialect so the branch shape is asserted without a live table. The SQL *semantics* (the increment /
  * close / revive transitions) are deterministic but only fully assertable against a real table — that is
- * the F2f live gate's job (PHASE_F2_PLAN.md §7/§9). Here we lock the safety-critical JS logic:
- *   - empty present-set is a HARD no-op (never touches the DB — decision 5);
+ * the live gate's job. Here we lock the safety-critical JS logic:
+ *   - empty present-set is a HARD no-op (never touches the DB);
  *   - count-only (shadow, default) SUPPRESSES the close write; enforce emits it;
  *   - bigint-as-string counts map to the SweepResult numbers;
  *   - NUL is stripped from external_ids before the jsonb param;
@@ -48,8 +48,8 @@ function rendered(query: unknown): { sql: string; params: unknown[] } {
 }
 
 await runScript("test-lifecycle-sweep", async () => {
-  // 1) Empty present-set is a HARD no-op — execute() must NOT be called (decision 5: `<> ALL('{}')`
-  //    would close the whole board).
+  // 1) Empty present-set is a HARD no-op — execute() must NOT be called (`<> ALL('{}')` would close the
+  //    whole board).
   {
     const { db, calls } = stubDb(OK_ROW);
     const r = await sweepLifecycle(db, 1, []);
@@ -60,8 +60,7 @@ await runScript("test-lifecycle-sweep", async () => {
     );
   }
 
-  // 2) Count-only (shadow, the default) SUPPRESSES the close write; the present set unnests from a jsonb
-  //    param; the streak increments SQL-side; companyId + threshold are bound.
+  // 2) Count-only (shadow, the default) SUPPRESSES the close write.
   {
     const { db, calls } = stubDb(OK_ROW);
     await sweepLifecycle(db, 7, ["a", "b"]);
@@ -79,7 +78,6 @@ await runScript("test-lifecycle-sweep", async () => {
     assert(params.includes(ABSENCE_CLOSE_THRESHOLD), "default threshold must be bound");
   }
 
-  // 3) Enforce mode emits the close write.
   {
     const { db, calls } = stubDb(OK_ROW);
     await sweepLifecycle(db, 7, ["a"], { enforce: true });
@@ -87,7 +85,7 @@ await runScript("test-lifecycle-sweep", async () => {
     assert(text.includes("THEN 'closed'"), "enforce mode must emit the close write");
   }
 
-  // 3a) closed_at clock (G2a), Arm A: the revive-clear (present → NULL) is ALWAYS emitted (shadow AND
+  // 3a) closed_at clock: the revive-clear (present → NULL) is ALWAYS emitted (shadow AND
   //     enforce — the invariant "closed_at non-NULL iff currently closed" holds regardless of mode); the
   //     close-stamp (THEN now()) is enforce-ONLY, in lockstep with the 'closed' write. `THEN now()` is
   //     distinct from `updated_at = now()`, so it cleanly detects the stamp branch.
@@ -104,7 +102,7 @@ await runScript("test-lifecycle-sweep", async () => {
     await sweepLifecycle(db, 7, ["a"], { enforce: true });
     const { sql: text } = rendered(calls[0]);
     assert(text.includes("THEN NULL"), "enforce Arm A must still clear closed_at on revive");
-    // LOCKSTEP (decision 4 — the load-bearing invariant for the IRREVERSIBLE prune): the closed_at stamp
+    // LOCKSTEP (the load-bearing invariant for the IRREVERSIBLE prune): the closed_at stamp
     // must ride the SAME `consecutive_absences + 1 >= threshold` predicate as the 'closed' write, not
     // merely exist. A stamp on a looser/wrong/unconditional predicate would still emit `THEN now()` yet
     // desync closed_at from lifecycle_state and poison the prune's `closed_at < now() - 30d` window. The
@@ -147,7 +145,6 @@ await runScript("test-lifecycle-sweep", async () => {
     assert((JSON.parse(jsonParam) as string[]).includes("job1"), "stripped id must be 'job1'");
   }
 
-  // 6) A custom threshold is honored (bound into the SQL).
   {
     const { db, calls } = stubDb(OK_ROW);
     await sweepLifecycle(db, 7, ["a"], { threshold: 5 });
@@ -155,7 +152,7 @@ await runScript("test-lifecycle-sweep", async () => {
     assert(params.includes(5), "custom threshold must be bound");
   }
 
-  // 7) closeJobsForCompanies (Arm B): empty ids is an early-out — never hits the DB.
+  // 7) closeJobsForCompanies: empty ids is an early-out — never hits the DB.
   {
     const { db, calls } = stubDb([{ would_close: "9" }]);
     const r = await closeJobsForCompanies(db, []);
@@ -163,7 +160,7 @@ await runScript("test-lifecycle-sweep", async () => {
     assert(r.closed === 0 && r.wouldClose === 0, "empty companyIds must return zeros");
   }
 
-  // 8) Arm B shadow (default) COUNTS would-close, writes nothing; ids bind as an int[] literal.
+  // 8) shadow (default) COUNTS would-close, writes nothing; ids bind as an int[] literal.
   {
     const { db, calls } = stubDb([{ would_close: "5" }]);
     const r = await closeJobsForCompanies(db, [10, 20]);
@@ -178,7 +175,7 @@ await runScript("test-lifecycle-sweep", async () => {
     assert(r.closed === 0 && r.wouldClose === 5, `shadow Arm B result wrong: ${JSON.stringify(r)}`);
   }
 
-  // 9) Arm B enforce UPDATEs to 'closed' AND stamps the closed_at clock (G2a); the closed count is the
+  // 9) enforce UPDATEs to 'closed' AND stamps the closed_at clock; the closed count is the
   //    RETURNING row count.
   {
     const { db, calls } = stubDb([{ id: 1 }, { id: 2 }, { id: 3 }]);
@@ -195,7 +192,7 @@ await runScript("test-lifecycle-sweep", async () => {
     );
   }
 
-  // 10) sweepStaleJobs (Tier-1 universal timer) — SHADOW (default): a count-only SELECT, never an UPDATE; the
+  // 10) sweepStaleJobs — SHADOW (default): a count-only SELECT, never an UPDATE; the
   //     default TTL is bound; the COALESCE staleness predicate AND the board-health guard (companies join +
   //     last_ingested_at) are present so a DOWN board's jobs can't be false-closed.
   {
@@ -222,7 +219,7 @@ await runScript("test-lifecycle-sweep", async () => {
   }
 
   // 11) ENFORCE: UPDATE ... FROM companies (board-health guard still applied) to 'closed' AND stamps the
-  //     closed_at clock (G2); the closed count is the RETURNING row count.
+  //     closed_at clock; the closed count is the RETURNING row count.
   {
     const { db, calls } = stubDb([{ id: 1 }, { id: 2 }, { id: 3 }]);
     const r = await sweepStaleJobs(db, { enforce: true });
@@ -258,7 +255,7 @@ await runScript("test-lifecycle-sweep", async () => {
     assert(rendered(calls[0]).params.includes(1), "non-positive ttlDays must floor to 1");
   }
 
-  // 13) markJobsPresent (Tier-1 liveness stamp): empty set is a no-op (no DB hit); a non-empty set emits the
+  // 13) markJobsPresent: empty set is a no-op (no DB hit); a non-empty set emits the
   //     CTE with the NO-OP GUARD (re-write only rows stale >1h or needing revival), the reviving columns, and
   //     the revived count from the pre-update closed snapshot; NUL is stripped.
   {
@@ -299,7 +296,7 @@ await runScript("test-lifecycle-sweep", async () => {
     assert(r.revived === 2, `markJobsPresent revived mapping wrong: ${JSON.stringify(r)}`);
   }
 
-  // 14) markCompanyIngested (Tier-1 board-health): stamps companies.last_ingested_at for the given company.
+  // 14) markCompanyIngested: stamps companies.last_ingested_at for the given company.
   {
     const { db, calls } = stubDb([]);
     await markCompanyIngested(db, 42);

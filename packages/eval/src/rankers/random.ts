@@ -1,5 +1,5 @@
 /**
- * The stub ranker (Phase 5 gate): a DETERMINISTIC shuffle of the candidate ids. It is the
+ * The stub ranker: a DETERMINISTIC shuffle of the candidate ids. It is the
  * floor every real ranker must clear, and it proves the harness end-to-end with zero network
  * or DB dependency. Determinism matters — a `Math.random` shuffle would make the committed
  * baseline report churn every run, turning the diff-vs-last-run into pure noise. The shuffle

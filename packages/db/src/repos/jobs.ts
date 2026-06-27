@@ -26,11 +26,10 @@ export interface CompanyRow {
  * already branded (the column is `$type<CompanySlug>()`) and in their platform-canonical form
  * — stored post-`normalizeSlug` — so the driver requests them exactly as ingestion expects.
  * Optionally scoped to one `source` (for a per-source pass) and/or to `activeOnly` rows —
- * the Phase-8 Worker cron sets `activeOnly: true` to skip boards discovery has deactivated
- * (Phase-7 deferred #5); it defaults falsey so existing callers are unchanged. `afterId` +
- * `limit` form an id-keyset cursor (`WHERE id > afterId ORDER BY id LIMIT limit`) for the
- * Phase-8 chunked-cron lane — the chunk is built in SQL, not by loading the whole table and
- * slicing in memory. Used by the all-companies ingestion path (CLI + the Phase-8 Worker cron).
+ * a cron sets `activeOnly: true` to skip boards discovery has deactivated; it defaults falsey
+ * so existing callers are unchanged. `afterId` + `limit` form an id-keyset cursor
+ * (`WHERE id > afterId ORDER BY id LIMIT limit`) for the chunked-cron lane — the chunk is built
+ * in SQL, not by loading the whole table and slicing in memory.
  */
 export function listCompanies(
   db: Db,
@@ -88,8 +87,7 @@ const UPSERT_BATCH_SIZE = 500;
 
 /**
  * Batch-upsert a board's jobs via INSERT ... ON CONFLICT, split into {@link UPSERT_BATCH_SIZE}-row
- * batches (one neon-http round-trip each — was a single statement until a mega-board overflowed it).
- * Conflict key is `(source, external_id)`.
+ * batches (one neon-http round-trip each). Conflict key is `(source, external_id)`.
  *
  * Returns `{ changed, total }`: `total` is the count of DISTINCT jobs after
  * de-duplication; `changed` is how many were inserted or updated (rows whose
@@ -129,17 +127,16 @@ export async function upsertJobs(
       // runAdapter already canonicalizes the in-memory job's locations, so on the ingestion
       // path this is a no-op — it stays here as the defense for any direct upsertJobs caller.
       // Order isn't semantically meaningful for ATS locations.
-      locations: [...job.locations].map((l) => l.replaceAll(NUL, "")).sort(),
+      locations: [...job.locations].map((loc) => loc.replaceAll(NUL, "")).sort(),
       remote: job.remote,
       applyUrl: job.applyUrl.replaceAll(NUL, ""),
       postedAt: job.postedAt,
-      // `raw` (job.raw) is DEPRECATED and intentionally NOT written — it was write-only debug
-      // data that grew to ~90% of the DB and exhausted the Neon storage limit (2026-06-16). The
-      // column is nullable; omitting it from the INSERT leaves it NULL. See schema.ts jobs doc.
-      // content_signature (Phase F1): md5 over the SAME normalized title+desc, computed SQL-side
-      // from the bound (NUL-stripped) values via the ONE signatureSql definition — byte-identical to
-      // the ON CONFLICT SET and the F1d backfill, so an insert and any later re-ingest/backfill of the
-      // same content always produce the same signature. (embedding omitted — populated in Phase 4.)
+      // `raw` (job.raw) is DEPRECATED and intentionally NOT written — write-only debug data that grew to
+      // dominate the DB. The column is nullable; omitting it from the INSERT leaves it NULL. See schema.ts
+      // jobs doc. content_signature: md5 over the SAME normalized title+desc, computed SQL-side from the
+      // bound (NUL-stripped) values via the ONE signatureSql definition — byte-identical to the ON CONFLICT
+      // SET and the backfill, so an insert and any later re-ingest/backfill of the same content always
+      // produce the same signature. (embedding omitted — populated by the embedding backfill.)
       contentSignature: signatureSql(sql`${title}`, sql`${descriptionText}`),
     };
   });
@@ -162,11 +159,9 @@ export async function upsertJobs(
   // batch rows), so build it ONCE and reuse it for each batch below.
   const conflictUpdate = {
     target: [jobs.source, jobs.externalId],
-    // Write every comparable field + company_id, refresh the write-only `posted_at`,
-    // conditionally reset the derived embedding, and advance updated_at. INVARIANT: every
-    // column tested in `setWhere` below must also appear here — a field compared but not
-    // written would make every re-ingest look "changed" forever. (`raw` is DEPRECATED and no
-    // longer written — see the INSERT VALUES note above; an existing row's raw is left as-is.)
+    // Write every comparable field + company_id, refresh the write-only `posted_at`, conditionally reset
+    // the derived embedding, and advance updated_at. INVARIANT: every column tested in `setWhere` below
+    // must also appear here — a field compared but not written would make every re-ingest look "changed".
     set: {
       companyId: sql`excluded.company_id`,
       title: sql`excluded.title`,
@@ -175,42 +170,27 @@ export async function upsertJobs(
       remote: sql`excluded.remote`,
       applyUrl: sql`excluded.apply_url`,
       postedAt: sql`excluded.posted_at`,
-      // The embedding is derived from title + description_text ONLY (see nullIfContentChanged above): reset
-      // it on a content change so the backfill / inline-embed step re-embeds, keep it on any other churn.
+      // Reset the derived embedding on a content change, keep it otherwise (see nullIfContentChanged above).
       embedding: nullIfContentChanged(jobs.embedding),
-      // content_signature (Phase F1): rewritten unconditionally from excluded title+desc via the
-      // ONE signatureSql definition (the setWhere note below explains why it is written but NOT
-      // also tested). Byte-identical to the INSERT VALUES above and the F1d backfill.
+      // content_signature: rewritten unconditionally from excluded title+desc via the ONE signatureSql
+      // definition (the setWhere note below explains why it is written but NOT also tested).
       contentSignature: signatureSql(sql`excluded.title`, sql`excluded.description_text`),
       updatedAt: sql`now()`,
     },
-    // Advance the row only when a real change differs. Fields written above but
-    // deliberately EXCLUDED from this test:
-    //  - `posted_at`: the adapter derives it as `first_published || updated_at`,
-    //    so for postings lacking `first_published` it ALIASES that same churning
-    //    `updated_at`; comparing it would make nearly every re-fetch look "changed"
-    //    and defeat idempotency. Still written, so it stays fresh whenever a real
-    //    change fires. (Greenhouse's per-fetch timestamp churn — the reason the old
-    //    `raw` column was also excluded here — no longer applies: `raw` is no longer written.)
-    //  - `content_signature` (Phase F1): rewritten unconditionally in the set block
-    //    above but DELIBERATELY excluded from this test. It is a PURE function of
-    //    title + description_text — the exact two fields this test already checks (and
-    //    the embedding CASE keys on) — so it changes IFF those clauses already fire;
-    //    rewriting it when only a non-content field changed is a harmless no-op
-    //    (identical md5), and an unchanged re-ingest never runs the set at all. Do NOT
-    //    add it to this test (redundant), and do NOT drop the title/description clauses
-    //    thinking the signature subsumes them (that would silently defeat idempotency +
-    //    re-embedding). See repos/sql.ts signatureSql + PHASE_F1_PLAN.md §4.2.
-    // OTHER-PHASE WRITERS, note:
-    //  - `lifecycle_state` is NOT written here (this set leaves it at its existing
-    //    value). Phase F2's closing/revival is a SEPARATE writer (repos/lifecycle.ts
-    //    sweepLifecycle) precisely because reviving a reappearing job to 'active' must
-    //    NOT be gated by this content test — an unchanged-but-reappearing job would
-    //    otherwise stay 'closed'. Keep lifecycle_state out of this set block.
-    //  - `locations` is compared as an ORDER-SENSITIVE jsonb array, but the
-    //    values above are sorted to a canonical order on write, so a
-    //    multi-location adapter that reorders offices won't report a spurious
-    //    change. (Keep that sort if this comparison stays order-sensitive.)
+    // Advance the row only when a real change differs. Fields written above but deliberately EXCLUDED
+    // from this test:
+    //  - `posted_at`: the adapter derives it as `first_published || updated_at`, so for postings lacking
+    //    `first_published` it ALIASES that same churning `updated_at`; comparing it would make nearly every
+    //    re-fetch look "changed" and defeat idempotency. Still written, so it stays fresh on a real change.
+    //  - `content_signature`: a PURE function of title + description_text — the exact two fields this test
+    //    already checks — so it changes IFF those clauses already fire; rewriting it on a non-content change
+    //    is a harmless no-op (identical md5). Do NOT add it to this test (redundant), and do NOT drop the
+    //    title/description clauses thinking the signature subsumes them (that would defeat idempotency +
+    //    re-embedding).
+    //  - `lifecycle_state` is NOT written here (left at its existing value). The closing/revival is a
+    //    SEPARATE writer (repos/lifecycle.ts sweepLifecycle) precisely because reviving a reappearing job to
+    //    'active' must NOT be gated by this content test — an unchanged-but-reappearing job would otherwise
+    //    stay 'closed'. Keep lifecycle_state out of this set block.
     setWhere: sql`
         ${jobs.companyId} IS DISTINCT FROM excluded.company_id OR
         ${jobs.title} IS DISTINCT FROM excluded.title OR

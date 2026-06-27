@@ -65,16 +65,16 @@ INGEST_LIMIT = "150"
 # shadow-closes` + an absence-clustering diagnostic showed a 2,482-job (3.65% of active) would-close backlog
 # spread across 410 boards at modest per-board fractions (real staleness, NOT an empty-fetch false-absence
 # bug). ATOMIC both-runtimes flip (decision 2 — partial flip is the #1 risk): this deploy applies Arms A/B;
-# you MUST ALSO set F2_ENFORCE=enforce in the Vercel/Inngest env (Arm C) in the same window. Rollback =
+# you MUST ALSO set LIFECYCLE_CLOSE_ENFORCE=enforce in the Vercel/Inngest env (Arm C) in the same window. Rollback =
 # flip back to "shadow" + redeploy (reversible; a reappearing job revives regardless of the flag).
-F2_ENFORCE = "enforce"
+LIFECYCLE_CLOSE_ENFORCE = "enforce"
 
 # Tier-1 universal staleness close — the completeness-INDEPENDENT lifecycle backstop that closes any active
 # job not re-confirmed (last_seen_at, stamped by markJobsPresent) within STALE_SWEEP_TTL_DAYS. This
 # is what ends the permanently-capped-mega-board (boschgroup) Arm-A lifecycle exemption: its aged-out tail
 # closes on the same clock as every other board (Arm A's set-difference sweep needs a COMPLETE feed and is
 # skipped on a capped/partial fetch; this timer needs no complete feed). The sweep runs EVERY tick driven by
-# the deployed code; STALE_SWEEP is its OWN enforce switch, SEPARATE from F2_ENFORCE above (so it ships
+# the deployed code; STALE_SWEEP is its OWN enforce switch, SEPARATE from LIFECYCLE_CLOSE_ENFORCE above (so it ships
 # shadow even though F2 is already enforced):
 #   STALE_SWEEP unset/"shadow" : count-only — tally `staleWouldClose`, write no 'closed' (the SHIPPED default).
 #   STALE_SWEEP = "enforce"    : close active jobs past the TTL on STILL-FETCHED boards (+ stamp closed_at for G2).
