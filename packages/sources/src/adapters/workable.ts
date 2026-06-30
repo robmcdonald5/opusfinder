@@ -1,4 +1,4 @@
-import { companySlug, isRecord, jobId } from "@opusfinder/shared";
+import { companySlug, isRecord, safeJobId } from "@opusfinder/shared";
 import type { NormalizedJob } from "@opusfinder/shared";
 
 import { inferRemoteFromText, joinParts } from "./fields";
@@ -56,7 +56,8 @@ export const workableAdapter: SourceAdapter = {
 function toNormalizedJob(raw: unknown, ctx: SourceContext): NormalizedJob | null {
   if (!isRecord(raw)) return null;
   // The posting id is `shortcode` (an alphanumeric code), already a string.
-  if (typeof raw.shortcode !== "string" || raw.shortcode.trim().length === 0) return null;
+  const externalId = safeJobId(raw.shortcode);
+  if (externalId === null) return null;
   if (typeof raw.title !== "string") return null;
 
   const applyUrl =
@@ -81,7 +82,7 @@ function toNormalizedJob(raw: unknown, ctx: SourceContext): NormalizedJob | null
 
   return {
     source: "workable",
-    externalId: jobId(raw.shortcode),
+    externalId,
     title: raw.title,
     companySlug: ctx.slug,
     locations,

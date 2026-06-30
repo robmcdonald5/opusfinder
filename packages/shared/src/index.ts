@@ -36,6 +36,21 @@ export function jobId(value: string): JobId {
   return trimmed as JobId;
 }
 
+/**
+ * Non-throwing {@link jobId}: returns the branded id, or `null` for any value `jobId` would reject
+ * (non-string, empty/whitespace-only, or containing interior whitespace). Delegates to `jobId` so the
+ * accept/reject rule can never drift. Lets a `SourceAdapter.mapItem` honor its "skip + count, never
+ * throw on bad data" contract for a malformed posting id instead of throwing out of the page loop.
+ */
+export function safeJobId(value: unknown): JobId | null {
+  if (typeof value !== "string") return null;
+  try {
+    return jobId(value);
+  } catch {
+    return null;
+  }
+}
+
 /** Escape hatch for already-trusted values (e.g. read back from the DB). */
 export const unsafeCompanySlug = (value: string): CompanySlug => value as CompanySlug;
 
