@@ -1,0 +1,20 @@
+{
+  // Type-checks the test suite separately from the shippable surface (root tsconfig.json EXCLUDES
+  // *.test.ts so `pnpm typecheck` stays fast and decoupled from vitest/test-only types). Run via
+  // `pnpm typecheck:test`. Vitest itself runs tests through esbuild (no type-check), so this is the
+  // authority for test-file type errors.
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    // Mirror of vitest.config.ts resolve.alias so @test/* resolves under tsc too (Bundler resolution
+    // takes the path relative to this config; allowImportingTsExtensions in the base handles the .ts).
+    "paths": {
+      "@test/*": ["./test/*"]
+    }
+  },
+  // NODE-graph test files only. apps/* own their own test typecheck under their runtime's tsconfig —
+  // the Cloudflare Worker (apps/scrapers) via apps/scrapers/tsconfig.test.json (Workers types, no node),
+  // apps/web via svelte-check. Workers ambient globals can't coexist with @types/node in one compilation,
+  // so apps/scrapers is NOT globbed here (and is excluded so a test import can't pull its src in either).
+  "include": ["test/**/*.ts", "packages/*/src/**/*.test.ts"],
+  "exclude": ["**/node_modules", "**/dist", "**/.svelte-kit", "**/.wrangler", "apps/scrapers"]
+}

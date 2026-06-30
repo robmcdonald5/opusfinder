@@ -10,6 +10,8 @@
     "lib": ["ES2022"],
     "noEmit": true
   },
+  // Shippable Worker surface only — co-located *.test.ts are excluded here (mirrors the root tsconfig)
+  // and typechecked by the sibling tsconfig.test.json, which re-includes them under these same Worker types.
   "include": ["src/**/*.ts", "worker-configuration.d.ts"],
-  "exclude": ["node_modules", ".wrangler", "dist"]
+  "exclude": ["node_modules", ".wrangler", "dist", "src/**/*.test.ts"]
 }
