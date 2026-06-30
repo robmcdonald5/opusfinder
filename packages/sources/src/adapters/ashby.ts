@@ -1,4 +1,4 @@
-import { companySlug, isRecord, jobId } from "@opusfinder/shared";
+import { companySlug, isRecord, safeJobId } from "@opusfinder/shared";
 import type { NormalizedJob } from "@opusfinder/shared";
 
 import { inferRemoteFromText } from "./fields";
@@ -50,7 +50,8 @@ export const ashbyAdapter: SourceAdapter = {
 
 function toNormalizedJob(raw: unknown, ctx: SourceContext): NormalizedJob | null {
   if (!isRecord(raw)) return null;
-  if (typeof raw.id !== "string" || raw.id.trim().length === 0) return null;
+  const externalId = safeJobId(raw.id);
+  if (externalId === null) return null;
   if (typeof raw.title !== "string") return null;
 
   const applyUrl =
@@ -87,7 +88,7 @@ function toNormalizedJob(raw: unknown, ctx: SourceContext): NormalizedJob | null
 
   return {
     source: "ashby",
-    externalId: jobId(raw.id),
+    externalId,
     title: raw.title,
     companySlug: ctx.slug,
     locations,

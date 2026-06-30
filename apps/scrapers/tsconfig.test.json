@@ -1,0 +1,12 @@
+{
+  // Worker-graph TEST typecheck. Inherits the Worker's ISOLATED types from ./tsconfig.json
+  // (worker-configuration.d.ts → KVNamespace/ExecutionContext/ExportedHandler/Env; NO @types/node —
+  // node's URL/fetch/Request globals collide with the Workers runtime ones), but RE-INCLUDES the
+  // co-located *.test.ts files the shippable config excludes. `extends` does not inherit include/exclude,
+  // so both are redeclared here. The node-graph test typecheck (root tsconfig.test.json) deliberately
+  // EXCLUDES apps/scrapers — the two ambient environments cannot share one compilation. Run via
+  // `pnpm --filter @opusfinder/scrapers typecheck:test` (chained into the root `typecheck:test`).
+  "extends": "./tsconfig.json",
+  "include": ["src/**/*.ts", "worker-configuration.d.ts"],
+  "exclude": ["node_modules", ".wrangler", "dist"]
+}

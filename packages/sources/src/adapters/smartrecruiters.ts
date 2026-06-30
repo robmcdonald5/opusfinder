@@ -1,4 +1,4 @@
-import { companySlug, isRecord, jobId } from "@opusfinder/shared";
+import { companySlug, isRecord, safeJobId } from "@opusfinder/shared";
 import type { NormalizedJob } from "@opusfinder/shared";
 
 import { joinParts } from "./fields";
@@ -99,12 +99,12 @@ export const smartRecruitersAdapter: SourceAdapter = {
  */
 function toNormalizedJob(raw: unknown, ctx: SourceContext): NormalizedJob | null {
   if (!isRecord(raw)) return null;
-  if (typeof raw.id !== "string" || raw.id.trim().length === 0) return null;
   if (typeof raw.name !== "string") return null;
 
-  // Brand once and reuse for the reconstructed apply URL, so the URL uses the same
-  // trimmed/validated id as externalId (not the raw, possibly space-padded value).
-  const externalId = jobId(raw.id);
+  // Brand once (reused below for the reconstructed apply URL, so the URL uses the same
+  // trimmed/validated id); a non-string / empty / interior-whitespace id skips, never throws.
+  const externalId = safeJobId(raw.id);
+  if (externalId === null) return null;
 
   let postedAt: Date | null = null;
   if (typeof raw.releasedDate === "string" && raw.releasedDate) {

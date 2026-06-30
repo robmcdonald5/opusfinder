@@ -1,4 +1,4 @@
-import { companySlug, isRecord, jobId } from "@opusfinder/shared";
+import { companySlug, isRecord, safeJobId } from "@opusfinder/shared";
 import type { NormalizedJob } from "@opusfinder/shared";
 
 import { inferRemoteFromText, joinParts } from "./fields";
@@ -48,7 +48,8 @@ export const pinpointAdapter: SourceAdapter = {
 function toNormalizedJob(raw: unknown, ctx: SourceContext): NormalizedJob | null {
   if (!isRecord(raw)) return null;
   // Posting `id` is a string and is DISTINCT from the nested job.id and the url UUID.
-  if (typeof raw.id !== "string" || raw.id.trim().length === 0) return null;
+  const externalId = safeJobId(raw.id);
+  if (externalId === null) return null;
   if (typeof raw.title !== "string") return null;
 
   // Apply URL is the explicit `url` (UUID-based, with an /en/ locale segment).
@@ -70,7 +71,7 @@ function toNormalizedJob(raw: unknown, ctx: SourceContext): NormalizedJob | null
 
   return {
     source: "pinpoint",
-    externalId: jobId(raw.id),
+    externalId,
     title: raw.title,
     companySlug: ctx.slug,
     locations,

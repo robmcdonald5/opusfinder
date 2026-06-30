@@ -10,6 +10,9 @@ allowBuilds:
   # loads protobufjs. Its postinstall is a no-op version-warn helper (produces no artifact), and the
   # runtime require() API works with the build skipped regardless — so unbuilt is safe (like sharp).
   protobufjs: false
+  # msw ships a browser service-worker artifact via its postinstall; we use only `msw/node` (request
+  # interception in tests), which needs no artifact — so unbuilt is safe (like sharp/protobufjs).
+  msw: false
 
 # Allowlist of deps permitted to run install/build scripts (pnpm 10+ blocks by
 # default). Moved here from package.json's "pnpm" field, which pnpm 11 ignores.

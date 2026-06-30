@@ -1,4 +1,4 @@
-import { companySlug, isRecord, jobId } from "@opusfinder/shared";
+import { companySlug, isRecord, safeJobId } from "@opusfinder/shared";
 import type { NormalizedJob } from "@opusfinder/shared";
 
 import { inferRemoteFromText, joinParts } from "./fields";
@@ -92,11 +92,12 @@ export const trakstarAdapter: SourceAdapter = {
 
 function toNormalizedJob(raw: unknown, ctx: SourceContext): NormalizedJob | null {
   if (!isRecord(raw)) return null;
-  if (typeof raw.id !== "string" || raw.id.trim().length === 0) return null;
   if (typeof raw.title !== "string") return null;
 
-  // Brand once and reuse for the reconstructed apply URL, so the URL uses the same trimmed id.
-  const externalId = jobId(raw.id);
+  // Brand once (reused below for the reconstructed apply URL, so the URL uses the same trimmed
+  // id); a non-string / empty / interior-whitespace id skips, never throws.
+  const externalId = safeJobId(raw.id);
+  if (externalId === null) return null;
 
   // hosted_url is provided inline; reconstruct from the canonical pattern only if it is absent
   // (the lowercased slug is the subdomain, matching the echoed client_name).

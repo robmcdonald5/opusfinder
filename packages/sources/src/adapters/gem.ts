@@ -1,4 +1,4 @@
-import { companySlug, isRecord, jobId } from "@opusfinder/shared";
+import { companySlug, isRecord, safeJobId } from "@opusfinder/shared";
 import type { NormalizedJob } from "@opusfinder/shared";
 
 import { inferRemoteFromText } from "./fields";
@@ -48,7 +48,8 @@ export const gemAdapter: SourceAdapter = {
 function toNormalizedJob(raw: unknown, ctx: SourceContext): NormalizedJob | null {
   if (!isRecord(raw)) return null;
   // `id` is already a string (legacy numeric-strings AND opaque tokens) — no String() needed.
-  if (typeof raw.id !== "string" || raw.id.trim().length === 0) return null;
+  const externalId = safeJobId(raw.id);
+  if (externalId === null) return null;
   if (typeof raw.title !== "string") return null;
 
   const applyUrl = typeof raw.absolute_url === "string" && raw.absolute_url ? raw.absolute_url : "";
@@ -79,7 +80,7 @@ function toNormalizedJob(raw: unknown, ctx: SourceContext): NormalizedJob | null
 
   return {
     source: "gem",
-    externalId: jobId(raw.id),
+    externalId,
     title: raw.title,
     companySlug: ctx.slug,
     locations,

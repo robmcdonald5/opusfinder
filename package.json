@@ -15,8 +15,13 @@
     "format:check": "prettier --check .",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "typecheck:scrapers": "pnpm --filter @opusfinder/scrapers typecheck",
+    "typecheck:test": "tsc --noEmit -p tsconfig.test.json && pnpm --filter @opusfinder/scrapers typecheck:test",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:unit": "vitest run --project unit",
+    "test:integration": "vitest run --project integration",
+    "test:cov": "vitest run --coverage",
     "guard:worker": "node scripts/check-worker-isolation.mjs",
-    "test:watchdog": "tsx apps/scrapers/scripts/test-watchdog-fail.ts",
     "db:migrate": "pnpm --filter @opusfinder/db migrate",
     "db:backfill-signatures": "pnpm --filter @opusfinder/db backfill-signatures",
     "db:backfill-snapshots": "pnpm --filter @opusfinder/db backfill-snapshots",
@@ -45,13 +50,20 @@
     "inngest:dev": "npx --yes inngest-cli@latest dev -u http://localhost:3000/api/inngest --no-discovery"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "0.5.3",
+    "@electric-sql/pglite-pgvector": "0.0.4",
     "@eslint/js": "^10",
+    "@opusfinder/db": "workspace:*",
     "@types/node": "^24",
+    "@vitest/coverage-v8": "^4.1.9",
+    "drizzle-orm": "^0.45.2",
     "esbuild": "0.28.1",
     "eslint": "^10",
+    "msw": "^2.14.6",
     "prettier": "^3",
     "tsx": "^4",
     "typescript": "^6",
-    "typescript-eslint": "^8"
+    "typescript-eslint": "^8",
+    "vitest": "^4.1.9"
   }
 }

@@ -19,7 +19,7 @@ export function loadDataset(path: string): EvalExample[] {
 
 /**
  * Parse + validate a JSONL string into examples. Separated from file I/O so it is unit-
- * testable on inline strings (see scripts/test-metrics.ts) without touching the filesystem.
+ * testable on inline strings (see dataset.test.ts) without touching the filesystem.
  * `label` is a human-facing prefix for error messages (a path, or anything).
  */
 export function parseDatasetLines(text: string, label = "dataset"): EvalExample[] {

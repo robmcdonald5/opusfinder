@@ -21,7 +21,7 @@ pnpm eval -- --ranker llm-rerank                 # shared LLM rerank core (deter
 pnpm eval -- --dataset data/fixture.jsonl       # synthetic smoke test (no DB/network)
 pnpm eval:compare                               # Voyage vs OpenAI, side-by-side retrieval@k
 
-pnpm --filter @opusfinder/eval test:metrics         # self-test of the metrics math + loader
+pnpm exec vitest run packages/eval/src              # self-tests: metrics/cosine/dataset/report (Vitest)
 pnpm --filter @opusfinder/eval export:candidates    # dump real jobs from Neon (labeling aid)
 pnpm --filter @opusfinder/eval build:dataset        # regenerate dataset.jsonl from the export
 ```
@@ -34,7 +34,7 @@ unchanged run is a byte-identical file — the diff is signal, not noise.
 
 Binary relevance (`expectedGoodIds`): precision@k, recall@k, NDCG@k at k ∈ {3, 5, 10}, averaged
 across examples. Recall/NDCG are undefined (and dropped from the mean) for an example with no
-relevant ids. The math is pinned by `scripts/test-metrics.ts`.
+relevant ids. The math is pinned by `src/metrics.test.ts` (+ `cosine`/`dataset`/`report` tests).
 
 ## Dataset
 

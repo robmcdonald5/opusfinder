@@ -6,5 +6,11 @@
     "packages/db/drizzle.config.ts",
     "packages/auth/better-auth.ts"
   ],
-  "exclude": ["**/node_modules", "**/dist", "**/.svelte-kit", "**/.wrangler"]
+  "exclude": [
+    "**/node_modules",
+    "**/dist",
+    "**/.svelte-kit",
+    "**/.wrangler",
+    "**/*.test.ts"
+  ]
 }
