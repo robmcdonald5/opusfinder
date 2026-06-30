@@ -12,9 +12,6 @@
   },
   "types": "./src/index.ts",
   "scripts": {
-    "test:userid": "tsx scripts/test-userid.ts",
-    "test:token": "tsx scripts/test-token.ts",
-    "test:enforce-flag": "tsx scripts/test-enforce-flag.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

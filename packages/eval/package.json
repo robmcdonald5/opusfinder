@@ -13,7 +13,6 @@
     "export:candidates": "tsx scripts/export-candidates.ts",
     "extract-profile": "tsx scripts/extract-profile.ts",
     "build:dataset": "tsx scripts/build-dataset.ts",
-    "test:metrics": "tsx scripts/test-metrics.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

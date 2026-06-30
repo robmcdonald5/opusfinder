@@ -1,7 +1,7 @@
 /**
  * Ranking-quality metrics. Pure, dependency-free, and the single source of truth every ranker
  * is judged by. Relevance is BINARY: an id is relevant iff it is in the example's
- * `expectedGoodIds`. `scripts/test-metrics.ts` pins this math against hand-computed cases, so a
+ * `expectedGoodIds`. `metrics.test.ts` pins this math against hand-computed cases, so a
  * refactor that breaks it fails loudly.
  */
 

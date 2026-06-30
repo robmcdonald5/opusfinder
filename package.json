@@ -22,7 +22,6 @@
     "test:integration": "vitest run --project integration",
     "test:cov": "vitest run --coverage",
     "guard:worker": "node scripts/check-worker-isolation.mjs",
-    "test:watchdog": "tsx apps/scrapers/scripts/test-watchdog-fail.ts",
     "db:migrate": "pnpm --filter @opusfinder/db migrate",
     "db:backfill-signatures": "pnpm --filter @opusfinder/db backfill-signatures",
     "db:backfill-snapshots": "pnpm --filter @opusfinder/db backfill-snapshots",
