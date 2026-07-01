@@ -134,8 +134,12 @@ export function probeCandidate(
  * `minIntervalMs` between two STARTS to the same host. Poll-based — a probe run is bursty and
  * short-lived, so a 25 ms poll is cheaper than a wakeup queue. The check-and-increment in `acquire`
  * is synchronous (no `await` between read and write), so two workers can't both claim the last slot.
+ *
+ * Exported (not re-exported from the package barrel) so `host-throttle.test.ts` can drive the interval
+ * gate directly under fake timers — the concurrency cap / min-interval / release semantics are worth
+ * asserting in isolation rather than only through `probeCandidates`.
  */
-class HostThrottle {
+export class HostThrottle {
   private readonly state = new Map<string, { inFlight: number; lastStart: number }>();
 
   constructor(

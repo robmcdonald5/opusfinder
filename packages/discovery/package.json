@@ -9,10 +9,6 @@
   "types": "./src/index.ts",
   "scripts": {
     "discover": "tsx scripts/discover.ts",
-    "test:probe": "tsx scripts/test-probe.ts",
-    "test:resolve": "tsx scripts/test-resolve.ts",
-    "test:lanes": "tsx scripts/test-lanes.ts",
-    "test:lane-hn": "tsx scripts/test-lane-hn.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
