@@ -21,7 +21,8 @@ email)` (the CV-ingest path — creates a verified user with a throwaway random 
 - `src/env.ts` — node-only `getAuthSecret()` / `getAuthBaseURL()` behind the `./env` subpath (never
   bundled into the Worker, same discipline as `@opusfinder/storage/env`).
 - `scripts/` — `user:create` / `user:set-prefs` / `user:list` CLIs, plus `test:auth` (driver/B1 probe)
-  `test:create-user` (end-to-end, self-cleaning), and `test:prefs-flags` (prefs flag-parsing) smokes.
+  and `test:create-user` (end-to-end, self-cleaning) smokes. (Prefs flag-parsing moved to co-located
+  Vitest: `src/cli-utils.test.ts` + `src/prefs-flags.test.ts`.)
 - `better-auth.ts` — the entrypoint `pnpm dlx @better-auth/cli generate` introspects to emit the schema.
 
 The `user` / `session` / `account` / `verification` + `user_preferences` tables live in the unified
