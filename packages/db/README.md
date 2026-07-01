@@ -57,7 +57,7 @@ Run from the repo root via the workspace filter so the cwd is `packages/db`:
 | `pnpm --filter @opusfinder/db studio`    | Open Drizzle Studio                                        |
 | `pnpm --filter @opusfinder/db ping`      | Round-trip `SELECT 1` against Neon                         |
 | `pnpm --filter @opusfinder/db runs`      | Print the most recent `source_runs` rows (pipeline health) |
-| `pnpm --filter @opusfinder/db test:health` | Health-checker smoke — pure `evaluateHealth` over canned signals (no creds; Phase F6) |
+| `pnpm exec vitest run packages/db/src/health.test.ts` | Health-checker suite — pure `evaluateHealth` over canned signals (no creds; Phase F6) |
 | `pnpm --filter @opusfinder/db typecheck` | `tsc --noEmit`                                             |
 
 `migrate` and `ping` are also exposed at the root as `pnpm db:migrate` / `pnpm db:ping`.
@@ -127,7 +127,7 @@ Run from the repo root via the workspace filter so the cwd is `packages/db`:
   `closeJobsByIds` (Arm B/C — bulk-close a dead board's still-active jobs / the explicit-410 digest items).
   `repos/discovery.ts`'s `deactivateStale` was widened to RETURN the deactivated ids (was a bare count) so
   Arm B can close their jobs. Soft-close only — never a row DELETE (F1 reads the closed row's signature;
-  `digest_items.job_id` is `ON DELETE NO ACTION`). Smoke: `pnpm --filter @opusfinder/db test:lifecycle` (no
+  `digest_items.job_id` is `ON DELETE NO ACTION`). Suite: `pnpm exec vitest run packages/db/src/repos/lifecycle.test.ts` (no
   creds). **Ships SHADOW / count-only by DEFAULT** — the `'closed'` flip is suppressed and tallied as
   `wouldClose` unless a SINGLE `LIFECYCLE_CLOSE_ENFORCE` switch (`parseEnforceFlag` in `@opusfinder/shared`) is on; it's
   threaded through all three arms with no multi-site code edit — the scrapers Worker reads `env.LIFECYCLE_CLOSE_ENFORCE`
@@ -150,7 +150,7 @@ Run from the repo root via the workspace filter so the cwd is `packages/db`:
   excluded, so un-backfilled rows are inert, not wrong. `alreadyShownSignatures` carries NO `lifecycle_state`
   filter (a soft-closed predecessor's signature still suppresses its repost). Re-runnable backfill:
   `pnpm db:backfill-signatures` (`scripts/backfill-content-signature.ts`); no-creds smoke
-  `pnpm --filter @opusfinder/db test:signature`. **LIVE** — migration 0011 is APPLIED and the rows are
+  `pnpm exec vitest run packages/db/src/repos/content-signature.test.ts`. **LIVE** — migration 0011 is APPLIED and the rows are
   backfilled, so the display-collapse + repost anti-join read paths are active; the cosine near-dup layer
   (F1e/F1f) is DEFERRED.
 - **Schema (Phase F3).** `drizzle/0012_dazzling_layla_miller.sql` (additive, hand-guarded `IF NOT EXISTS` — same
@@ -162,7 +162,7 @@ Run from the repo root via the workspace filter so the cwd is `packages/db`:
   `LocationMode` (`remote_only` excludes on-site; `onsite_only` excludes remote — subsumes the old `remoteOk`
   boolean), and `RetrieveOpts.remoteOk` → `locationMode`. LOCATION is the only working hard filter in F3; salary +
   YoE are stored + soft-prompt-only (never hard filters). No-creds smokes:
-  `pnpm --filter @opusfinder/db test:prefs` (preferences round-trip) + `pnpm --filter @opusfinder/db test:location`
+  `pnpm exec vitest run packages/db/src/repos/preferences.test.ts` (preferences round-trip) + `pnpm exec vitest run packages/db/src/repos/location-mode.test.ts`
   (`geoMatches` LocationMode branches). **APPLIED to prod.**
 - **Schema (Phase F4) — job-side enrichment, REMOVED.** `drizzle/0013_cloudy_polaris.sql` originally added
   seven nullable `jobs` columns for job-side structured enrichment (`yoe_min`/`yoe_max`, `salary_min`/`salary_max`,
@@ -179,7 +179,7 @@ Run from the repo root via the workspace filter so the cwd is `packages/db`:
   `off|shadow|enforce` modes, shadow-first: validate on real traffic before flipping a check to enforce). Window
   sizes clamp to ≥1 so a `0` can't silently disarm the check it sizes. Read-only; shape-only (every metric is a
   count/age/ratio, no PII). The verdict layer is `pnpm health` (in `@opusfinder/inngest`); no-creds smoke
-  `test:health`. (The CHECKER itself still adds NO migration — only the `health_alerts` TABLE below is 0014.)
+  `packages/db/src/health.test.ts`. (The CHECKER itself still adds NO migration — only the `health_alerts` TABLE below is 0014.)
 - **Schema (Phase 12a).** `drizzle/0014_slow_red_hulk.sql` (additive) adds the append-only `health_alerts`
   incident log — `check_id` / `mode` / `metric` / `threshold` / `detail` / `created_at`, plus a `created_at`
   index. `check_id` / `mode` are plain `text` (NOT a TS union imported from `health.ts`) deliberately, to
