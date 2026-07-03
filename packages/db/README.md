@@ -116,7 +116,8 @@ Run from the repo root via the workspace filter so the cwd is `packages/db`:
   jobs ⋈ companies in one round trip; items are filtered APP-SIDE to `lifecycle_state='active'` so a job
   closed between retrieval and send never renders — G1b: returns `null` only when the digest row vanished,
   vs empty `items` for a clean no-send) + `recordDigestSent` / `recordDigestDeliveryOutcome` /
-  `recordDigestSendFailure`, smoke-checked by `pnpm --filter @opusfinder/db test:digest-payload`.
+  `recordDigestSendFailure`, covered by the co-located PGlite suite
+  (`pnpm exec vitest run packages/db/src/repos/digests.integration.test.ts`).
 - **Schema (Phase F2).** `drizzle/0010_curly_drax.sql` adds `jobs.consecutive_absences`
   (`smallint NOT NULL DEFAULT 0`) — a pure-streak counter of consecutive trusted fetches in which an `active`
   job was absent; `lifecycle_state` flips to `'closed'` at the threshold (`ABSENCE_CLOSE_THRESHOLD`), and the

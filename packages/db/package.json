@@ -24,7 +24,6 @@
     "runs": "tsx scripts/show-runs.ts",
     "shadow-closes": "tsx scripts/show-shadow-closes.ts",
     "delivery": "tsx scripts/show-digest-delivery.ts",
-    "test:digest-payload": "tsx scripts/test-digest-payload.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
