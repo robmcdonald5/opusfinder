@@ -10,7 +10,6 @@
   "scripts": {
     "ingest-cv": "tsx scripts/ingest-cv.ts",
     "profiles:restructure": "tsx scripts/profiles-restructure.ts",
-    "test:ingest": "tsx scripts/test-ingest.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

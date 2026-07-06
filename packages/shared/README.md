@@ -158,9 +158,9 @@ export const getVoyageApiKey = requireEnv({
 `user` table (`@opusfinder/auth`) — a random `user.id`. The deterministic `mintUserId(email)` (UUIDv5
 over a fixed namespace + normalized email, in the node-only `@opusfinder/shared/userid` subpath) is
 **retired from the live path**: `ingest-cv` / `profiles-restructure` now resolve a real `user.id` via
-`getOrCreateUserByEmail` / `findUserIdByEmail`. `mintUserId` is kept ONLY as a deterministic id source for
-the offline `test-ingest` smoke and is locked by the golden-vector test
-(`pnpm --filter @opusfinder/shared test:userid`); email-derived ids are not reintroduced on the live
+`getOrCreateUserByEmail` / `findUserIdByEmail`. `mintUserId` is kept ONLY for the golden-vector suite
+(`pnpm exec vitest run packages/shared/src/userid.test.ts`) and as a potential re-key backfill
+helper; email-derived ids are not reintroduced on the live
 path (email is PII → reversible ids are a debt being paid down). It stays on its own subpath because it
 imports `node:crypto` — keeping the `src/index.ts` barrel `node:`-free so it bundles into the
 `nodejs_compat`-less scrapers Worker (same discipline as `@opusfinder/shared/env`).

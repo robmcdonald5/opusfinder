@@ -12,17 +12,21 @@ call. **No UI** — the HTTP handler, auth-client, and forms land in Phase 12.
 
 - `src/auth.ts` — `createAuth(authDb, { secret, baseURL })`: the Better Auth instance over the Drizzle
   adapter. `authDb` MUST be the **neon-serverless** `createAuthDb` (`@opusfinder/db/auth-client`) —
-  `signUpEmail` wraps the `user`+`account` inserts in a transaction the neon-http driver can't run
-  (#4747). Config: `generateId: "uuid"`, `autoSignIn: false`, `requireEmailVerification: false`.
+  the adapter's `transaction` config defaults to false in better-auth 1.6.x, so `signUpEmail` runs
+  its inserts sequentially today, but the tx-capable driver is kept so enabling adapter transactions
+  (or a future better-auth default flip) can't hit neon-http's "No transactions support" (#4747).
+  Config: `generateId: "uuid"`, `autoSignIn: false`, `requireEmailVerification: false`.
 - `src/service.ts` — `createUserWithPreferences(db, auth, input)` (signUpEmail → seed-only `emailVerified`
   flip → seed `user_preferences` with a random unsubscribe token); `getOrCreateUserByEmail(db, auth,
 email)` (the CV-ingest path — creates a verified user with a throwaway random password, idempotent on
   normalized email); `findUserIdByEmail`.
 - `src/env.ts` — node-only `getAuthSecret()` / `getAuthBaseURL()` behind the `./env` subpath (never
   bundled into the Worker, same discipline as `@opusfinder/storage/env`).
-- `scripts/` — `user:create` / `user:set-prefs` / `user:list` CLIs, plus `test:auth` (driver/B1 probe)
-  and `test:create-user` (end-to-end, self-cleaning) smokes. (Prefs flag-parsing moved to co-located
-  Vitest: `src/cli-utils.test.ts` + `src/prefs-flags.test.ts`.)
+- `scripts/` — `user:create` / `user:set-prefs` / `user:list` CLIs. (The old `test:auth` and
+  `test:create-user` smokes moved to co-located Vitest: `src/auth.integration.test.ts` — the
+  `AUTH_LIVE_TEST=1` neon-serverless live gate — and `src/service.integration.test.ts` on PGlite;
+  wiring/env pins live in `src/auth.test.ts` + `src/env.test.ts`, prefs flag-parsing in
+  `src/cli-utils.test.ts` + `src/prefs-flags.test.ts`.)
 - `better-auth.ts` — the entrypoint `pnpm dlx @better-auth/cli generate` introspects to emit the schema.
 
 The `user` / `session` / `account` / `verification` + `user_preferences` tables live in the unified
