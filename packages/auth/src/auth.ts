@@ -12,8 +12,12 @@ import type { AuthDb } from "@opusfinder/db/auth-client";
  * this module — and anything that imports it — must NEVER enter the scrapers Worker bundle. The
  * Worker reads Neon directly as a trusted process and never touches `@opusfinder/auth`.
  *
- * `authDb` MUST be the neon-serverless handle (`createAuthDb`), not the neon-http `createDb`:
- * `signUpEmail` wraps the `user`+`account` inserts in an interactive transaction neon-http cannot run.
+ * `authDb` MUST be the neon-serverless handle (`createAuthDb`), not the neon-http `createDb`. NOTE:
+ * under better-auth 1.6.x our drizzleAdapter config leaves `transaction` at its false default, so
+ * `signUpEmail` currently runs the `user`+`account` inserts SEQUENTIALLY (as-is passthrough — proven
+ * by the non-atomicity tests in service.integration.test.ts). The tx-capable driver is kept as
+ * deliberate future-proofing: a config/version change that turns adapter transactions on must not
+ * be blocked by a driver that throws "No transactions support" (neon-http, neon #4747).
  */
 export function createAuth(authDb: AuthDb, opts: { secret: string; baseURL: string }) {
   return betterAuth({
