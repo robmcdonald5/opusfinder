@@ -61,6 +61,14 @@ describe("llmRerankRanker", () => {
     ]);
   });
 
+  it("breaks an all-equal-score tie by original input order", async () => {
+    // Every candidate scored 0.5 → the core's `b.score - a.score || a.idx - b.idx` falls back to input order.
+    const call: RerankCall = (_system, chunk) =>
+      Promise.resolve(chunk.map((c): RerankScore => ({ id: c.id, score: 0.5 })));
+    const ranked = await llmRerankRanker(call)(profile, [...candidates]);
+    expect(ranked).toEqual([1, 2, 3, 4]);
+  });
+
   it("returns a full permutation of the candidate ids", async () => {
     const ranked = await llmRerankRanker(stubRerankCall)(profile, [...candidates]);
     expect([...ranked].sort((a, b) => a - b)).toEqual([1, 2, 3, 4]);

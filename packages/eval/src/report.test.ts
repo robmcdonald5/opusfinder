@@ -86,9 +86,9 @@ describe("diffReports", () => {
     vi.mocked(readFileSync).mockReturnValue(JSON.stringify(REPORT));
     const prev = readReport("reports/x.json"); // recall/ndcg are NaN both runs
     const out = diffReports(prev, REPORT);
-    // precision is 0.5 both runs → an unsigned "0.0pp"; recall + ndcg are NaN both runs → "=" each.
-    expect(out).toContain("0.0pp");
-    expect(out.match(/=/g)).toHaveLength(2);
+    // precision 0.5 both runs → unsigned "0.0pp"; recall + ndcg NaN both runs → "=" each. diffReports is
+    // deterministic (no timestamp) → pin the whole row: the unsigned zero, the padding, the "=" columns.
+    expect(out).toBe("  @3   P    0.0pp  R        =  NDCG        =");
   });
 
   it("null prev establishes a baseline instead of throwing", () => {
@@ -98,9 +98,10 @@ describe("diffReports", () => {
 
 describe("formatReport", () => {
   it("renders an undefined metric as 'n/a', never the nonsensical 'n/a%'", () => {
-    const out = formatReport(REPORT);
-    expect(out).toContain("R    n/a"); // recall NaN → padded n/a
-    expect(out).not.toContain("n/a%");
-    expect(out).toContain("ranker=random");
+    // formatReport is deterministic (no timestamp) → pin the whole string: `embedder=` is omitted when
+    // null, precision renders "50.0%", and both NaN cells render the padded "n/a" (never "n/a%").
+    expect(formatReport(REPORT)).toBe(
+      "ranker=random  examples=1  dataset=d\n  @3   P  50.0%  R    n/a  NDCG    n/a",
+    );
   });
 });

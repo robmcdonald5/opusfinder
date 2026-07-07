@@ -45,6 +45,6 @@ describe("mintUserId", () => {
   });
 
   it.each(["", "   ", "\t\n"])("throws on a blank email (%j)", (email) => {
-    expect(() => mintUserId(email)).toThrow();
+    expect(() => mintUserId(email)).toThrow("mintUserId: email is empty");
   });
 });

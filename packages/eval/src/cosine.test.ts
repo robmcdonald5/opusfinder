@@ -19,6 +19,6 @@ describe("cosineSimilarity", () => {
   });
 
   it("throws on a length mismatch (dimension / provider bug)", () => {
-    expect(() => cosineSimilarity([1, 2], [1, 2, 3])).toThrow(/length mismatch/);
+    expect(() => cosineSimilarity([1, 2], [1, 2, 3])).toThrow("cosineSimilarity: length mismatch (2 vs 3).");
   });
 });

@@ -41,13 +41,13 @@ describe("scoreRanker — permutation guard", () => {
 
   it("rejects a ranking with the wrong number of ids (dropped a candidate)", async () => {
     await expect(scoreRanker(fixedRanker([1, 2, 3]), [example])).rejects.toThrow(
-      /returned 3 ids for 5 candidates/,
+      "ranker returned 3 ids for 5 candidates (example backend-ic-1).",
     );
   });
 
   it("rejects a same-length ranking that is not a permutation (fabricated an id)", async () => {
     await expect(scoreRanker(fixedRanker([1, 2, 3, 4, 99]), [example])).rejects.toThrow(
-      /not a permutation of candidate ids/,
+      "ranker output is not a permutation of candidate ids (example backend-ic-1).",
     );
   });
 });
