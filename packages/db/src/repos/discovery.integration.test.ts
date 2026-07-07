@@ -204,6 +204,7 @@ describe("discovery repo — companies lifecycle field semantics (integration: r
         active: true,
         consecutiveProbeFailures: 1,
         lastLiveAt: daysAgo(40),
+        updatedAt: SENTINEL_2020, // planted past clock → deactivateStale's `updated_at = now()` write is provable
       });
       // SWEPT via the COALESCE fallback: last_live_at NULL (never LIVE-probed), created_at 40d ago.
       const sweptByCreated = await seedCompany({
@@ -242,9 +243,10 @@ describe("discovery repo — companies lifecycle field semantics (integration: r
       expect([...ids].sort((a, b) => a - b)).toEqual([swept, sweptByCreated].sort((a, b) => a - b));
       expect((await readCompany(swept)).active).toBe(false);
       expect((await readCompany(sweptByCreated)).active).toBe(false);
-      // updated_at advanced on a swept row (off its default-now insert value would be indistinguishable, so
-      // assert it is a Date and moved — the returned-ids set above is the primary kill signal).
-      expect((await readCompany(swept)).updatedAt).toBeInstanceOf(Date);
+      // updated_at WAS stamped now() on the swept row: seeded at SENTINEL_2020 (which is NOT part of the
+      // COALESCE(last_live_at, created_at) staleness predicate, so it cannot change qualification), so a
+      // dropped `updatedAt: sql`now()`` SET member is caught here — matching the markProbeResult/markProbed siblings.
+      expect((await readCompany(swept)).updatedAt.getTime()).toBeGreaterThan(SENTINEL_2020.getTime());
       // The spared rows keep their pre-sweep active flag.
       expect((await readCompany(neverFailed)).active).toBe(true);
       expect((await readCompany(recent)).active).toBe(true);

@@ -5,7 +5,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import type { Db } from "@opusfinder/db";
 import { listCompanies, upsertCompany, upsertJobs, writeJobEmbeddings } from "@opusfinder/db/repos";
-import { companies, jobs } from "@opusfinder/db/schema";
+import { companies, EMBEDDING_DIMENSIONS, jobs } from "@opusfinder/db/schema";
 import { companySlug, jobId, type NormalizedJob } from "@opusfinder/shared";
 
 import { createTestDb } from "@test/db/pglite";
@@ -290,7 +290,7 @@ describe("upsertCompany + upsertJobs — board persistence semantics (integratio
       // excluded.embedding is ALWAYS NULL (VALUES omits the column): `ELSE excluded.embedding`
       // — the historical near-miss — or a CASE without ELSE would wipe the vector right here.
       expect(after.embedding).not.toBeNull();
-      expect(after.embedding).toHaveLength(1024);
+      expect(after.embedding).toHaveLength(EMBEDDING_DIMENSIONS);
       expect(after.embedding![7]!).toBeCloseTo(1, 5);
     });
 

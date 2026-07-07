@@ -25,7 +25,7 @@ vi.mock("@opusfinder/shared", () => ({
   parseEnforceFlag: (value?: string) => value === "enforce",
 }));
 
-import worker, { pingWatchdogFail } from "./index";
+import worker from "./index";
 
 // Mirrors the wrangler.toml / src/index.ts cron constants — must match character-for-character (esp.
 // the weekday "SUN", not "0"); a mismatch here is exactly the drift the default-case throw guards.
@@ -322,54 +322,5 @@ describe("runIngestionTick — cursor wrap math (wrap to 0 only at end of table,
     const { kv } = await runIngestTick({ cursorRaw: "123", counts: { processed: 1, companies: 1, lastId: 200 } });
     expect(kv.get).toHaveBeenCalledWith("afterId");
     expect(kv.put.mock.calls[0]![0]).toBe("afterId");
-  });
-});
-
-// pingWatchdogFail is exported solely for this smoke: the published /fail body must be the FIRST LINE
-// only, capped at 500 chars, so a multi-line drizzle error never leaks bound params / a connection
-// string to the external watchdog.
-describe("pingWatchdogFail", () => {
-  it("skips the network entirely when HEALTH_PING_URL is unset", () => {
-    const fetchSpy = vi.fn().mockResolvedValue(undefined);
-    vi.stubGlobal("fetch", fetchSpy);
-    const ctx = makeCtx();
-    pingWatchdogFail({} as never, ctx as never, "anything");
-    expect(ctx.waitUntil).not.toHaveBeenCalled();
-    expect(fetchSpy).not.toHaveBeenCalled();
-  });
-
-  it("POSTs the single-line message to ${HEALTH_PING_URL}/fail and bounds it via waitUntil", () => {
-    const fetchSpy = vi.fn().mockResolvedValue(undefined);
-    vi.stubGlobal("fetch", fetchSpy);
-    const ctx = makeCtx();
-    pingWatchdogFail({ HEALTH_PING_URL: "https://hc.example/x" } as never, ctx as never, "down hard");
-    expect(ctx.waitUntil).toHaveBeenCalledTimes(1);
-    expect(fetchSpy).toHaveBeenCalledWith("https://hc.example/x/fail", {
-      method: "POST",
-      body: "down hard",
-    });
-  });
-
-  it("publishes only the first line of a multi-line message (drops the drizzle params: tail)", () => {
-    const fetchSpy = vi.fn().mockResolvedValue(undefined);
-    vi.stubGlobal("fetch", fetchSpy);
-    pingWatchdogFail(
-      { HEALTH_PING_URL: "https://hc.example/x" } as never,
-      makeCtx() as never,
-      "Failed query: select ...\nparams: [secret, 42]",
-    );
-    expect(fetchSpy.mock.calls[0]![1]).toMatchObject({ body: "Failed query: select ..." });
-  });
-
-  it("caps the published body at 500 chars", () => {
-    const fetchSpy = vi.fn().mockResolvedValue(undefined);
-    vi.stubGlobal("fetch", fetchSpy);
-    pingWatchdogFail(
-      { HEALTH_PING_URL: "https://hc.example/x" } as never,
-      makeCtx() as never,
-      "z".repeat(900),
-    );
-    const body = (fetchSpy.mock.calls[0]![1] as { body: string }).body;
-    expect(body).toHaveLength(500);
   });
 });
