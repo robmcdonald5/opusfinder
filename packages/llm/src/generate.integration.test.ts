@@ -146,8 +146,17 @@ describe("generate — Anthropic Messages over MSW", () => {
       ),
     );
 
-    await expect(
-      generate({ model: "haiku", messages: [{ role: "user", content: "hi" }] }),
-    ).rejects.toThrow();
+    let err: Error | undefined;
+    try {
+      await generate({ model: "haiku", messages: [{ role: "user", content: "hi" }] });
+    } catch (e) {
+      err = e as Error;
+    }
+
+    expect(err).toBeDefined();
+    // The point of this test: generate() has NO error-wrapping (unlike generateObject, which catches
+    // NoObjectGeneratedError). A bare rejects.toThrow() would stay green even if wrapping crept in, so pin
+    // the "unwrapped" half — the message must NOT be a generate() wrapper — mirroring the generateObject sibling.
+    expect(err?.message).not.toMatch(/^generate\(\):/);
   });
 });
