@@ -28,7 +28,9 @@ export default defineConfig({
           environment: "node",
           isolate: true, // fresh module registry per file → memoized SDK singletons can't leak across files
           include: ["{packages,apps}/*/src/**/*.test.ts"],
-          exclude: ["**/*.integration.test.ts"],
+          // MANDATORY: a *.live.test.ts under src/ ends in .test.ts, so it would otherwise be
+          // double-collected here (MSW-free) on top of the `live` project — exclude BOTH suffixes.
+          exclude: ["**/*.integration.test.ts", "**/*.live.test.ts"],
         },
       },
       {
@@ -39,6 +41,22 @@ export default defineConfig({
           isolate: true,
           include: ["{packages,apps}/*/**/*.integration.test.ts"],
           setupFiles: ["./test/setup/msw.ts"], // shared MSW server lifecycle
+        },
+      },
+      {
+        // Real-network live gates ONLY. NO setupFiles → no MSW server is registered, so both `fetch`
+        // AND the global `WebSocket` reach the real network untouched. This is REQUIRED, not stylistic:
+        // MSW 2.x's setupServer patches `globalThis.WebSocket` and intercepts fetch, so a live gate
+        // placed in the `integration` project hard-fails under onUnhandledRequest:"error" (a neon-http
+        // fetch is rejected; a neon-serverless WS is rejected too). Every file here is skipIf-gated on an
+        // EXPLICIT opt-in flag (e.g. AUTH_LIVE_TEST=1) ON TOP of creds, and the default runners exclude
+        // this project — `pnpm test`/`test:cov` are scoped to unit+integration; run it via `pnpm test:live`.
+        extends: true,
+        test: {
+          name: "live",
+          environment: "node",
+          isolate: true,
+          include: ["{packages,apps}/*/**/*.live.test.ts"],
         },
       },
     ],
