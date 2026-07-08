@@ -7,15 +7,20 @@ import { getDatabaseUrl } from "@opusfinder/db/env";
 import { getAuthBaseURL, getAuthSecret } from "./env";
 import { createAuth } from "./index";
 
-// Phase 0 pilot — the one live-DB `skipIf` gate. Ports the retired scripts/test-auth-db.ts. It proves the seam that
+// The one live-DB `skipIf` gate. Ports the retired scripts/test-auth-db.ts. It proves the seam that
 // PGlite CANNOT fake: neon-serverless interactive transactions (auth signUpEmail wrapping). neon-http
 // throws "No transactions support"; only a real Neon branch over neon-serverless runs `tx.execute`.
+//
+// LIVES IN THE `live` VITEST PROJECT (`*.live.test.ts`, no MSW) — NOT `integration`. MSW 2.x's
+// setupServer patches `globalThis.WebSocket`, and the neon-serverless driver resolves that global at
+// connect time, so under the integration project's onUnhandledRequest:"error" this WS would be
+// intercepted and hard-fail. The no-MSW `live` project lets the real socket open.
 //
 // Gated on an EXPLICIT opt-in flag (repo idiom — cf. HN_LIVE_TEST / OUTSCAL_SEED_LIVE) on top of the
 // creds, so it SKIPS cleanly on every dev box and in the secret-free CI lane even when a package .env
 // happens to define DATABASE_URL. The owner runs it with `AUTH_LIVE_TEST=1` + creds against a Neon branch
-// (see VITEST_MIGRATION_PLAN §8). The top-level imports are side-effect-free (lazy env getters), so the
-// file loads — and skips — without any creds present.
+// (see VITEST_MIGRATION_PLAN §8), via `pnpm test:live`. The top-level imports are side-effect-free (lazy
+// env getters), so the file loads — and skips — without any creds present.
 const LIVE =
   process.env.AUTH_LIVE_TEST === "1" &&
   !!process.env.DATABASE_URL &&
