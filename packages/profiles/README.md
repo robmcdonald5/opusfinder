@@ -47,9 +47,10 @@ guarantee**, not a seam contract — `src/` stays free of `@opusfinder/llm`.
 - `pnpm profiles:restructure <email>` — re-structure a profile from its cached transcript. Resolves an
   **existing** user via `findUserIdByEmail` and errors cleanly if none exists (it does not create a user),
   so unlike `ingest-cv` it needs no `BETTER_AUTH_SECRET`.
-- `pnpm --filter @opusfinder/profiles test:ingest` — smoke-test `ingestCv` with stub seams + an
-  in-memory store (no LLM / Voyage / R2 spend); seeds a real `user` row for its fixed test id (so the
-  `user_cv_files`/`user_profiles` → `user.id` FK is satisfied) and writes a few rows under it.
+- The old `test:ingest` smoke moved to co-located Vitest: `src/ingest.integration.test.ts` exercises
+  `ingestCv` with stub seams + real PGlite persistence (no LLM / Voyage / R2 spend, no creds, no row
+  pollution) — run `pnpm exec vitest run packages/profiles/src/ingest.integration.test.ts`; the
+  restructure/embed seams are covered by `src/restructure.integration.test.ts` + `src/embed.test.ts`.
 
 ## Known gaps
 

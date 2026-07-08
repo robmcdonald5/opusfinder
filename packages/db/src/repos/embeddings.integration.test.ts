@@ -11,14 +11,7 @@ import {
 import { companySlug, jobId, type NormalizedJob } from "@opusfinder/shared";
 
 import { createTestDb } from "@test/db/pglite";
-
-// A 1024-dim (EMBEDDING_DIMENSIONS) one-hot vector. Orthogonal one-hots give exact cosine distances —
-// distance(v_i, v_i) == 0 and distance(v_i, v_j) == 1 for i != j — so the ordering assertion is precise.
-function oneHot(index: number): number[] {
-  const v = new Array<number>(1024).fill(0);
-  v[index] = 1;
-  return v;
-}
+import { oneHot } from "@test/db/vectors";
 
 function job(externalId: string, title: string): NormalizedJob {
   return {
@@ -41,13 +34,15 @@ function job(externalId: string, title: string): NormalizedJob {
 // PGlite's pgvector) by round-tripping through the actual repo functions and asserting `<=>` ordering.
 describe("pgvector retrieval over PGlite (pilot: R1 driver compat + R2 HNSW migration DDL)", () => {
   let db: Db;
-  let close: () => Promise<void>;
+  let close: (() => Promise<void>) | undefined;
 
   beforeAll(async () => {
     ({ db, close } = await createTestDb());
   });
   afterAll(async () => {
-    await close(); // drain the WASM handle → clean Windows teardown (no UV_HANDLE_CLOSING)
+    // Optional-chained: if beforeAll's createTestDb() rejected, a bare close() would bury the real
+    // failure under a secondary TypeError. Drains the WASM handle → clean Windows teardown.
+    await close?.();
   });
 
   it("round-trips company → jobs → embeddings and orders neighbours by cosine distance", async () => {

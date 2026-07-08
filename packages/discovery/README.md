@@ -103,11 +103,13 @@ Algolia shipped in Phase F5 as the `hn` lane.)
 
 ## Tests
 
-```sh
-pnpm --filter @opusfinder/discovery test:probe              # probeFetch + probeCandidate(s) (stubbed fetch)
-pnpm --filter @opusfinder/discovery test:resolve            # resolveUrl + resolveSeed (offline)
-pnpm --filter @opusfinder/discovery test:lanes              # selectLanes/resolveLanes lane-loop (stub lanes, no network)
-pnpm --filter @opusfinder/discovery test:lane-hn           # parseHnThread over a captured payload (no network)
-pnpm --filter @opusfinder/discovery test:lane-hn --live    # opt-in: hits real HN Algolia
-pnpm --filter @opusfinder/discovery exec tsx scripts/test-resolve.ts --live  # resolve the real pinned seed
+All suites are co-located `*.test.ts` (Vitest `unit` project), run from the repo root (PowerShell):
+
+```powershell
+pnpm exec vitest run packages/discovery     # this package: selectLanes/resolveLanes, resolveUrl/resolveSeed,
+                                            # probeFetch/probeCandidate(s), HostThrottle, parseHnThread (all offline)
+
+# Opt-in live gates (real network, skipped unless the flag is set):
+$env:HN_LIVE_TEST="1";      pnpm exec vitest run packages/discovery/src/lanes/hn.test.ts   # hits real HN Algolia
+$env:OUTSCAL_SEED_LIVE="1"; pnpm exec vitest run packages/discovery/src/resolve.test.ts    # resolves the real pinned seed
 ```

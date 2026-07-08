@@ -30,10 +30,11 @@ export interface CreateUserInput {
  * `emailVerified` and seed the 1:1 `user_preferences` row with a random unsubscribe token. Returns the
  * branded `user.id`.
  *
- * `signUpEmail` wraps the `user`+`account` inserts in a transaction (why `auth` must be backed by the
- * neon-serverless `authDb`); the verify UPDATE + prefs upsert are separate single statements on `db`.
- * Not atomic across those steps — acceptable for seed data, and `getOrCreateUserByEmail` makes the
- * prefs step idempotent on a retry.
+ * `signUpEmail` runs the `user`+`account` inserts through the adapter (sequentially under the current
+ * `transaction: false` adapter default — `auth` stays backed by the tx-capable neon-serverless
+ * `authDb` as future-proofing); the verify UPDATE + prefs upsert are separate single statements on
+ * `db`. Not atomic across ANY of those steps — acceptable for seed data, and `getOrCreateUserByEmail`
+ * makes the prefs step idempotent on a retry.
  */
 export async function createUserWithPreferences(
   db: Db,

@@ -58,8 +58,12 @@ describe("embeddingRanker", () => {
     const embed = makeFakeEmbedder();
     await embeddingRanker(embed)(profile, [...pool]);
     expect(queryCalls(embed)).toHaveLength(1);
-    // Three distinct job texts → one document embed call carrying all three.
-    expect(documentCalls(embed).flat()).toHaveLength(3);
+    // Three distinct job texts, composed `title\n\ndesc`, in candidate order → one document embed call.
+    expect(documentCalls(embed).flat()).toEqual([
+      "A\n\naligned [[v:1,0]]",
+      "B\n\northogonal [[v:0,1]]",
+      "C\n\ndiagonal [[v:2,2]]",
+    ]);
   });
 
   it("caches document vectors across invocations — a recurring job is embedded once", async () => {
@@ -88,7 +92,7 @@ describe("embeddingRanker", () => {
     const embed = makeFakeEmbedder();
     const blank: EvalJob[] = [{ id: 99, title: "", descriptionText: "" }];
     await expect(embeddingRanker(embed)(profile, blank)).rejects.toThrow(
-      /composes to empty text/,
+      /candidate job 99 composes to empty text/,
     );
   });
 

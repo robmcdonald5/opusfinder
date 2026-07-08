@@ -11,7 +11,7 @@ import {
 import type { ProfileEmbedFn, StructureFn, TranscribeFn } from "../src/index";
 
 /**
- * The real (Node-only) wiring of the pipeline seams, shared by the three scripts so they agree on how
+ * The real (Node-only) wiring of the pipeline seams, shared by the two CLI scripts so they agree on how
  * transcribe / structure / embed are built. This is the layer that pulls @opusfinder/llm +
  * @opusfinder/embeddings (and thus their env modules) — keeping it in scripts/ is what lets
  * packages/profiles/src stay Worker-portable. Both LLM calls run at temperature 0: transcription is a

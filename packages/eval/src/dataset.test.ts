@@ -37,7 +37,7 @@ describe("parseDatasetLines", () => {
       line:
         '{"profile":{"id":"p1","summary":"s","skills":[],"targetRoles":[]},' +
         '"candidateJobs":[{"id":1,"title":"t","descriptionText":"d"}],"expectedGoodIds":[2]}',
-      match: /absent from candidateJobs/,
+      match: /expectedGoodIds contains 2, which is absent from candidateJobs\./,
     },
     {
       label: "non-integer good id (can never match an integer pool id)",
@@ -64,14 +64,14 @@ describe("parseDatasetLines", () => {
       line:
         '{"profile":{"id":"p1","summary":"s","skills":[],"targetRoles":[]},' +
         '"candidateJobs":[{"id":1,"title":"  ","descriptionText":""}],"expectedGoodIds":[]}',
-      match: /no embeddable content/,
+      match: /job 1 has no embeddable content \(title and descriptionText are both empty\)/,
     },
     {
       label: "contentless profile (summary AND skills AND targetRoles empty)",
       line:
         '{"profile":{"id":"p1","summary":"  ","skills":[],"targetRoles":[]},' +
         '"candidateJobs":[{"id":1,"title":"t","descriptionText":"d"}],"expectedGoodIds":[]}',
-      match: /no embeddable content/,
+      match: /profile has no embeddable content \(summary, skills, and targetRoles compose to ""\)/,
     },
   ])("rejects $label", ({ line, match }) => {
     expect(() => parseDatasetLines(line)).toThrow(match);

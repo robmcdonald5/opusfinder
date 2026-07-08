@@ -7,7 +7,7 @@ import { getDatabaseUrl } from "@opusfinder/db/env";
 import { getAuthBaseURL, getAuthSecret } from "./env";
 import { createAuth } from "./index";
 
-// Phase 0 pilot — the one live-DB `skipIf` gate. Ports scripts/test-auth-db.ts. It proves the seam that
+// Phase 0 pilot — the one live-DB `skipIf` gate. Ports the retired scripts/test-auth-db.ts. It proves the seam that
 // PGlite CANNOT fake: neon-serverless interactive transactions (auth signUpEmail wrapping). neon-http
 // throws "No transactions support"; only a real Neon branch over neon-serverless runs `tx.execute`.
 //

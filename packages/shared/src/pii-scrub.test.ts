@@ -11,13 +11,15 @@ import { scrubProfilePii } from "./index";
 describe("scrubProfilePii", () => {
   // Each row: a summary fragment, and whether scrubbing should remove it.
   it.each([
-    { label: "email address", text: "reach me at jane.doe@example.com", redacted: true },
-    { label: "10-digit phone with separators", text: "call (682) 333-9323 anytime", redacted: true },
-    { label: "9-digit run (one below the phone threshold)", text: "ticket 12345-6789 open", redacted: false },
-    { label: "year range (8 digits)", text: "Worked 2015-2019 on payments", redacted: false },
-    { label: "a metric like p99", text: "tuned p99 latency", redacted: false },
-  ])("$label → redacted=$redacted", ({ text, redacted }) => {
+    { label: "email address", text: "reach me at jane.doe@example.com", redacted: true, expected: "reach me at [redacted]" },
+    { label: "10-digit phone with separators", text: "call (682) 333-9323 anytime", redacted: true, expected: "call [redacted] anytime" },
+    { label: "9-digit run (one below the phone threshold)", text: "ticket 12345-6789 open", redacted: false, expected: "ticket 12345-6789 open" },
+    { label: "year range (8 digits)", text: "Worked 2015-2019 on payments", redacted: false, expected: "Worked 2015-2019 on payments" },
+    { label: "a metric like p99", text: "tuned p99 latency", redacted: false, expected: "tuned p99 latency" },
+  ])("$label → redacted=$redacted", ({ text, redacted, expected }) => {
     const out = scrubProfilePii({ summary: text, skills: [], targetRoles: [] }).summary;
+    // Pin the EXACT scrubbed string: redact placement AND byte-for-byte survival of the non-PII text.
+    expect(out).toBe(expected);
     expect(out.includes("[redacted]")).toBe(redacted);
   });
 
@@ -27,9 +29,8 @@ describe("scrubProfilePii", () => {
       skills: ["Go", "PostgreSQL"],
       targetRoles: ["Staff Engineer"],
     });
-    expect(scrubbed.summary).not.toMatch(/@example\.com/);
-    expect(scrubbed.summary).not.toMatch(/333-9323/);
-    expect(scrubbed.summary).toMatch(/2015-2019/);
+    // Deterministic scrub → pin the whole composed output: both redactions placed, spacing intact, year kept.
+    expect(scrubbed.summary).toBe("Senior engineer; reach me at [redacted] or [redacted]. Worked 2015-2019.");
   });
 
   it("preserves non-PII skills and target-roles fields", () => {

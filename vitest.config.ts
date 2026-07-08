@@ -53,6 +53,10 @@ export default defineConfig({
         "**/test/**", // fixtures, setup, helpers
         "**/drizzle/**",
         "**/*.d.ts",
+        // apps/web (SvelteKit) has no suite until Phase 4; its file-based `+server.ts` routes would
+        // otherwise pollute the merged denominator as indistinguishable 0% rows. Re-scope per-package
+        // when its node-pool suite lands.
+        "apps/web/**",
       ],
       // CAVEAT: v8 coverage does NOT work under workerd. A future @cloudflare/vitest-pool-workers
       // project (a true in-isolate scrapers Worker suite) must use provider:"istanbul" and merge

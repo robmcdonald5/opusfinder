@@ -26,7 +26,9 @@ describe("jobId — strict branded constructor", () => {
     ["a\tb", "interior tab"],
     ["a\nb", "interior newline"],
   ])("throws on %j (%s)", (input) => {
-    expect(() => jobId(input)).toThrow(/Invalid JobId/);
+    // The message echoes the ORIGINAL (untrimmed) input verbatim via JSON.stringify — a trimmed-echo
+    // regression (reporting "" for "   ") would fail this, unlike a bare /Invalid JobId/ prefix match.
+    expect(() => jobId(input)).toThrow(`Invalid JobId: ${JSON.stringify(input)}`);
   });
 });
 
@@ -85,6 +87,7 @@ describe("companySlug — URL-path-safe slug floor", () => {
     ["café", "non-ASCII"],
     ["a:b", "colon"],
   ])("throws on %j (%s)", (input) => {
-    expect(() => companySlug(input)).toThrow(/Invalid CompanySlug/);
+    // Same untrimmed-echo contract as jobId: the reported value is the original input, not the trimmed form.
+    expect(() => companySlug(input)).toThrow(`Invalid CompanySlug: ${JSON.stringify(input)}`);
   });
 });
