@@ -74,7 +74,7 @@ describe("runAdapter — invariant ATS plumbing over MSW", () => {
   afterEach(() => vi.restoreAllMocks());
 
   describe("request contract + single fetch", () => {
-    it("builds the request from jobsRequest, maps each item, and sorts each job's locations", async () => {
+    it("builds the request from jobsRequest, maps each item, and sorts each job's locations without mutating the raw input", async () => {
       let method = "";
       let url = "";
       server.use(
@@ -92,6 +92,22 @@ describe("runAdapter — invariant ATS plumbing over MSW", () => {
       expect(ids(jobs)).toEqual(["1", "2"]);
       // runAdapter canonicalizes location order (keeps the persisted jsonb stable) — ["Zeta","Alpha"] → sorted.
       expect(jobs[0]?.locations).toEqual(["Alpha", "Zeta"]);
+      // The sort must COPY: mkJob aliases job.locations into job.raw, and job.raw is persisted as jobs.raw
+      // jsonb (an input to content_signature). An in-place `.sort()` would reorder raw too — assert it didn't.
+      expect((jobs[0]?.raw as RawItem).locations).toEqual(["Zeta", "Alpha"]);
+    });
+
+    it("normalizes the raw slug into ctx.slug before mapping (never passes rawSlug through)", async () => {
+      server.use(http.get(LIST, () => HttpResponse.json({ jobs: [raw(1)] })));
+      // normalizeSlug transforms the raw input; a regression that used rawSlug directly as ctx.slug would
+      // persist postings under a non-canonical company key, silently breaking cross-source dedupe/grouping.
+      const adapter = makeAdapter({
+        normalizeSlug: (rawSlug) => companySlug(rawSlug.replace("-RAW", "")),
+      });
+
+      const jobs = await runAdapter(adapter, "acme-RAW");
+
+      expect(jobs[0]?.companySlug).toBe(companySlug("acme")); // the normalized slug, NOT companySlug("acme-RAW")
     });
   });
 
@@ -232,6 +248,53 @@ describe("runAdapter — invariant ATS plumbing over MSW", () => {
 
       expect(calls).toBe(2);
       expect(ids(jobs)).toEqual(["1"]);
+    });
+
+    it("retries a transient 429 (Retry-After: 0) and succeeds — a rate-limit is recoverable, not a dropped board", async () => {
+      // Distinct from the 5xx term above: this pins the `res.status === 429` half of the retryable set
+      // (the code cites Workable's HTML 429). Dropping just that clause would turn a recoverable rate-limit
+      // into a board dropped on its first hit.
+      let calls = 0;
+      server.use(
+        http.get(LIST, () => {
+          calls += 1;
+          if (calls === 1) {
+            return new HttpResponse(null, { status: 429, headers: { "retry-after": "0" } });
+          }
+          return HttpResponse.json({ jobs: [raw(1)] });
+        }),
+      );
+
+      const jobs = await runAdapter(makeAdapter(), "acme");
+
+      expect(calls).toBe(2);
+      expect(ids(jobs)).toEqual(["1"]);
+    });
+
+    it("aborts a hung request via fetchTimeoutMs and surfaces it as a tagged fetch-error", async () => {
+      // run-adapter's most safety-critical invariant (its own doc comment): a board that accepts the
+      // connection but never responds would otherwise hang the whole Worker tick forever, freezing the KV
+      // chunk cursor. AbortSignal.timeout converts that hang into an ordinary transient failure. Fake timers
+      // fire the timeout deterministically; the never-resolving handler means ONLY the abort can settle the fetch.
+      vi.useFakeTimers();
+      try {
+        let calls = 0;
+        server.use(
+          http.get(LIST, () => {
+            calls += 1;
+            return new Promise<never>(() => {}); // never resolves
+          }),
+        );
+
+        const promise = runAdapter(makeAdapter(), "acme", { maxRetries: 0, fetchTimeoutMs: 50 });
+        const settled = expect(promise).rejects.toThrow(/greenhouse "acme" fetch error:/);
+        await vi.advanceTimersByTimeAsync(100); // past fetchTimeoutMs → the timeout signal aborts the fetch
+        await settled;
+
+        expect(calls).toBe(1);
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it("retries up to maxRetries then throws a tagged fetch-failed error", async () => {

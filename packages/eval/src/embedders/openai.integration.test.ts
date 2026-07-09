@@ -92,10 +92,13 @@ describe("openaiEmbedder — OpenAI embeddings over MSW", () => {
       }),
     );
 
-    const long = "a".repeat(25_000); // over OpenAI's ~8k-token per-input limit
+    // Head ≠ tail so the assertion distinguishes slice(0, MAX) from a wrong-end slice(-MAX): a tail-slice
+    // would ship the low-signal footer instead of the high-signal title/summary head, silently degrading
+    // the eval ranking this embedder exists to measure.
+    const long = "H".repeat(24_000) + "T".repeat(1_000); // 25_000 chars, over OpenAI's ~8k-token per-input limit
     await openaiEmbedder([long, "short"], "document");
 
-    expect(input[0]).toHaveLength(24_000); // MAX_TOKENS_PER_INPUT(8000) * CHARS_PER_TOKEN(3)
+    expect(input[0]).toBe("H".repeat(24_000)); // the HEAD is kept: MAX_TOKENS_PER_INPUT(8000) * CHARS_PER_TOKEN(3)
     expect(input[1]).toBe("short"); // a short input is passed through verbatim
   });
 
@@ -124,17 +127,17 @@ describe("openaiEmbedder — OpenAI embeddings over MSW", () => {
     expect(vectors).toEqual([...inputs.keys()].map((k) => oneHot(k)));
   });
 
-  it("returns order-aligned vectors on the happy path (usage discarded)", async () => {
+  it("returns order-aligned vectors on the happy path", async () => {
     server.use(
       http.post(OPENAI_URL, async ({ request }) => {
         const b = (await request.json()) as { input: string[] };
-        return HttpResponse.json(embeddingsEnvelope(b.input.length, { totalTokens: 99 }));
+        return HttpResponse.json(embeddingsEnvelope(b.input.length));
       }),
     );
 
     const vectors = await openaiEmbedder(["a", "b"], "document");
 
-    // The Embedder contract returns vectors only — usage (99) is intentionally dropped by this embedder.
+    // The Embedder contract returns vectors only — the OpenAI usage is discarded by design (no field to leak).
     expect(vectors).toEqual([oneHot(0), oneHot(1)]);
     expect(vectors[0]).toHaveLength(EMBED_DIMENSIONS);
   });
