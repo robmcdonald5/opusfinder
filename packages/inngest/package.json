@@ -15,8 +15,6 @@
     "inngest:serve": "tsx scripts/serve.ts",
     "digest": "tsx scripts/digest.ts",
     "health": "tsx scripts/show-health.ts",
-    "test:digest-email": "tsx scripts/test-digest-email.ts",
-    "test:probe": "tsx scripts/test-digest-probe.ts",
     "test:health-alert": "tsx scripts/test-health-alert.ts"
   },
   "dependencies": {
