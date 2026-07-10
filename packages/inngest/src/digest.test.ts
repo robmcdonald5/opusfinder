@@ -289,6 +289,29 @@ describe("runPerUser", () => {
     );
   });
 
+  it("defaults enforce to false when deps omit enforceLifecycle (the ?? false fallback)", async () => {
+    // makeDeps always sets the flag explicitly; build deps WITHOUT it so the `?? false` default is the value
+    // that reaches the probe. An explicit `false` cannot tell `?? false` apart from `?? true`.
+    const deps: DigestDeps = {
+      db: {} as never,
+      rerank,
+      batch: { submit: batchSubmit, poll: batchPoll, collect: batchCollect },
+      email,
+      probe,
+    };
+    const { tools } = recordingStep();
+
+    await runPerUser(deps, event(), tools);
+
+    expect(probeMod.probeDigestLiveness).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      500,
+      { enforce: false },
+    );
+  });
+
   it("skips with no-profile-or-embedding when the profile is missing — only the load step runs", async () => {
     repos.getProfileForDigest.mockResolvedValue(null);
     const { runs, tools } = recordingStep();
@@ -298,6 +321,24 @@ describe("runPerUser", () => {
     expect(out).toEqual({ userId: USER, skipped: "no-profile-or-embedding" });
     expect(runs).toEqual(["load"]);
     expect(rerank).not.toHaveBeenCalled();
+  });
+
+  it("skips no-profile-or-embedding when the profile is present but its embedding is null", async () => {
+    // The OTHER half of the load gate's OR (`!profile.embedding`): the profile row exists but its embedding
+    // column is null (e.g. not yet backfilled). Must skip at load, NOT fall through to the retrieve step's
+    // disappeared-mid-run throw.
+    repos.getProfileForDigest.mockResolvedValue({
+      structured: { skills: [] },
+      embedding: null,
+      emailVerified: true,
+    });
+    const { runs, tools } = recordingStep();
+
+    const out = await runPerUser(makeDeps(), event(), tools);
+
+    expect(out).toEqual({ userId: USER, skipped: "no-profile-or-embedding" });
+    expect(runs).toEqual(["load"]);
+    expect(repos.retrieveCandidatesForProfile).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -334,6 +375,19 @@ describe("runPerUser", () => {
     expect(runs).toEqual(["load"]);
   });
 
+  it("skips ineligible when the preferences row is missing (null)", async () => {
+    // The `!prefs` sub-branch of the eligibility gate: a user with a profile but no preferences row must skip
+    // gracefully, NOT crash dereferencing prefs.digestEnabled. getPreferences returns `... | null` in prod.
+    repos.getPreferences.mockResolvedValue(null);
+    const { runs, tools } = recordingStep();
+
+    const out = await runPerUser(makeDeps(), event(), tools);
+
+    expect(out).toEqual({ userId: USER, skipped: "ineligible" });
+    expect(runs).toEqual(["load"]);
+    expect(rerank).not.toHaveBeenCalled();
+  });
+
   it("skips not-approved when the send permit (digestApprovedAt) is null — before any paid spend", async () => {
     repos.getPreferences.mockResolvedValue({
       digestEnabled: true,
@@ -356,6 +410,23 @@ describe("runPerUser", () => {
     expect(out).toEqual({ userId: USER, skipped: "not-approved" });
     expect(runs).toEqual(["load"]);
     expect(rerank).not.toHaveBeenCalled();
+  });
+
+  it("throws when the profile embedding disappears between the load and retrieve reads", async () => {
+    // Load reads a valid embedding-bearing profile (passes the gate); the retrieve step RE-READS and finds the
+    // embedding gone (a mid-run delete/re-embed race) → the disappeared-mid-run invariant must fire. Needs two
+    // once-values because a single mockResolvedValue would return the same profile to both reads.
+    const validProfile = { structured: { skills: [] }, embedding: [0.1], emailVerified: true };
+    repos.getProfileForDigest
+      .mockResolvedValueOnce(validProfile) // load read
+      .mockResolvedValueOnce({ ...validProfile, embedding: null }); // retrieve re-read
+    const { runs, tools } = recordingStep();
+
+    await expect(runPerUser(makeDeps(), event(), tools)).rejects.toThrow(
+      /profile embedding disappeared mid-run/,
+    );
+    expect(runs).toEqual(["load", "retrieve"]);
+    expect(repos.retrieveCandidatesForProfile).not.toHaveBeenCalled();
   });
 
   it("skips no-candidates and backs off when retrieval is empty", async () => {
@@ -442,6 +513,25 @@ describe("runPerUser", () => {
     expect(batchPoll).toHaveBeenCalledTimes(168); // SYNTH_MAX_POLLS (30 fast + 138 slow)
   });
 
+  it("polls on the fast (2m) schedule for the first hour, then the slow (10m) tail", async () => {
+    // Stay in_progress through poll i=30 (so synthesis-wait-30 is emitted), then end at i=31. The sleep id
+    // encodes only the loop index, so the DURATION is what pins the fast→slow boundary (i < SYNTH_FAST_POLLS).
+    let polls = 0;
+    batchPoll.mockImplementation(async () =>
+      polls++ < 31 ? { status: "in_progress" } : { status: "ended" },
+    );
+    const { sleepCalls, tools } = recordingStep();
+
+    await runPerUser(makeDeps(), event(), tools);
+
+    expect(batchPoll).toHaveBeenCalledTimes(32);
+    const durationById = new Map(sleepCalls.map((s) => [s.id, s.duration]));
+    expect(durationById.get("synthesis-initial-wait")).toBe("30s");
+    expect(durationById.get("synthesis-wait-0")).toBe("2m"); // fast band
+    expect(durationById.get("synthesis-wait-29")).toBe("2m"); // last fast (i=29 < 30)
+    expect(durationById.get("synthesis-wait-30")).toBe("10m"); // first slow (i=30, not < 30)
+  });
+
   it("throws when synthesis yields no usable reason for any item", async () => {
     batchCollect.mockResolvedValue(
       new Map([
@@ -453,6 +543,30 @@ describe("runPerUser", () => {
 
     await expect(runPerUser(makeDeps(), event(), tools)).rejects.toThrow(/no usable reason/);
     expect(repos.insertDigest).not.toHaveBeenCalled();
+  });
+
+  it("partial synthesis: drops the reason-less item and renumbers the lone survivor to rank 1", async () => {
+    // job 1's synthesis errored (dropped by the reason filter); job 2 succeeded. job 2 was index 1 pre-filter,
+    // so it must be RENUMBERED to rank 1 — the only test that exercises the kept-map renumbering (i + 1) with
+    // a hole punched in the middle (the all-keep and all-drop tests can't observe i + 1 vs i).
+    batchCollect.mockResolvedValue(
+      new Map([
+        [`d${RUN_ID}-1`, { text: "reason one", status: "errored" }], // non-succeeded → dropped
+        [`d${RUN_ID}-2`, { text: "reason two", status: "succeeded" }], // survives
+      ]),
+    );
+    const { tools } = recordingStep();
+
+    const out = await runPerUser(makeDeps(), event(), tools);
+
+    expect(out).toEqual({ userId: USER, digestId: 500, itemCount: 1, delivery: "delivered" });
+    expect(repos.insertDigest).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ itemCount: 1 }),
+    );
+    const items = repos.insertDigestItems.mock.calls.at(-1)![3] as Array<{ jobId: number; rank: number }>;
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({ jobId: 2, rank: 1 }); // renumbered from its pre-filter index of 1
   });
 
   it("throws the snapshot invariant when a kept job has no snapshot", async () => {

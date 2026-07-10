@@ -48,6 +48,9 @@ export interface RecordingStep {
   runs: string[];
   /** step.sleep ids in call order. */
   sleeps: string[];
+  /** step.sleep {id, duration} in call order — so a suite can pin the durable wait CADENCE, not just ids
+   *  (the digest poll schedule encodes the interval only in the duration; its sleep id is the loop index). */
+  sleepCalls: { id: string; duration?: string }[];
   /** step.sendEvent {id, events} in call order (fan-out payloads). */
   sentEvents: { id: string; events: unknown }[];
   tools: RecordingStepTools;
@@ -57,18 +60,21 @@ export interface RecordingStep {
 export function recordingStep(): RecordingStep {
   const runs: string[] = [];
   const sleeps: string[] = [];
+  const sleepCalls: { id: string; duration?: string }[] = [];
   const sentEvents: { id: string; events: unknown }[] = [];
   return {
     runs,
     sleeps,
+    sleepCalls,
     sentEvents,
     tools: {
       run: async <T>(id: string, fn: () => Promise<T>): Promise<T> => {
         runs.push(id);
         return fn();
       },
-      sleep: async (id: string): Promise<void> => {
+      sleep: async (id: string, duration?: string): Promise<void> => {
         sleeps.push(id);
+        sleepCalls.push({ id, duration });
       },
       sendEvent: async (id: string, events: unknown): Promise<void> => {
         sentEvents.push({ id, events });
