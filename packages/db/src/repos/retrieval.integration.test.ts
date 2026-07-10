@@ -474,6 +474,35 @@ describe("retrieveCandidatesForProfile — SQL filter + cosine rank + post-filte
     expect(result.map((c) => c.id)).not.toContain(seeded[0]!);
   });
 
+  // B16b — the inverse wiring (absorbs verify-prefs-live PART A's on-site arm): onsite_only must drop the
+  // nearest REMOTE job. B16 covers remote_only; the geoMatches truth table stays in location-mode.test.ts.
+  it("enforces locationMode onsite_only through the real path — drops the nearest remote job", async () => {
+    const seeded = await seedBoard([
+      {
+        externalId: "remote",
+        title: "Senior Platform Engineer",
+        remote: true,
+        locations: ["Remote - US"],
+        embedding: oneHot(0),
+      },
+      {
+        externalId: "onsite",
+        title: "Data Platform Engineer",
+        remote: false,
+        locations: ["Austin, TX"],
+        embedding: blend(0.6, 0.8),
+      },
+    ]);
+    const result = await retrieveCandidatesForProfile(db, oneHot(0), {
+      limit: 10,
+      locationMode: "onsite_only",
+    });
+    expect(result).toHaveLength(1);
+    // The remote job is NEAREST — onsite_only must surface only the on-site row.
+    expect(result[0]!.id).toBe(seeded[1]!);
+    expect(result.map((c) => c.id)).not.toContain(seeded[0]!);
+  });
+
   // B17
   it("maps raw rows faithfully — jsonb locations array, strict boolean remote, 32-hex signature, finite distance", async () => {
     const seeded = await seedBoard([

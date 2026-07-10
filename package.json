@@ -15,7 +15,7 @@
     "format:check": "prettier --check .",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "typecheck:scrapers": "pnpm --filter @opusfinder/scrapers typecheck",
-    "typecheck:test": "tsc --noEmit -p tsconfig.test.json && pnpm --filter @opusfinder/scrapers typecheck:test",
+    "typecheck:test": "tsc --noEmit -p tsconfig.test.json && pnpm --filter @opusfinder/scrapers typecheck:test && pnpm --filter @opusfinder/web check",
     "test": "vitest run --project unit --project integration",
     "test:watch": "vitest --project unit --project integration",
     "test:unit": "vitest run --project unit",

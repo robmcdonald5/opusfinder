@@ -22,16 +22,8 @@ import { getDatabaseUrl } from "@opusfinder/db/env";
 import { checkHealth, healthOptionsFromEnv } from "@opusfinder/db/health";
 import { json } from "@sveltejs/kit";
 
+import { isAuthorized } from "./auth";
 import type { RequestHandler } from "./$types";
-
-/** True only when HEALTH_PING_TOKEN is set AND the caller presents it (bearer header or ?token=). */
-function isAuthorized(request: Request, url: URL): boolean {
-  const expected = process.env.HEALTH_PING_TOKEN;
-  if (!expected) return false; // unset → nobody is authorized for the full body (secure default)
-  const bearer = request.headers.get("authorization");
-  const presented = bearer?.startsWith("Bearer ") ? bearer.slice(7) : url.searchParams.get("token");
-  return presented === expected;
-}
 
 export const GET: RequestHandler = async ({ request, url }) => {
   const db = createDb(getDatabaseUrl());
