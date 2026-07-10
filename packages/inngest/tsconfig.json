@@ -1,4 +1,7 @@
 {
   "extends": "../../tsconfig.base.json",
-  "include": ["src/**/*.ts", "scripts/**/*.ts"]
+  "include": ["src/**/*.ts", "scripts/**/*.ts"],
+  // Test files are type-checked by the root tsconfig.test.json (which knows the @test/* alias + test types)
+  // via `pnpm typecheck:test`; keep them out of the shippable package typecheck. Mirrors packages/db.
+  "exclude": ["**/*.test.ts"]
 }

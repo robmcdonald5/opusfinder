@@ -14,8 +14,7 @@
     "typecheck": "tsc --noEmit",
     "inngest:serve": "tsx scripts/serve.ts",
     "digest": "tsx scripts/digest.ts",
-    "health": "tsx scripts/show-health.ts",
-    "test:health-alert": "tsx scripts/test-health-alert.ts"
+    "health": "tsx scripts/show-health.ts"
   },
   "dependencies": {
     "@opusfinder/db": "workspace:*",
