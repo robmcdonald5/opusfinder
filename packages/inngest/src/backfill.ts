@@ -47,6 +47,64 @@ const EMBED_PAGE = 64;
  *  cap returns `drained:false`; the next daily cron resumes (idempotent). At 64/page ≈ 12,800 rows/run. */
 const MAX_PAGES_PER_RUN = 200;
 
+/** The one step primitive the drain uses — structural, so a test drives it with a recording fake step and
+ *  Inngest's real StepTools pass straight through. */
+export interface EmbedDrainStepTools {
+  run<T>(id: string, fn: () => Promise<T>): Promise<T>;
+}
+
+/**
+ * The embed-drain loop body, extracted from the Inngest handler so its page / mismatch / cap branches are
+ * unit-testable with a recording fake `step` + stubbed repo primitives (no real Neon / Voyage). Pages the
+ * backlog ONE page per `step.run` (each = one Voyage request + one UPDATE), bounded by MAX_PAGES_PER_RUN.
+ * Cursorless: a written row drops out of `embedding IS NULL`, so the next no-offset query returns the rows
+ * after it.
+ *   - empty batch, or a short (<EMBED_PAGE) last page ⇒ done ⇒ drained:true, stop.
+ *   - a vector/batch length mismatch ⇒ NonRetriableError (a deterministic bug — don't burn paid retries).
+ *   - the page cap hit on a deep backlog ⇒ drained:false; the next daily cron resumes (idempotent).
+ */
+export async function embedDrainStep(
+  deps: BackfillDeps,
+  step: EmbedDrainStepTools,
+): Promise<{ pages: number; processed: number; tokens: number; drained: boolean }> {
+  let pages = 0;
+  let processed = 0;
+  let tokens = 0;
+  let drained = false;
+  for (let i = 0; i < MAX_PAGES_PER_RUN; i++) {
+    // Step id derives ONLY from the loop index (never ctx.attempt — that would orphan a retried step).
+    // Each page is its own step.run = one Voyage request + one UPDATE.
+    const page = await step.run(`embed-page-${i}`, async () => {
+      const batch = await jobsNeedingEmbedding(deps.db, { limit: EMBED_PAGE });
+      if (batch.length === 0) return { processed: 0, tokens: 0, done: true };
+      const { embeddings, usage } = await deps.embed(
+        batch.map((job) => jobEmbeddingText(job)),
+        { inputType: "document" },
+      );
+      // A length mismatch is a deterministic bug — fail terminally rather than burn paid retries.
+      if (embeddings.length !== batch.length) {
+        throw new NonRetriableError(
+          `embed returned ${embeddings.length} vectors for ${batch.length} jobs`,
+        );
+      }
+      const written = await writeJobEmbeddings(
+        deps.db,
+        batch.map((job, k) => ({ id: job.id, embedding: embeddings[k] as number[] })),
+      );
+      return { processed: written, tokens: usage.totalTokens, done: batch.length < EMBED_PAGE };
+    });
+    pages++;
+    processed += page.processed;
+    tokens += page.tokens;
+    if (page.done) {
+      drained = true;
+      break;
+    }
+  }
+  // `drained:false` ⇒ the page cap was hit on a deep backlog; the next daily cron finishes the tail.
+  return { pages, processed, tokens, drained };
+}
+
 /**
  * embed-backlog-drain — fill `jobs.embedding` daily (this gates matching). `singleton skip` (keyless ⇒ one
  * global flight) drops a tick that fires while a deep-backlog run is still draining, so there is no
@@ -56,44 +114,12 @@ function makeEmbedDrain(deps: BackfillDeps) {
   return inngest.createFunction(
     { id: "embed-backlog-drain", singleton: { mode: "skip" } },
     { cron: "0 4 * * *" }, // 04:00 UTC — after the night of hourly ingestion, clear of the digest cadence
-    async ({ step }) => {
-      let pages = 0;
-      let processed = 0;
-      let tokens = 0;
-      let drained = false;
-      for (let i = 0; i < MAX_PAGES_PER_RUN; i++) {
-        // Step id derives ONLY from the loop index (never ctx.attempt — that would orphan a retried step).
-        // Each page is its own step.run = one Voyage request + one UPDATE.
-        const page = await step.run(`embed-page-${i}`, async () => {
-          const batch = await jobsNeedingEmbedding(deps.db, { limit: EMBED_PAGE });
-          if (batch.length === 0) return { processed: 0, tokens: 0, done: true };
-          const { embeddings, usage } = await deps.embed(
-            batch.map((job) => jobEmbeddingText(job)),
-            { inputType: "document" },
-          );
-          // A length mismatch is a deterministic bug — fail terminally rather than burn paid retries.
-          if (embeddings.length !== batch.length) {
-            throw new NonRetriableError(
-              `embed returned ${embeddings.length} vectors for ${batch.length} jobs`,
-            );
-          }
-          const written = await writeJobEmbeddings(
-            deps.db,
-            batch.map((job, k) => ({ id: job.id, embedding: embeddings[k] as number[] })),
-          );
-          return { processed: written, tokens: usage.totalTokens, done: batch.length < EMBED_PAGE };
-        });
-        pages++;
-        processed += page.processed;
-        tokens += page.tokens;
-        if (page.done) {
-          drained = true;
-          break;
-        }
-      }
-      // `drained:false` ⇒ the page cap was hit on a deep backlog; the next daily cron finishes the tail.
-      return { pages, processed, tokens, drained };
-    },
+    // The adapter passes Inngest's tools through; the cast is sound — the page step's return
+    // ({processed,tokens,done}) is a JSON fixed-point, so Inngest's Jsonify memoization is the identity on it.
+    ({ step }) =>
+      embedDrainStep(deps, {
+        run: async (id, fn) => (await step.run(id, fn)) as Awaited<ReturnType<typeof fn>>,
+      }),
   );
 }
 

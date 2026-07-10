@@ -18,7 +18,13 @@ import {
 } from "@opusfinder/db/repos";
 import { type HealthCheck, type HealthReport, isEnforceFiring } from "@opusfinder/db/health";
 
+import { checkDetail } from "./health-alert-helpers";
+
 export { DEFAULT_HEALTH_ALERT_COOLDOWN_H };
+
+// Re-exported so existing consumers (the `pnpm health` CLI + tests) keep importing the render helpers from
+// here; the definitions moved to ./health-alert-helpers for isolated unit testing (case §3-4c).
+export { checkDetail, formatMetric, thresholdSuffix } from "./health-alert-helpers";
 
 /** The injected email seam — `sendHealthAlert(subject, text)` from `@opusfinder/email` is assignable. */
 export type AlertSend = (subject: string, text: string) => Promise<{ emailId: string }>;
@@ -35,40 +41,6 @@ export function getHealthAlertCooldownH(
   if (rawCooldown === undefined || rawCooldown.trim() === "") return DEFAULT_HEALTH_ALERT_COOLDOWN_H;
   const cooldownH = Number(rawCooldown);
   return Number.isFinite(cooldownH) && cooldownH >= 0 ? cooldownH : DEFAULT_HEALTH_ALERT_COOLDOWN_H;
-}
-
-/** The `[threshold N]` suffix (empty for boolean checks). */
-export function thresholdSuffix(check: HealthCheck): string {
-  return check.threshold === null ? "" : ` [threshold ${check.threshold}]`;
-}
-
-/** Shape-only metric formatting per check id — counts / ages / ratios, never job/user text. */
-export function formatMetric(check: HealthCheck): string {
-  if (check.metric === null) return "no data";
-  switch (check.id) {
-    case "ingestion_staleness":
-      return `${check.metric.toFixed(1)}h since last ok`;
-    case "discovery_window":
-      return `${check.metric.toFixed(1)}d since last ok`;
-    case "board_fail_ratio":
-      return `${(check.metric * 100).toFixed(0)}% boards failed`;
-    case "embedding_backlog":
-      return `${check.metric} rows`;
-    case "digest_health":
-      return `${check.metric} errored run(s)`;
-    case "bounce_suppression":
-      return `${check.metric} affected user(s)`;
-    case "discovery_lane_errors":
-      return `${check.metric} lane error(s)`;
-    default:
-      return String(check.metric);
-  }
-}
-
-/** One shape-only line per check — the alert body line AND the `health_alerts.detail` value (kept identical
- *  so the email and the stored history can't drift). */
-export function checkDetail(check: HealthCheck): string {
-  return `${check.label} (${check.id}): ${formatMetric(check)}${thresholdSuffix(check)}`;
 }
 
 export interface HealthAlertOutcome {
