@@ -1,0 +1,54 @@
+# Phase 5a — the secret-free regression gate for the Vitest suite. A single windows-latest lane runs the
+# structural test-isolation guard, the test-typecheck graph, and the unit+integration suite on every PR and
+# every push to main. Deliberately SECRET-FREE: PGlite is in-process, all HTTP boundaries are MSW-mocked, and
+# every real-network gate is a `*.live.test.ts` in the `live` project that `pnpm test` excludes and every
+# `skipIf` flag leaves off. The gated live lane (Neon/Voyage/R2 on a schedule) is a separate future workflow.
+name: ci
+
+on:
+  push:
+    branches: [main] # direct pushes / merges to main; feature branches gate via their pull_request
+  pull_request:
+  workflow_dispatch: # manual re-run from the Actions tab
+
+# Least privilege: this lane reads code and needs nothing else (no secrets to expose).
+permissions:
+  contents: read
+
+# One in-flight run per ref; a new push to a feature branch / PR supersedes the previous run. NEVER cancel a
+# main run — each merge commit needs its own green `ci` status for branch protection / deploy gates, so a
+# rapid second merge must not cancel the first commit's check.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  test:
+    # Single lane, no OS matrix: Windows is both the dev environment AND the regression guard for the
+    # libuv UV_HANDLE_CLOSING teardown crash (exit 3221226505) — the reason the suite forbids `--forceExit`.
+    runs-on: windows-latest
+    # Fail fast instead of burning GitHub's 6-hour default on a wedged run (e.g. a socket/WASM handle that
+    # never drains). The full suite runs in well under this locally.
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      # Install the pinned pnpm (reads `packageManager: pnpm@11.7.0` from package.json). Runs BEFORE
+      # setup-node so its `cache: pnpm` can resolve the pnpm store path.
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24 # engines.node >=24
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # Structural gate: every *.live.test.ts is flag-gated, and no test file is misrouted or orphaned.
+      - run: pnpm guard:tests
+
+      # Type-check the test graph: tsconfig.test.json + the scrapers Worker tests + apps/web svelte-check.
+      - run: pnpm typecheck:test
+
+      # Unit + integration only. Every live gate skips (no flags, no secrets); no `--forceExit`.
+      - run: pnpm test
