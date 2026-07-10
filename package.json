@@ -23,6 +23,7 @@
     "test:live": "vitest run --project live",
     "test:cov": "vitest run --project unit --project integration --coverage",
     "guard:worker": "node scripts/check-worker-isolation.mjs",
+    "guard:tests": "node scripts/check-test-isolation.mjs",
     "db:migrate": "pnpm --filter @opusfinder/db migrate",
     "db:backfill-signatures": "pnpm --filter @opusfinder/db backfill-signatures",
     "db:backfill-snapshots": "pnpm --filter @opusfinder/db backfill-snapshots",

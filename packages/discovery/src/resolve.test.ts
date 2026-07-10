@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { resolveSeed, resolveUrl, type ResolveCounts } from "./resolve";
-import { loadSeed, type CompanyRecord } from "./seed";
+import type { CompanyRecord } from "./seed";
 
 // Leaf pure-unit for the seed resolver (offline, deterministic — no timers, no network). Ports
 // scripts/test-resolve.ts. `resolveUrl` is URL → (source, rawSlug) by first-matching adapter;
@@ -126,23 +126,4 @@ describe("slug floor boundaries", () => {
     expect(counts.candidates).toBe(1);
     expect(candidates.map((c) => `${c.source}:${c.slug}`)).toEqual([`greenhouse:${longSlug}`]);
   });
-});
-
-// Live network check against the pinned public outscal seed (raw.githubusercontent, no creds).
-// Opt in with OUTSCAL_SEED_LIVE=1; loose assertions only.
-const LIVE = process.env.OUTSCAL_SEED_LIVE === "1";
-describe.skipIf(!LIVE)("resolveSeed — live outscal seed", () => {
-  it(
-    "the pinned seed yields > 0 candidates across multiple distinct sources",
-    async () => {
-      const live = await loadSeed();
-      const { candidates, counts } = resolveSeed(live);
-
-      expect(counts.seedRecords).toBeGreaterThan(1000);
-      expect(counts.candidates).toBeGreaterThan(0);
-      const distinctSources = new Set(candidates.map((c) => c.source));
-      expect(distinctSources.size).toBeGreaterThan(1);
-    },
-    60_000,
-  );
 });

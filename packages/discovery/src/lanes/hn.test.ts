@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { fetchHnAlgoliaLane, parseHnThread, type HnItem } from "./hn";
+import { parseHnThread, type HnItem } from "./hn";
 
 // Leaf pure-unit port of scripts/test-lane-hn.ts. `parseHnThread` is the offline, network-free half of
 // the HN "Who is hiring?" lane: it entity-decodes each comment's HTML (HN encodes `/` as `&#x2F;` and `&`
@@ -152,26 +152,4 @@ describe("parseHnThread — punctuation / entity edge cases", () => {
     const text = `apply https://jobs.lever.co/dupe/role-1 or again https://jobs.lever.co/dupe/role-2`;
     expect(linksOf(text)).toStrictEqual(["https://jobs.lever.co/dupe/role-1"]);
   });
-});
-
-// Opt-in LIVE check against the real current HN "Who is hiring?" thread (network; no creds). Two sequential
-// fetches (each AbortSignal.timeout(10s)) validate the Algolia endpoints + title-filter + /items shape that
-// the offline fixture can't. TOLERANT assertions only. Enable with HN_LIVE_TEST=1.
-const HN_LIVE = process.env.HN_LIVE_TEST === "1";
-
-describe.skipIf(!HN_LIVE)("fetchHnAlgoliaLane — live", () => {
-  it(
-    "resolves the current thread and yields > 0 covered-board records with http(s) links",
-    async () => {
-      const records = await fetchHnAlgoliaLane();
-      expect(records.length).toBeGreaterThan(0);
-
-      const links = records.flatMap((r) => r.ats_links ?? []);
-      expect(links.length).toBeGreaterThan(0);
-      for (const link of links) {
-        expect(link).toMatch(/^https?:\/\//);
-      }
-    },
-    30_000,
-  );
 });
