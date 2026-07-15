@@ -20,6 +20,9 @@ importers:
       '@opusfinder/db':
         specifier: workspace:*
         version: link:packages/db
+      '@opusfinder/shared':
+        specifier: workspace:*
+        version: link:packages/shared
       '@types/node':
         specifier: ^24
         version: 24.12.4

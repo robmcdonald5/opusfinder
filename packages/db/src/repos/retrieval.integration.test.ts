@@ -8,10 +8,11 @@ import {
   upsertJobs,
   writeJobEmbeddings,
 } from "@opusfinder/db/repos";
-import { jobs } from "@opusfinder/db/schema";
+import { companies, jobs } from "@opusfinder/db/schema";
 import { companySlug, jobId, type NormalizedJob } from "@opusfinder/shared";
 
 import { createTestDb } from "@test/db/pglite";
+import { truncate } from "@test/db/truncate";
 import { blend, oneHot } from "@test/db/vectors";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -61,9 +62,8 @@ describe("retrieveCandidatesForProfile — SQL filter + cosine rank + post-filte
     ({ db, close } = await createTestDb());
   });
   beforeEach(async () => {
-    // Truncate ONLY the tables this file touches; RESTART IDENTITY keeps seeded ids deterministic
-    // (several seeds assert rank-1 identity and would cross-contaminate otherwise).
-    await db.execute(sql`TRUNCATE TABLE companies, jobs RESTART IDENTITY CASCADE`);
+    // Several seeds assert rank-1 identity and would cross-contaminate without a per-test reset.
+    await truncate(db, companies, jobs);
   });
   afterAll(async () => {
     // Optional-chained: if beforeAll's createTestDb() rejected, a bare close() would bury the real

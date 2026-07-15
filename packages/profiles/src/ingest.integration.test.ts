@@ -1,4 +1,4 @@
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Db } from "@opusfinder/db";
@@ -6,7 +6,9 @@ import { user, userCvFiles, userProfiles } from "@opusfinder/db/schema";
 import { MIN_TRANSCRIPT_CHARS, type StructuredProfile, type UserId } from "@opusfinder/shared";
 import type { PutObjectInput, StorageClient } from "@opusfinder/storage";
 
+import { uid } from "@test/db/ids";
 import { createTestDb } from "@test/db/pglite";
+import { truncate } from "@test/db/truncate";
 import { oneHot } from "@test/db/vectors";
 
 import { ingestCv, type IngestCvOptions } from "./ingest";
@@ -23,11 +25,6 @@ import type { ProfileEmbedFn, StructureFn, TranscribeFn } from "./types";
 // the profiles repo's read fns (getProfileTextKey is owned by restructure.integration.test.ts;
 // getProfileForDigest by packages/db/src/repos/profiles.integration.test.ts) and live neon-http
 // driver parity (deferred with the 5b live-gate work).
-
-/** Explicit deterministic uuid per seeded user (the digests suite's idiom) — never gen_random_uuid(). */
-function uid(n: number): UserId {
-  return `00000000-0000-4000-8000-${String(n).padStart(12, "0")}` as UserId;
-}
 
 const A = uid(1);
 const B = uid(2);
@@ -145,11 +142,7 @@ describe("ingestCv — CV → profile pipeline (stub seams, real PGlite persiste
     ({ db, close } = await createTestDb());
   });
   beforeEach(async () => {
-    // Truncate ONLY the tables this file touches; the reserved "user" table is interpolated as a
-    // drizzle table object so quoting is never hand-rolled.
-    await db.execute(
-      sql`TRUNCATE TABLE ${userProfiles}, ${userCvFiles}, ${user} RESTART IDENTITY CASCADE`,
-    );
+    await truncate(db, userProfiles, userCvFiles, user);
     // The user_cv_files/user_profiles → user.id FK needs real rows; unique emails (user_email_uq).
     await db.insert(user).values([
       { id: A, name: "User A", email: "user-a@test.local", emailVerified: true },

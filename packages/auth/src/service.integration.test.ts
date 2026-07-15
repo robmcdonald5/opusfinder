@@ -1,4 +1,4 @@
-import { eq, sql } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Db } from "@opusfinder/db";
@@ -6,7 +6,9 @@ import type { AuthDb } from "@opusfinder/db/auth-client";
 import { account, session, user, userPreferences, verification } from "@opusfinder/db/schema";
 import type { UserId } from "@opusfinder/shared";
 
+import { uid } from "@test/db/ids";
 import { createTestDb } from "@test/db/pglite";
+import { truncate } from "@test/db/truncate";
 
 import {
   createAuth,
@@ -28,11 +30,6 @@ import {
 //
 // NEVER import ./env here — it runs loadPackageEnv at module scope against the real packages/auth/.env
 // and would demand a real BETTER_AUTH_SECRET. The auth instance gets literals instead.
-
-/** Explicit deterministic uuid for direct-seeded rows (bystanders, lookup-only users). */
-function uid(n: number): UserId {
-  return `00000000-0000-4000-8000-${String(n).padStart(12, "0")}` as UserId;
-}
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const TOKEN_RE = /^[0-9a-f]{64}$/;
@@ -65,10 +62,7 @@ describe("auth service — createUserWithPreferences / getOrCreateUserByEmail / 
     });
   });
   beforeEach(async () => {
-    // The reserved "user" table is interpolated as a drizzle table object so quoting is never hand-rolled.
-    await db.execute(
-      sql`TRUNCATE TABLE ${userPreferences}, ${account}, ${session}, ${verification}, ${user} RESTART IDENTITY CASCADE`,
-    );
+    await truncate(db, userPreferences, account, session, verification, user);
   });
   afterAll(async () => {
     // Optional-chained: if beforeAll's createTestDb() rejected, a bare close() would bury the real

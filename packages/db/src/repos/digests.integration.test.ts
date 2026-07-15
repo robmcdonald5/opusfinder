@@ -1,4 +1,4 @@
-import { eq, sql } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import type { Db } from "@opusfinder/db";
@@ -35,7 +35,9 @@ import {
 } from "@opusfinder/db/schema";
 import { companySlug, jobId, type DigestCadence, type UserId } from "@opusfinder/shared";
 
+import { uid } from "@test/db/ids";
 import { createTestDb } from "@test/db/pglite";
+import { truncate } from "@test/db/truncate";
 
 import { NUL } from "./sql";
 
@@ -46,12 +48,6 @@ import { NUL } from "./sql";
 // filter, the two empty shapes), and the delivery-state writes. NOT this file's job: the digest_runs
 // start/finish lifecycle (owned by runs.integration.test.ts — startDigestRun appears here ONLY as FK
 // seeding for digests.digest_run_id) and SQL text/param binding (the render()/stubExecDb unit seams).
-
-/** Explicit monotonically-ascending uuid — Postgres orders uuid bytewise, so ORDER BY user.id /
- *  gt(afterId) assertions are deterministic (never rely on gen_random_uuid insertion order). */
-function uid(n: number): UserId {
-  return `00000000-0000-4000-8000-${String(n).padStart(12, "0")}` as UserId;
-}
 
 function hoursAgo(h: number): Date {
   return new Date(Date.now() - h * 3_600_000);
@@ -87,10 +83,17 @@ describe("digests repo — recipient gates, shown-history anti-joins, persist/re
     ({ db, close } = await createTestDb());
   });
   beforeEach(async () => {
-    // Truncate ONLY the tables this file touches; RESTART IDENTITY keeps seeded ids deterministic.
-    // The reserved "user" table is interpolated as a drizzle table object so quoting is never hand-rolled.
-    await db.execute(
-      sql`TRUNCATE TABLE ${digestItems}, ${digests}, ${digestRuns}, ${userPreferences}, ${userProfiles}, ${userCvFiles}, ${jobs}, ${companies}, ${user} RESTART IDENTITY CASCADE`,
+    await truncate(
+      db,
+      digestItems,
+      digests,
+      digestRuns,
+      userPreferences,
+      userProfiles,
+      userCvFiles,
+      jobs,
+      companies,
+      user,
     );
   });
   afterAll(async () => {

@@ -1,4 +1,4 @@
-import { eq, sql } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import type { Db } from "@opusfinder/db";
@@ -12,6 +12,7 @@ import {
 import { digestRuns, sourceRuns } from "@opusfinder/db/schema";
 
 import { createTestDb } from "@test/db/pglite";
+import { truncate } from "@test/db/truncate";
 
 // The run lifecycle for BOTH audit tables under REAL Postgres semantics: startRun/startDigestRun
 // insert a `running` row off the column defaults, the shared finishRunRow terminalizes it exactly
@@ -29,9 +30,7 @@ describe("run lifecycle (source_runs + digest_runs) — start opens a running ro
     ({ db, close } = await createTestDb());
   });
   beforeEach(async () => {
-    // Truncate ONLY the tables this file touches; RESTART IDENTITY keeps run ids deterministic.
-    // CASCADE follows digest_runs → digests → digest_items (all empty here — no digests are written).
-    await db.execute(sql`TRUNCATE TABLE source_runs, digest_runs RESTART IDENTITY CASCADE`);
+    await truncate(db, sourceRuns, digestRuns);
   });
   afterAll(async () => {
     // Optional-chained: if beforeAll's createTestDb() rejected, a bare close() would bury the real

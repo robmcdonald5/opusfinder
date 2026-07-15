@@ -1,4 +1,4 @@
-import { eq, sql } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Db } from "@opusfinder/db";
@@ -7,6 +7,7 @@ import { runDiscovery } from "@opusfinder/discovery";
 import { companySlug, jobId, type SourceName } from "@opusfinder/shared";
 
 import { createTestDb } from "@test/db/pglite";
+import { truncate } from "@test/db/truncate";
 import { jsonResponse, routedFetch, textResponse, type Route } from "@test/http/fetch-router";
 
 // What this file proves: the runDiscovery ORCHESTRATION over real PGlite — the seed→resolve→PARTITION→
@@ -93,7 +94,7 @@ describe("runDiscovery — orchestration over real PGlite (fetch stubbed)", () =
     ({ db, close } = await createTestDb());
   });
   beforeEach(async () => {
-    await db.execute(sql`TRUNCATE TABLE companies, jobs, source_runs RESTART IDENTITY CASCADE`);
+    await truncate(db, companies, jobs, sourceRuns);
   });
   afterEach(() => {
     // Restore the MSW-patched global fetch each test installed over (config has no unstubGlobals:true).

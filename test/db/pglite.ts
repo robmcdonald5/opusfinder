@@ -20,8 +20,9 @@ import { openMigratedClient } from "./snapshot";
  * typed query builder AND raw `db.execute(sql\`...\`)` normalized through `resultRows()` — runs unmodified
  * (confirmed by the Phase 0 pilot, including the `<=>` cosine query and the HNSW-indexed migrations).
  *
- * Usage: one instance per test file in `beforeAll`; `truncate` touched tables in `beforeEach` when a file
- * has multiple tests; ALWAYS `await close()` in `afterAll` to drain the WASM handle (Windows teardown).
+ * Usage: one instance per test file in `beforeAll`; reset touched tables between tests with
+ * `truncate(db, ...tables)` (see ./truncate) in `beforeEach`; ALWAYS `await close()` in `afterAll` to
+ * drain the WASM handle (Windows teardown).
  *
  * CAVEATS: PGlite is single-user WASM — correct `<=>` ordering on small sets but NOT production HNSW
  * recall, and it cannot represent neon-serverless interactive transactions (those stay real-Neon live

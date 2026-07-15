@@ -1,4 +1,4 @@
-import { eq, sql } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Db } from "@opusfinder/db";
@@ -6,7 +6,9 @@ import { user, userCvFiles, userProfiles, type CvFileStatus } from "@opusfinder/
 import type { StructuredProfile, UserId } from "@opusfinder/shared";
 import type { StorageClient } from "@opusfinder/storage";
 
+import { uid } from "@test/db/ids";
 import { createTestDb } from "@test/db/pglite";
+import { truncate } from "@test/db/truncate";
 import { oneHot } from "@test/db/vectors";
 
 import { restructureProfile } from "./restructure";
@@ -25,11 +27,6 @@ import type { ProfileEmbedFn, StructureFn } from "./types";
 // NUL is built at RUNTIME — a literal escape in this source would be decoded to a real byte by the
 // file-writing tool and corrupt the file.
 const NUL = String.fromCharCode(0);
-
-/** Explicit monotonically-ascending uuid — deterministic, never gen_random_uuid insertion order. */
-function uid(n: number): UserId {
-  return `00000000-0000-4000-8000-${String(n).padStart(12, "0")}` as UserId;
-}
 
 /** A clean, PII-free structured profile: scrubProfilePii is the identity on it, so persisted
  *  `structured` can be asserted with strict equality. */
@@ -96,11 +93,7 @@ describe("restructureProfile — cached-transcript re-run seam: lookup, scrub, e
     ({ db, close } = await createTestDb());
   });
   beforeEach(async () => {
-    // Truncate ONLY the tables this file touches; RESTART IDENTITY keeps seeded ids deterministic.
-    // The reserved "user" table is interpolated as a drizzle table object so quoting is never hand-rolled.
-    await db.execute(
-      sql`TRUNCATE TABLE ${userProfiles}, ${userCvFiles}, ${user} RESTART IDENTITY CASCADE`,
-    );
+    await truncate(db, userProfiles, userCvFiles, user);
   });
   afterAll(async () => {
     // Optional-chained: if beforeAll's createTestDb() rejected, a bare close() would bury the real
