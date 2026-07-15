@@ -40,7 +40,12 @@ export default defineConfig({
           environment: "node",
           isolate: true,
           include: ["{packages,apps}/*/**/*.integration.test.ts"],
-          setupFiles: ["./test/setup/msw.ts"], // shared MSW server lifecycle
+          setupFiles: ["./test/setup/msw.ts"], // shared MSW server lifecycle (per file, in each worker)
+          // Runs ONCE in the main process before any worker: migrate a PGlite + dump a schema snapshot that
+          // every createTestDb() loads instead of replaying 24 migrations per file (~1.3s → ~0.24s). Scoped
+          // to this project only — `unit`/`live` never pay for it. `globalSetup` is a valid per-project
+          // option (unlike root-only `teardownTimeout`). See test/db/snapshot.ts.
+          globalSetup: ["./test/db/global-setup.ts"],
         },
       },
       {
