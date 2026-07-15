@@ -1,8 +1,9 @@
-# Phase 5a — the secret-free regression gate for the Vitest suite. A single windows-latest lane runs the
-# structural test-isolation guard, the test-typecheck graph, and the unit+integration suite on every PR and
-# every push to main. Deliberately SECRET-FREE: PGlite is in-process, all HTTP boundaries are MSW-mocked, and
-# every real-network gate is a `*.live.test.ts` in the `live` project that `pnpm test` excludes and every
-# `skipIf` flag leaves off. The gated live lane (Neon/Voyage/R2 on a schedule) is a separate future workflow.
+# The secret-free regression gate for the repo. A single windows-latest lane runs the two structural guards
+# (test-isolation + Worker-isolation), both typecheck graphs (shippable + test), and the unit+integration
+# suite on every PR and every push to main. Deliberately SECRET-FREE: PGlite is in-process,
+# all HTTP boundaries are MSW-mocked, and every real-network gate is a `*.live.test.ts` in the `live` project
+# that `pnpm test` excludes and every `skipIf` flag leaves off. The gated live lane (Neon/Voyage/R2 on a
+# schedule) is a separate future workflow.
 name: ci
 
 on:
@@ -47,7 +48,16 @@ jobs:
       # Structural gate: every *.live.test.ts is flag-gated, and no test file is misrouted or orphaned.
       - run: pnpm guard:tests
 
-      # Type-check the test graph: tsconfig.test.json + the scrapers Worker tests + apps/web svelte-check.
+      # Structural gate: no server-only subsystem (auth / neon-serverless / inngest / email / anthropic)
+      # can reach the scrapers Cloudflare Worker bundle — esbuild resolves the real edge-runtime module graph.
+      - run: pnpm guard:worker
+
+      # Type-check the shippable packages/* library graph (root tsconfig.json) — production source with NO
+      # other CI type gate (typecheck:test globs only *.test.ts under packages; deployed apps are checked below).
+      - run: pnpm typecheck
+
+      # Type-check the node test graph (tsconfig.test.json) PLUS the deployed apps under their own runtime
+      # configs: the scrapers Worker src+tests (Workers types) and apps/web via svelte-check.
       - run: pnpm typecheck:test
 
       # Unit + integration only. Every live gate skips (no flags, no secrets); no `--forceExit`.
