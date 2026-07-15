@@ -1,19 +1,19 @@
-import { fileURLToPath } from "node:url";
-
 import { PGlite } from "@electric-sql/pglite";
-import { vector } from "@electric-sql/pglite-pgvector";
 import { drizzle } from "drizzle-orm/pglite";
-import { migrate } from "drizzle-orm/pglite/migrator";
 
 import { schema, type Db } from "@opusfinder/db";
 
-// The REAL packages/db/drizzle migration set, resolved relative to THIS file (repo-root test/db/), so a
-// new migration is picked up automatically — the fixture is never a hand-maintained schema copy.
-const MIGRATIONS = fileURLToPath(new URL("../../packages/db/drizzle", import.meta.url));
+import { openMigratedClient } from "./snapshot";
 
 /**
- * Spin up an in-process PGlite (WASM Postgres 17) with pgvector, apply the real drizzle migrations, and
+ * Spin up an in-process PGlite (WASM Postgres 17) with pgvector carrying the full migrated schema, and
  * return a drizzle client cast to the repo's `Db`.
+ *
+ * Schema delivery is amortized: the `integration` project's globalSetup migrates ONCE and dumps a datadir
+ * snapshot; each call here loads that snapshot (~5.5× faster than replaying the 24 migrations, and
+ * byte-identical — same tables, pgvector extension, both HNSW indexes, `<=>` behavior, drizzle journal). On
+ * a snapshot cache-miss (a non-vitest import) `openMigratedClient` falls back to a fresh migrate. See
+ * `./snapshot.ts` and VITEST_MIGRATION_PLAN §10.1 (PGlite setup amortization).
  *
  * The `as unknown as Db` cast is the documented R1 compromise: `Db` is the neon-http client type and the
  * PGlite drizzle client is a structurally-different driver, but every repo path the tests exercise — the
@@ -32,10 +32,9 @@ export async function createTestDb(): Promise<{
   client: PGlite;
   close: () => Promise<void>;
 }> {
-  const client = new PGlite({ extensions: { vector } });
-  // Migrate the properly-typed PGlite client BEFORE casting — the pglite migrator needs the real
-  // PgliteDatabase type; the `as unknown as Db` happens only on the value handed back to the repos.
+  const client = await openMigratedClient();
+  // Wrap the properly-typed PGlite client, then cast only the value handed back to the repos — the raw
+  // `PgliteDatabase` type is preserved through migration/loading; `as unknown as Db` happens here alone.
   const pglite = drizzle(client, { schema });
-  await migrate(pglite, { migrationsFolder: MIGRATIONS });
   return { db: pglite as unknown as Db, client, close: () => client.close() };
 }
