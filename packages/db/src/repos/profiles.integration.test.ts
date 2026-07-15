@@ -1,4 +1,4 @@
-import { eq, sql } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import type { Db } from "@opusfinder/db";
@@ -11,7 +11,9 @@ import {
 import { user, userCvFiles, userProfiles } from "@opusfinder/db/schema";
 import type { UserId } from "@opusfinder/shared";
 
+import { uid } from "@test/db/ids";
 import { createTestDb } from "@test/db/pglite";
+import { truncate } from "@test/db/truncate";
 import { oneHot } from "@test/db/vectors";
 
 // What this file proves: the profiles repo behaviors the ingest/restructure pipelines CANNOT observe.
@@ -27,11 +29,6 @@ import { oneHot } from "@test/db/vectors";
 // onto user.id, so a profile row without a user row cannot exist; the join's observable job is the
 // emailVerified projection, pinned below in both polarities.
 
-/** Explicit deterministic uuids — same idiom as the sibling digests suite. */
-function uid(n: number): UserId {
-  return `00000000-0000-4000-8000-${String(n).padStart(12, "0")}` as UserId;
-}
-
 describe("profiles repo — UPDATE ownership predicates + getProfileForDigest (integration: real PGlite semantics)", () => {
   let db: Db;
   let close: (() => Promise<void>) | undefined;
@@ -40,10 +37,7 @@ describe("profiles repo — UPDATE ownership predicates + getProfileForDigest (i
     ({ db, close } = await createTestDb());
   });
   beforeEach(async () => {
-    // Truncate ONLY the tables this file touches; RESTART IDENTITY keeps serial ids deterministic.
-    await db.execute(
-      sql`TRUNCATE TABLE ${userProfiles}, ${userCvFiles}, ${user} RESTART IDENTITY CASCADE`,
-    );
+    await truncate(db, userProfiles, userCvFiles, user);
   });
   afterAll(async () => {
     // Optional-chained: if beforeAll's createTestDb() rejected, a bare close() would bury the real

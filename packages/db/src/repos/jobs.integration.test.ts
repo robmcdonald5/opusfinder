@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-import { eq, sql } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import type { Db } from "@opusfinder/db";
@@ -9,6 +9,7 @@ import { companies, EMBEDDING_DIMENSIONS, jobs } from "@opusfinder/db/schema";
 import { companySlug, jobId, type NormalizedJob } from "@opusfinder/shared";
 
 import { createTestDb } from "@test/db/pglite";
+import { truncate } from "@test/db/truncate";
 import { oneHot } from "@test/db/vectors";
 
 import { NUL, normalizeSignatureText } from "./sql";
@@ -54,8 +55,7 @@ describe("upsertCompany + upsertJobs — board persistence semantics (integratio
     ({ db, close } = await createTestDb());
   });
   beforeEach(async () => {
-    // Truncate ONLY the tables this file touches; RESTART IDENTITY keeps seeded ids deterministic.
-    await db.execute(sql`TRUNCATE TABLE companies, jobs RESTART IDENTITY CASCADE`);
+    await truncate(db, companies, jobs);
   });
   afterAll(async () => {
     // Optional-chained: if beforeAll's createTestDb() rejected, a bare close() would bury the real

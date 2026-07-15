@@ -1,4 +1,4 @@
-import { eq, sql } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Db } from "@opusfinder/db";
@@ -7,6 +7,7 @@ import { companySlug, jobId, type SourceName } from "@opusfinder/shared";
 import { runIngestion, type IngestEmbedFn, type IngestionOptions } from "@opusfinder/sources";
 
 import { createTestDb } from "@test/db/pglite";
+import { truncate } from "@test/db/truncate";
 import { oneHot } from "@test/db/vectors";
 import { jsonResponse, routedFetch, textResponse, type Route } from "@test/http/fetch-router";
 
@@ -70,7 +71,7 @@ describe("runIngestion — orchestration over real PGlite (fetch stubbed)", () =
     ({ db, close } = await createTestDb());
   });
   beforeEach(async () => {
-    await db.execute(sql`TRUNCATE TABLE companies, jobs, source_runs RESTART IDENTITY CASCADE`);
+    await truncate(db, companies, jobs, sourceRuns);
   });
   afterEach(() => {
     vi.unstubAllGlobals();

@@ -1,4 +1,4 @@
-import { eq, sql } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import type { Db } from "@opusfinder/db";
@@ -13,6 +13,7 @@ import { companies } from "@opusfinder/db/schema";
 import { companySlug, type CompanySlug, type SourceName } from "@opusfinder/shared";
 
 import { createTestDb } from "@test/db/pglite";
+import { truncate } from "@test/db/truncate";
 
 // What this file proves: the companies-lifecycle field semantics in repos/discovery.ts that runDiscovery
 // drives but cannot cleanly observe through the orchestrator (every write is interleaved with the run's
@@ -54,8 +55,7 @@ describe("discovery repo — companies lifecycle field semantics (integration: r
     ({ db, close } = await createTestDb());
   });
   beforeEach(async () => {
-    // Truncate ONLY the table this file touches; RESTART IDENTITY keeps serial ids deterministic.
-    await db.execute(sql`TRUNCATE TABLE companies RESTART IDENTITY CASCADE`);
+    await truncate(db, companies);
   });
   afterAll(async () => {
     // Optional-chained: if beforeAll's createTestDb() rejected, a bare close() would bury the real

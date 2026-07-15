@@ -56,6 +56,7 @@
     "@electric-sql/pglite-pgvector": "0.0.4",
     "@eslint/js": "^10",
     "@opusfinder/db": "workspace:*",
+    "@opusfinder/shared": "workspace:*",
     "@types/node": "^24",
     "@vitest/coverage-v8": "^4.1.9",
     "drizzle-orm": "^0.45.2",
