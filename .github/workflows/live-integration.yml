@@ -1,0 +1,117 @@
+# The gated LIVE-INTEGRATION lane (Phase 5b) — nightly drift detection against the real external services
+# the secret-free ci.yml deliberately CANNOT cover (VITEST_MIGRATION_PLAN §7b / §8 / §9 Q6). It runs the
+# `live` vitest project (`pnpm test:live`) with the per-provider opt-in flags set, so ONLY the admitted
+# providers light up: Neon (auth neon-serverless interactive tx + digest neon-http payload type parity),
+# Voyage (live voyage-4-large embeddings), and R2 (object round-trip). Anthropic (prompt-cache
+# observability) and Resend (delivery lifecycle) stay MANUAL — un-mockable / unbounded cost — so their
+# gates' flags are deliberately NOT set here (§9 Q6).
+#
+# NEVER `pull_request`: fork PRs get no secrets by platform default, and this lane must never expose keys to
+# untrusted code. It runs on `schedule:` (keyed to the external services' change rhythm, NOT the commit
+# rhythm — a contract failure is a DRIFT ALERT, not a per-commit build break) plus manual `workflow_dispatch`.
+#
+# ── OWNER PROVISIONING (the agent authored + locally skip-validated this; only the owner can do the rest) ──
+#   1. Create a `live-integration` GitHub Environment with a deployment-branch rule = `main` only.
+#   2. Add these Environment secrets (NOT repo-wide secrets):
+#        NEON_PROJECT_ID, NEON_API_KEY               — ephemeral branch create/delete (project-scoped key)
+#        BETTER_AUTH_SECRET                           — the auth neon-serverless tx gate
+#        VOYAGE_API_KEY                               — the live embeddings gate (dedicated CI key + rate cap)
+#        R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY,
+#        R2_BUCKET_NAME, R2_ACCOUNT_ID                — the R2 round-trip gate (dedicated `opusfinder-ci`
+#                                                       bucket; token scoped to Object Read/Write on it only)
+#   3. Do NOT add ANTHROPIC_API_KEY / RESEND_* here — those gates stay manual (§9 Q6).
+#   Third-party actions are pinned to full commit SHAs (Dependabot bumps the trailing-comment version): a
+#   compromised action in a secrets job reads keys in plaintext, so pinning + source audit is the primary
+#   supply-chain control for a solo private repo (fork surface is already zero).
+name: live-integration
+
+on:
+  schedule:
+    - cron: "0 7 * * *" # 07:00 UTC nightly — external-service rhythm, not commit rhythm
+  workflow_dispatch: # manual drift check from the Actions tab
+
+# Least privilege: only checkout needs the repo, and nothing here writes to it.
+permissions:
+  contents: read
+
+# One live lane at a time — a manual dispatch during the nightly run QUEUES rather than double-spending
+# provider quota or racing two ephemeral branches. Never cancel an in-flight drift run.
+concurrency:
+  group: live-integration
+  cancel-in-progress: false
+
+jobs:
+  live:
+    # The gated lane runs Linux; §9 Q4 keeps only the secret-free lane on windows-latest (the teardown-crash
+    # guard). Fail fast rather than burning the 6-hour default on a wedged socket.
+    runs-on: ubuntu-latest
+    environment: live-integration # keys scoped to this Environment (branch rule = main), NOT repo secrets
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24 # engines.node >=24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      # A 24h auto-delete backstop so a run cancelled between create and the always()-delete cannot leak an
+      # ephemeral branch. RFC 3339 UTC, the format the Neon API expects.
+      - name: Compute branch TTL backstop
+        id: ttl
+        run: echo "expires_at=$(date -u -d '+1 day' +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
+      # A SCHEMA-ONLY ephemeral branch: the parent's schema (all migrations) with ZERO data — the
+      # "empty-migrated" branch that carries NO prod PII into CI (the self-seeding live gates INSERT and
+      # tear down their own rows). We deliberately do NOT run `pnpm db:migrate`: a schema-only branch copies
+      # the schema OBJECTS but not the `__drizzle_migrations` journal ROWS, so drizzle's journal-based
+      # migrator would try to re-apply 0000 (CREATE TABLE …) onto already-existing objects and fail. The
+      # branch therefore reflects prod's DEPLOYED schema — the correct surface for a drift lane (keep prod
+      # migrated to head). If the Neon plan lacks schema-only branches, drop `branch_type` (a default CoW
+      # branch copies the journal) and ADD a `pnpm db:migrate` step — accepting that the branch then
+      # transiently contains prod data.
+      - name: Create ephemeral Neon branch (schema-only)
+        id: neon
+        uses: neondatabase/create-branch-action@fb620d43d4c565abaf088b848a4e28e5c4ea4d9c # 6.3.1
+        with:
+          project_id: ${{ secrets.NEON_PROJECT_ID }}
+          api_key: ${{ secrets.NEON_API_KEY }}
+          branch_name: ci-${{ github.run_id }}
+          branch_type: schema-only
+          expires_at: ${{ steps.ttl.outputs.expires_at }}
+          # db_url below is built with the action's defaults database=neondb / role=neondb_owner (Neon's
+          # own project defaults). If this project's primary database or owner role differs, pin
+          # `database:`/`role:` here to match — otherwise this step fails LOUDLY ("Failed to get branch
+          # database …") at provisioning, before any gate runs (a clear config error, not a false alert).
+
+      # Only the admitted providers' flags are set, so exactly the Neon (auth + digest), Voyage, and R2
+      # gates run; every other live gate (prefs→Anthropic, hn→Algolia, outscal-seed) stays skipped. A gate
+      # assertion failure surfaces here as the DRIFT ALERT. Never --forceExit (Windows-only crash, but the
+      # rule is repo-wide).
+      - name: Run live gates (failure = drift alert)
+        run: pnpm test:live
+        env:
+          DATABASE_URL: ${{ steps.neon.outputs.db_url }}
+          BETTER_AUTH_SECRET: ${{ secrets.BETTER_AUTH_SECRET }}
+          VOYAGE_API_KEY: ${{ secrets.VOYAGE_API_KEY }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME }}
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          AUTH_LIVE_TEST: "1" # Neon: neon-serverless interactive transaction (auth signUp wrapping)
+          DIGEST_LIVE_TEST: "1" # Neon: getDigestEmailPayload neon-http type-mapping parity
+          VOYAGE_LIVE_TEST: "1" # Voyage: live voyage-4-large embeddings
+          R2_LIVE_TEST: "1" # R2: object put/get/delete round-trip
+          # NO PREFS_LIVE_TEST / ANTHROPIC_API_KEY / RESEND_* — those gates stay manual (§9 Q6).
+
+      - name: Delete ephemeral Neon branch
+        # Tear down even when the gates FAIL — but only if the branch was actually created. Deleting a
+        # never-created branch (a failed/skipped create step) errors on "branch not found" and adds a
+        # confusing second red step; the `expires_at` TTL above is the backstop for that path.
+        if: always() && steps.neon.outcome == 'success'
+        uses: neondatabase/delete-branch-action@4468d825d5a88ef4012f1705a82f02ec3072f776 # v3.2.1
+        with:
+          project_id: ${{ secrets.NEON_PROJECT_ID }}
+          api_key: ${{ secrets.NEON_API_KEY }}
+          branch: ci-${{ github.run_id }}

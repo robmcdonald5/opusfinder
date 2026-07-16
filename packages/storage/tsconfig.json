@@ -1,4 +1,7 @@
 {
   "extends": "../../tsconfig.base.json",
-  "include": ["src/**/*.ts", "scripts/**/*.ts"]
+  "include": ["src/**/*.ts", "scripts/**/*.ts"],
+  // Co-located *.test.ts import vitest (and, elsewhere, @test/* aliases) that live only in the root
+  // tsconfig.test.json — keep them out of this shippable per-package `tsc` (mirrors db/auth/profiles/inngest).
+  "exclude": ["**/*.test.ts"]
 }

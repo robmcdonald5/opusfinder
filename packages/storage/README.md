@@ -37,5 +37,6 @@ must never enter a Worker bundle.
 
 ## Round-trip check
 
-`pnpm --filter @opusfinder/storage test:r2` does a real put/get/delete against the configured bucket
-(verifies the checksum config). Requires `packages/storage/.env`.
+`R2_LIVE_TEST=1 pnpm test:live` runs `src/s3-client.live.test.ts` — a real put/get/delete round-trip
+(string + binary + missing-key→null) against the configured bucket, verifying the checksum config.
+Requires `packages/storage/.env` (or the CI Environment secrets); skips cleanly without the flag + creds.

@@ -10,7 +10,6 @@
   },
   "types": "./src/index.ts",
   "scripts": {
-    "test:r2": "tsx scripts/test-r2.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
