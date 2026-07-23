@@ -1,0 +1,1714 @@
+{
+  "dataset": "data/dataset.jsonl",
+  "corpus": {
+    "totalJobs": 107131,
+    "embeddedJobs": 104866,
+    "activeEmbedded": 68610,
+    "activeEmbedded14d": 11512
+  },
+  "fetch": 150,
+  "ks": [
+    10,
+    50,
+    150
+  ],
+  "efSearch": [
+    40,
+    100,
+    200
+  ],
+  "sampleJobIds": [
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9
+  ],
+  "variants": [
+    {
+      "name": "unfiltered",
+      "queries": [
+        {
+          "label": "swe-fullstack-ai",
+          "exactRows": 150,
+          "byEf": [
+            {
+              "ef": 40,
+              "annRows": 41,
+              "recalls": [
+                {
+                  "k": 10,
+                  "recall": 0.7,
+                  "hits": 7,
+                  "denom": 10
+                },
+                {
+                  "k": 50,
+                  "recall": 0.82,
+                  "hits": 41,
+                  "denom": 50
+                },
+                {
+                  "k": 150,
+                  "recall": 0.2733333333333333,
+                  "hits": 41,
+                  "denom": 150
+                }
+              ]
+            },
+            {
+              "ef": 100,
+              "annRows": 101,
+              "recalls": [
+                {
+                  "k": 10,
+                  "recall": 1,
+                  "hits": 10,
+                  "denom": 10
+                },
+                {
+                  "k": 50,
+                  "recall": 0.94,
+                  "hits": 47,
+                  "denom": 50
+                },
+                {
+                  "k": 150,
+                  "recall": 0.6733333333333333,
+                  "hits": 101,
+                  "denom": 150
+                }
+              ]
+            },
+            {
+              "ef": 200,
+              "annRows": 150,
+              "recalls": [
+                {
+                  "k": 10,
+                  "recall": 1,
+                  "hits": 10,
+                  "denom": 10
+                },
+                {
+                  "k": 50,
+                  "recall": 0.98,
+                  "hits": 49,
+                  "denom": 50
+                },
+                {
+                  "k": 150,
+                  "recall": 0.98,
+                  "hits": 147,
+                  "denom": 150
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "label": "finance-systems-eng",
+          "exactRows": 150,
+          "byEf": [
+            {
+              "ef": 40,
+              "annRows": 41,
+              "recalls": [
+                {
+                  "k": 10,
+                  "recall": 1,
+                  "hits": 10,
+                  "denom": 10
+                },
+                {
+                  "k": 50,
+                  "recall": 0.82,
+                  "hits": 41,
+                  "denom": 50
+                },
+                {
+                  "k": 150,
+                  "recall": 0.2733333333333333,
+                  "hits": 41,
+                  "denom": 150
+                }
+              ]
+            },
+            {
+              "ef": 100,
+              "annRows": 118,
+              "recalls": [
+                {
+                  "k": 10,
+                  "recall": 1,
+                  "hits": 10,
+                  "denom": 10
+                },
+                {
+                  "k": 50,
+                  "recall": 1,
+                  "hits": 50,
+                  "denom": 50
+                },
+                {
+                  "k": 150,
+                  "recall": 0.7866666666666666,
+                  "hits": 118,
+                  "denom": 150
+                }
+              ]
+            },
+            {
+              "ef": 200,
+              "annRows": 150,
+              "recalls": [
+                {
+                  "k": 10,
+                  "recall": 1,
+                  "hits": 10,
+                  "denom": 10
+                },
+                {
+                  "k": 50,
+                  "recall": 1,
+                  "hits": 50,
+                  "denom": 50
+                },
+                {
+                  "k": 150,
+                  "recall": 1,
+                  "hits": 150,
+                  "denom": 150
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "label": "job-2",
+          "exactRows": 150,
+          "byEf": [
+            {
+              "ef": 40,
+              "annRows": 41,
+              "recalls": [
+                {
+                  "k": 10,
+                  "recall": 1,
+                  "hits": 10,
+                  "denom": 10
+                },
+                {
+                  "k": 50,
+                  "recall": 0.82,
+                  "hits": 41,
+                  "denom": 50
+                },
+                {
+                  "k": 150,
+                  "recall": 0.2733333333333333,
+                  "hits": 41,
+                  "denom": 150
+                }
+              ]
+            },
+            {
+              "ef": 100,
+              "annRows": 102,
+              "recalls": [
+                {
+                  "k": 10,
+                  "recall": 1,
+                  "hits": 10,
+                  "denom": 10
+                },
+                {
+                  "k": 50,
+                  "recall": 1,
+                  "hits": 50,
+                  "denom": 50
+                },
+                {
+                  "k": 150,
+                  "recall": 0.68,
+                  "hits": 102,
+                  "denom": 150
+                }
+              ]
+            },
+            {
+              "ef": 200,
+              "annRows": 150,
+              "recalls": [
+                {
+                  "k": 10,
+                  "recall": 1,
+                  "hits": 10,
+                  "denom": 10
+                },
+                {
+                  "k": 50,
+                  "recall": 1,
+                  "hits": 50,
+                  "denom": 50
+                },
+                {
+                  "k": 150,
+                  "recall": 0.9933333333333333,
+                  "hits": 149,
+                  "denom": 150
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "label": "job-3",
+          "exactRows": 150,
+          "byEf": [
+            {
+              "ef": 40,
+              "annRows": 41,
+              "recalls": [
+                {
+                  "k": 10,
+                  "recall": 1,
+                  "hits": 10,
+                  "denom": 10
+                },
+                {
+                  "k": 50,
+                  "recall": 0.82,
+                  "hits": 41,
+                  "denom": 50
+                },
+                {
+                  "k": 150,
+                  "recall": 0.2733333333333333,
+                  "hits": 41,
+                  "denom": 150
+                }
+              ]
+            },
+            {
+              "ef": 100,
+              "annRows": 100,
+              "recalls": [
+                {
+                  "k": 10,
+                  "recall": 1,
+                  "hits": 10,
+                  "denom": 10
+                },
+                {
+                  "k": 50,
+                  "recall": 1,
+                  "hits": 50,
+                  "denom": 50
+                },
+                {
+                  "k": 150,
+                  "recall": 0.6666666666666666,
+                  "hits": 100,
+                  "denom": 150
+                }
+              ]
+            },
+            {
+              "ef": 200,
+              "annRows": 150,
+              "recalls": [
+                {
+                  "k": 10,
+                  "recall": 1,
+                  "hits": 10,
+                  "denom": 10
+                },
+                {
+                  "k": 50,
+                  "recall": 1,
+                  "hits": 50,
+                  "denom": 50
+                },
+                {
+                  "k": 150,
+                  "recall": 0.9933333333333333,
+                  "hits": 149,
+                  "denom": 150
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "label": "job-4",
+          "exactRows": 150,
+          "byEf": [
+            {
+              "ef": 40,
+              "annRows": 41,
+              "recalls": [
+                {
+                  "k": 10,
+                  "recall": 1,
+                  "hits": 10,
+                  "denom": 10
+                },
+                {
+                  "k": 50,
+                  "recall": 0.82,
+                  "hits": 41,
+                  "denom": 50
+                },
+                {
+                  "k": 150,
+                  "recall": 0.2733333333333333,
+                  "hits": 41,
+                  "denom": 150
+                }
+              ]
+            },
+            {
+              "ef": 100,
+              "annRows": 101,
+              "recalls": [
+                {
+                  "k": 10,
+                  "recall": 1,
+                  "hits": 10,
+                  "denom": 10
+                },
+                {
+                  "k": 50,
+                  "recall": 1,
+                  "hits": 50,
+                  "denom": 50
+                },
+                {
+                  "k": 150,
+                  "recall": 0.6733333333333333,
+                  "hits": 101,
+                  "denom": 150
+                }
+              ]
+            },
+            {
+              "ef": 200,
+              "annRows": 150,
+              "recalls": [
+                {
+                  "k": 10,
+                  "recall": 1,
+                  "hits": 10,
+                  "denom": 10
+                },
+                {
+                  "k": 50,
+                  "recall": 1,
+                  "hits": 50,
+                  "denom": 50
+                },
+                {
+                  "k": 150,
+                  "recall": 0.9933333333333333,
+                  "hits": 149,
+                  "denom": 150
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "label": "job-5",
+          "exactRows": 150,
+          "byEf": [
+            {
+              "ef": 40,
+              "annRows": 41,
+              "recalls": [
+                {
+                  "k": 10,
+                  "recall": 1,
+                  "hits": 10,
+                  "denom": 10
+                },
+                {
+                  "k": 50,
+                  "recall": 0.82,
+                  "hits": 41,
+                  "denom": 50
+                },
+                {
+                  "k": 150,
+                  "recall": 0.2733333333333333,
+                  "hits": 41,
+                  "denom": 150
+                }
+              ]
+            },
+            {
+              "ef": 100,
+              "annRows": 110,
+              "recalls": [
+                {
+                  "k": 10,
+                  "recall": 1,
+                  "hits": 10,
+                  "denom": 10
+                },
+                {
+                  "k": 50,
+                  "recall": 1,
+                  "hits": 50,
+                  "denom": 50
+                },
+                {
+                  "k": 150,
+                  "recall": 0.7333333333333333,
+                  "hits": 110,
+                  "denom": 150
+                }
+              ]
+            },
+            {
+              "ef": 200,
+              "annRows": 150,
+              "recalls": [
+                {
+                  "k": 10,
+                  "recall": 1,
+                  "hits": 10,
+                  "denom": 10
+                },
+                {
+                  "k": 50,
+                  "recall": 1,
+                  "hits": 50,
+                  "denom": 50
+                },
+                {
+                  "k": 150,
+                  "recall": 1,
+                  "hits": 150,
+                  "denom": 150
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "label": "job-6",
+          "exactRows": 150,
+          "byEf": [
+            {
+              "ef": 40,
+              "annRows": 41,
+              "recalls": [
+                {
+                  "k": 10,
+                  "recall": 1,
+                  "hits": 10,
+                  "denom": 10
+                },
+                {
+                  "k": 50,
+                  "recall": 0.82,
+                  "hits": 41,
+                  "denom": 50
+                },
+                {
+                  "k": 150,
+                  "recall": 0.2733333333333333,
+                  "hits": 41,
+                  "denom": 150
+                }
+              ]
+            },
+            {
+              "ef": 100,
+              "annRows": 101,
+              "recalls": [
+                {
+                  "k": 10,
+                  "recall": 1,
+                  "hits": 10,
+                  "denom": 10
+                },
+                {
+                  "k": 50,
+                  "recall": 1,
+                  "hits": 50,
+                  "denom": 50
+                },
+                {
+                  "k": 150,
+                  "recall": 0.6733333333333333,
+                  "hits": 101,
+                  "denom": 150
+                }
+              ]
+            },
+            {
+              "ef": 200,
+              "annRows": 150,
+              "recalls": [
+                {
+                  "k": 10,
+                  "recall": 1,
+                  "hits": 10,
+                  "denom": 10
+                },
+                {
+                  "k": 50,
+                  "recall": 1,
+                  "hits": 50,
+                  "denom": 50
+                },
+                {
+                  "k": 150,
+                  "recall": 1,
+                  "hits": 150,
+                  "denom": 150
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "label": "job-7",
+          "exactRows": 150,
+          "byEf": [
+            {
+              "ef": 40,
+              "annRows": 41,
+              "recalls": [
+                {
+                  "k": 10,
+                  "recall": 1,
+                  "hits": 10,
+                  "denom": 10
+                },
+                {
+                  "k": 50,
+                  "recall": 0.82,
+                  "hits": 41,
+                  "denom": 50
+                },
+                {
+                  "k": 150,
+                  "recall": 0.2733333333333333,
+                  "hits": 41,
+                  "denom": 150
+                }
+              ]
+            },
+            {
+              "ef": 100,
+              "annRows": 101,
+              "recalls": [
+                {
+                  "k": 10,
+                  "recall": 1,
+                  "hits": 10,
+                  "denom": 10
+                },
+                {
+                  "k": 50,
+                  "recall": 0.96,
+                  "hits": 48,
+                  "denom": 50
+                },
+                {
+                  "k": 150,
+                  "recall": 0.6733333333333333,
+                  "hits": 101,
+                  "denom": 150
+                }
+              ]
+            },
+            {
+              "ef": 200,
+              "annRows": 150,
+              "recalls": [
+                {
+                  "k": 10,
+                  "recall": 1,
+                  "hits": 10,
+                  "denom": 10
+                },
+                {
+                  "k": 50,
+                  "recall": 1,
+                  "hits": 50,
+                  "denom": 50
+                },
+                {
+                  "k": 150,
+                  "recall": 1,
+                  "hits": 150,
+                  "denom": 150
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "label": "job-8",
+          "exactRows": 150,
+          "byEf": [
+            {
+              "ef": 40,
+              "annRows": 41,
+              "recalls": [
+                {
+                  "k": 10,
+                  "recall": 1,
+                  "hits": 10,
+                  "denom": 10
+                },
+                {
+                  "k": 50,
+                  "recall": 0.82,
+                  "hits": 41,
+                  "denom": 50
+                },
+                {
+                  "k": 150,
+                  "recall": 0.2733333333333333,
+                  "hits": 41,
+                  "denom": 150
+                }
+              ]
+            },
+            {
+              "ef": 100,
+              "annRows": 102,
+              "recalls": [
+                {
+                  "k": 10,
+                  "recall": 1,
+                  "hits": 10,
+                  "denom": 10
+                },
+                {
+                  "k": 50,
+                  "recall": 0.98,
+                  "hits": 49,
+                  "denom": 50
+                },
+                {
+                  "k": 150,
+                  "recall": 0.68,
+                  "hits": 102,
+                  "denom": 150
+                }
+              ]
+            },
+            {
+              "ef": 200,
+              "annRows": 150,
+              "recalls": [
+                {
+                  "k": 10,
+                  "recall": 1,
+                  "hits": 10,
+                  "denom": 10
+                },
+                {
+                  "k": 50,
+                  "recall": 1,
+                  "hits": 50,
+                  "denom": 50
+                },
+                {
+                  "k": 150,
+                  "recall": 1,
+                  "hits": 150,
+                  "denom": 150
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "label": "job-9",
+          "exactRows": 150,
+          "byEf": [
+            {
+              "ef": 40,
+              "annRows": 40,
+              "recalls": [
+                {
+                  "k": 10,
+                  "recall": 1,
+                  "hits": 10,
+                  "denom": 10
+                },
+                {
+                  "k": 50,
+                  "recall": 0.8,
+                  "hits": 40,
+                  "denom": 50
+                },
+                {
+                  "k": 150,
+                  "recall": 0.26666666666666666,
+                  "hits": 40,
+                  "denom": 150
+                }
+              ]
+            },
+            {
+              "ef": 100,
+              "annRows": 102,
+              "recalls": [
+                {
+                  "k": 10,
+                  "recall": 1,
+                  "hits": 10,
+                  "denom": 10
+                },
+                {
+                  "k": 50,
+                  "recall": 1,
+                  "hits": 50,
+                  "denom": 50
+                },
+                {
+                  "k": 150,
+                  "recall": 0.68,
+                  "hits": 102,
+                  "denom": 150
+                }
+              ]
+            },
+            {
+              "ef": 200,
+              "annRows": 150,
+              "recalls": [
+                {
+                  "k": 10,
+                  "recall": 1,
+                  "hits": 10,
+                  "denom": 10
+                },
+                {
+                  "k": 50,
+                  "recall": 1,
+                  "hits": 50,
+                  "denom": 50
+                },
+                {
+                  "k": 150,
+                  "recall": 1,
+                  "hits": 150,
+                  "denom": 150
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "means": [
+        {
+          "ef": 40,
+          "k": 10,
+          "recall": 0.97,
+          "queries": 10
+        },
+        {
+          "ef": 40,
+          "k": 50,
+          "recall": 0.8180000000000002,
+          "queries": 10
+        },
+        {
+          "ef": 40,
+          "k": 150,
+          "recall": 0.2726666666666667,
+          "queries": 10
+        },
+        {
+          "ef": 100,
+          "k": 10,
+          "recall": 1,
+          "queries": 10
+        },
+        {
+          "ef": 100,
+          "k": 50,
+          "recall": 0.9879999999999999,
+          "queries": 10
+        },
+        {
+          "ef": 100,
+          "k": 150,
+          "recall": 0.692,
+          "queries": 10
+        },
+        {
+          "ef": 200,
+          "k": 10,
+          "recall": 1,
+          "queries": 10
+        },
+        {
+          "ef": 200,
+          "k": 50,
+          "recall": 0.998,
+          "queries": 10
+        },
+        {
+          "ef": 200,
+          "k": 150,
+          "recall": 0.9960000000000001,
+          "queries": 10
+        }
+      ]
+    },
+    {
+      "name": "prod-filtered-14d",
+      "queries": [
+        {
+          "label": "swe-fullstack-ai",
+          "exactRows": 150,
+          "byEf": [
+            {
+              "ef": 40,
+              "annRows": 2,
+              "recalls": [
+                {
+                  "k": 10,
+                  "recall": 0.2,
+                  "hits": 2,
+                  "denom": 10
+                },
+                {
+                  "k": 50,
+                  "recall": 0.04,
+                  "hits": 2,
+                  "denom": 50
+                },
+                {
+                  "k": 150,
+                  "recall": 0.013333333333333334,
+                  "hits": 2,
+                  "denom": 150
+                }
+              ]
+            },
+            {
+              "ef": 100,
+              "annRows": 5,
+              "recalls": [
+                {
+                  "k": 10,
+                  "recall": 0.5,
+                  "hits": 5,
+                  "denom": 10
+                },
+                {
+                  "k": 50,
+                  "recall": 0.1,
+                  "hits": 5,
+                  "denom": 50
+                },
+                {
+                  "k": 150,
+                  "recall": 0.03333333333333333,
+                  "hits": 5,
+                  "denom": 150
+                }
+              ]
+            },
+            {
+              "ef": 200,
+              "annRows": 17,
+              "recalls": [
+                {
+                  "k": 10,
+                  "recall": 1,
+                  "hits": 10,
+                  "denom": 10
+                },
+                {
+                  "k": 50,
+                  "recall": 0.34,
+                  "hits": 17,
+                  "denom": 50
+                },
+                {
+                  "k": 150,
+                  "recall": 0.11333333333333333,
+                  "hits": 17,
+                  "denom": 150
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "label": "finance-systems-eng",
+          "exactRows": 150,
+          "byEf": [
+            {
+              "ef": 40,
+              "annRows": 6,
+              "recalls": [
+                {
+                  "k": 10,
+                  "recall": 0.6,
+                  "hits": 6,
+                  "denom": 10
+                },
+                {
+                  "k": 50,
+                  "recall": 0.12,
+                  "hits": 6,
+                  "denom": 50
+                },
+                {
+                  "k": 150,
+                  "recall": 0.04,
+                  "hits": 6,
+                  "denom": 150
+                }
+              ]
+            },
+            {
+              "ef": 100,
+              "annRows": 13,
+              "recalls": [
+                {
+                  "k": 10,
+                  "recall": 1,
+                  "hits": 10,
+                  "denom": 10
+                },
+                {
+                  "k": 50,
+                  "recall": 0.26,
+                  "hits": 13,
+                  "denom": 50
+                },
+                {
+                  "k": 150,
+                  "recall": 0.08666666666666667,
+                  "hits": 13,
+                  "denom": 150
+                }
+              ]
+            },
+            {
+              "ef": 200,
+              "annRows": 35,
+              "recalls": [
+                {
+                  "k": 10,
+                  "recall": 1,
+                  "hits": 10,
+                  "denom": 10
+                },
+                {
+                  "k": 50,
+                  "recall": 0.7,
+                  "hits": 35,
+                  "denom": 50
+                },
+                {
+                  "k": 150,
+                  "recall": 0.23333333333333334,
+                  "hits": 35,
+                  "denom": 150
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "label": "job-2",
+          "exactRows": 150,
+          "byEf": [
+            {
+              "ef": 40,
+              "annRows": 2,
+              "recalls": [
+                {
+                  "k": 10,
+                  "recall": 0.2,
+                  "hits": 2,
+                  "denom": 10
+                },
+                {
+                  "k": 50,
+                  "recall": 0.04,
+                  "hits": 2,
+                  "denom": 50
+                },
+                {
+                  "k": 150,
+                  "recall": 0.013333333333333334,
+                  "hits": 2,
+                  "denom": 150
+                }
+              ]
+            },
+            {
+              "ef": 100,
+              "annRows": 4,
+              "recalls": [
+                {
+                  "k": 10,
+                  "recall": 0.4,
+                  "hits": 4,
+                  "denom": 10
+                },
+                {
+                  "k": 50,
+                  "recall": 0.08,
+                  "hits": 4,
+                  "denom": 50
+                },
+                {
+                  "k": 150,
+                  "recall": 0.02666666666666667,
+                  "hits": 4,
+                  "denom": 150
+                }
+              ]
+            },
+            {
+              "ef": 200,
+              "annRows": 7,
+              "recalls": [
+                {
+                  "k": 10,
+                  "recall": 0.6,
+                  "hits": 6,
+                  "denom": 10
+                },
+                {
+                  "k": 50,
+                  "recall": 0.14,
+                  "hits": 7,
+                  "denom": 50
+                },
+                {
+                  "k": 150,
+                  "recall": 0.04666666666666667,
+                  "hits": 7,
+                  "denom": 150
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "label": "job-3",
+          "exactRows": 150,
+          "byEf": [
+            {
+              "ef": 40,
+              "annRows": 0,
+              "recalls": [
+                {
+                  "k": 10,
+                  "recall": 0,
+                  "hits": 0,
+                  "denom": 10
+                },
+                {
+                  "k": 50,
+                  "recall": 0,
+                  "hits": 0,
+                  "denom": 50
+                },
+                {
+                  "k": 150,
+                  "recall": 0,
+                  "hits": 0,
+                  "denom": 150
+                }
+              ]
+            },
+            {
+              "ef": 100,
+              "annRows": 5,
+              "recalls": [
+                {
+                  "k": 10,
+                  "recall": 0.5,
+                  "hits": 5,
+                  "denom": 10
+                },
+                {
+                  "k": 50,
+                  "recall": 0.1,
+                  "hits": 5,
+                  "denom": 50
+                },
+                {
+                  "k": 150,
+                  "recall": 0.03333333333333333,
+                  "hits": 5,
+                  "denom": 150
+                }
+              ]
+            },
+            {
+              "ef": 200,
+              "annRows": 8,
+              "recalls": [
+                {
+                  "k": 10,
+                  "recall": 0.7,
+                  "hits": 7,
+                  "denom": 10
+                },
+                {
+                  "k": 50,
+                  "recall": 0.16,
+                  "hits": 8,
+                  "denom": 50
+                },
+                {
+                  "k": 150,
+                  "recall": 0.05333333333333334,
+                  "hits": 8,
+                  "denom": 150
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "label": "job-4",
+          "exactRows": 150,
+          "byEf": [
+            {
+              "ef": 40,
+              "annRows": 1,
+              "recalls": [
+                {
+                  "k": 10,
+                  "recall": 0.1,
+                  "hits": 1,
+                  "denom": 10
+                },
+                {
+                  "k": 50,
+                  "recall": 0.02,
+                  "hits": 1,
+                  "denom": 50
+                },
+                {
+                  "k": 150,
+                  "recall": 0.006666666666666667,
+                  "hits": 1,
+                  "denom": 150
+                }
+              ]
+            },
+            {
+              "ef": 100,
+              "annRows": 4,
+              "recalls": [
+                {
+                  "k": 10,
+                  "recall": 0.4,
+                  "hits": 4,
+                  "denom": 10
+                },
+                {
+                  "k": 50,
+                  "recall": 0.08,
+                  "hits": 4,
+                  "denom": 50
+                },
+                {
+                  "k": 150,
+                  "recall": 0.02666666666666667,
+                  "hits": 4,
+                  "denom": 150
+                }
+              ]
+            },
+            {
+              "ef": 200,
+              "annRows": 8,
+              "recalls": [
+                {
+                  "k": 10,
+                  "recall": 0.7,
+                  "hits": 7,
+                  "denom": 10
+                },
+                {
+                  "k": 50,
+                  "recall": 0.16,
+                  "hits": 8,
+                  "denom": 50
+                },
+                {
+                  "k": 150,
+                  "recall": 0.05333333333333334,
+                  "hits": 8,
+                  "denom": 150
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "label": "job-5",
+          "exactRows": 150,
+          "byEf": [
+            {
+              "ef": 40,
+              "annRows": 5,
+              "recalls": [
+                {
+                  "k": 10,
+                  "recall": 0.5,
+                  "hits": 5,
+                  "denom": 10
+                },
+                {
+                  "k": 50,
+                  "recall": 0.1,
+                  "hits": 5,
+                  "denom": 50
+                },
+                {
+                  "k": 150,
+                  "recall": 0.03333333333333333,
+                  "hits": 5,
+                  "denom": 150
+                }
+              ]
+            },
+            {
+              "ef": 100,
+              "annRows": 10,
+              "recalls": [
+                {
+                  "k": 10,
+                  "recall": 1,
+                  "hits": 10,
+                  "denom": 10
+                },
+                {
+                  "k": 50,
+                  "recall": 0.2,
+                  "hits": 10,
+                  "denom": 50
+                },
+                {
+                  "k": 150,
+                  "recall": 0.06666666666666667,
+                  "hits": 10,
+                  "denom": 150
+                }
+              ]
+            },
+            {
+              "ef": 200,
+              "annRows": 25,
+              "recalls": [
+                {
+                  "k": 10,
+                  "recall": 1,
+                  "hits": 10,
+                  "denom": 10
+                },
+                {
+                  "k": 50,
+                  "recall": 0.5,
+                  "hits": 25,
+                  "denom": 50
+                },
+                {
+                  "k": 150,
+                  "recall": 0.16666666666666666,
+                  "hits": 25,
+                  "denom": 150
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "label": "job-6",
+          "exactRows": 150,
+          "byEf": [
+            {
+              "ef": 40,
+              "annRows": 5,
+              "recalls": [
+                {
+                  "k": 10,
+                  "recall": 0.5,
+                  "hits": 5,
+                  "denom": 10
+                },
+                {
+                  "k": 50,
+                  "recall": 0.1,
+                  "hits": 5,
+                  "denom": 50
+                },
+                {
+                  "k": 150,
+                  "recall": 0.03333333333333333,
+                  "hits": 5,
+                  "denom": 150
+                }
+              ]
+            },
+            {
+              "ef": 100,
+              "annRows": 9,
+              "recalls": [
+                {
+                  "k": 10,
+                  "recall": 0.9,
+                  "hits": 9,
+                  "denom": 10
+                },
+                {
+                  "k": 50,
+                  "recall": 0.18,
+                  "hits": 9,
+                  "denom": 50
+                },
+                {
+                  "k": 150,
+                  "recall": 0.06,
+                  "hits": 9,
+                  "denom": 150
+                }
+              ]
+            },
+            {
+              "ef": 200,
+              "annRows": 25,
+              "recalls": [
+                {
+                  "k": 10,
+                  "recall": 1,
+                  "hits": 10,
+                  "denom": 10
+                },
+                {
+                  "k": 50,
+                  "recall": 0.5,
+                  "hits": 25,
+                  "denom": 50
+                },
+                {
+                  "k": 150,
+                  "recall": 0.16666666666666666,
+                  "hits": 25,
+                  "denom": 150
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "label": "job-7",
+          "exactRows": 150,
+          "byEf": [
+            {
+              "ef": 40,
+              "annRows": 4,
+              "recalls": [
+                {
+                  "k": 10,
+                  "recall": 0.4,
+                  "hits": 4,
+                  "denom": 10
+                },
+                {
+                  "k": 50,
+                  "recall": 0.08,
+                  "hits": 4,
+                  "denom": 50
+                },
+                {
+                  "k": 150,
+                  "recall": 0.02666666666666667,
+                  "hits": 4,
+                  "denom": 150
+                }
+              ]
+            },
+            {
+              "ef": 100,
+              "annRows": 14,
+              "recalls": [
+                {
+                  "k": 10,
+                  "recall": 0.8,
+                  "hits": 8,
+                  "denom": 10
+                },
+                {
+                  "k": 50,
+                  "recall": 0.28,
+                  "hits": 14,
+                  "denom": 50
+                },
+                {
+                  "k": 150,
+                  "recall": 0.09333333333333334,
+                  "hits": 14,
+                  "denom": 150
+                }
+              ]
+            },
+            {
+              "ef": 200,
+              "annRows": 36,
+              "recalls": [
+                {
+                  "k": 10,
+                  "recall": 1,
+                  "hits": 10,
+                  "denom": 10
+                },
+                {
+                  "k": 50,
+                  "recall": 0.72,
+                  "hits": 36,
+                  "denom": 50
+                },
+                {
+                  "k": 150,
+                  "recall": 0.24,
+                  "hits": 36,
+                  "denom": 150
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "label": "job-8",
+          "exactRows": 150,
+          "byEf": [
+            {
+              "ef": 40,
+              "annRows": 4,
+              "recalls": [
+                {
+                  "k": 10,
+                  "recall": 0.4,
+                  "hits": 4,
+                  "denom": 10
+                },
+                {
+                  "k": 50,
+                  "recall": 0.08,
+                  "hits": 4,
+                  "denom": 50
+                },
+                {
+                  "k": 150,
+                  "recall": 0.02666666666666667,
+                  "hits": 4,
+                  "denom": 150
+                }
+              ]
+            },
+            {
+              "ef": 100,
+              "annRows": 9,
+              "recalls": [
+                {
+                  "k": 10,
+                  "recall": 0.8,
+                  "hits": 8,
+                  "denom": 10
+                },
+                {
+                  "k": 50,
+                  "recall": 0.18,
+                  "hits": 9,
+                  "denom": 50
+                },
+                {
+                  "k": 150,
+                  "recall": 0.06,
+                  "hits": 9,
+                  "denom": 150
+                }
+              ]
+            },
+            {
+              "ef": 200,
+              "annRows": 33,
+              "recalls": [
+                {
+                  "k": 10,
+                  "recall": 1,
+                  "hits": 10,
+                  "denom": 10
+                },
+                {
+                  "k": 50,
+                  "recall": 0.66,
+                  "hits": 33,
+                  "denom": 50
+                },
+                {
+                  "k": 150,
+                  "recall": 0.22,
+                  "hits": 33,
+                  "denom": 150
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "label": "job-9",
+          "exactRows": 150,
+          "byEf": [
+            {
+              "ef": 40,
+              "annRows": 3,
+              "recalls": [
+                {
+                  "k": 10,
+                  "recall": 0.3,
+                  "hits": 3,
+                  "denom": 10
+                },
+                {
+                  "k": 50,
+                  "recall": 0.06,
+                  "hits": 3,
+                  "denom": 50
+                },
+                {
+                  "k": 150,
+                  "recall": 0.02,
+                  "hits": 3,
+                  "denom": 150
+                }
+              ]
+            },
+            {
+              "ef": 100,
+              "annRows": 6,
+              "recalls": [
+                {
+                  "k": 10,
+                  "recall": 0.6,
+                  "hits": 6,
+                  "denom": 10
+                },
+                {
+                  "k": 50,
+                  "recall": 0.12,
+                  "hits": 6,
+                  "denom": 50
+                },
+                {
+                  "k": 150,
+                  "recall": 0.04,
+                  "hits": 6,
+                  "denom": 150
+                }
+              ]
+            },
+            {
+              "ef": 200,
+              "annRows": 10,
+              "recalls": [
+                {
+                  "k": 10,
+                  "recall": 1,
+                  "hits": 10,
+                  "denom": 10
+                },
+                {
+                  "k": 50,
+                  "recall": 0.2,
+                  "hits": 10,
+                  "denom": 50
+                },
+                {
+                  "k": 150,
+                  "recall": 0.06666666666666667,
+                  "hits": 10,
+                  "denom": 150
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "means": [
+        {
+          "ef": 40,
+          "k": 10,
+          "recall": 0.31999999999999995,
+          "queries": 10
+        },
+        {
+          "ef": 40,
+          "k": 50,
+          "recall": 0.06399999999999999,
+          "queries": 10
+        },
+        {
+          "ef": 40,
+          "k": 150,
+          "recall": 0.021333333333333333,
+          "queries": 10
+        },
+        {
+          "ef": 100,
+          "k": 10,
+          "recall": 0.69,
+          "queries": 10
+        },
+        {
+          "ef": 100,
+          "k": 50,
+          "recall": 0.158,
+          "queries": 10
+        },
+        {
+          "ef": 100,
+          "k": 150,
+          "recall": 0.05266666666666666,
+          "queries": 10
+        },
+        {
+          "ef": 200,
+          "k": 10,
+          "recall": 0.9,
+          "queries": 10
+        },
+        {
+          "ef": 200,
+          "k": 50,
+          "recall": 0.40800000000000003,
+          "queries": 10
+        },
+        {
+          "ef": 200,
+          "k": 150,
+          "recall": 0.13599999999999998,
+          "queries": 10
+        }
+      ]
+    }
+  ]
+}
