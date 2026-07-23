@@ -5,6 +5,7 @@ import { EMBEDDING_DIMENSIONS } from "@opusfinder/db/schema";
 import { oneHot } from "@test/db/vectors";
 import { embeddingsEnvelope } from "@test/msw/fixtures/embeddings";
 import { server } from "@test/msw/server";
+import { rejectionOf } from "@test/rejection";
 
 import { embed } from "./embed";
 
@@ -155,32 +156,21 @@ describe("embed — Voyage over MSW", () => {
   it("throws a secret-free error on a non-2xx, echoing status + a ≤300-char snippet", async () => {
     server.use(http.post(VOYAGE_URL, () => HttpResponse.text("E".repeat(400), { status: 500 })));
 
-    let err: Error | undefined;
-    try {
-      await embed(["x"], { apiKey: "pa-secret" });
-    } catch (e) {
-      err = e as Error;
-    }
+    const err = await rejectionOf(embed(["x"], { apiKey: "pa-secret" }));
 
-    expect(err).toBeInstanceOf(Error);
-    expect(err?.message).toMatch(/Voyage embeddings request failed: 500/);
-    expect(err?.message).not.toContain("pa-secret"); // no-secrets-in-errors
-    expect(err?.message).toContain("E".repeat(300)); // snippet is sliced to 300
-    expect(err?.message).not.toContain("E".repeat(301));
+    expect(err.message).toMatch(/Voyage embeddings request failed: 500/);
+    expect(err.message).not.toContain("pa-secret"); // no-secrets-in-errors
+    expect(err.message).toContain("E".repeat(300)); // snippet is sliced to 300
+    expect(err.message).not.toContain("E".repeat(301));
   });
 
   it("omits the ' - snippet' suffix when the error body is empty", async () => {
     server.use(http.post(VOYAGE_URL, () => new HttpResponse(null, { status: 503 })));
 
-    let err: Error | undefined;
-    try {
-      await embed(["x"], { apiKey: "pa-key" });
-    } catch (e) {
-      err = e as Error;
-    }
+    const err = await rejectionOf(embed(["x"], { apiKey: "pa-key" }));
 
-    expect(err?.message).toMatch(/Voyage embeddings request failed: 503/);
-    expect(err?.message).not.toContain(" - ");
+    expect(err.message).toMatch(/Voyage embeddings request failed: 503/);
+    expect(err.message).not.toContain(" - ");
   });
 
   it("does NOT retry a 429 — exactly one request fires", async () => {

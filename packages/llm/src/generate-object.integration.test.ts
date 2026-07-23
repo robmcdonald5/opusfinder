@@ -4,6 +4,7 @@ import { z } from "zod";
 
 import { anthropicMessage } from "@test/msw/fixtures/anthropic";
 import { server } from "@test/msw/server";
+import { rejectionOf } from "@test/rejection";
 
 import { generateObject } from "./generate-object";
 
@@ -56,17 +57,14 @@ describe("generateObject — Anthropic Messages over MSW", () => {
       ),
     );
 
-    let err: Error | undefined;
-    try {
-      await generateObject({ model: "haiku", schema, messages: [{ role: "user", content: "x" }] });
-    } catch (e) {
-      err = e as Error;
-    }
+    const err = await rejectionOf(
+      generateObject({ model: "haiku", schema, messages: [{ role: "user", content: "x" }] }),
+    );
 
-    expect(err?.message).toBe(
+    expect(err.message).toBe(
       "generateObject(): output was truncated at maxOutputTokens=2048; raise maxOutputTokens (set by the caller, e.g. scripts/seams.ts).",
     );
-    expect(err?.cause).toBeDefined(); // the SDK's NoObjectGeneratedError is preserved
+    expect(err.cause).toBeDefined(); // the SDK's NoObjectGeneratedError is preserved
   });
 
   it("wraps a non-truncation unparseable response with the finishReason in the message", async () => {
@@ -76,14 +74,11 @@ describe("generateObject — Anthropic Messages over MSW", () => {
       ),
     );
 
-    let err: Error | undefined;
-    try {
-      await generateObject({ model: "haiku", schema, messages: [{ role: "user", content: "x" }] });
-    } catch (e) {
-      err = e as Error;
-    }
+    const err = await rejectionOf(
+      generateObject({ model: "haiku", schema, messages: [{ role: "user", content: "x" }] }),
+    );
 
-    expect(err?.message).toBe(
+    expect(err.message).toBe(
       "generateObject(): the model did not return schema-valid JSON (finishReason=stop).",
     );
   });
@@ -98,14 +93,10 @@ describe("generateObject — Anthropic Messages over MSW", () => {
       ),
     );
 
-    let err: Error | undefined;
-    try {
-      await generateObject({ model: "haiku", schema, messages: [{ role: "user", content: "x" }] });
-    } catch (e) {
-      err = e as Error;
-    }
+    const err = await rejectionOf(
+      generateObject({ model: "haiku", schema, messages: [{ role: "user", content: "x" }] }),
+    );
 
-    expect(err).toBeDefined();
-    expect(err?.message).not.toMatch(/^generateObject\(\):/); // the wrapper only catches NoObjectGeneratedError
+    expect(err.message).not.toMatch(/^generateObject\(\):/); // the wrapper only catches NoObjectGeneratedError
   });
 });

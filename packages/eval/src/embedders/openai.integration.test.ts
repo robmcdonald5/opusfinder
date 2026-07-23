@@ -5,6 +5,7 @@ import { EMBED_DIMENSIONS } from "@opusfinder/embeddings";
 import { oneHot } from "@test/db/vectors";
 import { embeddingsEnvelope } from "@test/msw/fixtures/embeddings";
 import { server } from "@test/msw/server";
+import { rejectionOf } from "@test/rejection";
 
 import { openaiEmbedder } from "./openai";
 
@@ -161,32 +162,21 @@ describe("openaiEmbedder — OpenAI embeddings over MSW", () => {
     vi.stubEnv("OPENAI_API_KEY", "sk-secret-DEADBEEF");
     server.use(http.post(OPENAI_URL, () => HttpResponse.text("E".repeat(400), { status: 500 })));
 
-    let err: Error | undefined;
-    try {
-      await openaiEmbedder(["x"], "document");
-    } catch (e) {
-      err = e as Error;
-    }
+    const err = await rejectionOf(openaiEmbedder(["x"], "document"));
 
-    expect(err).toBeInstanceOf(Error);
-    expect(err?.message).toMatch(/OpenAI embeddings request failed: 500/);
-    expect(err?.message).not.toContain("sk-secret-DEADBEEF"); // no-secrets-in-errors
-    expect(err?.message).toContain("E".repeat(300)); // snippet sliced to 300
-    expect(err?.message).not.toContain("E".repeat(301));
+    expect(err.message).toMatch(/OpenAI embeddings request failed: 500/);
+    expect(err.message).not.toContain("sk-secret-DEADBEEF"); // no-secrets-in-errors
+    expect(err.message).toContain("E".repeat(300)); // snippet sliced to 300
+    expect(err.message).not.toContain("E".repeat(301));
   });
 
   it("omits the ' - snippet' suffix when the error body is empty", async () => {
     server.use(http.post(OPENAI_URL, () => new HttpResponse(null, { status: 503 })));
 
-    let err: Error | undefined;
-    try {
-      await openaiEmbedder(["x"], "document");
-    } catch (e) {
-      err = e as Error;
-    }
+    const err = await rejectionOf(openaiEmbedder(["x"], "document"));
 
-    expect(err?.message).toMatch(/OpenAI embeddings request failed: 503/);
-    expect(err?.message).not.toContain(" - ");
+    expect(err.message).toMatch(/OpenAI embeddings request failed: 503/);
+    expect(err.message).not.toContain(" - ");
   });
 
   it("does NOT retry a 429 — exactly one request fires", async () => {
