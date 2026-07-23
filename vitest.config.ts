@@ -62,6 +62,12 @@ export default defineConfig({
           environment: "node",
           isolate: true,
           include: ["{packages,apps}/*/**/*.live.test.ts"],
+          // Live gates self-seed over real networks — the CI lane's ephemeral Neon branch COLD-STARTS its
+          // compute, so first-query latency is unbounded by the code under test (the digest gate passed at
+          // 3.7s and timed out at vitest's 5s default on the very next run). Generous budgets here; the
+          // strict defaults stay on unit/integration, where a slow test IS a defect.
+          testTimeout: 30_000,
+          hookTimeout: 30_000,
         },
       },
     ],
