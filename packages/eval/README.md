@@ -24,7 +24,8 @@ pnpm eval:hnsw                                  # HNSW-vs-exact recall on real N
 
 pnpm exec vitest run packages/eval/src              # self-tests: metrics/cosine/dataset/report (Vitest)
 pnpm --filter @opusfinder/eval export:candidates    # dump real jobs from Neon (labeling aid)
-pnpm --filter @opusfinder/eval build:dataset        # regenerate dataset.jsonl from the export
+pnpm --filter @opusfinder/eval build:pool           # per-profile candidate pools from Neon (3 arms)
+pnpm --filter @opusfinder/eval build:dataset        # regenerate dataset.jsonl (legacy + pooled)
 ```
 
 `pnpm eval` writes a committed report per `(ranker, embedder, dataset)` under `reports/` and
@@ -57,19 +58,38 @@ line, validated at load (`src/dataset.ts`). It is **frozen/hermetic**: candidate
 snapshotted, not read live from the DB, so metrics don't drift as `jobs` changes. `data/fixture.jsonl`
 is a tiny synthetic, non-PII set for smoke tests.
 
-Build flow: `export:candidates` dumps real jobs → `build:dataset` assembles examples from the
-export + the profiles/labels in `scripts/build-dataset.ts`.
+Two example shapes coexist:
+
+- **Legacy (2 seed examples)** — labeled against the FULL board of the original ~80-job corpus;
+  frozen verbatim in `data/legacy-examples.jsonl` and passed through `build:dataset` untouched.
+- **Pooled (the scale shape)** — at the ~100k-job corpus a full board is unlabelable, so each
+  example's `candidateJobs` is the union of three nomination arms (`scripts/build-pool.ts`):
+  production retrieval (Voyage query embedding through `retrieveCandidatesForProfile`), a
+  Postgres full-text arm (target roles + skills), and a seeded random arm — multi-arm so the
+  labels aren't circular in the production ranker's favor. **Labels are honest only WITHIN each
+  example's pool**: unlabeled ≠ irrelevant, so never compute full-corpus labeled recall from
+  pool-scoped labels.
+
+Build flow: profiles + owner-authoritative labels live in `data/profiles/<id>.json` (committed)
+→ `build:pool` snapshots each profile's candidate pool to `data/pools/<id>.json` (gitignored)
+→ `build:dataset` assembles legacy + pooled examples into `dataset.jsonl`. Rebuilding a pool
+against a changed corpus shifts pool ids; `build:dataset` then fails loud on stale labels
+(forcing a relabel) instead of silently rescoring them.
 
 ### Profiles, labels, and PII
 
-Profiles are an **eval-time stand-in** for the Phase-9 `user_profiles` row. The seed profiles are
-derived from real CVs and are **anonymized** — no names, contact info, employers, schools, or
-URLs; only summary / skills / target roles. Raw CVs live in `data/cvs/` and are **gitignored**
-(never committed), as is the `candidates-export.json` working artifact and `.env`.
+Profiles are an **eval-time stand-in** for the Phase-9 `user_profiles` row. Every profile is
+derived from a real CV — the 2 seed profiles from the owners' own CVs, the pooled profiles from
+the CC0 Kaggle "Resume Dataset" (snehaanbhawal; source-anonymized LiveCareer resumes, pulled via
+the `opensporks/resumes` HF mirror) — and is **anonymized** — no names, contact info, employers,
+schools, or URLs; only summary / skills / target roles. Raw CVs live in `data/cvs/` and are
+**gitignored** (never committed), as are the `candidates-export.json` / `data/pools/` working
+artifacts and `.env`.
 
-Labels are agent-drafted; the CV owner is the authority and may refine `expectedGoodIds` directly
-in `dataset.jsonl` (or in `build-dataset.ts` and re-run). Scale the set toward the spec's ~50
-examples via public CV datasets (Kaggle/HuggingFace) + more ATS boards as adapters land.
+Labels are agent-drafted; the labeling authority (the CV owner for the seed profiles, the repo
+owner for the dataset-derived ones) refines `goodIds` in `data/profiles/<id>.json` and re-runs
+`build:dataset`. Scale the set toward the spec's ~50 examples via public CV datasets
+(Kaggle/HuggingFace) + more ATS boards as adapters land.
 
 ## Status (Phase 5)
 
