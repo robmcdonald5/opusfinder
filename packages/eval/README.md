@@ -20,6 +20,7 @@ pnpm eval -- --ranker embedding --embedder openai   # vector retrieval (OpenAI)
 pnpm eval -- --ranker llm-rerank                 # shared LLM rerank core (deterministic stub)
 pnpm eval -- --dataset data/fixture.jsonl       # synthetic smoke test (no DB/network)
 pnpm eval:compare                               # Voyage vs OpenAI, side-by-side retrieval@k
+pnpm eval:hnsw                                  # HNSW-vs-exact recall on real Neon (read-only)
 
 pnpm exec vitest run packages/eval/src              # self-tests: metrics/cosine/dataset/report (Vitest)
 pnpm --filter @opusfinder/eval export:candidates    # dump real jobs from Neon (labeling aid)
@@ -35,6 +36,19 @@ unchanged run is a byte-identical file — the diff is signal, not noise.
 Binary relevance (`expectedGoodIds`): precision@k, recall@k, NDCG@k at k ∈ {3, 5, 10}, averaged
 across examples. Recall/NDCG are undefined (and dropped from the mean) for an example with no
 relevant ids. The math is pinned by `src/metrics.test.ts` (+ `cosine`/`dataset`/`report` tests).
+
+## HNSW recall (plan §8)
+
+`pnpm eval:hnsw` measures how much of the EXACT cosine top-k the pgvector HNSW index returns on
+the real Neon corpus — a read-only MEASUREMENT (not a pass/fail), written to
+`reports/hnsw-recall.dataset.json`. Each leg is planner-forced over the tx-capable neon-serverless driver
+and EXPLAIN-verified (the ANN leg must use the index, the exact leg must not), so it can never
+silently score exact-vs-exact. Recall is tie-aware on distance (`src/ann.ts`), because
+same-signature cross-posts carry identical embeddings. Production currently seq-scans (exact —
+neon-http can't hold `SET LOCAL hnsw.ef_search`; see repos/retrieval.ts), so this quantifies the
+cliff retrieval inherits if scale ever flips the planner to the index: at the default
+`ef_search=40` the production-filtered shape under-fills catastrophically (single-digit rows of
+the 150 fetched). Needs `DATABASE_URL` + `VOYAGE_API_KEY`.
 
 ## Dataset
 
