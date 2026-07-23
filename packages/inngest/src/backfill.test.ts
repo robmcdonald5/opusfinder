@@ -9,6 +9,7 @@ import { NonRetriableError } from "inngest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { recordingStep } from "@test/inngest/stubs";
+import { rejectionOf } from "@test/rejection";
 
 const repos = vi.hoisted(() => ({
   jobsNeedingEmbedding: vi.fn(),
@@ -84,10 +85,10 @@ describe("embedDrainStep", () => {
     const embed = fakeEmbed(63); // 63 vectors for 64 jobs
     const { tools } = recordingStep();
 
-    const err = await embedDrainStep(deps(embed), tools).catch((e: unknown) => e);
+    const err = await rejectionOf(embedDrainStep(deps(embed), tools));
 
     expect(err).toBeInstanceOf(NonRetriableError);
-    expect((err as Error).message).toMatch(/embed returned 63 vectors for 64 jobs/);
+    expect(err.message).toMatch(/embed returned 63 vectors for 64 jobs/);
     expect(repos.writeJobEmbeddings).not.toHaveBeenCalled();
   });
 

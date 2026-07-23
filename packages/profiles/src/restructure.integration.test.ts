@@ -10,6 +10,7 @@ import { uid } from "@test/db/ids";
 import { createTestDb } from "@test/db/pglite";
 import { truncate } from "@test/db/truncate";
 import { oneHot } from "@test/db/vectors";
+import { rejectionOf } from "@test/rejection";
 
 import { restructureProfile } from "./restructure";
 import type { ProfileEmbedFn, StructureFn } from "./types";
@@ -70,18 +71,6 @@ function stubEmbed(vector: number[] = oneHot(0)) {
     embeddings: texts.map(() => vector),
     usage: { totalTokens: 42 },
   }));
-}
-
-/** Resolve to the rejection reason (failing the test if the promise resolved) so messages can be
- *  pinned EXACTLY — substring matching would stay green under a wrapper prefix. */
-async function rejectionOf(promise: Promise<unknown>): Promise<Error> {
-  try {
-    await promise;
-  } catch (err) {
-    expect(err).toBeInstanceOf(Error);
-    return err as Error;
-  }
-  throw new Error("expected the promise to reject, but it resolved");
 }
 
 describe("restructureProfile — cached-transcript re-run seam: lookup, scrub, embed, upsert (integration: real PGlite semantics)", () => {

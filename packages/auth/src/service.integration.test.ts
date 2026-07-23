@@ -9,6 +9,7 @@ import type { UserId } from "@opusfinder/shared";
 import { uid } from "@test/db/ids";
 import { createTestDb } from "@test/db/pglite";
 import { truncate } from "@test/db/truncate";
+import { rejectionOf } from "@test/rejection";
 
 import {
   createAuth,
@@ -33,14 +34,6 @@ import {
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const TOKEN_RE = /^[0-9a-f]{64}$/;
-
-/** Rejection capture: resolves to the error (or null if the promise resolved). */
-function captureRejection(p: Promise<unknown>): Promise<Error | null> {
-  return p.then(
-    () => null,
-    (e: unknown) => e as Error,
-  );
-}
 
 describe("auth service — createUserWithPreferences / getOrCreateUserByEmail / findUserIdByEmail (integration: real better-auth over PGlite)", () => {
   let db: Db;
@@ -213,12 +206,11 @@ describe("auth service — createUserWithPreferences / getOrCreateUserByEmail / 
       const signedIn = await auth.api.signInEmail({ body: { email, password } });
       expect(signedIn.user.id).toBe(userId);
 
-      const err = await captureRejection(
+      const err = await rejectionOf(
         auth.api.signInEmail({ body: { email, password: "pw-roundtrip-NO" } }),
       );
-      expect(err).not.toBeNull();
       // Plain JS throw (better-auth APIError, no SQL failure) → exact-message matching.
-      expect(err!.message).toBe("Invalid email or password");
+      expect(err.message).toBe("Invalid email or password");
     });
 
     it("mints no session row — autoSignIn:false", async () => {
@@ -307,31 +299,29 @@ describe("auth service — createUserWithPreferences / getOrCreateUserByEmail / 
 
   describe("createUserWithPreferences — error paths (the documented non-atomic contract)", () => {
     it("rejects an untrimmed/malformed email at better-auth body validation and writes NO rows", async () => {
-      const err = await captureRejection(
+      const err = await rejectionOf(
         createUserWithPreferences(db, auth, {
           email: " padded@svc.test ", // z.email() rejects leading/trailing spaces BEFORE any insert
           password: "pw-longenough-1",
         }),
       );
-      expect(err).not.toBeNull();
       // Plain JS throw (thrown before SQL) → exact-message matching. VERIFIED live: the route's
       // better-call BODY-SCHEMA validation (z.email() on body.email) rejects first — the handler's
       // own BASE_ERROR_CODES.INVALID_EMAIL ("Invalid email") is never reached via auth.api.
-      expect(err!.message).toBe("[body.email] Invalid email address");
+      expect(err.message).toBe("[body.email] Invalid email address");
       expect(await allUserRows()).toHaveLength(0);
       expect(await db.select({ id: account.id }).from(account)).toHaveLength(0);
       expect(await allPrefsRows()).toHaveLength(0);
     });
 
     it("rejects a 7-char password with PASSWORD_TOO_SHORT and writes NO rows", async () => {
-      const err = await captureRejection(
+      const err = await rejectionOf(
         createUserWithPreferences(db, auth, {
           email: "shortpw@svc.test",
           password: "seven77", // 7 chars < better-auth's default minPasswordLength 8
         }),
       );
-      expect(err).not.toBeNull();
-      expect(err!.message).toBe("Password too short");
+      expect(err.message).toBe("Password too short");
       expect(await allUserRows()).toHaveLength(0);
       expect(await db.select({ id: account.id }).from(account)).toHaveLength(0);
       expect(await allPrefsRows()).toHaveLength(0);
@@ -347,7 +337,7 @@ describe("auth service — createUserWithPreferences / getOrCreateUserByEmail / 
       });
       const prefsBefore = await prefsRow(existing);
 
-      const err = await captureRejection(
+      const err = await rejectionOf(
         createUserWithPreferences(db, auth, {
           email: "dupe@svc.test",
           password: "pw-second-000",
@@ -358,8 +348,7 @@ describe("auth service — createUserWithPreferences / getOrCreateUserByEmail / 
       // OBSERVABLE contract only (better-auth 1.6.14: generic-duplicate → phantom uuid → the prefs
       // INSERT violates user_preferences_user_id_user_id_fk). drizzle 0.45 wraps the PG error as
       // "Failed query: …" — the 23503 text lives on err.cause, never the wrapper message.
-      expect(err).not.toBeNull();
-      expect(String(err!.cause ?? err)).toMatch(/foreign key|violates/i);
+      expect(String(err.cause ?? err)).toMatch(/foreign key|violates/i);
 
       // The pre-existing user is untouched: exactly one user row, still unverified.
       const users = await db.select().from(user);

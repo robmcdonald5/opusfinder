@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
+import { rejectionOf } from "@test/rejection";
+
 import { embedQuery } from "./embed";
 import type { ProfileEmbedFn } from "./types";
 
@@ -19,19 +21,6 @@ const NO_VECTOR_MESSAGE = "embed() returned no usable vector for the profile tex
 /** A seam stub resolving a fixed response; call args are asserted via the mock. */
 function seamReturning(response: Awaited<ReturnType<ProfileEmbedFn>>) {
   return vi.fn<ProfileEmbedFn>(async () => response);
-}
-
-/** Resolve to the rejection reason (failing the test if the promise resolved) so messages can be
- *  pinned EXACTLY — `.rejects.toThrow(string)` is substring matching and would stay green if the
- *  message grew a wrapper prefix. */
-async function rejectionOf(promise: Promise<unknown>): Promise<Error> {
-  try {
-    await promise;
-  } catch (err) {
-    expect(err).toBeInstanceOf(Error);
-    return err as Error;
-  }
-  throw new Error("expected the promise to reject, but it resolved");
 }
 
 describe("embedQuery — unwrap-and-validate over the injected embed seam (unit: pure, stubbed ProfileEmbedFn)", () => {

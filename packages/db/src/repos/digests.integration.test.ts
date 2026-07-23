@@ -38,6 +38,7 @@ import { companySlug, jobId, type DigestCadence, type UserId } from "@opusfinder
 import { uid } from "@test/db/ids";
 import { createTestDb } from "@test/db/pglite";
 import { truncate } from "@test/db/truncate";
+import { rejectionOf } from "@test/rejection";
 
 import { NUL } from "./sql";
 
@@ -378,20 +379,13 @@ describe("digests repo — recipient gates, shown-history anti-joins, persist/re
       const first = await insertDigest(db, { userId: a, digestRunId: r1, itemCount: 2, counts: {} });
       expect(first.id).toBeGreaterThan(0);
       // The digests_user_id_digest_run_id_uq index is the double-write guard — if a migration drops
-      // or widens it, this expected rejection stops happening (rejection === null below).
-      const rejection = await insertDigest(db, {
-        userId: a,
-        digestRunId: r1,
-        itemCount: 2,
-        counts: {},
-      }).then(
-        () => null,
-        (e: unknown) => e as Error,
+      // or widens it, this expected rejection stops happening (rejectionOf fails the test).
+      const rejection = await rejectionOf(
+        insertDigest(db, { userId: a, digestRunId: r1, itemCount: 2, counts: {} }),
       );
-      expect(rejection).not.toBeNull();
       // Drizzle wraps the driver error as "Failed query: ..." — the 23505 unique-violation text lives
       // on err.cause, so match the cause chain, not the wrapper message.
-      expect(String(rejection!.cause ?? rejection)).toMatch(/unique|duplicate/i);
+      expect(String(rejection.cause ?? rejection)).toMatch(/unique|duplicate/i);
       // Same user on a DIFFERENT run succeeds — the guard is the composite pair, not user_id alone.
       const r2 = await startDigestRun(db, "manual");
       const second = await insertDigest(db, { userId: a, digestRunId: r2, itemCount: 1, counts: {} });

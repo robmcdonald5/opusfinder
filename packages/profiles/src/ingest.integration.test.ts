@@ -10,6 +10,7 @@ import { uid } from "@test/db/ids";
 import { createTestDb } from "@test/db/pglite";
 import { truncate } from "@test/db/truncate";
 import { oneHot } from "@test/db/vectors";
+import { rejectionOf, rejectionReasonOf } from "@test/rejection";
 
 import { ingestCv, type IngestCvOptions } from "./ingest";
 import type { ProfileEmbedFn, StructureFn, TranscribeFn } from "./types";
@@ -506,13 +507,9 @@ describe("ingestCv — CV → profile pipeline (stub seams, real PGlite persiste
     }));
     const { client, puts } = spyStorage();
 
-    const err = await ingestCv(db, ingestOpts(client, { embed })).then(
-      () => null,
-      (e: unknown) => e as Error,
-    );
-    expect(err).not.toBeNull();
+    const err = await rejectionOf(ingestCv(db, ingestOpts(client, { embed })));
     // Plain JS throw (embedQuery, before any SQL) — exact message, not the drizzle wrapper idiom.
-    expect(err!.message).toBe("embed() returned no usable vector for the profile text");
+    expect(err.message).toBe("embed() returned no usable vector for the profile text");
 
     const rows = await cvRowsFor(A, byst.cvIds);
     expect(rows).toHaveLength(1);
@@ -532,13 +529,9 @@ describe("ingestCv — CV → profile pipeline (stub seams, real PGlite persiste
     }));
     const { client } = spyStorage();
 
-    const err = await ingestCv(db, ingestOpts(client, { embed })).then(
-      () => null,
-      (e: unknown) => e as Error,
-    );
-    expect(err).not.toBeNull();
+    const err = await rejectionOf(ingestCv(db, ingestOpts(client, { embed })));
     // Kills the guard's second arm independently: `!vector` alone would let [[]] through.
-    expect(err!.message).toBe("embed() returned no usable vector for the profile text");
+    expect(err.message).toBe("embed() returned no usable vector for the profile text");
     expect(await readProfiles(A)).toHaveLength(0);
 
     await expectBystandersUnchanged(byst);
@@ -551,9 +544,8 @@ describe("ingestCv — CV → profile pipeline (stub seams, real PGlite persiste
     const structure = stubStructure();
     const { client, puts } = spyStorage();
 
-    const err = await ingestCv(db, ingestOpts(client, { transcribe, structure })).then(
-      () => null,
-      (e: unknown) => e,
+    const err = await rejectionReasonOf(
+      ingestCv(db, ingestOpts(client, { transcribe, structure })),
     );
     expect(err).toBe(boom); // identity — never a wrapped or secondary error
 
@@ -575,10 +567,7 @@ describe("ingestCv — CV → profile pipeline (stub seams, real PGlite persiste
     const transcribe = stubTranscribe();
     const { client, puts } = spyStorage({ rejectWith: outage });
 
-    const err = await ingestCv(db, ingestOpts(client, { transcribe })).then(
-      () => null,
-      (e: unknown) => e,
-    );
+    const err = await rejectionReasonOf(ingestCv(db, ingestOpts(client, { transcribe })));
     expect(err).toBe(outage);
     expect(puts).toHaveLength(0); // the put rejected before recording anything
     expect(transcribe).not.toHaveBeenCalled(); // upload precedes transcription
@@ -605,10 +594,7 @@ describe("ingestCv — CV → profile pipeline (stub seams, real PGlite persiste
       },
     });
 
-    const err = await ingestCv(db, ingestOpts(client)).then(
-      () => null,
-      (e: unknown) => e,
-    );
+    const err = await rejectionReasonOf(ingestCv(db, ingestOpts(client)));
     expect(err).toBe(outage);
     expect(puts).toHaveLength(1); // only the original landed — put#2 rejected before recording
 
@@ -627,10 +613,7 @@ describe("ingestCv — CV → profile pipeline (stub seams, real PGlite persiste
     const transcribe = vi.fn<TranscribeFn>(() => Promise.reject("boom-string"));
     const { client } = spyStorage();
 
-    const err = await ingestCv(db, ingestOpts(client, { transcribe })).then(
-      () => null,
-      (e: unknown) => e,
-    );
+    const err = await rejectionReasonOf(ingestCv(db, ingestOpts(client, { transcribe })));
     expect(err).toBe("boom-string");
 
     const rows = await cvRowsFor(A, byst.cvIds);
@@ -649,10 +632,7 @@ describe("ingestCv — CV → profile pipeline (stub seams, real PGlite persiste
     const transcribe = vi.fn<TranscribeFn>(() => Promise.reject(nulError));
     const { client } = spyStorage();
 
-    const err = await ingestCv(db, ingestOpts(client, { transcribe })).then(
-      () => null,
-      (e: unknown) => e,
-    );
+    const err = await rejectionReasonOf(ingestCv(db, ingestOpts(client, { transcribe })));
     expect(err).toBe(nulError); // the original error still propagates, NUL and all
 
     const rows = await cvRowsFor(A, byst.cvIds);
@@ -693,10 +673,7 @@ describe("ingestCv — CV → profile pipeline (stub seams, real PGlite persiste
     const embed = stubEmbed();
     const { client, puts } = spyStorage();
 
-    const err = await ingestCv(db, ingestOpts(client, { structure, embed })).then(
-      () => null,
-      (e: unknown) => e,
-    );
+    const err = await rejectionReasonOf(ingestCv(db, ingestOpts(client, { structure, embed })));
     expect(err).toBe(boom);
 
     const rows = await cvRowsFor(A, byst.cvIds);
@@ -731,10 +708,7 @@ describe("ingestCv — CV → profile pipeline (stub seams, real PGlite persiste
     }) as unknown as Db;
     const { client } = spyStorage();
 
-    const err = await ingestCv(proxyDb, ingestOpts(client, { transcribe })).then(
-      () => null,
-      (e: unknown) => e,
-    );
+    const err = await rejectionReasonOf(ingestCv(proxyDb, ingestOpts(client, { transcribe })));
     expect(err).toBe(boom); // the mark's own failure must NEVER mask the real cause
 
     const rows = await cvRowsFor(A);
@@ -787,13 +761,9 @@ describe("ingestCv — CV → profile pipeline (stub seams, real PGlite persiste
     const transcribe = stubTranscribe();
     const { client, puts } = spyStorage();
 
-    const err = await ingestCv(db, ingestOpts(client, { userId: ghost, transcribe })).then(
-      () => null,
-      (e: unknown) => e as Error,
-    );
-    expect(err).not.toBeNull();
+    const err = await rejectionOf(ingestCv(db, ingestOpts(client, { userId: ghost, transcribe })));
     // drizzle 0.45 wraps PG errors as 'Failed query: …' — the 23503 text lives on err.cause.
-    expect(String(err!.cause ?? err)).toMatch(/foreign key|violates/i);
+    expect(String(err.cause ?? err)).toMatch(/foreign key|violates/i);
 
     expect(puts).toHaveLength(0); // the insert precedes the try AND the first storage write
     expect(transcribe).not.toHaveBeenCalled();
