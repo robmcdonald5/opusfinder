@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import type { DigestEmailPayload } from "@opusfinder/db/repos";
 import { server } from "@test/msw/server";
+import { rejectionOf } from "@test/rejection";
 
 import { renderDigestEmail } from "./render";
 import { emailIdempotencyKey, getEmailLastEvent, sendDigestEmail, sendHealthAlert } from "./transport";
@@ -150,16 +151,11 @@ describe("Resend transport over MSW", () => {
       ),
     );
 
-    let err: Error | undefined;
-    try {
-      await sendDigestEmail(makePayload());
-    } catch (e) {
-      err = e as Error;
-    }
+    const err = await rejectionOf(sendDigestEmail(makePayload()));
 
-    expect(err?.message).toBe("resend send failed: rate_limit_exceeded (status 429) for digest 42");
-    expect(err?.message).not.toContain("user@example.com"); // no recipient leaked
-    expect(err?.message).not.toContain("Too many requests"); // no provider message leaked
+    expect(err.message).toBe("resend send failed: rate_limit_exceeded (status 429) for digest 42");
+    expect(err.message).not.toContain("user@example.com"); // no recipient leaked
+    expect(err.message).not.toContain("Too many requests"); // no provider message leaked
   });
 
   it("throws a shape-only error when the delivery poll is unauthorized", async () => {
@@ -194,15 +190,10 @@ describe("Resend transport over MSW", () => {
       ),
     );
 
-    let err: Error | undefined;
-    try {
-      await sendHealthAlert("subject", "text");
-    } catch (e) {
-      err = e as Error;
-    }
+    const err = await rejectionOf(sendHealthAlert("subject", "text"));
 
-    expect(err?.message).toBe("resend alert send failed: application_error (status 500)");
-    expect(err?.message).not.toContain("ops@example.test");
-    expect(err?.message).not.toContain("delivery to");
+    expect(err.message).toBe("resend alert send failed: application_error (status 500)");
+    expect(err.message).not.toContain("ops@example.test");
+    expect(err.message).not.toContain("delivery to");
   });
 });

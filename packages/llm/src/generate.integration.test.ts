@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { anthropicMessage } from "@test/msw/fixtures/anthropic";
 import { server } from "@test/msw/server";
+import { rejectionOf } from "@test/rejection";
 
 import { generate } from "./generate";
 
@@ -146,17 +147,13 @@ describe("generate — Anthropic Messages over MSW", () => {
       ),
     );
 
-    let err: Error | undefined;
-    try {
-      await generate({ model: "haiku", messages: [{ role: "user", content: "hi" }] });
-    } catch (e) {
-      err = e as Error;
-    }
+    const err = await rejectionOf(
+      generate({ model: "haiku", messages: [{ role: "user", content: "hi" }] }),
+    );
 
-    expect(err).toBeDefined();
     // The point of this test: generate() has NO error-wrapping (unlike generateObject, which catches
     // NoObjectGeneratedError). A bare rejects.toThrow() would stay green even if wrapping crept in, so pin
     // the "unwrapped" half — the message must NOT be a generate() wrapper — mirroring the generateObject sibling.
-    expect(err?.message).not.toMatch(/^generate\(\):/);
+    expect(err.message).not.toMatch(/^generate\(\):/);
   });
 });
