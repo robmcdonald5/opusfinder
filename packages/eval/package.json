@@ -14,6 +14,7 @@
     "export:candidates": "tsx scripts/export-candidates.ts",
     "extract-profile": "tsx scripts/extract-profile.ts",
     "build:pool": "tsx scripts/build-pool.ts",
+    "draft-labels": "tsx scripts/draft-labels.ts",
     "build:dataset": "tsx scripts/build-dataset.ts",
     "typecheck": "tsc --noEmit"
   },
@@ -23,7 +24,8 @@
     "@opusfinder/llm": "workspace:*",
     "@opusfinder/rerank": "workspace:*",
     "@opusfinder/shared": "workspace:*",
-    "dotenv": "^17"
+    "dotenv": "^17",
+    "zod": "^4"
   },
   "devDependencies": {
     "tsx": "^4"

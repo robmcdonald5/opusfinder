@@ -25,6 +25,7 @@ pnpm eval:hnsw                                  # HNSW-vs-exact recall on real N
 pnpm exec vitest run packages/eval/src              # self-tests: metrics/cosine/dataset/report (Vitest)
 pnpm --filter @opusfinder/eval export:candidates    # dump real jobs from Neon (labeling aid)
 pnpm --filter @opusfinder/eval build:pool           # per-profile candidate pools from Neon (3 arms)
+pnpm --filter @opusfinder/eval draft-labels         # draft each pool's labels + an owner review sheet
 pnpm --filter @opusfinder/eval build:dataset        # regenerate dataset.jsonl (legacy + pooled)
 ```
 
@@ -72,9 +73,11 @@ Two example shapes coexist:
 
 Build flow: profiles + owner-authoritative labels live in `data/profiles/<id>.json` (committed)
 → `build:pool` snapshots each profile's candidate pool to `data/pools/<id>.json` (gitignored)
+→ `draft-labels` judges that pool and writes drafted `goodIds` + a review sheet
 → `build:dataset` assembles legacy + pooled examples into `dataset.jsonl`. Rebuilding a pool
 against a changed corpus shifts pool ids; `build:dataset` then fails loud on stale labels
-(forcing a relabel) instead of silently rescoring them.
+(forcing a relabel) instead of silently rescoring them. A profile with no labels drafted yet is
+SKIPPED (loudly) rather than emitted as an example nothing is relevant to.
 
 ### Profiles, labels, and PII
 
@@ -88,8 +91,18 @@ artifacts and `.env`.
 
 Labels are agent-drafted; the labeling authority (the CV owner for the seed profiles, the repo
 owner for the dataset-derived ones) refines `goodIds` in `data/profiles/<id>.json` and re-runs
-`build:dataset`. Scale the set toward the spec's ~50 examples via public CV datasets
-(Kaggle/HuggingFace) + more ATS boards as adapters land.
+`build:dataset`. `draft-labels` produces that draft — it judges each pooled candidate against the
+profile ONE at a time (independently, so no candidate is judged in the company of its neighbours)
+under `scripts/label-judge.ts`'s rubric, which is deliberately NOT the production rerank rubric:
+that one orders a digest on a 0–1 scale, and reusing a ranker's own prompt to manufacture its
+ground truth would make the eval partly self-graded. Verdicts are three-way — only `good` becomes a
+label, and `borderline` keeps the judge's uncertainty visible instead of rounding it away. Each run
+writes `data/reviews/<id>.md` (gitignored): every verdict with a one-sentence reason, borderlines
+called out first, since that is where owner review changes the ground truth most. Re-running will
+not overwrite existing labels without `--force`.
+
+Scale the set toward the spec's ~50 examples via public CV datasets (Kaggle/HuggingFace) + more ATS
+boards as adapters land.
 
 ## Status (Phase 5)
 

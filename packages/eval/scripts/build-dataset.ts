@@ -49,8 +49,18 @@ function legacyLines(): string[] {
 
 function main(): void {
   const lines = legacyLines();
+  const skipped: string[] = [];
 
   for (const { profile, goodIds, notes } of loadAllProfileFiles()) {
+    // A profile that has never been labeled is NOT an example with nothing relevant in its pool —
+    // it is work in progress, and emitting it would score every ranker 0 on it and silently drag
+    // the aggregate precision down. Distinguished by `notes`: draft-labels.ts always writes
+    // provenance there, so empty goodIds + empty notes means "no one has labeled this yet", while
+    // empty goodIds WITH notes is a real (if unusual) judgement that nothing in the pool fits.
+    if (goodIds.length === 0 && notes.trim() === "") {
+      skipped.push(profile.id);
+      continue;
+    }
     const pool = loadPoolFile(profile.id);
     const byId = new Map(pool.candidates.map((c) => [c.id, c]));
     const candidateJobs: EvalJob[] = pool.candidates.map((c) => ({
@@ -62,6 +72,12 @@ function main(): void {
     }));
 
     console.error(`\n[${profile.id}] ${goodIds.length} good of ${candidateJobs.length} pooled:`);
+    if (goodIds.length === 0) {
+      console.error(
+        `  WARNING: labeled, but nothing in the pool was judged relevant — this example scores every ` +
+          `ranker 0 at every k. Keep it only if that is a real finding about the corpus.`,
+      );
+    }
     for (const goodId of goodIds) {
       const j = byId.get(goodId);
       if (!j) {
@@ -87,6 +103,14 @@ function main(): void {
   // out-of-pool good id). parseDatasetLines throws with a line number on any violation.
   const examples = parseDatasetLines(content, "build-dataset output");
   writeFileSync(join(PKG_ROOT, "data", "dataset.jsonl"), content, "utf8");
+  // No silent caps: a profile left out of the dataset must be visible here, or a partially-labeled
+  // set reads as "the whole set".
+  if (skipped.length > 0) {
+    console.error(
+      `\nSKIPPED ${skipped.length} unlabeled profile(s): ${skipped.join(", ")}. ` +
+        `Draft their labels with \`pnpm --filter @opusfinder/eval draft-labels\`, then re-run this.`,
+    );
+  }
   console.error(`\nWrote data/dataset.jsonl: ${examples.length} examples.`);
 }
 
