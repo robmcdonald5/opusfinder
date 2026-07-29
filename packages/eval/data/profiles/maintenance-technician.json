@@ -1,0 +1,46 @@
+{
+  "profile": {
+    "id": "maintenance-technician",
+    "summary": "Equipment engineering technician with 20 years of material management and logistics experience across government and aerospace sectors, plus 13 years of law enforcement background. Demonstrates deep expertise in mechanical, pneumatic, and hydraulic systems; robotic automation design and implementation; and industrial equipment troubleshooting. Skilled in factory automation, electrical control systems, preventive maintenance program development, and technical leadership of maintenance teams. Holds NDT Level II certification and forklift/crane certifications; experienced with test equipment, instrumentation, and fire safety systems in high-precision environments including NASA wind tunnel facilities.",
+    "skills": [
+      "Robotic systems design and programming",
+      "Factory automation",
+      "Electrical control systems",
+      "Mechanical systems troubleshooting",
+      "Pneumatic systems",
+      "Hydraulic systems",
+      "Equipment installation and commissioning",
+      "Preventive maintenance planning",
+      "NDT Level II",
+      "Forklift operation",
+      "Crane operation",
+      "Fire alarm systems",
+      "Fire sprinkler systems",
+      "Instrumentation and calibration",
+      "Test equipment operation and maintenance",
+      "Conveyor systems",
+      "Technical documentation and schematics interpretation",
+      "Inventory management",
+      "Material logistics coordination",
+      "ISO 9001",
+      "Non-destructive testing",
+      "Hazardous materials handling",
+      "Microsoft Office",
+      "Promis software",
+      "WDS software",
+      "LSS software",
+      "CAVS II software",
+      "Technical leadership and mentoring",
+      "Shift coordination and planning"
+    ],
+    "targetRoles": [
+      "Equipment Engineering Technician",
+      "Maintenance Technician Lead",
+      "Automation Systems Technician",
+      "Facilities Maintenance Supervisor",
+      "Test Equipment Technician"
+    ]
+  },
+  "goodIds": [],
+  "notes": ""
+}
