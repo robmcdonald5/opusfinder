@@ -17,11 +17,16 @@ node_modules/
 
 # eval: raw CVs (PII — derived, anonymized profiles are committed; the source CVs are not) and any
 # working *.json dump under data/. The committed datasets are *.jsonl; candidates-export.json and
-# any custom --out target are *.json working artifacts, never committed. Fixture reports are
+# any custom --out target are *.json working artifacts, never committed. Pool snapshots
+# (data/pools/) are regeneration intermediates — only the frozen dataset.jsonl they feed is
+# committed (data/profiles/ label files ARE committed), and label review sheets (data/reviews/) are
+# regenerable review aids for the owner — the labels they justify are what gets committed. Fixture reports are
 # smoke-test output, not baselines. Extraction-eval reports (Phase F4) have no diff-vs-baseline
 # mechanism, so they are run artifacts (the stub one is explicitly "not a quality signal"), never committed.
 packages/eval/data/cvs/
 packages/eval/data/*.json
+packages/eval/data/pools/
+packages/eval/data/reviews/
 packages/eval/reports/*.fixture.json
 packages/eval/reports/extraction-*.json
 

@@ -1,0 +1,62 @@
+{
+  "profile": {
+    "id": "it-manager",
+    "summary": "Information Technology Manager with 25+ years of progressive IT leadership and infrastructure management experience. Specializes in network engineering, systems administration, disaster recovery, and IT operations across complex enterprise environments. Demonstrates strong technical depth in LAN/WAN/WLAN design and optimization, hardware/software lifecycle management, and vendor relations, combined with proven ability to lead teams, drive process improvements, and deliver measurable cost savings and performance gains. Holds dual Master's degrees in Information Systems Management and Leadership, plus industry certifications (MCP, CompTIA Network+, CompTIA A+).",
+    "skills": [
+      "Network engineering",
+      "LAN/WAN/WLAN design and optimization",
+      "Systems administration",
+      "Disaster recovery planning",
+      "Backup and restore operations",
+      "Hardware lifecycle management",
+      "Software licensing",
+      "IT infrastructure",
+      "Cisco networking",
+      "Nortel networking",
+      "Juniper networking",
+      "Meraki wireless",
+      "Server administration",
+      "Database administration",
+      "User account management",
+      "Email administration",
+      "Imaging and deployment",
+      "Thin client solutions",
+      "Wireless network design",
+      "Network troubleshooting",
+      "IT security",
+      "Antivirus and anti-spam administration",
+      "Vendor management",
+      "IT budgeting",
+      "IT policy and procedure development",
+      "Team leadership",
+      "Staff training and mentoring",
+      "Process improvement",
+      "IT project management",
+      "Strategic IT planning",
+      "Quality assurance",
+      "ERP systems",
+      "Scripting and automation",
+      "Asset tracking",
+      "Helpdesk administration"
+    ],
+    "targetRoles": [
+      "IT Manager",
+      "IT Director",
+      "Network Manager",
+      "Infrastructure Manager",
+      "IT Operations Manager"
+    ]
+  },
+  "goodIds": [
+    4518961,
+    4198002,
+    3485757,
+    4965154,
+    3979271,
+    4962287,
+    3492175,
+    3937702,
+    4108479
+  ],
+  "notes": "Labels drafted by scripts/draft-labels.ts (sonnet, one call per candidate, temperature 0) over the 75-candidate pool: 9 good / 28 borderline / 38 bad. Pool-scoped: honest only within this pool (unlabeled != irrelevant)."
+}
