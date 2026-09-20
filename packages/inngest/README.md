@@ -176,7 +176,7 @@ A few impl-time calls landed leaner/safer than the plan's defaults — recorded 
 
 ## Local end-to-end (three terminals)
 
-```powershell
+```bash
 # Terminal A — the local Inngest dev server (no account, no keys):
 pnpm inngest:dev
 

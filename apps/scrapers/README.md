@@ -55,7 +55,7 @@ and the library it calls owns its own `source_runs` row (`startRun`/`finishRun`)
 
 ## Local development (no deploy)
 
-```powershell
+```bash
 pnpm --filter @opusfinder/scrapers types:generate   # emits worker-configuration.d.ts (run before typecheck)
 pnpm --filter @opusfinder/scrapers typecheck
 pnpm --filter @opusfinder/scrapers exec wrangler deploy --dry-run --outdir dist   # bundle-only gate
@@ -63,8 +63,8 @@ pnpm --filter @opusfinder/scrapers exec wrangler deploy --dry-run --outdir dist 
 # Run the scheduled handlers locally against real Neon (needs .dev.vars — see below):
 pnpm --filter @opusfinder/scrapers dev
 # In another terminal, trigger a cron via the canonical local endpoint (spaces -> + in the query):
-Invoke-WebRequest "http://localhost:8787/cdn-cgi/handler/scheduled?cron=0+*+*+*+*"   # ingestion (hourly)
-Invoke-WebRequest "http://localhost:8787/cdn-cgi/handler/scheduled?cron=0+3+*+*+SUN"    # discovery
+curl "http://localhost:8787/cdn-cgi/handler/scheduled?cron=0+*+*+*+*"   # ingestion (hourly)
+curl "http://localhost:8787/cdn-cgi/handler/scheduled?cron=0+3+*+*+SUN"    # discovery
 ```
 
 `wrangler dev`'s `fetch` calls hit real remote servers (Neon HTTP + the ATS APIs are real even in local
@@ -81,7 +81,7 @@ changes (it is committed so `typecheck` works without a generate step first).
 
 These require the Cloudflare account / real secrets / billing:
 
-```powershell
+```bash
 wrangler login
 wrangler kv namespace create INGEST_CURSOR   # then uncomment the `id` line in wrangler.toml + paste it
 wrangler secret put DATABASE_URL

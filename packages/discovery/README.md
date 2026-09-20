@@ -103,9 +103,9 @@ Algolia shipped in Phase F5 as the `hn` lane.)
 
 ## Tests
 
-All suites are co-located `*.test.ts` (Vitest `unit` project), run from the repo root (PowerShell):
+All suites are co-located `*.test.ts` (Vitest `unit` project), run from the repo root:
 
-```powershell
+```bash
 pnpm exec vitest run packages/discovery     # this package: selectLanes/resolveLanes, resolveUrl/resolveSeed,
                                             # probeFetch/probeCandidate(s), HostThrottle, parseHnThread (all offline)
 
