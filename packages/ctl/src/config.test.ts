@@ -96,6 +96,34 @@ describe("loadConfig", () => {
     expect(r.ok ? "" : r.error).not.toContain(SECRET);
   });
 
+  it("lets env vars override a corrupt file: a warning when they cover every field, an error otherwise", () => {
+    const broken = `{"clientSecret": "${SECRET}",`;
+    const env = {
+      OPUSFINDER_CTL_URL: "https://x.example.com",
+      OPUSFINDER_CTL_CLIENT_ID: "env.access",
+      OPUSFINDER_CTL_CLIENT_SECRET: "env-secret",
+    };
+    const all = loadConfig(deps({ files: { [DEFAULT_PATH]: broken }, env }));
+    expect(all.ok && all.config).toEqual({
+      url: "https://x.example.com",
+      clientId: "env.access",
+      clientSecret: "env-secret",
+    });
+    expect(all.ok && all.warnings.join("\n")).toMatch(
+      /not a JSON object .* ignored: every field came from the environment/,
+    );
+    expect(all.ok && all.warnings.join("\n")).not.toContain(SECRET);
+
+    const partial = loadConfig(
+      deps({
+        files: { [DEFAULT_PATH]: broken },
+        env: { OPUSFINDER_CTL_URL: "https://x.example.com" },
+      }),
+    );
+    expect(partial.ok).toBe(false);
+    expect(partial.ok ? "" : partial.error).toMatch(/not a JSON object/);
+  });
+
   it.each([
     ["plain http to a remote host", "http://opusfinder-control.example.workers.dev"],
     ["a query string", "https://x.example.com/?a=1"],

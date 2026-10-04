@@ -62,6 +62,8 @@ export function loadConfig(deps: ConfigDeps): ConfigResult {
   const path = configPath(deps);
   const warnings: string[] = [];
   let file: Partial<Record<keyof CtlConfig, unknown>> = {};
+  // Never echo the content: it holds the client secret.
+  let corrupt: string | null = null;
   const text = deps.readFile(path);
   if (text !== null) {
     try {
@@ -70,11 +72,7 @@ export function loadConfig(deps: ConfigDeps): ConfigResult {
         throw new Error("not an object");
       file = parsed as typeof file;
     } catch {
-      // Never echo the content: it holds the client secret.
-      return {
-        ok: false,
-        error: `${path} is not a JSON object (${text.length} bytes); expected {"url", "clientId", "clientSecret"}`,
-      };
+      corrupt = `${path} is not a JSON object (${text.length} bytes); expected {"url", "clientId", "clientSecret"}`;
     }
     const mode = deps.fileMode(path);
     if (mode !== null && (mode & 0o077) !== 0) {
@@ -92,6 +90,11 @@ export function loadConfig(deps: ConfigDeps): ConfigResult {
   };
 
   const missing = (["url", "clientId", "clientSecret"] as const).filter((k) => !pick(k));
+  // Env vars win per field, so a broken file only matters for the fields the env doesn't supply.
+  if (corrupt !== null) {
+    if (missing.length > 0) return { ok: false, error: corrupt };
+    warnings.push(`${corrupt} — ignored: every field came from the environment`);
+  }
   if (missing.length > 0) {
     const where = text === null ? `${path} (not found)` : path;
     return {
