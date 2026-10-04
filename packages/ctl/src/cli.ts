@@ -128,6 +128,9 @@ interface Proposal {
   status: string;
   proposer: string;
   expires_at: string;
+  /** Only on /v1/status's open proposals: the target moved since filing, so approve would refuse it. */
+  stale?: boolean;
+  current?: string | null;
 }
 
 const short = (iso: unknown) =>
@@ -142,7 +145,8 @@ function pad(rows: string[][]): string {
 }
 
 function proposalLine(p: Proposal): string {
-  return `#${p.id} ${p.target}: ${val(p.from_value)} → ${val(p.to_value)} by ${p.proposer} [${p.status}] (expires ${short(p.expires_at)}) — ${p.reason}`;
+  const stale = p.stale ? ` STALE (now ${val(p.current)}; re-propose)` : "";
+  return `#${p.id} ${p.target}: ${val(p.from_value)} → ${val(p.to_value)} by ${p.proposer} [${p.status}]${stale} (expires ${short(p.expires_at)}) — ${p.reason}`;
 }
 
 function formatStatus(s: Json): string {

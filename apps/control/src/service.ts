@@ -1,4 +1,5 @@
 import {
+  DIMENSIONS,
   INHERIT,
   PROPOSAL_TTL_MS,
   RUN_OUTCOMES,
@@ -16,6 +17,7 @@ import {
   type Classification,
   type DimKey,
   type GateView,
+  type StateMap,
   type Target,
 } from "@opusfinder/control";
 
@@ -27,8 +29,8 @@ import {
   fileProposal,
   getProposal,
   insertRun,
-  lastChange,
   listProposals,
+  readGate,
   readState,
   readStatus,
   type ChangeRow,
@@ -60,6 +62,8 @@ const RECENT_CHANGES = 30;
 const DETAIL_MAX = 500;
 /** A trip or a ledger write must not be lost to a concurrent change: re-read and retry this many times. */
 const TRIP_ATTEMPTS = 3;
+/** The longest run a ledger row may describe. Longer = a unit bug (e.g. seconds sent as ms·1000). */
+const MAX_RUN_DURATION_MS = 7 * 24 * 60 * 60 * 1000;
 
 function requireRole(caller: Caller, ...roles: Caller["role"][]): void {
   if (!roles.includes(caller.role)) {
@@ -67,8 +71,9 @@ function requireRole(caller: Caller, ...roles: Caller["role"][]): void {
   }
 }
 
-function field(body: unknown, name: string): unknown {
-  return typeof body === "object" && body !== null
+/** One field of a request body (undefined when the body isn't an object). Shared with index.ts. */
+export function field(body: unknown, name: string): unknown {
+  return typeof body === "object" && body !== null && !Array.isArray(body)
     ? (body as Record<string, unknown>)[name]
     : undefined;
 }
@@ -111,6 +116,14 @@ export type ProposalView = Omit<ProposalRow, "status"> & {
   proposer: string;
 };
 
+/** An open proposal as the status read shows it: plus whether approving it now would be refused. */
+export type OpenProposalView = ProposalView & {
+  /** The target's desired value right now (null = no override). */
+  current: string | null;
+  /** True when `current` is no longer the value the proposal was made from: approve will refuse it. */
+  stale: boolean;
+};
+
 function proposalView(row: ProposalRow, now: string): ProposalView {
   const expired = row.status === "open" && row.expires_at <= now;
   return {
@@ -130,6 +143,12 @@ function ledgerView(row: LedgerRow) {
   return { ...row, units };
 }
 
+/** The target's desired value now, or undefined when the address no longer parses (registry changed). */
+function currentValue(state: StateMap, address: string): string | null | undefined {
+  const t = parseTarget(address);
+  return t.ok ? desiredValue(state, t.value) : undefined;
+}
+
 export async function status(db: D1Database, caller: Caller, now: string) {
   const s = await readStatus(db, now, RECENT_CHANGES);
   const views = stateViews(s.state);
@@ -140,7 +159,15 @@ export async function status(db: D1Database, caller: Caller, now: string) {
     global: views.global,
     stages: views.stages.map((v) => ({ ...v, lastRun: lastRun.get(v.id) ?? null })),
     policies: views.policies,
-    openProposals: s.proposals.map((p) => proposalView(p, now)),
+    openProposals: s.proposals.map((p): OpenProposalView => {
+      const current = currentValue(s.state, p.target);
+      return {
+        ...proposalView(p, now),
+        current: current ?? null,
+        stale: current === undefined || current !== p.from_value,
+      };
+    }),
+    closedProposals: s.closedProposals.map((p) => proposalView(p, now)),
     recentChanges: s.changes,
   };
 }
@@ -154,7 +181,8 @@ export interface GateAnswer extends GateView {
   because: string | null;
 }
 
-const DIM_PARAMS: readonly DimKey[] = ["source", "lane"];
+// Every dimension the registry declares is a gate parameter: adding one to DIMENSIONS is enough.
+const DIM_PARAMS = Object.keys(DIMENSIONS) as DimKey[];
 
 export async function gate(
   db: D1Database,
@@ -167,7 +195,7 @@ export async function gate(
     const v = dims[d];
     if (typeof v === "string" && v.length > 0) narrowed[d] = v;
   }
-  const [state, last] = await Promise.all([readState(db), lastChange(db, stage)]);
+  const { state, last } = await readGate(db, stage);
   return {
     ...gateView(state, stage, narrowed),
     since: last?.at ?? null,
@@ -328,7 +356,14 @@ async function openProposal(db: D1Database, id: number, now: string): Promise<Pr
   return { ...view, status: "open" };
 }
 
-/** Owner approval: apply the proposed change and close the proposal in ONE batch (store.applyChange). */
+/**
+ * Owner approval: apply the proposed change and close the proposal in ONE batch (store.applyChange).
+ *
+ * Refused as STALE when the target has moved off the value the proposal was made from — the owner would
+ * be approving "off → on" against a store that now says "shadow" (or already says "on"). The proposal is
+ * closed as 'stale' with the reason, nothing is applied or logged as a change, and the proposer can file
+ * a fresh one against the current value.
+ */
 export async function approve(
   db: D1Database,
   caller: Caller,
@@ -359,16 +394,20 @@ export async function approve(
   const expected = state.get(p.target) ?? null;
   const from = desiredValue(state, t.value);
   const decidedBy = actorLabel(caller);
-  if (v.value === expected || (expected === null && v.value === from)) {
-    // Already in effect (someone set it meanwhile): close the proposal, nothing to log as a change.
-    if (!(await closeProposal(db, id, "approved", decidedBy, note ?? "already in effect", now))) {
+  if (from !== p.from_value || v.value === from) {
+    const why =
+      `stale: ${p.target} is now ${from ?? INHERIT}, proposed from ${p.from_value ?? INHERIT}; ` +
+      `nothing applied`;
+    if (!(await closeProposal(db, id, "stale", decidedBy, why, now))) {
       throw new ApiError(
         409,
         "conflict",
         `proposal #${id} changed while approving; re-read and retry`,
       );
     }
-    return { result: "noop" as const, proposal: await proposal(db, id, now) };
+    throw new ApiError(409, "stale_proposal", `proposal #${id} is ${why}`, {
+      proposal: await proposal(db, id, now),
+    });
   }
   const res = await applyChange(db, {
     target: p.target,
@@ -448,8 +487,10 @@ function isoTime(raw: unknown, name: string, required: boolean): string | null {
     if (required) throw new ApiError(400, "invalid_run", `${name} is required (ISO-8601)`);
     return null;
   }
-  const ms = typeof raw === "string" ? Date.parse(raw) : Number.NaN;
-  if (!Number.isFinite(ms))
+  const ms = typeof raw === "string" && raw.length <= 40 ? Date.parse(raw) : Number.NaN;
+  // Years 2000–9999: Date#toISOString() of anything outside a 4-digit year isn't the sortable shape
+  // every other timestamp in the store has.
+  if (!Number.isFinite(ms) || ms < Date.UTC(2000, 0, 1) || ms >= Date.UTC(10000, 0, 1))
     throw new ApiError(400, "invalid_run", `${name} must be an ISO-8601 time`);
   return new Date(ms).toISOString();
 }
@@ -473,9 +514,21 @@ export async function recordRun(db: D1Database, caller: Caller, body: unknown, n
       `gateMode must be one of: ${stageDef(stage).modes.join(", ")}`,
     );
   }
+  // Bounded so a unit bug is a 400 the runtime sees, never a 500 from the INTEGER column.
   const durationRaw = field(body, "durationMs") ?? null;
-  if (durationRaw !== null && !(Number.isInteger(durationRaw) && (durationRaw as number) >= 0)) {
-    throw new ApiError(400, "invalid_run", "durationMs must be a non-negative integer");
+  if (
+    durationRaw !== null &&
+    !(
+      Number.isInteger(durationRaw) &&
+      (durationRaw as number) >= 0 &&
+      (durationRaw as number) <= MAX_RUN_DURATION_MS
+    )
+  ) {
+    throw new ApiError(
+      400,
+      "invalid_run",
+      `durationMs must be a whole number from 0 to ${MAX_RUN_DURATION_MS} (7 days)`,
+    );
   }
   const unitsRaw = field(body, "units") ?? {};
   if (typeof unitsRaw !== "object" || unitsRaw === null || Array.isArray(unitsRaw)) {
@@ -491,15 +544,24 @@ export async function recordRun(db: D1Database, caller: Caller, body: unknown, n
         `${stage} doesn't record "${unit}" (records: ${allowed.join(", ")})`,
       );
     }
-    if (typeof n !== "number" || !Number.isFinite(n) || n < 0) {
-      throw new ApiError(400, "invalid_run", `units.${unit} must be a non-negative number`);
+    if (typeof n !== "number" || !Number.isFinite(n) || n < 0 || n > Number.MAX_SAFE_INTEGER) {
+      throw new ApiError(
+        400,
+        "invalid_run",
+        `units.${unit} must be a number from 0 to ${Number.MAX_SAFE_INTEGER}`,
+      );
     }
     units[unit] = n;
   }
+  const startedAt = isoTime(field(body, "startedAt"), "startedAt", true) as string;
+  const finishedAt = isoTime(field(body, "finishedAt"), "finishedAt", false);
+  if (finishedAt !== null && finishedAt < startedAt) {
+    throw new ApiError(400, "invalid_run", "finishedAt is before startedAt");
+  }
   const id = await insertRun(db, {
     stage,
-    startedAt: isoTime(field(body, "startedAt"), "startedAt", true) as string,
-    finishedAt: isoTime(field(body, "finishedAt"), "finishedAt", false),
+    startedAt,
+    finishedAt,
     durationMs: durationRaw as number | null,
     outcome,
     gateMode: gateMode as string | null,

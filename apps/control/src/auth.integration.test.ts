@@ -198,6 +198,55 @@ describe("token verification: forged or stale tokens are refused (401)", () => {
   });
 });
 
+describe("Access key endpoint outages (the faked JWKS answers 503)", () => {
+  // Time-dependent paths (TTL expiry → stale-while-error, backoff growth, maxStale) are unit-tested in
+  // key-cache.test.ts with an injected clock; workerd's clock can't be faked. These are the paths that need
+  // no time to pass, end to end through the real Worker.
+
+  it("keeps admitting valid tokens from cached keys while the endpoint is down", async () => {
+    expect((await h.request("/v1/status", { as: "owner" })).status).toBe(200); // keys cached
+    h.setJwksFailing(true);
+    try {
+      for (let i = 0; i < 5; i++) {
+        expect((await h.request("/v1/status", { as: "owner" })).status).toBe(200);
+      }
+    } finally {
+      h.setJwksFailing(false);
+    }
+  });
+
+  it("rate-limits unknown-kid refetches even while every refetch fails", async () => {
+    h.setJwksFailing(true);
+    try {
+      const before = h.jwksFetches();
+      for (let i = 0; i < 8; i++) {
+        const token = await h.keys.sign(AccessKeys.humanClaims(OWNER_EMAIL), { kid: `down-${i}` });
+        expect((await h.request("/v1/status", { as: { token } })).status).toBe(401);
+      }
+      expect(h.jwksFetches() - before).toBeLessThanOrEqual(1);
+      // …and the known key still works throughout.
+      expect((await h.request("/v1/status", { as: "owner" })).status).toBe(200);
+    } finally {
+      h.setJwksFailing(false);
+    }
+  });
+
+  it("fails closed on a cold start, then backs off instead of fetching on every request", async () => {
+    const cold = await startControl();
+    try {
+      cold.setJwksFailing(true);
+      for (let i = 0; i < 6; i++) {
+        const res = await cold.request("/v1/status", { as: "owner" });
+        expect(res.status).toBe(503);
+        expect(await errorCode(res)).toBe("auth_unavailable");
+      }
+      expect(cold.jwksFetches()).toBe(1);
+    } finally {
+      await cold.dispose();
+    }
+  }, 60_000);
+});
+
 describe("route permissions by role (default deny per route)", () => {
   it.each<[string, "owner" | "agent" | "runtime", string, unknown]>([
     ["agent can't approve", "agent", "/v1/proposals/1/approve", {}],

@@ -3,11 +3,13 @@ import { WorkerEntrypoint } from "cloudflare:workers";
 import type { Role } from "@opusfinder/control";
 
 import { identify, type Caller } from "./auth";
+import { AUDIT_NAME_RE } from "./auth-config";
 import type { Env } from "./env";
 import { renderError, renderPage } from "./page";
 import {
   ApiError,
   approve,
+  field,
   gate,
   proposal,
   proposalNote,
@@ -74,25 +76,82 @@ function errorJson(err: ApiError): Response {
   return json({ error: { code: err.code, message: err.message }, ...err.extra }, err.status);
 }
 
+const tooLarge = () => new ApiError(413, "too_large", `body over ${MAX_BODY_BYTES} bytes`);
+
+/**
+ * Read a body with a hard cap in BYTES (not UTF-16 code units): refuse up front when Content-Length
+ * declares more, and count bytes while streaming, so an undeclared or chunked body can't get past it
+ * either — nothing over the cap is ever buffered. No body reads as "".
+ */
 async function readBody(request: Request): Promise<string> {
-  const text = await request.text();
-  if (text.length > MAX_BODY_BYTES)
-    throw new ApiError(413, "too_large", `body over ${MAX_BODY_BYTES} bytes`);
-  return text;
+  const declared = request.headers.get("content-length");
+  if (declared !== null && Number(declared) > MAX_BODY_BYTES) throw tooLarge();
+  if (!request.body) return "";
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > MAX_BODY_BYTES) {
+      await reader.cancel();
+      throw tooLarge();
+    }
+    chunks.push(value);
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(bytes);
 }
 
-/** JSON bodies only: a cross-site HTML form can't send application/json without a CORS preflight, and
- *  this Worker answers no preflight — so the JSON API can't be driven by another site's form. */
-async function jsonBody(request: Request): Promise<unknown> {
-  const type = request.headers.get("content-type") ?? "";
-  if (!type.toLowerCase().startsWith("application/json")) {
+/**
+ * The JSON API's body. Optional (approve/reject/withdraw need none; an empty body reads as {}), but a
+ * body that IS sent must be declared application/json — a cross-site HTML form can't send that without a
+ * CORS preflight, which this Worker never answers — and must be a JSON object, never null/array/scalar.
+ */
+async function jsonBody(request: Request): Promise<Record<string, unknown>> {
+  // A declared non-JSON type is refused even with no body: every HTML form declares one, so this keeps
+  // form-shaped requests out on top of the cross-site check.
+  const type = request.headers.get("content-type");
+  if (type !== null && !type.toLowerCase().startsWith("application/json")) {
     throw new ApiError(415, "unsupported_media_type", "send the body as application/json");
   }
   const text = await readBody(request);
+  if (text.length === 0) return {};
+  if (type === null) {
+    throw new ApiError(415, "unsupported_media_type", "send the body as application/json");
+  }
+  let parsed: unknown;
   try {
-    return text.length === 0 ? {} : JSON.parse(text);
+    parsed = JSON.parse(text);
   } catch {
     throw new ApiError(400, "invalid_json", "body is not valid JSON");
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw new ApiError(400, "invalid_body", "body must be a JSON object");
+  }
+  return parsed as Record<string, unknown>;
+}
+
+/**
+ * CSRF guard for every state-changing request. Browsers mark a cross-site request (Origin, and
+ * Sec-Fetch-Site); the CLI and runtimes send neither. Body-less POSTs (approve/reject/withdraw) have no
+ * content type to check, so THIS — not the JSON rule — is what stops another site from driving them with
+ * the owner's Access cookie.
+ */
+function assertNotCrossSite(request: Request, url: URL): void {
+  const origin = request.headers.get("origin");
+  const site = request.headers.get("sec-fetch-site");
+  if (
+    (origin !== null && origin !== url.origin) ||
+    (site !== null && site !== "same-origin" && site !== "none")
+  ) {
+    throw new ApiError(403, "cross_origin", "cross-site requests can't change anything here");
   }
 }
 
@@ -171,9 +230,20 @@ const ROUTES: readonly Route[] = [
       const form = await formBody(request, url);
       const id = proposalId(params[0] ?? "");
       const note = proposalNote(form.get("note"));
-      if (params[1] === "approve") await approve(env.DB, caller, id, note, "panel", now);
-      else await reject(env.DB, caller, id, note, now);
-      return redirect(`/?done=${params[1] === "approve" ? "approved" : "rejected"}`);
+      if (params[1] === "reject") {
+        await reject(env.DB, caller, id, note, now);
+        return redirect("/?done=rejected");
+      }
+      try {
+        await approve(env.DB, caller, id, note, "panel", now);
+      } catch (err) {
+        // Not an error from the owner's point of view: the page says the proposal went stale and why
+        // (it is now listed under recently closed), nothing was applied.
+        if (err instanceof ApiError && err.code === "stale_proposal")
+          return redirect("/?done=stale");
+        throw err;
+      }
+      return redirect("/?done=approved");
     },
   },
   {
@@ -232,8 +302,7 @@ const ROUTES: readonly Route[] = [
     pattern: /^\/v1\/proposals\/(\d+)\/approve$/,
     roles: ["owner"],
     handler: async ({ request, env, caller, params, now }) => {
-      const body = await jsonBody(request);
-      const note = proposalNote((body as { note?: unknown }).note);
+      const note = proposalNote(field(await jsonBody(request), "note"));
       return json(
         await approve(env.DB, caller, proposalId(params[0] ?? ""), note, apiChannel(request), now),
       );
@@ -244,8 +313,7 @@ const ROUTES: readonly Route[] = [
     pattern: /^\/v1\/proposals\/(\d+)\/reject$/,
     roles: ["owner"],
     handler: async ({ request, env, caller, params, now }) => {
-      const body = await jsonBody(request);
-      const note = proposalNote((body as { note?: unknown }).note);
+      const note = proposalNote(field(await jsonBody(request), "note"));
       return json({
         proposal: await reject(env.DB, caller, proposalId(params[0] ?? ""), note, now),
       });
@@ -310,6 +378,7 @@ async function handle(request: Request, env: Env): Promise<Response> {
   }
 
   try {
+    if (request.method !== "GET") assertNotCrossSite(request, url);
     return await route.handler({
       request,
       env,
@@ -343,8 +412,6 @@ interface BindingProps {
   name?: unknown;
 }
 
-const LABEL_RE = /^[A-Za-z0-9._:-]{1,64}$/;
-
 /**
  * The runtime RPC surface for Workers in this account (the scrapers Worker, via a service binding, in a
  * later slice). Same rules as the HTTP routes with role "runtime": read a gate, write a ledger row, trip a
@@ -356,7 +423,7 @@ export class ControlRpc extends WorkerEntrypoint<Env, BindingProps> {
     const name = this.ctx.props?.name;
     return {
       role: "runtime",
-      name: typeof name === "string" && LABEL_RE.test(name) ? name : "service-binding",
+      name: typeof name === "string" && AUDIT_NAME_RE.test(name) ? name : "service-binding",
     };
   }
 

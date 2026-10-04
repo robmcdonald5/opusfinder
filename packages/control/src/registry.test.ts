@@ -7,7 +7,6 @@ import {
   PROPOSAL_TTL_MS,
   STAGE_IDS,
   globalSwitch,
-  policies,
   policyDef,
   stageDef,
   stages,
@@ -121,26 +120,48 @@ describe("registry: knobs", () => {
   });
 
   it("declares ingest.concurrency as the owner specified (default 1, min 1, riskier up, legacy env)", () => {
-    expect(stages.ingest.knobs.concurrency).toEqual({
+    // max is deliberately NOT pinned here: it mirrors the scrapers Worker's MAX_INGEST_CONCURRENCY clamp
+    // (branch perf/ingest-concurrency), and a sync test against that constant replaces a copied number
+    // once this branch rebases onto it.
+    const { max, ...rest } = stages.ingest.knobs.concurrency;
+    expect(rest).toEqual({
       label: expect.any(String),
       default: 1,
       min: 1,
-      max: 6, // mirrors MAX_INGEST_CONCURRENCY on branch perf/ingest-concurrency
       riskier: "up",
       int: true,
       legacyEnv: "INGEST_CONCURRENCY",
     });
+    expect(max).toBeGreaterThanOrEqual(1);
   });
 
-  it("a shorter stale-sweep TTL is the risky side (it closes more)", () => {
-    expect(policies.stale_sweep.knobs.ttlDays.riskier).toBe("down");
+  it("pins every knob's risky side (a flip changes what an agent may do alone)", () => {
+    expect(
+      Object.fromEntries(allKnobs().map(([address, knob]) => [address, knob.riskier])),
+    ).toEqual({
+      "ingest.boardsPerTick": "up", // more boards per tick: more Neon time and subrequests
+      "ingest.concurrency": "up", // more parallel lanes: more load per tick
+      "discover.limit": "up", // more seed slugs probed: more subrequests and Neon writes
+      "discover.reprobeLimit": "up", // more re-probes: same
+      "embed.pagesPerRun": "up", // more pages: more Voyage tokens
+      "embed.tokensPerRun": "up", // a higher token cap: more Voyage spend
+      "alerts.cooldownH": "down", // a SHORTER cooldown re-pages sooner: more emails
+      "digest.topK": "up", // more jobs per digest: more rerank tokens
+      "digest.maxRecipientsPerRun": "up", // more recipients: more LLM + email spend
+      "stale_sweep.ttlDays": "down", // a SHORTER TTL closes more jobs
+      "health.ingestion_staleness.threshold": "up", // looser: an outage goes unnoticed longer
+      "health.board_fail_ratio.threshold": "up", // looser: same
+      "health.discovery_window.threshold": "up", // looser: same
+      "health.embedding_backlog.threshold": "up", // looser: same
+    });
   });
 });
 
 describe("registry: agent rules", () => {
-  it("marks exactly the 7 health checks as 'approval' (owner decision 2026-10-04)", () => {
-    const approval = POLICY_IDS.filter((id) => policyDef(id).agent === "approval");
-    expect(approval).toEqual([
+  it("marks exactly global, the alerts stage and the 7 health checks as 'approval' (owner decisions)", () => {
+    expect(globalSwitch.agent).toBe("approval");
+    expect(STAGE_IDS.filter((id) => stageDef(id).agent === "approval")).toEqual(["alerts"]);
+    expect(POLICY_IDS.filter((id) => policyDef(id).agent === "approval")).toEqual([
       "health.ingestion_staleness",
       "health.board_fail_ratio",
       "health.discovery_window",
@@ -149,9 +170,13 @@ describe("registry: agent rules", () => {
       "health.digest_health",
       "health.bounce_suppression",
     ]);
-    for (const id of STAGE_IDS)
-      expect(stageDef(id).agent ?? "safe-direction").toBe("safe-direction");
-    expect(globalSwitch.agent).toBe("safe-direction");
+    // Every other entry an agent may stop on its own: each single spending stage, close, stale_sweep.
+    for (const id of STAGE_IDS.filter((s) => s !== "alerts")) {
+      expect(stageDef(id).agent ?? "safe-direction", id).toBe("safe-direction");
+    }
+    for (const id of ["close", "stale_sweep"] as const) {
+      expect(policyDef(id).agent ?? "safe-direction", id).toBe("safe-direction");
+    }
   });
 
   it("health checks watch a real stage and are read by the alerts stage", () => {

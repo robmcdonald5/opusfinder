@@ -1,7 +1,15 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
-import { POLICY_IDS, STAGE_IDS, globalSwitch, policyDef, stageDef } from "@opusfinder/control";
-import { startControl, type ControlHarness } from "@test/control/harness";
+import {
+  DIMENSIONS,
+  POLICY_IDS,
+  STAGE_IDS,
+  globalSwitch,
+  policyDef,
+  stageDef,
+  type DimKey,
+} from "@opusfinder/control";
+import { ORIGIN, startControl, type ControlHarness } from "@test/control/harness";
 
 // The JSON API against a real local D1: seed = registry, classify() enforced per role, the approval queue,
 // the ledger, trips — and the C3 invariant that a state change and its change_log row land together or
@@ -200,11 +208,52 @@ describe("POST /v1/changes", () => {
     expect(await lastLog()).toMatchObject({ from_value: "off", to_value: null });
   });
 
-  it("caps everything at off when an agent flips the master switch off", async () => {
-    expect((await change("agent", "global", "off")).status).toBe(200);
+  it("needs the owner to flip the master switch — off as well as on", async () => {
+    for (const value of ["off", "on"]) {
+      if (value === "on") await change("owner", "global", "off");
+      const res = await change("agent", "global", value);
+      expect(res.status, value).toBe(403);
+      expect((await body(res)).error.code).toBe("needs_approval");
+    }
+  });
+
+  it("caps everything at off when the owner flips the master switch off", async () => {
+    expect((await change("owner", "global", "off")).status).toBe(200);
     const gate = await body(await h.request("/v1/gate/ingest", { as: "runtime" }));
     expect(gate).toMatchObject({ mode: "off", desired: "on", cappedBy: "global" });
-    expect((await change("agent", "global", "on")).status).toBe(403);
+  });
+
+  it("won't let an agent silence alerting: alerts off and its cooldown need approval", async () => {
+    await change("owner", "alerts", "on");
+    const before = await changeCount();
+    for (const [target, value] of [
+      ["alerts", "off"],
+      ["alerts.cooldownH", "168"],
+      ["alerts.cooldownH", "1"],
+    ] as const) {
+      const res = await change("agent", target, value);
+      expect(res.status, `${target} ${value}`).toBe(403);
+      expect((await body(res)).error.code).toBe("needs_approval");
+    }
+    expect(await stateValue("alerts")).toBe("on");
+    expect(await changeCount()).toBe(before);
+  });
+
+  it("still lets an agent stop any single spending stage on its own", async () => {
+    for (const stage of ["ingest", "discover", "cv_ingest"]) {
+      expect((await change("agent", stage, "off")).status, stage).toBe(200);
+    }
+  });
+
+  it("treats setting an override at the inherited mode as a true no-op: no row, no log", async () => {
+    const before = await changeCount();
+    const res = await change("agent", "ingest@source=gem", "on");
+    expect(await body(res)).toEqual({ result: "noop", target: "ingest@source=gem", value: null });
+    expect(await stateValue("ingest@source=gem")).toBeNull();
+    expect(await changeCount()).toBe(before);
+    // The owner's request is the same no-op.
+    expect((await body(await change("owner", "ingest@source=gem", "on"))).result).toBe("noop");
+    expect(await changeCount()).toBe(before);
   });
 
   it("treats re-setting the current value as a no-op (no log row)", async () => {
@@ -266,12 +315,17 @@ describe("POST /v1/changes", () => {
   });
 
   it("only accepts JSON bodies (no cross-site form can drive the API)", async () => {
-    const form = await h.request("/v1/changes", {
-      as: "owner",
-      method: "POST",
-      headers: { "content-type": "application/x-www-form-urlencoded" },
-    });
-    expect(form.status).toBe(415);
+    for (const body of [undefined, "target=embed&value=on&reason=x"]) {
+      const form = await h.request("/v1/changes", {
+        as: "owner",
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body,
+      });
+      expect(form.status).toBe(415);
+    }
+    const untyped = await h.request("/v1/changes", { as: "owner", method: "POST", body: "{}" });
+    expect(untyped.status).toBe(415);
     const broken = await h.request("/v1/changes", {
       as: "owner",
       headers: { "content-type": "application/json" },
@@ -285,6 +339,95 @@ describe("POST /v1/changes", () => {
       body: JSON.stringify({ target: "ingest", value: "off", reason: "x".repeat(20_000) }),
     });
     expect(huge.status).toBe(413);
+  });
+
+  it("measures the 16 KB limit in bytes, not characters", async () => {
+    // 6,000 three-byte characters: 6,000 code units (under 16,384) but 18,000 bytes (over it).
+    const res = await h.request("/v1/changes", {
+      as: "owner",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ target: "ingest", value: "off", reason: "€".repeat(6000) }),
+    });
+    expect(res.status).toBe(413);
+  });
+
+  it("caps an undeclared (chunked) body while streaming it", async () => {
+    // No Content-Length: the up-front check can't fire, so only the running byte count stops it.
+    const chunk = new TextEncoder().encode(`"${"x".repeat(4000)}",`);
+    let sent = 0;
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (sent++ < 10) controller.enqueue(chunk);
+        else controller.close();
+      },
+    });
+    const res = await h.mf.dispatchFetch(`${ORIGIN}/v1/changes`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "cf-access-jwt-assertion": await h.token("owner"),
+      },
+      body: stream,
+      duplex: "half",
+    } as never);
+    expect(res.status).toBe(413);
+  });
+
+  it.each([
+    ["null", "null"],
+    ["an array", "[1, 2]"],
+    ["a string", '"approve"'],
+    ["a number", "42"],
+  ])("rejects a JSON body that is %s with 400 invalid_body", async (_label, raw) => {
+    for (const path of ["/v1/changes", "/v1/proposals/1/approve", "/v1/proposals/1/reject"]) {
+      const res = await h.request(path, {
+        as: "owner",
+        headers: { "content-type": "application/json" },
+        body: raw,
+      });
+      expect(res.status, path).toBe(400);
+      expect((await body(res)).error.code).toBe("invalid_body");
+    }
+  });
+
+  it.each([
+    ["a foreign Origin", { origin: "https://evil.example" }],
+    ["Sec-Fetch-Site: cross-site", { "sec-fetch-site": "cross-site" }],
+    ["Sec-Fetch-Site: same-site", { "sec-fetch-site": "same-site" }],
+  ])("refuses a state change marked %s (CSRF), even with no body", async (_label, headers) => {
+    const p = (
+      await body(
+        await h.request("/v1/proposals", {
+          as: "agent",
+          json: { target: "embed", value: "on", reason: "x" },
+        }),
+      )
+    ).proposal;
+    const res = await h.request(`/v1/proposals/${p.id}/approve`, {
+      as: "owner",
+      method: "POST",
+      headers,
+    });
+    expect(res.status).toBe(403);
+    expect((await body(res)).error.code).toBe("cross_origin");
+    expect(await stateValue("embed")).toBe("off");
+  });
+});
+
+describe("gate dimensions", () => {
+  it("honours every dimension the registry declares as a query parameter", async () => {
+    const dims = Object.keys(DIMENSIONS) as DimKey[];
+    expect(dims.length).toBeGreaterThan(0);
+    for (const dim of dims) {
+      const stage = STAGE_IDS.find((id) => (stageDef(id).dims ?? []).includes(dim));
+      const value = DIMENSIONS[dim][0];
+      if (!stage || !value) throw new Error(`no stage is narrowed by ${dim}`);
+      await change("owner", `${stage}@${dim}=${value}`, "off");
+      const gate = await body(
+        await h.request(`/v1/gate/${stage}?${dim}=${encodeURIComponent(value)}`, { as: "runtime" }),
+      );
+      expect(gate, dim).toMatchObject({ mode: "off", cappedBy: `${dim}=${value}` });
+    }
   });
 });
 
@@ -378,16 +521,63 @@ describe("the approval queue", () => {
     expect(await stateValue("embed")).toBe("off");
   });
 
-  it("closes as a no-op when the target already holds the value at approval time", async () => {
+  it("refuses a STALE proposal (target moved since filing): 409, closed as stale, nothing applied", async () => {
+    const p = await fileProposal("embed", "on");
+    await change("owner", "embed", "shadow");
+    const before = await changeCount();
+    const res = await h.request(`/v1/proposals/${p.id}/approve`, { as: "owner", json: {} });
+    expect(res.status).toBe(409);
+    const b = await body(res);
+    expect(b.error.code).toBe("stale_proposal");
+    expect(b.proposal).toMatchObject({ id: p.id, status: "stale" });
+    expect(b.proposal.decision_note).toMatch(
+      /embed is now shadow, proposed from off; nothing applied/,
+    );
+    expect(await stateValue("embed")).toBe("shadow");
+    expect(await changeCount()).toBe(before);
+    // It is closed: a second approve is not_open, and status lists it as stale, not open.
+    expect(
+      (await h.request(`/v1/proposals/${p.id}/approve`, { as: "owner", method: "POST" })).status,
+    ).toBe(409);
+    const s = await body(await h.request("/v1/status", { as: "agent" }));
+    expect(s.openProposals).toEqual([]);
+    expect(s.closedProposals[0]).toMatchObject({ id: p.id, status: "stale" });
+  });
+
+  it("flags an open proposal as stale in /v1/status before anyone tries to approve it", async () => {
+    const p = await fileProposal("embed", "on");
+    let s = await body(await h.request("/v1/status", { as: "agent" }));
+    expect(s.openProposals[0]).toMatchObject({ id: p.id, stale: false, current: "off" });
+    await change("owner", "embed", "shadow");
+    s = await body(await h.request("/v1/status", { as: "agent" }));
+    expect(s.openProposals[0]).toMatchObject({ id: p.id, stale: true, current: "shadow" });
+  });
+
+  it("files a fresh proposal once the old one's starting value no longer holds", async () => {
+    const old = await fileProposal("embed", "on");
+    await change("owner", "embed", "shadow");
+    const fresh = await fileProposal("embed", "on");
+    expect(fresh.id).not.toBe(old.id);
+    expect(fresh).toMatchObject({ from_value: "shadow", to_value: "on" });
+    // Body-less, no content type — what the page's API callers and `curl -X POST` send.
+    const res = await h.request(`/v1/proposals/${fresh.id}/approve`, {
+      as: "owner",
+      method: "POST",
+    });
+    expect(res.status).toBe(200);
+    expect(await stateValue("embed")).toBe("on");
+  });
+
+  it("treats a target that already holds the proposed value as stale too (nothing left to approve)", async () => {
     const p = await fileProposal();
     await change("owner", "embed", "on");
     const before = await changeCount();
-    const res = await body(
-      await h.request(`/v1/proposals/${p.id}/approve`, { as: "owner", json: {} }),
-    );
+    const raw = await h.request(`/v1/proposals/${p.id}/approve`, { as: "owner", json: {} });
+    expect(raw.status).toBe(409);
+    const res = await body(raw);
     expect(res).toMatchObject({
-      result: "noop",
-      proposal: { status: "approved", decision_note: "already in effect" },
+      error: { code: "stale_proposal" },
+      proposal: { status: "stale", decision_note: expect.stringMatching(/embed is now on/) },
     });
     expect(await changeCount()).toBe(before);
   });
@@ -467,8 +657,54 @@ describe("runtime: ledger + trip", () => {
       "a gate mode the stage lacks",
       { stage: "ingest", outcome: "ok", startedAt: "2026-10-04T10:00:00Z", gateMode: "shadow" },
     ],
-  ])("rejects %s", async (_label, json) => {
-    expect((await run(json)).status).toBe(400);
+    // Out-of-range numbers: each must be a 400 the runtime sees, never a D1 500.
+    [
+      "a duration over 7 days",
+      {
+        stage: "ingest",
+        outcome: "ok",
+        startedAt: "2026-10-04T10:00:00Z",
+        durationMs: 7 * 86_400_000 + 1,
+      },
+    ],
+    [
+      "an astronomically large duration",
+      { stage: "ingest", outcome: "ok", startedAt: "2026-10-04T10:00:00Z", durationMs: 1e300 },
+    ],
+    [
+      "a unit above MAX_SAFE_INTEGER",
+      {
+        stage: "ingest",
+        outcome: "ok",
+        startedAt: "2026-10-04T10:00:00Z",
+        units: { "cf.wall_ms": 2 ** 60 },
+      },
+    ],
+    ["a year-0 start time", { stage: "ingest", outcome: "ok", startedAt: "0000-01-01T00:00:00Z" }],
+    [
+      "a finish before the start",
+      {
+        stage: "ingest",
+        outcome: "ok",
+        startedAt: "2026-10-04T10:00:00Z",
+        finishedAt: "2026-10-04T09:00:00Z",
+      },
+    ],
+  ])("rejects %s with 400 invalid_run", async (_label, json) => {
+    const res = await run(json);
+    expect(res.status).toBe(400);
+    expect((await body(res)).error.code).toBe("invalid_run");
+  });
+
+  it("accepts the largest bounded values", async () => {
+    const res = await run({
+      stage: "ingest",
+      outcome: "ok",
+      startedAt: "2026-10-04T10:00:00Z",
+      durationMs: 7 * 86_400_000,
+      units: { "cf.wall_ms": Number.MAX_SAFE_INTEGER },
+    });
+    expect(res.status).toBe(201);
   });
 
   it("trips a stage off with a logged reason, and a second trip is a no-op", async () => {

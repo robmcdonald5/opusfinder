@@ -1,6 +1,8 @@
 import type { Role } from "@opusfinder/control";
 
+import { authConfig, type AuthConfig } from "./auth-config";
 import type { Env } from "./env";
+import { KeyCache, KeysUnavailableError } from "./key-cache";
 
 /**
  * Caller identity = role (§11.1: the credential IS the role). Every HTTP request is identified ONLY from a
@@ -33,93 +35,19 @@ export type AuthResult =
   | { ok: true; caller: Caller }
   | { ok: false; status: 401 | 403 | 503; code: string; message: string };
 
-interface ServiceToken {
-  role: "agent" | "runtime";
-  name: string;
-}
-
-interface AuthConfig {
-  teamDomain: string;
-  aud: string;
-  owners: ReadonlySet<string>;
-  tokens: ReadonlyMap<string, ServiceToken>;
-}
-
-// The issuer AND the JWKS host. Pinned to Access's own domain so a typo'd or hostile secret can't point
-// key discovery at someone else's server.
-const TEAM_DOMAIN_RE = /^https:\/\/[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.cloudflareaccess\.com$/;
-const NAME_RE = /^[A-Za-z0-9._:-]{1,64}$/;
 const CLOCK_SKEW_S = 60;
 const MAX_TOKEN_LENGTH = 8192;
 
-export function normalizeTeamDomain(raw: string | undefined): string | null {
-  if (!raw) return null;
-  let domain = raw.trim().toLowerCase().replace(/\/+$/, "");
-  if (!domain.startsWith("https://")) domain = `https://${domain}`;
-  return TEAM_DOMAIN_RE.test(domain) ? domain : null;
-}
-
-function parseServiceTokens(raw: string | undefined): Map<string, ServiceToken> {
-  const out = new Map<string, ServiceToken>();
-  if (!raw) return out;
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    // Shape only — the value holds client ids (see secrets-not-in-errors-or-logs).
-    console.error(
-      `SERVICE_TOKENS is not valid JSON (length ${raw.length}); no service token is accepted`,
-    );
-    return out;
-  }
-  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-    console.error("SERVICE_TOKENS must be a JSON object; no service token is accepted");
-    return out;
-  }
-  let skipped = 0;
-  for (const [clientId, value] of Object.entries(parsed)) {
-    const v = value as Partial<ServiceToken> | null;
-    const ok =
-      clientId.length > 0 &&
-      typeof v === "object" &&
-      v !== null &&
-      (v.role === "agent" || v.role === "runtime") &&
-      typeof v.name === "string" &&
-      NAME_RE.test(v.name);
-    if (ok) out.set(clientId, { role: v.role as ServiceToken["role"], name: v.name as string });
-    else skipped++;
-  }
-  if (skipped > 0) console.error(`SERVICE_TOKENS: ignored ${skipped} malformed entr(y/ies)`);
-  return out;
-}
-
-function authConfig(env: Env): AuthConfig | null {
-  const teamDomain = normalizeTeamDomain(env.ACCESS_TEAM_DOMAIN);
-  const aud = env.ACCESS_AUD?.trim();
-  if (!teamDomain || !aud) return null;
-  const owners = new Set(
-    (env.OWNER_EMAILS ?? "")
-      .split(",")
-      .map((e) => e.trim().toLowerCase())
-      .filter((e) => e.length > 0),
-  );
-  return { teamDomain, aud, owners, tokens: parseServiceTokens(env.SERVICE_TOKENS) };
-}
-
 // ---- JWKS (Access signing keys rotate every ~6 weeks; the old key stays valid 7 days) ----
-
-const JWKS_TTL_MS = 10 * 60_000;
-// A kid we don't have triggers a refetch (a fresh rotation) — but at most this often, so a stream of
-// forged kids can't turn into a stream of outbound fetches.
-const JWKS_MIN_REFRESH_MS = 30_000;
-
-let jwks: { domain: string; keys: Map<string, CryptoKey>; fetchedAt: number } | null = null;
 
 async function fetchJwks(domain: string): Promise<Map<string, CryptoKey>> {
   const res = await fetch(`${domain}/cdn-cgi/access/certs`, {
     headers: { accept: "application/json" },
   });
-  if (!res.ok) throw new Error(`Access JWKS fetch failed: HTTP ${res.status}`);
+  if (!res.ok) {
+    await res.body?.cancel();
+    throw new Error(`Access JWKS fetch failed: HTTP ${res.status}`);
+  }
   const body = (await res.json()) as { keys?: unknown };
   const keys = new Map<string, CryptoKey>();
   for (const k of Array.isArray(body.keys) ? body.keys : []) {
@@ -140,15 +68,16 @@ async function fetchJwks(domain: string): Promise<Map<string, CryptoKey>> {
   return keys;
 }
 
-async function signingKey(domain: string, kid: string): Promise<CryptoKey | null> {
-  const now = Date.now();
-  const cached = jwks && jwks.domain === domain ? jwks : null;
-  if (cached && now - cached.fetchedAt < JWKS_TTL_MS && cached.keys.has(kid)) {
-    return cached.keys.get(kid) ?? null;
+/** One cache per team domain per isolate (the policy — TTL, stale-while-error, backoff — is key-cache.ts). */
+const keyCaches = new Map<string, KeyCache<CryptoKey>>();
+
+function signingKey(domain: string, kid: string): Promise<CryptoKey | null> {
+  let cache = keyCaches.get(domain);
+  if (!cache) {
+    cache = new KeyCache({ load: () => fetchJwks(domain) });
+    keyCaches.set(domain, cache);
   }
-  if (cached && !cached.keys.has(kid) && now - cached.fetchedAt < JWKS_MIN_REFRESH_MS) return null;
-  jwks = { domain, keys: await fetchJwks(domain), fetchedAt: now };
-  return jwks.keys.get(kid) ?? null;
+  return cache.get(kid);
 }
 
 function b64urlBytes(segment: string): Uint8Array {
@@ -240,9 +169,13 @@ export async function identify(request: Request, env: Env): Promise<AuthResult> 
   try {
     verified = await verifyAccessJwt(token, cfg);
   } catch (err) {
-    console.error(
-      `identity check unavailable: ${err instanceof Error ? err.message : String(err)}`,
-    );
+    // The key cache already logged the failed fetch (once per attempt, not per request while it backs
+    // off); anything else is unexpected and worth a line.
+    if (!(err instanceof KeysUnavailableError)) {
+      console.error(
+        `identity check unavailable: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
     return {
       ok: false,
       status: 503,

@@ -125,6 +125,24 @@ describe("pnpm ctl against the control Worker", () => {
     expect((await ctl(["proposals"])).stdout).toBe("no proposals");
   });
 
+  it("status marks an open proposal whose target moved as STALE", async () => {
+    await ctl(["set", "embed", "on", "--reason", "drain"]);
+    await h.request("/v1/changes", {
+      as: "owner",
+      json: { target: "embed", value: "shadow", reason: "count first" },
+    });
+    const r = await ctl(["status"]);
+    expect(r.stdout).toMatch(
+      /embed: off → on by agent:observer \[open\] STALE \(now shadow; re-propose\)/,
+    );
+  });
+
+  it("refuses to let an agent turn the master switch off (exit 3: proposed instead)", async () => {
+    const r = await ctl(["set", "global", "off", "--reason", "all off drill"]);
+    expect(r.code).toBe(EXIT.proposed);
+    expect(await stateValue("global")).toBe("on");
+  });
+
   it("set --no-propose on a health check reports not applied (exit 4) and files nothing", async () => {
     const r = await ctl([
       "set",

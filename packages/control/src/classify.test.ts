@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { classify, direction, type Change, type Role } from "./classify";
+import { agentRule, classify, direction, type Change, type Role } from "./classify";
 import { MODE_RANK, POLICY_IDS, STAGE_IDS, type Mode } from "./registry";
 import { desiredValue, type StateMap } from "./resolve";
 import {
@@ -31,8 +31,21 @@ const set = (target: Target, from: string | null, to: string | null): Change => 
   to,
 });
 
-const isHealth = (target: Target) =>
-  target.kind !== "dim" && target.entry.type === "policy" && target.entry.id.startsWith("health.");
+/**
+ * The entries the owner put under "approval" (decisions 2026-10-04): the master switch, the alerts stage
+ * and the 7 health checks — their modes AND their knobs. Spelled out here rather than read from the
+ * registry, so a registry edit that drops one of them fails these tests instead of silently moving them.
+ */
+const APPROVAL_ENTRIES = new Set<string>([
+  "global",
+  "alerts",
+  ...POLICY_IDS.filter((p) => p.startsWith("health.")),
+]);
+
+const needsApproval = (target: Target) =>
+  APPROVAL_ENTRIES.has(
+    target.kind === "dim" ? target.stage : formatTarget({ kind: "mode", entry: target.entry }),
+  );
 
 /** Every value a target can hold, as stored canonical strings (null = no override). */
 function valuesOf(target: Target): (string | null)[] {
@@ -88,6 +101,9 @@ describe("direction", () => {
     // ttlDays: riskier DOWN (a shorter TTL closes more).
     expect(direction(t("stale_sweep.ttlDays"), "21", "30")).toBe("down");
     expect(direction(t("stale_sweep.ttlDays"), "21", "14")).toBe("up");
+    // cooldownH: riskier DOWN (a shorter cooldown re-pages sooner: more emails).
+    expect(direction(t("alerts.cooldownH"), "24", "6")).toBe("up");
+    expect(direction(t("alerts.cooldownH"), "24", "48")).toBe("down");
     expect(direction(t("ingest.boardsPerTick"), "150", "150")).toBe("none");
   });
 
@@ -120,7 +136,7 @@ describe("agent: the safe-direction rule", () => {
   it("applies exactly the moves toward less spend/risk, and proposes the rest (whole registry)", () => {
     let applied = 0;
     let proposed = 0;
-    for (const m of everyMove((target) => !isHealth(target))) {
+    for (const m of everyMove((target) => !needsApproval(target))) {
       const c = classify(set(m.target, m.from, m.to), "agent");
       const safer = risk(m.target, m.to) <= risk(m.target, m.from);
       expect(c.outcome, `${formatTarget(m.target)} ${m.from}→${m.to}`).toBe(
@@ -147,6 +163,13 @@ describe("agent: the safe-direction rule", () => {
     expect(classify(set(t("global"), "off", "on"), "agent").outcome).toBe("propose");
   });
 
+  it("can still stop every single spending stage on its own", () => {
+    for (const id of STAGE_IDS.filter((s) => s !== "alerts")) {
+      const top = entryModes({ type: "stage", id }).at(-1) ?? "on";
+      expect(classify(set(t(id), top, "off"), "agent").outcome, id).toBe("apply");
+    }
+  });
+
   it("can never move a policy toward enforce on its own", () => {
     expect(classify(set(t("close"), "shadow", "enforce"), "agent").outcome).toBe("propose");
     expect(classify(set(t("stale_sweep"), "shadow", "enforce"), "agent").outcome).toBe("propose");
@@ -154,7 +177,6 @@ describe("agent: the safe-direction rule", () => {
 
   it("can turn things off, lower spend knobs and add narrowing overrides on its own", () => {
     expect(classify(set(t("embed"), "on", "off"), "agent").outcome).toBe("apply");
-    expect(classify(set(t("global"), "on", "off"), "agent").outcome).toBe("apply");
     expect(classify(set(t("close"), "enforce", "shadow"), "agent").outcome).toBe("apply");
     expect(classify(set(t("embed.tokensPerRun"), "10000000", "5000000"), "agent").outcome).toBe(
       "apply",
@@ -178,26 +200,36 @@ describe("agent: the safe-direction rule", () => {
   });
 });
 
-describe("agent: health checks need approval for ANY change (registry rule)", () => {
-  const healthMoves = everyMove(isHealth);
+describe("agent: global, alerts and the health checks need approval for ANY change (registry rule)", () => {
+  const approvalMoves = everyMove(needsApproval);
 
-  it("covers all 7 checks, their modes and their threshold knobs", () => {
-    const touched = new Set(healthMoves.map((m) => formatTarget(m.target)));
-    for (const id of POLICY_IDS.filter((p) => p.startsWith("health.")))
-      expect(touched).toContain(id);
+  it("covers global, alerts (+ its cooldown knob), all 7 checks and their threshold knobs", () => {
+    const touched = new Set(approvalMoves.map((m) => formatTarget(m.target)));
+    for (const id of APPROVAL_ENTRIES) expect(touched).toContain(id);
+    expect(touched).toContain("alerts.cooldownH");
     expect(touched).toContain("health.board_fail_ratio.threshold");
     expect(touched).toContain("health.embedding_backlog.threshold");
   });
 
+  it("derives the rule for knobs from their entry", () => {
+    expect(agentRule(t("alerts.cooldownH"))).toBe("approval");
+    expect(agentRule(t("health.board_fail_ratio.threshold"))).toBe("approval");
+    expect(agentRule(t("ingest.boardsPerTick"))).toBe("safe-direction");
+  });
+
   it("proposes every move — quieter AND louder", () => {
-    for (const m of healthMoves) {
+    for (const m of approvalMoves) {
       const c = classify(set(m.target, m.from, m.to), "agent");
       expect(c.outcome, `${formatTarget(m.target)} ${m.from}→${m.to}`).toBe("propose");
     }
   });
 
-  it("explicitly: enforce→shadow, shadow→off and a looser threshold are all proposals", () => {
+  it("explicitly: silencing alerts, a quieter check and the master switch off are all proposals", () => {
     const quieter = [
+      set(t("global"), "on", "off"),
+      set(t("alerts"), "on", "off"),
+      set(t("alerts.cooldownH"), "24", "168"),
+      set(t("alerts.cooldownH"), "24", "1"),
       set(t("health.ingestion_staleness"), "enforce", "shadow"),
       set(t("health.ingestion_staleness"), "shadow", "off"),
       set(t("health.board_fail_ratio.threshold"), "0.5", "0.9"),

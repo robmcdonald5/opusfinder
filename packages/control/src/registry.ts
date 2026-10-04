@@ -52,9 +52,11 @@ export type UnitId = (typeof UNIT_IDS)[number];
  * generically and has no special cases:
  *   - "safe-direction": a move toward LESS (mode down the order, knob opposite its `riskier` side, a new
  *     narrowing override) applies immediately; a move toward MORE becomes a proposal for the owner.
- *   - "approval": EVERY agent move is a proposal, in either direction. Owner decision 2026-10-04 for the
- *     health checks: quieter alerting (enforce→shadow, a looser threshold) is itself a risk — it is how an
- *     outage goes unnoticed — so "toward off" is not automatically safe there.
+ *   - "approval": EVERY agent move is a proposal, in either direction. Owner decisions 2026-10-04: the
+ *     7 health checks (quieter alerting — enforce→shadow, a looser threshold — is itself a risk: it is how
+ *     an outage goes unnoticed), the `alerts` stage (an agent must not be able to silence all alerting)
+ *     and the master switch (an agent may stop any single spending stage, but not everything at once).
+ *     A knob follows its entry's rule, so e.g. alerts.cooldownH needs approval too.
  * The owner role is never restricted; the runtime role may only trip a stage off (classify.ts).
  */
 export type AgentRule = "safe-direction" | "approval";
@@ -149,12 +151,16 @@ export interface GlobalDef {
   agent: AgentRule;
 }
 
-/** The "all off" master switch: every stage's and policy's effective mode is capped by it (§5.1). */
+/**
+ * The "all off" master switch: every stage's and policy's effective mode is capped by it (§5.1). An agent
+ * may stop any single spending stage on its own, but flipping EVERYTHING off (alerting and the watchdog
+ * heartbeat's driver included) is an owner call — hence "approval", in both directions.
+ */
 export const globalSwitch: GlobalDef = {
   label: "Master switch (everything)",
   modes: ["off", "on"],
   initial: "on",
-  agent: "safe-direction",
+  agent: "approval",
 };
 
 export const stages = {
@@ -178,8 +184,9 @@ export const stages = {
         int: true,
         legacyEnv: "INGEST_LIMIT",
       },
-      // Parallel board lanes per tick (branch perf/ingest-concurrency). 1 = the original sequential loop;
-      // max mirrors that branch's MAX_INGEST_CONCURRENCY clamp in apps/scrapers/src/index.ts.
+      // Parallel board lanes per tick, from branch perf/ingest-concurrency (merging before this slice).
+      // 1 = the original sequential loop; max mirrors that branch's MAX_INGEST_CONCURRENCY clamp in
+      // apps/scrapers/src/index.ts — a sync test against that clamp lands when this branch rebases on it.
       concurrency: {
         label: "Parallel board lanes per tick",
         default: 1,
@@ -266,13 +273,17 @@ export const stages = {
     initial: "off",
     onUnreadable: "skip",
     units: ["resend.emails", "neon.awake_s"],
+    // Turning alerting off is how an outage goes unseen, so — like the health checks — every agent move
+    // here, the cooldown knob included, needs the owner (decision 2026-10-04).
+    agent: "approval",
     knobs: {
+      // A SHORTER cooldown re-pages sooner: more emails against Resend's 100/day free quota. Riskier DOWN.
       cooldownH: {
         label: "Alert cooldown",
         default: 24,
         min: 1,
         max: 168,
-        riskier: "up",
+        riskier: "down",
         int: true,
         unit: "h",
         legacyEnv: "HEALTH_ALERT_COOLDOWN_H",

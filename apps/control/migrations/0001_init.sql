@@ -16,7 +16,8 @@ CREATE TABLE state (
 
 -- The approval queue. An agent's non-safe change (classify() → "propose") lands here; the owner approves
 -- or rejects it on the page. Open proposals lapse 7 days after creation (expires_at; checked at read and
--- approve time, so no sweeper is needed).
+-- approve time, so no sweeper is needed). 'stale' = closed unapplied at approve time because the target
+-- had moved off from_value (the owner would otherwise approve against a picture that no longer holds).
 CREATE TABLE proposal (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   created_at TEXT NOT NULL,
@@ -27,7 +28,7 @@ CREATE TABLE proposal (
   from_value TEXT,
   to_value TEXT,
   reason TEXT NOT NULL CHECK (length(reason) BETWEEN 1 AND 300),
-  status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'approved', 'rejected', 'withdrawn')),
+  status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'approved', 'rejected', 'withdrawn', 'stale')),
   decided_at TEXT,
   decided_by TEXT,
   decision_note TEXT

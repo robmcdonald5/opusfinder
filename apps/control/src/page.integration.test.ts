@@ -145,6 +145,33 @@ describe("owner forms", () => {
     expect(await stateValue("digest")).toBe("off");
   });
 
+  it("shows a stale proposal as stale (reject only), and a stale approve as a flash, not an error", async () => {
+    const res = await h.request("/v1/proposals", {
+      as: "agent",
+      json: { target: "embed", value: "on", reason: "drain" },
+    });
+    const id = ((await res.json()) as { proposal: { id: number } }).proposal.id;
+    await h.request("/v1/changes", {
+      as: "owner",
+      json: { target: "embed", value: "shadow", reason: "count first" },
+    });
+
+    const page = await (await h.request("/", { as: "owner" })).text();
+    expect(page).toContain("Stale:");
+    expect(page).not.toContain(`action="/ui/proposals/${id}/approve"`);
+    expect(page).toContain(`action="/ui/proposals/${id}/reject"`);
+
+    // A form posted before the page refreshed still lands safely: nothing applied, a clear flash.
+    const ok = await h.request(`/ui/proposals/${id}/approve`, { as: "owner", form: { note: "" } });
+    expect(ok.status).toBe(303);
+    expect(ok.headers.get("location")).toBe("/?done=stale");
+    expect(await stateValue("embed")).toBe("shadow");
+    const after = await (await h.request("/?done=stale", { as: "owner" })).text();
+    expect(after).toContain("That proposal was stale");
+    expect(after).toContain("Recently closed proposals (1)");
+    expect(after).toContain('class="mode m-stale">stale</span>');
+  });
+
   it("shows a readable, escaped error page for an invalid change", async () => {
     const res = await h.request("/ui/change", {
       as: "owner",

@@ -103,6 +103,13 @@ describe("parseValue", () => {
     expect(errorOf(parseValue(o, "shadow"))).toMatch(/off, on, inherit/);
   });
 
+  it("canonicalizes an override at the stage's top mode to 'no override' (it caps nothing)", () => {
+    expect(parseValue(target("ingest@source=lever"), "on")).toEqual({ ok: true, value: null });
+    expect(parseValue(target("discover@lane=hn"), "on")).toEqual({ ok: true, value: null });
+    // A value below the top does cap, so it is kept.
+    expect(parseValue(target("ingest@source=lever"), "off")).toEqual({ ok: true, value: "off" });
+  });
+
   it("canonicalizes in-range decimal knob values", () => {
     expect(parseValue(target("ingest.boardsPerTick"), "75")).toEqual({ ok: true, value: "75" });
     expect(parseValue(target("ingest.boardsPerTick"), "75.0")).toEqual({ ok: true, value: "75" });

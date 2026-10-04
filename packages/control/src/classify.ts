@@ -10,7 +10,7 @@
 //   - ADDING a narrowing override (an override can only cap, so a new one is never "more on");
 // are "down". Turning on, moving toward enforce, raising a spend knob and REMOVING an override (which
 // un-caps the slice) are "up". Per-entry exceptions are declared on the registry entry (`agent:
-// "approval"` — the health checks), never special-cased here.
+// "approval"` — the master switch, the alerts stage and the health checks), never special-cased here.
 //
 // Roles (credential = role, §11.1):
 //   owner   — applies anything (a human Access login; the person whose decision this is).

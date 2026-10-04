@@ -161,6 +161,10 @@ export function parseValue(target: Target, raw: string): ParseResult<string | nu
           error: `${formatTarget(target)} takes one of: ${[...modes, INHERIT].join(", ")} (got "${value}")`,
         };
       }
+      // An override at the stage's TOP mode caps nothing (effective = the lowest of stage and override),
+      // so it IS "no override": canonicalize it to null. Setting one where none exists is then a true
+      // no-op — no row, no change_log line — instead of a meaningless row that reads like a decision.
+      if (value === modes[modes.length - 1]) return { ok: true, value: null };
       return { ok: true, value };
     }
     case "knob": {

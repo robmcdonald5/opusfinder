@@ -41,7 +41,8 @@ export interface ProposalRow {
   from_value: string | null;
   to_value: string | null;
   reason: string;
-  status: "open" | "approved" | "rejected" | "withdrawn";
+  /** "stale": closed unapplied because the target moved off the value it was proposed from. */
+  status: "open" | "approved" | "rejected" | "withdrawn" | "stale";
   decided_at: string | null;
   decided_by: string | null;
   decision_note: string | null;
@@ -77,7 +78,7 @@ export async function readState(db: D1Database): Promise<Map<string, string>> {
   return new Map(results.map((r) => [r.key, r.value]));
 }
 
-/** Everything /v1/status needs, in one round trip. */
+/** Everything /v1/status needs, in one round trip (one batch = one consistent snapshot). */
 export async function readStatus(
   db: D1Database,
   now: string,
@@ -86,14 +87,21 @@ export async function readStatus(
   state: StateMap;
   changes: ChangeRow[];
   proposals: ProposalRow[];
+  /** The latest proposals that are no longer open (decided, stale or lapsed), newest first. */
+  closedProposals: ProposalRow[];
   lastRuns: LedgerRow[];
 }> {
-  const [state, changes, proposals, runs] = await db.batch([
+  const [state, changes, proposals, closed, runs] = await db.batch([
     db.prepare("SELECT key, value FROM state"),
     db.prepare(`${CHANGE_SELECT} ORDER BY c.id DESC LIMIT ?`).bind(changeLimit),
     db
       .prepare(
         "SELECT * FROM proposal WHERE status = 'open' AND expires_at > ? ORDER BY id DESC LIMIT 100",
+      )
+      .bind(now),
+    db
+      .prepare(
+        "SELECT * FROM proposal WHERE status <> 'open' OR expires_at <= ? ORDER BY id DESC LIMIT 10",
       )
       .bind(now),
     db.prepare("SELECT * FROM ledger WHERE id IN (SELECT MAX(id) FROM ledger GROUP BY stage)"),
@@ -103,16 +111,28 @@ export async function readStatus(
     state: new Map(rows.map((r) => [r.key, r.value])),
     changes: (changes?.results ?? []) as ChangeRow[],
     proposals: (proposals?.results ?? []) as ProposalRow[],
+    closedProposals: (closed?.results ?? []) as ProposalRow[],
     lastRuns: (runs?.results ?? []) as LedgerRow[],
   };
 }
 
-/** The latest change to one target — the "since …, by …, because …" of S4. */
-export async function lastChange(db: D1Database, target: string): Promise<ChangeRow | null> {
-  return db
-    .prepare(`${CHANGE_SELECT} WHERE c.target = ? ORDER BY c.id DESC LIMIT 1`)
-    .bind(target)
-    .first<ChangeRow>();
+/**
+ * What a gate answer needs — all state rows plus the latest change to the stage (S4's "since …, by …,
+ * because …") — in ONE batch: one subrequest, and the two reads come from the same snapshot.
+ */
+export async function readGate(
+  db: D1Database,
+  stage: string,
+): Promise<{ state: StateMap; last: ChangeRow | null }> {
+  const [state, last] = await db.batch([
+    db.prepare("SELECT key, value FROM state"),
+    db.prepare(`${CHANGE_SELECT} WHERE c.target = ? ORDER BY c.id DESC LIMIT 1`).bind(stage),
+  ]);
+  const rows = (state?.results ?? []) as { key: string; value: string }[];
+  return {
+    state: new Map(rows.map((r) => [r.key, r.value])),
+    last: ((last?.results ?? [])[0] as ChangeRow | undefined) ?? null,
+  };
 }
 
 export interface ApplyInput {
@@ -210,16 +230,18 @@ export interface NewProposal {
 }
 
 /**
- * File a proposal, or return the identical one that is already open (same target + value). Idempotent by
- * construction — an unattended observer re-filing the same ask every run gets the same id back instead of
- * stacking duplicates for the owner. The insert is conditional in ONE statement, so two concurrent filings
- * can't both pass a separate existence check.
+ * File a proposal, or return the identical one that is already open (same target, same from AND to value).
+ * Idempotent by construction — an unattended observer re-filing the same ask every run gets the same id
+ * back instead of stacking duplicates for the owner. `from` is part of identity: if the target moved since
+ * the old proposal was filed, that one is stale (approve refuses it) and a fresh, approvable one is filed.
+ * The insert is conditional in ONE statement, so two concurrent filings can't both pass a separate
+ * existence check.
  */
 export async function fileProposal(
   db: D1Database,
   input: NewProposal,
 ): Promise<{ proposal: ProposalRow; duplicate: boolean }> {
-  const live = `target = ?1 AND to_value IS ?2 AND status = 'open' AND expires_at > ?3`;
+  const live = `target = ?1 AND to_value IS ?2 AND from_value IS ?7 AND status = 'open' AND expires_at > ?3`;
   const inserted = await db
     .prepare(
       `INSERT INTO proposal (target, to_value, created_at, expires_at, proposer_role, proposer_name, from_value, reason, status)
@@ -240,8 +262,10 @@ export async function fileProposal(
     .first<ProposalRow>();
   if (inserted) return { proposal: inserted, duplicate: false };
   const existing = await db
-    .prepare(`SELECT * FROM proposal WHERE ${live} ORDER BY id DESC LIMIT 1`)
-    .bind(input.target, input.to, input.now)
+    .prepare(
+      `SELECT * FROM proposal WHERE target = ?1 AND to_value IS ?2 AND from_value IS ?4 AND status = 'open' AND expires_at > ?3 ORDER BY id DESC LIMIT 1`,
+    )
+    .bind(input.target, input.to, input.now, input.from)
     .first<ProposalRow>();
   if (!existing) throw new Error("proposal insert matched an open duplicate that then vanished");
   return { proposal: existing, duplicate: true };
@@ -268,11 +292,11 @@ export async function listProposals(
   return (await stmt.all<ProposalRow>()).results;
 }
 
-/** Close an open, unexpired proposal without applying it (reject / withdraw / approve-as-no-op). */
+/** Close an open, unexpired proposal without applying it (reject / withdraw / stale). */
 export async function closeProposal(
   db: D1Database,
   id: number,
-  status: "approved" | "rejected" | "withdrawn",
+  status: "rejected" | "withdrawn" | "stale",
   decidedBy: string,
   note: string | null,
   now: string,

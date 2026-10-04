@@ -1,4 +1,10 @@
-import { INHERIT, allTargets, formatTarget, type ValueSource } from "@opusfinder/control";
+import {
+  INHERIT,
+  MODE_RANK,
+  allTargets,
+  formatTarget,
+  type ValueSource,
+} from "@opusfinder/control";
 
 import type { StatusView } from "./service";
 
@@ -35,7 +41,8 @@ th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);vertic
 th{font-weight:600;color:var(--muted);font-size:.8rem;text-transform:uppercase;letter-spacing:.03em}
 code{font:.85rem ui-monospace,SFMono-Regular,Menlo,monospace}
 .mode{display:inline-block;padding:1px 8px;border-radius:10px;font-size:.82rem;font-weight:600;border:1px solid currentColor}
-.m-on,.m-enforce{color:var(--on)}.m-shadow{color:var(--shadow)}.m-off,.m-inherit{color:var(--off)}.m-bad{color:var(--bad)}
+.m-on,.m-enforce,.m-approved{color:var(--on)}.m-shadow,.m-stale,.m-expired{color:var(--shadow)}.m-off,.m-inherit,.m-withdrawn{color:var(--off)}.m-bad,.m-rejected{color:var(--bad)}
+.warn{color:var(--shadow);font-weight:600}
 .flash{padding:10px 12px;border-radius:8px;background:var(--card);border-left:4px solid var(--on)}
 .card{background:var(--card);border-radius:8px;padding:12px;margin:10px 0}
 .form{display:grid;gap:8px;max-width:520px}
@@ -76,7 +83,14 @@ const FLASH: Record<string, string> = {
   noop: "Nothing to change — it already had that value.",
   approved: "Proposal approved and applied.",
   rejected: "Proposal rejected.",
+  stale:
+    "That proposal was stale — its target had moved since it was filed — so nothing was applied. It is listed under recently closed.",
 };
+
+/** Every mode name, from the registry's ordering (so a new mode shows up in the forms by itself). */
+const ALL_MODES = Object.keys(MODE_RANK);
+
+const APPROVAL_NOTE = `<span class="muted">· agents need approval for any change</span>`;
 
 export function renderPage(view: StatusView, flash: string | null): string {
   const isOwner = view.caller.role === "owner";
@@ -100,19 +114,47 @@ export function renderPage(view: StatusView, flash: string | null): string {
     )} → ${mode(p.to_value)}</p>
 <p>${esc(p.reason)}</p>
 <p class="muted">by ${esc(p.proposer)} · ${when(p.created_at)} · expires ${when(p.expires_at)}</p>${
+      p.stale
+        ? `<p class="warn">Stale: <code>${esc(p.target)}</code> is now ${mode(p.current)}, not ${mode(
+            p.from_value,
+          )}. Approving would be refused; reject it and let the agent re-propose.</p>`
+        : ""
+    }${
       isOwner
-        ? `<form method="post" action="/ui/proposals/${esc(p.id)}/approve">
+        ? `<form method="post" action="/ui/proposals/${esc(p.id)}/${p.stale ? "reject" : "approve"}">
 <label>Note (optional, logged)<input name="note" maxlength="300" autocomplete="off"></label>
-<div class="actions"><button type="submit">Approve</button><button type="submit" class="reject" formaction="/ui/proposals/${esc(
-            p.id,
-          )}/reject">Reject</button></div></form>`
+<div class="actions">${
+            p.stale
+              ? `<button type="submit" class="reject">Reject</button>`
+              : `<button type="submit">Approve</button><button type="submit" class="reject" formaction="/ui/proposals/${esc(
+                  p.id,
+                )}/reject">Reject</button>`
+          }</div></form>`
         : ""
     }</div>`);
+  }
+  if (view.closedProposals.length > 0) {
+    parts.push(
+      `<details><summary class="muted">Recently closed proposals (${view.closedProposals.length})</summary><ul class="log">${view.closedProposals
+        .map(
+          (c) =>
+            `<li><strong>#${esc(c.id)}</strong> <code>${esc(c.target)}</code>: ${mode(c.from_value)} → ${mode(
+              c.to_value,
+            )} ${mode(c.status)} <span class="muted">by ${esc(c.proposer)}${
+              c.decided_by ? `, closed by ${esc(c.decided_by)}` : ""
+            } ${when(c.decided_at ?? c.expires_at)}</span>${
+              c.decision_note ? `<br>${esc(c.decision_note)}` : ""
+            }</li>`,
+        )
+        .join("")}</ul></details>`,
+    );
   }
 
   // ---- master switch + stages ----
   parts.push(`<h2>Stages</h2>
-<p>Master switch: ${mode(view.global.desired)}${sourceNote(view.global.source)} <span class="muted">— off caps every stage and policy at off.</span></p>
+<p>Master switch: ${mode(view.global.desired)}${sourceNote(view.global.source)} <span class="muted">— off caps every stage and policy at off.</span> ${
+    view.global.agent === "approval" ? APPROVAL_NOTE : ""
+  }</p>
 <div class="scroll"><table><thead><tr><th>Stage</th><th>Desired</th><th>Effective</th><th>Last run</th></tr></thead><tbody>`);
   for (const s of view.stages) {
     const capped = s.cappedBy ? ` <span class="muted">(capped by ${esc(s.cappedBy)})</span>` : "";
@@ -120,7 +162,9 @@ export function renderPage(view: StatusView, flash: string | null): string {
       ? `${outcome(s.lastRun.outcome)} ${when(s.lastRun.started_at)}`
       : `<span class="muted">none recorded</span>`;
     parts.push(
-      `<tr><td>${esc(s.label)}<br><code>${esc(s.id)}</code></td><td>${mode(s.desired)}${sourceNote(
+      `<tr><td>${esc(s.label)}<br><code>${esc(s.id)}</code>${
+        s.agent === "approval" ? ` ${APPROVAL_NOTE}` : ""
+      }</td><td>${mode(s.desired)}${sourceNote(
         s.source,
       )}</td><td>${mode(s.effective)}${capped}</td><td>${run}</td></tr>`,
     );
@@ -221,7 +265,7 @@ function renderForms(view: StatusView): string {
 <div class="card"><form class="form" method="post" action="/ui/change">
 <strong>Flip a mode</strong>
 <label>Switch<select name="target">${modeTargets.map((t) => option(t, `${t} (now ${desired.get(t) ?? "?"})`)).join("")}</select></label>
-<label>New mode<select name="value">${["off", "shadow", "on", "enforce"].map((m) => option(m, m)).join("")}</select></label>
+<label>New mode<select name="value">${ALL_MODES.map((m) => option(m, m)).join("")}</select></label>
 ${reason}<button type="submit">Apply</button></form></div>
 <div class="card"><form class="form" method="post" action="/ui/change">
 <strong>Set a knob</strong>
@@ -235,7 +279,7 @@ ${reason}<button type="submit">Apply</button></form></div>
 <label>Slice<select name="target">${dimTargets
     .map((t) => option(t, `${t}${overrides.has(t) ? ` (now ${overrides.get(t)})` : ""}`))
     .join("")}</select></label>
-<label>Override<select name="value">${["off", "shadow", "on", INHERIT].map((m) => option(m, m === INHERIT ? "inherit (clear)" : m)).join("")}</select></label>
+<label>Override<select name="value">${[...ALL_MODES.filter((m) => m !== "enforce"), INHERIT].map((m) => option(m, m === INHERIT ? "inherit (clear)" : m)).join("")}</select></label>
 ${reason}<button type="submit">Apply</button></form></div>
 <p class="muted">Invalid combinations (e.g. <code>shadow</code> on a stage without it) are refused with the reason.</p>`;
 }

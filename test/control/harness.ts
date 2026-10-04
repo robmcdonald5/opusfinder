@@ -248,6 +248,8 @@ export interface ControlHarness {
   db: TestD1;
   /** How many times the Worker fetched the JWKS. */
   jwksFetches: () => number;
+  /** Make the faked Access key endpoint answer 503 (true) or the keys again (false). */
+  setJwksFailing: (failing: boolean) => void;
   token: (who: Exclude<Who, null | { token: string }>) => Promise<string>;
   request: (path: string, opts: RequestOptions) => Promise<Response>;
   /** Call the ControlRpc entrypoint (or the default fetch) through a real service binding. */
@@ -272,6 +274,7 @@ export async function startControl(
   const probe = await bundleStoreProbe();
   const date = compatibilityDate();
   let jwksFetches = 0;
+  let jwksFailing = false;
   const definedBindings = Object.fromEntries(
     Object.entries(bindings).filter(([, v]) => v !== undefined),
   ) as Record<string, string>;
@@ -287,6 +290,7 @@ export async function startControl(
         outboundService: (request: Request) => {
           if (request.url === `${TEAM_DOMAIN}/cdn-cgi/access/certs`) {
             jwksFetches++;
+            if (jwksFailing) return new Response("upstream unavailable", { status: 503 });
             return new Response(JSON.stringify(keys.jwks()), {
               headers: { "content-type": "application/json" },
             });
@@ -325,6 +329,9 @@ export async function startControl(
     keys,
     db,
     jwksFetches: () => jwksFetches,
+    setJwksFailing: (failing) => {
+      jwksFailing = failing;
+    },
     async token(who) {
       switch (who) {
         case "owner":
