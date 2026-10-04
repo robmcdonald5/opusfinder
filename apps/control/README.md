@@ -32,7 +32,8 @@ The credential is the role (§11.1). Every HTTP request is identified **before r
 `Cf-Access-Jwt-Assertion` header that Cloudflare Access attaches to everything it lets through. The
 Worker verifies that token itself — RS256 signature against the team's JWKS
 (`https://<team>.cloudflareaccess.com/cdn-cgi/access/certs`, cached 10 min, refetched at most every
-30 s on an unknown key id), `iss` = the team domain, `aud` contains this app's AUD tag, `exp`/`nbf`,
+30 s on an unknown key id; if a refetch fails the last good keys keep working for up to 24 h while
+retries back off from 30 s to 10 min), `iss` = the team domain, `aud` contains this app's AUD tag, `exp`/`nbf`,
 `type: "app"` — then maps it:
 
 | Token                                       | Role                     | Condition                                                          |
@@ -49,10 +50,12 @@ Access token and is refused like any anonymous request.
 What each role may change is decided by `classify()` in `packages/control`:
 
 - **owner** — anything; approves or rejects proposals.
-- **agent** — moves toward less spend/risk apply immediately (turn off, lower a spend knob, add a
-  narrowing override, master switch off); anything else must be proposed. Entries declared
-  `agent: "approval"` in the registry (the 7 health checks) need approval for **any** change,
-  quieter or louder. Posture repairs (re-enabling a platform schedule) are agent-safe.
+- **agent** — moves toward less spend/risk apply immediately (turn a stage off, lower a spend knob,
+  add a narrowing override); anything else must be proposed. Entries declared `agent: "approval"` in
+  the registry need approval for **any** change, quieter or louder, knobs included: the **master
+  switch** (an agent may stop any single spending stage, not everything at once), the **alerts**
+  stage (an agent may not silence alerting) and the **7 health checks**. Posture repairs
+  (re-enabling a platform schedule) are agent-safe.
 - **runtime** — read gates, write ledger rows, `trip(stage, reason)` which can only set a stage off.
 
 **Why there is no local identity shortcut.** The Worker has exactly one way to learn who is
@@ -64,26 +67,32 @@ Miniflare outbound-fetch stub — the network is faked, the code is not.
 
 ## JSON API
 
-All bodies are `application/json` (anything else is 415 — another site's form can't drive the API).
-Errors are `{ "error": { "code", "message" } }`.
+Bodies are optional where a route needs none (approve, reject, withdraw: no body and no content type
+is fine). A body that is sent must be a JSON **object** declared `application/json` — any other declared
+type is 415 — and at most 16 KB, counted in bytes. Every POST that a browser marks as cross-site
+(`Origin` of another site, or `Sec-Fetch-Site` other than `same-origin`) is refused (403
+`cross_origin`), so another site can't drive the API with the owner's Access cookie. Errors are
+`{ "error": { "code", "message" } }`.
 
 | Route                                                                                               | Roles                          | What                                                                                                                                                                                                                    |
 | --------------------------------------------------------------------------------------------------- | ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `GET /v1/status`                                                                                    | owner, agent                   | Every stage/policy/knob: desired + effective mode, last ledger row, recent changes, open proposals.                                                                                                                     |
 | `GET /v1/gate/:stage[?source=…&lane=…]`                                                             | all                            | "May I run, and with what settings?" — effective mode (narrowed to the slice), knobs, the policies the stage reads, set overrides, and `since`/`by`/`because`.                                                          |
 | `POST /v1/changes` `{target, value, reason, proposeIfNeeded?, dryRun?}`                             | owner, agent                   | Applies if `classify` allows; else **403 `needs_approval`** with a ready-to-send `propose` body, or — with `proposeIfNeeded: true` — files it and answers **202 `proposed`**. Re-setting the current value is a `noop`. |
-| `GET /v1/proposals[?status=all]`                                                                    | owner, agent                   | Open (default) or all proposals; `status` reads `expired` past 7 days.                                                                                                                                                  |
-| `POST /v1/proposals` `{target, value, reason}`                                                      | owner, agent                   | File a proposal. Idempotent: an identical open one is returned (200, `duplicate: true`).                                                                                                                                |
+| `GET /v1/proposals[?status=all]`                                                                    | owner, agent                   | Open (default) or all proposals; `status` reads `expired` past 7 days. In `/v1/status`, each open proposal also says whether it is `stale` (see approve).                                                               |
+| `POST /v1/proposals` `{target, value, reason}`                                                      | owner, agent                   | File a proposal. Idempotent: an open one with the same target, current value and proposed value is returned (200, `duplicate: true`).                                                                                   |
 | `GET /v1/proposals/:id`                                                                             | owner, agent                   | One proposal.                                                                                                                                                                                                           |
-| `POST /v1/proposals/:id/approve` `{note?}`                                                          | owner                          | Applies it and closes it in **one D1 batch**.                                                                                                                                                                           |
-| `POST /v1/proposals/:id/reject` `{note?}`                                                           | owner                          | Closes it.                                                                                                                                                                                                              |
-| `POST /v1/proposals/:id/withdraw`                                                                   | the proposer                   | Takes it back.                                                                                                                                                                                                          |
-| `POST /v1/runs` `{stage, outcome, startedAt, finishedAt?, durationMs?, gateMode?, units?, detail?}` | runtime                        | One ledger row; units must be ones the stage declares.                                                                                                                                                                  |
+| `POST /v1/proposals/:id/approve` (optional `{note}`)                                                | owner                          | Applies it and closes it in **one D1 batch** — unless the target has moved off the value it was proposed from: then **409 `stale_proposal`**, closed as `stale` with the reason, nothing applied.                       |
+| `POST /v1/proposals/:id/reject` (optional `{note}`)                                                 | owner                          | Closes it.                                                                                                                                                                                                              |
+| `POST /v1/proposals/:id/withdraw` (no body)                                                         | the proposer                   | Takes it back.                                                                                                                                                                                                          |
+| `POST /v1/runs` `{stage, outcome, startedAt, finishedAt?, durationMs?, gateMode?, units?, detail?}` | runtime                        | One ledger row; units must be ones the stage declares, each 0 … 2^53−1; `durationMs` at most 7 days; out of range is 400 `invalid_run`.                                                                                 |
 | `POST /v1/trip` `{stage, reason: runaway\|error-storm, detail?}`                                    | runtime                        | Turns the stage off, logged.                                                                                                                                                                                            |
 | `GET /` and `POST /ui/…`                                                                            | owner (agents: read-only page) | The page and its same-origin form posts.                                                                                                                                                                                |
 
 Targets: `global`, `<stage>`, `<policy>`, `<entry>.<knob>`, `<stage>@<dim>=<value>` (e.g.
-`ingest@source=smartrecruiters`; value `inherit` clears an override).
+`ingest@source=smartrecruiters`; value `inherit` clears an override, and an override at the stage's
+top mode caps nothing, so it is stored as no override — setting one where none exists is a no-op).
+Every registry dimension is also a `/v1/gate` query parameter.
 
 RPC (`ControlRpc`, for a service binding): `gate(stage, dims?)`, `recordRun(run)`,
 `trip(stage, reason, detail?)`. A binding may pass `props = { name = "…" }` as its audit label.
@@ -241,8 +250,12 @@ pnpm exec wrangler d1 execute opusfinder-control --remote --command "UPDATE stat
 ## Known gaps (slice 1)
 
 - No runtime reads the gate yet; until the shadow slice, flipping a switch here changes the record,
-  not behaviour. The env vars (`INGEST_LIMIT`, `INGEST_CONCURRENCY`, `LIFECYCLE_CLOSE_ENFORCE`, …)
+  not behaviour. The deployed env vars (`INGEST_LIMIT`, `LIFECYCLE_CLOSE_ENFORCE`, `STALE_SWEEP*`, …)
   still rule.
+- `ingest.concurrency` mirrors `INGEST_CONCURRENCY`, which arrives with branch
+  `perf/ingest-concurrency` (merging before this one). Its `max` copies that branch's
+  `MAX_INGEST_CONCURRENCY` clamp until a sync test against the scrapers constant lands on the
+  rebase.
 - `HealthCheckId` still lives in `packages/db/src/health.ts`; a sync test in `@opusfinder/db` pins the
   registry to it until it moves here.
 - Approvals don't force a fresh Access login (feasibility unverified).
