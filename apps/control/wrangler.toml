@@ -1,0 +1,31 @@
+name = "opusfinder-control"
+main = "src/index.ts"
+compatibility_date = "2026-06-03"
+# No compatibility_flags: the Worker imports only @opusfinder/control (pure TS) and the runtime's own
+# `cloudflare:workers` module — no Node API, so no nodejs_compat. `pnpm guard:worker` enforces it.
+
+# The panel + API live on the workers.dev hostname, behind "Protect this Worker behind Access" (README).
+# Preview URLs are switched off: one public hostname is one fewer thing to keep behind Access.
+workers_dev = true
+preview_urls = false
+
+[observability]
+enabled = true
+
+# The control store: desired state, change log, proposal queue, run ledger. Strongly consistent, no idle
+# charge, and NOT Neon — reading or flipping a switch never wakes the database (C4).
+#   OWNER step (README): `wrangler d1 create opusfinder-control`, then paste the printed database_id
+#   over the all-zero placeholder. Local dev and the tests key their SQLite by binding, so they don't
+#   need it; a deploy with the placeholder fails loudly instead of binding the wrong database.
+[[d1_databases]]
+binding = "DB"
+database_name = "opusfinder-control"
+database_id = "00000000-0000-0000-0000-000000000000"
+migrations_dir = "migrations"
+
+# Secrets (never [vars] — they identify the account and the owner), set with `wrangler secret put`:
+#   ACCESS_TEAM_DOMAIN  https://<team>.cloudflareaccess.com
+#   ACCESS_AUD          the Access application's AUD tag
+#   OWNER_EMAILS        comma-separated owner login email(s)
+#   SERVICE_TOKENS      JSON {"<client-id>": {"role": "agent"|"runtime", "name": "<label>"}}
+# Until ACCESS_TEAM_DOMAIN + ACCESS_AUD are set every request gets 503 auth_not_configured (fail closed).
