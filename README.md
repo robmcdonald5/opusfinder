@@ -10,8 +10,11 @@ pipeline, and delivers a personalized digest on a regular cadence. See
 | Path                   | What                                                                                                                                                                                              |
 | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `apps/web/`            | SvelteKit headless production runtime — `/api/inngest` + `/api/health` on Vercel + Inngest Cloud (Phase 12a) ([README](apps/web/README.md))                                                        |
+| `apps/control/`        | Cloudflare control-plane Worker + D1 — desired state, change log, approval queue, run ledger behind Cloudflare Access; JSON API + one owner page (control plane slice 1) ([README](apps/control/README.md)) |
 | `apps/scrapers/`       | Cloudflare Workers cron runtime — scheduled ingestion + discovery against Neon (Phase 8) ([README](apps/scrapers/README.md))                                                                      |
 | `packages/auth/`       | Better Auth (email+password) — `user`/`session`/`account` schema + user-creation service + management CLIs (Phase 9.5; node/server-only, never in the Worker) ([README](packages/auth/README.md)) |
+| `packages/control/`    | The control plane's pure core — stage registry, fail-closed `effectiveMode()`, `classify(change, role)`; Worker-safe, dependency-free ([README](apps/control/README.md)) |
+| `packages/ctl/`        | `pnpm ctl` — the agent CLI for the control Worker (status / set / propose / proposals / withdraw) ([README](apps/control/README.md)) |
 | `packages/db/`         | Drizzle ORM over Neon Postgres + pgvector ([README](packages/db/README.md))                                                                                                                       |
 | `packages/discovery/`  | Slug-discovery pipeline — seed lanes (outscal + HN) → probe → upsert + staleness (Phase 7; F5 lane registry) ([README](packages/discovery/README.md))                                                                                    |
 | `packages/embeddings/` | Voyage `voyage-3-large` embeddings + HNSW retrieval ([README](packages/embeddings/README.md))                                                                                                     |
@@ -86,7 +89,8 @@ pnpm db:ping      # round-trips SELECT 1 against Neon
 | `pnpm digest`                             | Trigger a per-user digest run + poll for the result (`--user <uuid>` or `--all`; `[--timeout-ms] [--poll-ms]`)                                                                 |
 | `pnpm inngest:serve`                      | Local Inngest serve endpoint for the digest functions (bare Node http, port 3000; dev-only)                                                                                    |
 | `pnpm inngest:dev`                        | Local Inngest dev server (keyless; registers the serve URL for discovery + invocation)                                                                                         |
-| `pnpm guard:worker`                       | Assert auth / neon-serverless / the Inngest digest stack (`inngest`, `@opusfinder/llm`, `@opusfinder/rerank`, `@anthropic-ai/sdk`) never leak into the scrapers Worker (#6665) |
+| `pnpm guard:worker`                       | Assert auth / neon-serverless / the Inngest digest stack (`inngest`, `@opusfinder/llm`, `@opusfinder/rerank`, `@anthropic-ai/sdk`) never leak into the scrapers Worker (#6665); the control Worker bundles only its src + the pure `packages/control` |
+| `pnpm ctl <command>`                      | Read and flip the control plane as an agent: `status [--json]`, `set <target> <value> --reason …`, `propose`, `proposals`, `withdraw` (see [apps/control](apps/control/README.md)) |
 
 ## Deploying a schedule change
 
