@@ -1,0 +1,20 @@
+{
+  "name": "@opusfinder/ctl",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/cli.ts"
+  },
+  "types": "./src/cli.ts",
+  "scripts": {
+    "ctl": "node --import tsx src/bin.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@opusfinder/control": "workspace:*"
+  },
+  "devDependencies": {
+    "tsx": "^4"
+  }
+}

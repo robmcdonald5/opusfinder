@@ -50,12 +50,14 @@
     "digest": "pnpm --filter @opusfinder/inngest digest",
     "email:preview": "pnpm --filter @opusfinder/email preview",
     "inngest:serve": "pnpm --filter @opusfinder/inngest inngest:serve",
-    "inngest:dev": "npx --yes inngest-cli@latest dev -u http://localhost:3000/api/inngest --no-discovery"
+    "inngest:dev": "npx --yes inngest-cli@latest dev -u http://localhost:3000/api/inngest --no-discovery",
+    "ctl": "node --import tsx packages/ctl/src/bin.ts"
   },
   "devDependencies": {
     "@electric-sql/pglite": "0.5.3",
     "@electric-sql/pglite-pgvector": "0.0.4",
     "@eslint/js": "^10",
+    "@opusfinder/ctl": "workspace:*",
     "@opusfinder/db": "workspace:*",
     "@opusfinder/shared": "workspace:*",
     "@types/node": "^24",
