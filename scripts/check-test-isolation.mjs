@@ -23,6 +23,8 @@ import { execSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
+import { stripComments } from "./lib/strip-comments.mjs";
+
 const TEST_ROOTS = ["packages", "apps"];
 const PRUNE_DIRS = new Set(["node_modules", "dist", ".svelte-kit", "coverage"]);
 // The vitest projects this guard models. A project reported by `vitest list` that isn't here means the guard
@@ -43,12 +45,8 @@ function expectedProject(path) {
   return "unit";
 }
 
-// Drop block + line comments so a documentation comment (which may quote `.skipIf(` or a `process.env.<LIVE>`
-// example) can't satisfy check (a) in place of the real gate. The `[^:]` guard keeps a `://` in a URL from
-// being read as a line-comment start.
-function stripComments(src) {
-  return src.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/(^|[^:])\/\/[^\n]*/g, "$1");
-}
+// stripComments (./lib/strip-comments.mjs) drops comments first, so a documentation comment quoting
+// `.skipIf(` or a `process.env.<LIVE>` example can't satisfy check (a) in place of the real gate.
 
 let failures = 0;
 

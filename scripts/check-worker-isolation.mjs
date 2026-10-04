@@ -29,6 +29,8 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
+import { stripComments } from "./lib/strip-comments.mjs";
+
 const FORBIDDEN_IMPORTS = [
   "better-auth",
   "@opusfinder/auth",
@@ -120,12 +122,6 @@ const PURE_PACKAGE = {
 
 let failures = 0;
 const summaries = [];
-
-// Same comment stripper as check-test-isolation.mjs: the `[^:]` guard keeps a `://` in a URL from being
-// read as a line-comment start.
-function stripComments(src) {
-  return src.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/(^|[^:])\/\/[^\n]*/g, "$1");
-}
 
 function sourceFiles(dir, includeTests) {
   return readdirSync(dir, { recursive: true })
