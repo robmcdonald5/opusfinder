@@ -1,0 +1,7 @@
+{
+  // Package-local check only. The authoritative "is this Worker-safe?" type check is the control Worker's
+  // own tsconfig (apps/control, Workers types, NO @types/node): it compiles this package through its
+  // import graph, so a `process` / `Buffer` / node:* reference here fails `pnpm typecheck:test` there.
+  "extends": "../../tsconfig.base.json",
+  "include": ["src/**/*.ts"]
+}
