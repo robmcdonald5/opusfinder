@@ -9,7 +9,6 @@ import {
   globalSwitch,
   policyDef,
   stageDef,
-  stages,
   type Knob,
 } from "./registry";
 
@@ -98,6 +97,7 @@ describe("registry: modes", () => {
       stale_sweep: "shadow",
       "health.ingestion_staleness": "shadow",
       "health.board_fail_ratio": "shadow",
+      "health.hydrate_skip_ratio": "shadow",
       "health.discovery_window": "shadow",
       "health.discovery_lane_errors": "shadow",
       "health.embedding_backlog": "shadow",
@@ -119,28 +119,11 @@ describe("registry: knobs", () => {
     }
   });
 
-  it("declares ingest.concurrency as the owner specified (default 1, min 1, riskier up, legacy env)", () => {
-    // max is deliberately NOT pinned here: it mirrors the scrapers Worker's MAX_INGEST_CONCURRENCY clamp
-    // (branch perf/ingest-concurrency), and a sync test against that constant replaces a copied number
-    // once this branch rebases onto it.
-    const { max, ...rest } = stages.ingest.knobs.concurrency;
-    expect(rest).toEqual({
-      label: expect.any(String),
-      default: 1,
-      min: 1,
-      riskier: "up",
-      int: true,
-      legacyEnv: "INGEST_CONCURRENCY",
-    });
-    expect(max).toBeGreaterThanOrEqual(1);
-  });
-
   it("pins every knob's risky side (a flip changes what an agent may do alone)", () => {
     expect(
       Object.fromEntries(allKnobs().map(([address, knob]) => [address, knob.riskier])),
     ).toEqual({
       "ingest.boardsPerTick": "up", // more boards per tick: more Neon time and subrequests
-      "ingest.concurrency": "up", // more parallel lanes: more load per tick
       "discover.limit": "up", // more seed slugs probed: more subrequests and Neon writes
       "discover.reprobeLimit": "up", // more re-probes: same
       "embed.pagesPerRun": "up", // more pages: more Voyage tokens
@@ -151,6 +134,7 @@ describe("registry: knobs", () => {
       "stale_sweep.ttlDays": "down", // a SHORTER TTL closes more jobs
       "health.ingestion_staleness.threshold": "up", // looser: an outage goes unnoticed longer
       "health.board_fail_ratio.threshold": "up", // looser: same
+      "health.hydrate_skip_ratio.threshold": "up", // looser: same
       "health.discovery_window.threshold": "up", // looser: same
       "health.embedding_backlog.threshold": "up", // looser: same
     });
@@ -158,12 +142,13 @@ describe("registry: knobs", () => {
 });
 
 describe("registry: agent rules", () => {
-  it("marks exactly global, the alerts stage and the 7 health checks as 'approval' (owner decisions)", () => {
+  it("marks exactly global, the alerts stage and every health check as 'approval' (owner decisions)", () => {
     expect(globalSwitch.agent).toBe("approval");
     expect(STAGE_IDS.filter((id) => stageDef(id).agent === "approval")).toEqual(["alerts"]);
     expect(POLICY_IDS.filter((id) => policyDef(id).agent === "approval")).toEqual([
       "health.ingestion_staleness",
       "health.board_fail_ratio",
+      "health.hydrate_skip_ratio",
       "health.discovery_window",
       "health.discovery_lane_errors",
       "health.embedding_backlog",

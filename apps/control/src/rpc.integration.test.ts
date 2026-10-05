@@ -27,7 +27,7 @@ describe("ControlRpc over a service binding", () => {
     expect(rpc.value).toMatchObject({
       stage: "ingest",
       mode: "on",
-      knobs: { boardsPerTick: 150, concurrency: 1 },
+      knobs: { boardsPerTick: 250 },
     });
   });
 

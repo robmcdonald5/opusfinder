@@ -17,7 +17,7 @@ describe("gateView", () => {
       desired: "on",
       cappedBy: null,
       global: "on",
-      knobs: { boardsPerTick: 150, concurrency: 1 },
+      knobs: { boardsPerTick: 250 },
       policies: {
         close: { mode: "enforce", knobs: {} },
         stale_sweep: { mode: "shadow", knobs: { ttlDays: 21 } },
@@ -50,7 +50,7 @@ describe("gateView", () => {
     });
   });
 
-  it("gives the alerts stage all 7 health checks with their thresholds", () => {
+  it("gives the alerts stage every health check with its threshold", () => {
     const g = gateView(state(), "alerts");
     expect(Object.keys(g.policies).sort()).toEqual(
       POLICY_IDS.filter((p) => p.startsWith("health.")).sort(),
@@ -83,7 +83,7 @@ describe("stage / policy views", () => {
       },
     ]);
     expect(v.dims.source).toContain("smartrecruiters");
-    expect(v.knobs.map((k) => k.target)).toEqual(["ingest.boardsPerTick", "ingest.concurrency"]);
+    expect(v.knobs.map((k) => k.target)).toEqual(["ingest.boardsPerTick"]);
   });
 
   it("flags a health check whose watched stage is off (C6: skipped, not failing)", () => {

@@ -43,7 +43,7 @@ describe("fail-closed layer 1: a missing row is the registry default", () => {
 
   it("resolves a missing knob to its default and a missing override to 'no override'", () => {
     expect(knobValue(state(), knob("ingest.boardsPerTick"))).toEqual({
-      value: 150,
+      value: 250,
       source: "default",
     });
     expect(overrideMode(state(), "ingest", "source", "lever")).toEqual({

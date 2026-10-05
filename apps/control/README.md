@@ -54,7 +54,7 @@ What each role may change is decided by `classify()` in `packages/control`:
   add a narrowing override); anything else must be proposed. Entries declared `agent: "approval"` in
   the registry need approval for **any** change, quieter or louder, knobs included: the **master
   switch** (an agent may stop any single spending stage, not everything at once), the **alerts**
-  stage (an agent may not silence alerting) and the **7 health checks**. Posture repairs
+  stage (an agent may not silence alerting) and the **8 health checks**. Posture repairs
   (re-enabling a platform schedule) are agent-safe.
 - **runtime** — read gates, write ledger rows, `trip(stage, reason)` which can only set a stage off.
 
@@ -145,8 +145,8 @@ pnpm exec wrangler d1 migrations apply opusfinder-control --remote
 pnpm exec wrangler d1 execute opusfinder-control --remote --command "SELECT key, value FROM state ORDER BY key"
 ```
 
-Expect 17 rows: global/ingest/discover/cv_ingest `on`, embed/alerts/digest/live_integration `off`,
-close `enforce`, stale_sweep and the 7 `health.*` `shadow`.
+Expect 18 rows: global/ingest/discover/cv_ingest `on`, embed/alerts/digest/live_integration `off`,
+close `enforce`, stale_sweep and the 8 `health.*` `shadow`.
 
 **2. Deploy**
 
@@ -220,7 +220,7 @@ file per field.)
 ```bash
 cd ~/projects/opusfinder
 pnpm ctl status                                    # the table; "you: agent:agent"
-pnpm ctl set ingest.boardsPerTick 150 --reason "provisioning smoke test"   # no change, exit 0
+pnpm ctl set ingest.boardsPerTick 250 --reason "provisioning smoke test"   # no change, exit 0
 pnpm ctl set embed shadow --reason "provisioning smoke test: approval path" --propose   # exit 3
 curl -s -o /dev/null -w '%{http_code}\n' https://opusfinder-control.<your-subdomain>.workers.dev/v1/status
 ```
@@ -252,10 +252,6 @@ pnpm exec wrangler d1 execute opusfinder-control --remote --command "UPDATE stat
 - No runtime reads the gate yet; until the shadow slice, flipping a switch here changes the record,
   not behaviour. The deployed env vars (`INGEST_LIMIT`, `LIFECYCLE_CLOSE_ENFORCE`, `STALE_SWEEP*`, …)
   still rule.
-- `ingest.concurrency` mirrors `INGEST_CONCURRENCY`, which arrives with branch
-  `perf/ingest-concurrency` (merging before this one). Its `max` copies that branch's
-  `MAX_INGEST_CONCURRENCY` clamp until a sync test against the scrapers constant lands on the
-  rebase.
 - `HealthCheckId` still lives in `packages/db/src/health.ts`; a sync test in `@opusfinder/db` pins the
   registry to it until it moves here.
 - Approvals don't force a fresh Access login (feasibility unverified).

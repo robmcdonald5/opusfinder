@@ -52,8 +52,8 @@ export type UnitId = (typeof UNIT_IDS)[number];
  * generically and has no special cases:
  *   - "safe-direction": a move toward LESS (mode down the order, knob opposite its `riskier` side, a new
  *     narrowing override) applies immediately; a move toward MORE becomes a proposal for the owner.
- *   - "approval": EVERY agent move is a proposal, in either direction. Owner decisions 2026-10-04: the
- *     7 health checks (quieter alerting — enforce→shadow, a looser threshold — is itself a risk: it is how
+ *   - "approval": EVERY agent move is a proposal, in either direction. Owner decisions 2026-10-04: every
+ *     health check (quieter alerting — enforce→shadow, a looser threshold — is itself a risk: it is how
  *     an outage goes unnoticed), the `alerts` stage (an agent must not be able to silence all alerting)
  *     and the master switch (an agent may stop any single spending stage, but not everything at once).
  *     A knob follows its entry's rule, so e.g. alerts.cooldownH needs approval too.
@@ -167,7 +167,7 @@ export const stages = {
   ingest: {
     label: "Ingest job boards",
     runtime: "cf:opusfinder-scrapers",
-    trigger: { cron: "0 * * * *" },
+    trigger: { cron: "0 */2 * * *" },
     // Shadow not offered: a fetch-without-writing tick still costs the full Neon time (§5.2).
     modes: ["off", "on"],
     initial: "on",
@@ -175,30 +175,21 @@ export const stages = {
     units: ["cf.wall_ms", "cf.subrequests", "neon.awake_s"],
     dims: ["source"],
     knobs: {
+      // default = the Worker's fallback and wrangler.toml's INGEST_LIMIT; max = its MAX_INGEST_LIMIT clamp.
       boardsPerTick: {
         label: "Boards per tick",
-        default: 150,
+        default: 250,
         min: 1,
         max: 500,
         riskier: "up",
         int: true,
         legacyEnv: "INGEST_LIMIT",
       },
-      // Parallel board lanes per tick, from branch perf/ingest-concurrency (merging before this slice).
-      // 1 = the original sequential loop; max mirrors that branch's MAX_INGEST_CONCURRENCY clamp in
-      // apps/scrapers/src/index.ts — a sync test against that clamp lands when this branch rebases on it.
-      concurrency: {
-        label: "Parallel board lanes per tick",
-        default: 1,
-        min: 1,
-        max: 6,
-        riskier: "up",
-        int: true,
-        legacyEnv: "INGEST_CONCURRENCY",
-      },
     },
     budget: { targetUsdPerMonth: 10 }, // Neon compute dominates (Sep: $8.42)
-    expect: { everyMin: 60, graceMin: 70 },
+    // The healthchecks.io watchdog's settings (README "Deploying a schedule change"): period 2 h, grace
+    // ~1 h, which covers a tick's run time plus jitter yet flags one missed tick within ~3 h.
+    expect: { everyMin: 120, graceMin: 60 },
     heartbeat: "healthchecks:ingest",
   },
   discover: {
@@ -267,7 +258,7 @@ export const stages = {
     label: "Health alerts",
     runtime: "inngest:opusfinder",
     platformId: "health-check-alert",
-    trigger: { cron: "*/30 * * * *" },
+    trigger: { cron: "10 */2 * * *" }, // 10 min after each ingest tick starts, while Neon is awake
     // Shadow not offered: per-check shadow already exists at the policy level (§5.2).
     modes: ["off", "on"],
     initial: "off",
@@ -289,13 +280,13 @@ export const stages = {
         legacyEnv: "HEALTH_ALERT_COOLDOWN_H",
       },
     },
-    expect: { everyMin: 30, graceMin: 45 },
+    expect: { everyMin: 120, graceMin: 60 }, // the ingest tick's period and grace, which it rides
   },
   digest: {
     label: "User digests",
     runtime: "inngest:opusfinder",
     platformId: "digest-cadence", // + digest-orchestrator, digest-user (event-driven)
-    trigger: { cron: "0 13 * * *" },
+    trigger: { cron: "10 12 * * *" }, // 10 min after the 12:00 ingest tick (8:10am EDT)
     modes: ["off", "shadow", "on"],
     shadowMeans: "resolve eligible users and retrieve candidates; no LLM, no email",
     initial: "off",
@@ -390,12 +381,13 @@ export const policies = {
     },
     legacyEnv: "STALE_SWEEP",
   },
-  // The 7 health checks. Ids are `health.<HealthCheckId>` (packages/db/src/health.ts); a sync test in
-  // @opusfinder/db pins the two lists together. A later slice moves HealthCheckId HERE and has db/health
-  // import it — never the reverse (the H1 landmine: db/health reads `process`).
+  // The 8 health checks. Ids are `health.<HealthCheckId>` (packages/db/src/health.ts); a sync test in
+  // @opusfinder/db pins the two lists, each threshold default and its env var together. A later slice
+  // moves HealthCheckId HERE and has db/health import it — never the reverse (the H1 landmine: db/health
+  // reads `process`).
   "health.ingestion_staleness": healthCheck("Ingestion staleness", "ingest", {
     label: "Max ingestion age",
-    default: 3,
+    default: 5, // 2.5× the 2-hourly cron period: one missed tick is tolerated, two fire
     min: 1,
     max: 24,
     riskier: "up",
@@ -410,6 +402,16 @@ export const policies = {
     max: 1,
     riskier: "up",
     legacyEnv: "HEALTH_FAIL_RATIO",
+  }),
+  // Share of postings on hydrating boards (today only SmartRecruiters) whose detail fetch failed, so their
+  // stored content went stale.
+  "health.hydrate_skip_ratio": healthCheck("Hydrate skip ratio", "ingest", {
+    label: "Max skipped-detail ratio",
+    default: 0.2,
+    min: 0.05,
+    max: 1,
+    riskier: "up",
+    legacyEnv: "HEALTH_HYDRATE_SKIP_RATIO",
   }),
   "health.discovery_window": healthCheck("Discovery window", "discover", {
     label: "Max discovery age",

@@ -3,18 +3,18 @@ import { describe, expect, expectTypeOf, it } from "vitest";
 import { POLICY_IDS, policyDef, type PolicyId } from "@opusfinder/control";
 
 import {
-  DEFAULT_HEALTH_THRESHOLDS,
   evaluateHealth,
   healthOptionsFromEnv,
   type HealthCheckId,
   type HealthSignals,
-  type HealthThresholds,
 } from "./health";
 
 // The control-plane registry (@opusfinder/control) declares one `health.<id>` policy per health check, but
 // it is a pure leaf and may not import this module (db/health reads `process` — the H1 landmine). So the
 // sync check lives HERE, in the source of truth, pointing at the registry: a check added to health.ts
 // without its registry entry (or vice versa) fails, as does a threshold default or env name that drifts.
+// Thresholds are read off evaluateHealth's own output rather than a hand-kept check→field map, so a new
+// threshold (or one moved to another check) can't slip past a stale map.
 
 type RegistryHealthId = PolicyId extends infer P
   ? P extends `health.${infer Id}`
@@ -28,6 +28,8 @@ const QUIET: HealthSignals = {
   latestIngestFailed: 0,
   latestIngestProcessed: 10,
   latestIngestCompanies: 10,
+  latestIngestHydrateSkipped: 0,
+  latestIngestHydrateListed: 0,
   discoveryAgeD: 0,
   discoveryLaneErrors: 0,
   embeddingBacklog: 0,
@@ -37,13 +39,11 @@ const QUIET: HealthSignals = {
   cost: { digestsConsidered: 0, rerankCacheReadTokens: 0, rerankCacheCreationTokens: 0 },
 };
 
-/** Which HealthThresholds field each registry threshold knob stands for. */
-const THRESHOLD_FIELD: Partial<Record<HealthCheckId, keyof HealthThresholds>> = {
-  ingestion_staleness: "ingestMaxAgeH",
-  board_fail_ratio: "failRatio",
-  discovery_window: "discoveryMaxAgeD",
-  embedding_backlog: "backlogMax",
-};
+/** The checks as evaluated under `env`; with no env every threshold is DEFAULT_HEALTH_THRESHOLDS'. */
+const checksUnder = (env: Record<string, string> = {}) =>
+  evaluateHealth(QUIET, healthOptionsFromEnv(env)).checks;
+
+const thresholdKnob = (id: HealthCheckId) => policyDef(`health.${id}` as PolicyId).knobs?.threshold;
 
 describe("control registry ⇄ db/health", () => {
   it("declares exactly one health.<id> policy per HealthCheckId (type level, enforced by typecheck:test)", () => {
@@ -51,28 +51,27 @@ describe("control registry ⇄ db/health", () => {
   });
 
   it("declares exactly the checks evaluateHealth emits (runtime)", () => {
-    const emitted = evaluateHealth(QUIET)
-      .checks.map((c) => `health.${c.id}`)
+    const emitted = checksUnder()
+      .map((c) => `health.${c.id}`)
       .sort();
     expect(POLICY_IDS.filter((p) => p.startsWith("health.")).sort()).toEqual(emitted);
   });
 
-  it("gives each threshold knob the same default and legacy env var health.ts uses", () => {
-    const withKnobs = POLICY_IDS.filter((p) => policyDef(p).knobs?.threshold);
-    expect(withKnobs.map((p) => p.slice("health.".length)).sort()).toEqual(
-      Object.keys(THRESHOLD_FIELD).sort(),
-    );
-    for (const id of withKnobs) {
-      const knob = policyDef(id).knobs?.threshold;
-      const field = THRESHOLD_FIELD[id.slice("health.".length) as HealthCheckId];
-      if (!knob || !field || !knob.legacyEnv)
-        throw new Error(`${id}: threshold knob needs a field and legacyEnv`);
-      expect(knob.default, id).toBe(DEFAULT_HEALTH_THRESHOLDS[field]);
-      // The legacy env var must be the one healthOptionsFromEnv actually reads for that field.
-      const probe = String(knob.max);
-      expect(healthOptionsFromEnv({ [knob.legacyEnv]: probe }).thresholds?.[field], id).toBe(
-        Number(probe),
-      );
+  it("gives a check a threshold knob exactly when it has a threshold, defaulting to the one it applies", () => {
+    for (const c of checksUnder()) {
+      expect(thresholdKnob(c.id)?.default ?? null, c.id).toBe(c.threshold);
+    }
+  });
+
+  it("names, per threshold knob, the env var healthOptionsFromEnv reads for THAT check", () => {
+    for (const { id } of checksUnder()) {
+      const knob = thresholdKnob(id);
+      if (!knob) continue;
+      if (!knob.legacyEnv) throw new Error(`health.${id}: threshold knob needs a legacyEnv`);
+      // knob.max: inside the knob's range and never its default, so a hit can only come from the env var.
+      expect(knob.max, id).not.toBe(knob.default);
+      const applied = checksUnder({ [knob.legacyEnv]: String(knob.max) }).find((c) => c.id === id);
+      expect(applied?.threshold, id).toBe(knob.max);
     }
   });
 });

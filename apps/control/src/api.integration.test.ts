@@ -264,7 +264,7 @@ describe("POST /v1/changes", () => {
       value: "off",
     });
     // A knob with no row whose default already matches is a no-op too.
-    expect((await body(await change("agent", "ingest.boardsPerTick", "150"))).result).toBe("noop");
+    expect((await body(await change("agent", "ingest.boardsPerTick", "250"))).result).toBe("noop");
     expect(await changeCount()).toBe(before);
   });
 
@@ -296,7 +296,7 @@ describe("POST /v1/changes", () => {
     ],
     [
       "an out-of-range knob",
-      { target: "ingest.concurrency", value: "7", reason: "x" },
+      { target: "ingest.boardsPerTick", value: "501", reason: "x" },
       400,
       "invalid_value",
     ],

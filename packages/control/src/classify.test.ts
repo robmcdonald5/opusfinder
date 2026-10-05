@@ -33,7 +33,7 @@ const set = (target: Target, from: string | null, to: string | null): Change => 
 
 /**
  * The entries the owner put under "approval" (decisions 2026-10-04): the master switch, the alerts stage
- * and the 7 health checks — their modes AND their knobs. Spelled out here rather than read from the
+ * and every health check — their modes AND their knobs. Spelled out here rather than read from the
  * registry, so a registry edit that drops one of them fails these tests instead of silently moving them.
  */
 const APPROVAL_ENTRIES = new Set<string>([
@@ -96,15 +96,15 @@ describe("direction", () => {
   });
 
   it("follows each knob's declared riskier side", () => {
-    expect(direction(t("ingest.boardsPerTick"), "150", "75")).toBe("down");
-    expect(direction(t("ingest.boardsPerTick"), "150", "300")).toBe("up");
+    expect(direction(t("ingest.boardsPerTick"), "250", "75")).toBe("down");
+    expect(direction(t("ingest.boardsPerTick"), "250", "300")).toBe("up");
     // ttlDays: riskier DOWN (a shorter TTL closes more).
     expect(direction(t("stale_sweep.ttlDays"), "21", "30")).toBe("down");
     expect(direction(t("stale_sweep.ttlDays"), "21", "14")).toBe("up");
     // cooldownH: riskier DOWN (a shorter cooldown re-pages sooner: more emails).
     expect(direction(t("alerts.cooldownH"), "24", "6")).toBe("up");
     expect(direction(t("alerts.cooldownH"), "24", "48")).toBe("down");
-    expect(direction(t("ingest.boardsPerTick"), "150", "150")).toBe("none");
+    expect(direction(t("ingest.boardsPerTick"), "250", "250")).toBe("none");
   });
 
   it("treats adding an override as down and removing one as up", () => {
@@ -119,7 +119,7 @@ describe("direction", () => {
 
   it("fails closed on values it can't order", () => {
     expect(direction(t("embed"), "on", "turbo")).toBe("up");
-    expect(direction(t("ingest.boardsPerTick"), "150", "lots")).toBe("up");
+    expect(direction(t("ingest.boardsPerTick"), "250", "lots")).toBe("up");
     expect(direction(t("ingest.boardsPerTick"), "lots", "1")).toBe("up");
   });
 });
@@ -190,7 +190,7 @@ describe("agent: the safe-direction rule", () => {
     expect(classify(set(t("ingest@source=smartrecruiters"), "off", null), "agent").outcome).toBe(
       "propose",
     );
-    expect(classify(set(t("ingest.concurrency"), "1", "4"), "agent").outcome).toBe("propose");
+    expect(classify(set(t("ingest.boardsPerTick"), "250", "400"), "agent").outcome).toBe("propose");
     expect(classify(set(t("stale_sweep.ttlDays"), "21", "7"), "agent").outcome).toBe("propose");
   });
 
@@ -203,7 +203,7 @@ describe("agent: the safe-direction rule", () => {
 describe("agent: global, alerts and the health checks need approval for ANY change (registry rule)", () => {
   const approvalMoves = everyMove(needsApproval);
 
-  it("covers global, alerts (+ its cooldown knob), all 7 checks and their threshold knobs", () => {
+  it("covers global, alerts (+ its cooldown knob), every check and their threshold knobs", () => {
     const touched = new Set(approvalMoves.map((m) => formatTarget(m.target)));
     for (const id of APPROVAL_ENTRIES) expect(touched).toContain(id);
     expect(touched).toContain("alerts.cooldownH");

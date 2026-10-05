@@ -3,7 +3,7 @@
 -- health check shadow. Every mode row is written explicitly, each with its own change_log row, so the
 -- store (not the registry defaults) holds the adopted values and the audit trail starts at adoption.
 -- Knobs and dimension overrides are NOT seeded: a missing knob row reads as the registry default, which
--- already equals today's env values (INGEST_LIMIT=150, STALE_SWEEP_TTL_DAYS=21, …), and no slice is
+-- already equals today's env values (INGEST_LIMIT=250, STALE_SWEEP_TTL_DAYS=21, …), and no slice is
 -- narrowed today. The control Worker's integration suite asserts these rows equal the registry's
 -- `initial` values, so the two can't drift.
 
@@ -20,6 +20,7 @@ INSERT INTO state (key, value, updated_at, updated_by) VALUES
   ('stale_sweep', 'shadow', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), 'seed:slice-1'),
   ('health.ingestion_staleness', 'shadow', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), 'seed:slice-1'),
   ('health.board_fail_ratio', 'shadow', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), 'seed:slice-1'),
+  ('health.hydrate_skip_ratio', 'shadow', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), 'seed:slice-1'),
   ('health.discovery_window', 'shadow', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), 'seed:slice-1'),
   ('health.discovery_lane_errors', 'shadow', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), 'seed:slice-1'),
   ('health.embedding_backlog', 'shadow', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), 'seed:slice-1'),

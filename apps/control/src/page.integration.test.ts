@@ -33,7 +33,7 @@ describe("GET /", () => {
     expect(page).toContain('<meta name="viewport" content="width=device-width, initial-scale=1">');
     for (const text of [
       "Ingest job boards",
-      "ingest.concurrency",
+      "ingest.boardsPerTick",
       "Open proposals (0)",
       "Recent changes",
       "Flip a mode",

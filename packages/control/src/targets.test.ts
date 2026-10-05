@@ -70,7 +70,7 @@ describe("parseTarget / formatTarget", () => {
     ["x".repeat(129), /1-128/],
     ["nope", /unknown target "nope"/],
     ["global.anything", /unknown target/],
-    ["ingest.nope", /has no knob "nope" \(has: boardsPerTick, concurrency\)/],
+    ["ingest.nope", /has no knob "nope" \(has: boardsPerTick\)/],
     ["live_integration.x", /has no knob "x" \(has: none\)/],
     ["nope@source=lever", /unknown stage "nope"/],
     ["ingest@source", /override must look like ingest@<dim>=<value>/],
@@ -130,9 +130,8 @@ describe("parseValue", () => {
   it("enforces knob bounds and whole numbers", () => {
     expect(errorOf(parseValue(target("ingest.boardsPerTick"), "0"))).toMatch(/between 1 and 500/);
     expect(errorOf(parseValue(target("ingest.boardsPerTick"), "501"))).toMatch(/between 1 and 500/);
-    expect(errorOf(parseValue(target("ingest.concurrency"), "7"))).toMatch(/between 1 and 6/);
-    expect(errorOf(parseValue(target("ingest.concurrency"), "-1"))).toMatch(/between 1 and 6/);
-    expect(errorOf(parseValue(target("ingest.concurrency"), "1.5"))).toMatch(/whole number/);
+    expect(errorOf(parseValue(target("ingest.boardsPerTick"), "-1"))).toMatch(/between 1 and 500/);
+    expect(errorOf(parseValue(target("ingest.boardsPerTick"), "1.5"))).toMatch(/whole number/);
     expect(errorOf(parseValue(target("stale_sweep.ttlDays"), "6"))).toMatch(/between 7 and 90/);
   });
 });

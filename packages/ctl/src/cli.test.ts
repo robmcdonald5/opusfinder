@@ -142,7 +142,7 @@ describe("argument handling (offline)", () => {
     [["frobnicate"]],
     [["set", "nope", "on", "--reason", "x"]],
     [["set", "ingest", "shadow", "--reason", "x"]],
-    [["set", "ingest.concurrency", "9", "--reason", "x"]],
+    [["set", "ingest.boardsPerTick", "501", "--reason", "x"]],
     [["set", "embed", "on"]],
     [["set", "embed", "on", "--reason", "   "]],
     [["set", "embed", "--reason", "x"]],
