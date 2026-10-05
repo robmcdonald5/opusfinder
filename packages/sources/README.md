@@ -100,9 +100,12 @@ enforces it for every caller):
   as they are, and a brand-new posting waits for a run that fetches its content. Only its `company_id`
   follows the board listing it, so a posting that moved boards isn't closed by its old board's sweep. It
   still counts present (`markJobsPresent`, the absence sweep). `counts.hydrateSkipped` tallies these.
-  **Known limitation:** a posting whose detail STAYS unavailable while the ATS still lists it stays open
-  until the ATS delists it; the `hydrate_skip_ratio` health check surfaces a detail endpoint that keeps
-  failing.
+  **Known limitation (an accepted trade-off — a not-found detail isn't treated as "gone"):** a stored
+  posting whose detail is `404`/`410`/"Posting not available" while the ATS still LISTS it stays `active`
+  and digest-eligible (retrieved and reranked, on its last stored content) until the ATS delists it. And
+  `hydrate_skip_ratio` can't tell those not-founds from 5xx/timeouts, so steady list-vs-detail lag can hold
+  the ratio up while the detail endpoint is healthy. **Known follow-up:** count not-found details
+  separately (a not-found counter) so the ratio tracks real failures and such postings can be held back.
 - **Any source → blank description kept out**: a blank (empty/whitespace) description never replaces a
   non-blank stored one — an inline-content board (Greenhouse `content=true`, Workable `details=true`, Lever)
   momentarily serving no body, or SmartRecruiters `jobAd.sections: {}`. The stored text, its signature and

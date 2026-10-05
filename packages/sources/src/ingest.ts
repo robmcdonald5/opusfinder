@@ -256,8 +256,10 @@ export async function runIngestion(db: Db, opts: IngestionOptions = {}): Promise
         // `listedIds` is every de-duplicated external_id the board listed — what upsertJobs persisted PLUS the
         // contentMissing postings it did not write: a posting whose detail fetch failed is still listed, so it
         // must neither age toward the staleness timer nor count as absent in the sweep below. (Known
-        // limitation: one whose detail STAYS unavailable while still listed stays open until the ATS delists
-        // it; hydrate_skip_ratio surfaces a detail endpoint that keeps failing.)
+        // limitation, an accepted trade-off: a stored posting whose detail is 404/410/"not available" while
+        // still listed stays active and digest-eligible — retrieved and reranked — until the ATS delists it;
+        // and hydrate_skip_ratio can't tell those not-founds from 5xx, so steady list lag can hold the ratio
+        // up. Known follow-up: a separate not-found counter. See smartrecruiters.ts hydratePosting.)
         // Isolated like the sweep/embed steps: a stamp fault leaves jobs persisted and self-heals next cycle.
         // ORDER IS LOAD-BEARING — markJobsPresent (stamp last_seen) BEFORE markCompanyIngested (certify
         // board health): if the company were certified first and the job-stamp then threw, the timer could

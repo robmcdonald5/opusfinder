@@ -149,9 +149,13 @@ function isRemoteLocation(loc: unknown): boolean {
  * `{"message":"Posting not available"}`, or a jobAd without sections. A detail WITH sections is real
  * content even when every section is blank. The message is shape-only (a posting id, never body text).
  *
- * KNOWN LIMITATION (accepted for simplicity): a posting whose detail STAYS unavailable while SR still lists
- * it stays open — it counts present on every tick — until SR delists it. The `hydrate_skip_ratio` health
- * check surfaces a detail endpoint that keeps failing.
+ * KNOWN LIMITATION (an accepted trade-off: a not-found detail is NOT classified as "gone"): a stored
+ * posting whose detail is 404/410/"Posting not available" while SR still LISTS it counts present on every
+ * tick, so it stays `active` and digest-eligible (retrieved and reranked, on its last stored content) until
+ * SR delists it. And `hydrate_skip_ratio` can't tell those not-founds from 5xx/timeouts, so steady
+ * list-vs-detail lag can hold the ratio up while the detail endpoint is healthy. KNOWN FOLLOW-UP: count
+ * not-found details separately (a not-found counter) so the ratio tracks real failures and such postings
+ * can be held back.
  */
 async function hydratePosting(
   job: NormalizedJob,
