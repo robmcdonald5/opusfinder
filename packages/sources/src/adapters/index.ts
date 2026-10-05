@@ -33,6 +33,11 @@ export const adapters: Record<SourceName, SourceAdapter> = {
 /** The known source names (registry keys), for CLI validation + iteration. */
 export const SOURCE_NAMES = Object.keys(adapters) as SourceName[];
 
+/** An adapter's politeness group for ingestion pacing — its declared `pacingKey`, else its source. */
+export function pacingKeyOf(adapter: SourceAdapter): string {
+  return adapter.pacingKey ?? adapter.source;
+}
+
 /** Narrow an arbitrary string to a known SourceName. */
 export function isSourceName(value: string): value is SourceName {
   return Object.prototype.hasOwnProperty.call(adapters, value);

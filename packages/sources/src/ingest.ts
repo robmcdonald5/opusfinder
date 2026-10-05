@@ -23,7 +23,7 @@ import {
 import type { SourceName } from "@opusfinder/shared";
 import { sleep } from "@opusfinder/shared/async";
 
-import { adapters, fetchJobs } from "./adapters";
+import { adapters, fetchJobs, pacingKeyOf } from "./adapters";
 import type { RunAdapterOptions } from "./adapters/run-adapter";
 
 /**
@@ -83,10 +83,16 @@ export interface IngestionOptions {
   /** Inline embedder (injected). Omit ⇒ no inline embedding. */
   embed?: IngestEmbedFn;
   /**
-   * ms between two CONSECUTIVE boards of the SAME source, so we don't hammer one ATS's infra (Workable
-   * 429s on rapid calls). Not applied when the source changes — the next board hits a different host.
+   * Minimum ms between the STARTS of two boards with the same pacing key (the adapter's `pacingKey`,
+   * default its source), so we don't hammer one ATS's infra (Workable 429s on rapid calls). Paced by
+   * TIME, not adjacency: before a board, sleep only what's left of `paceMs` since its key's last board
+   * started — so alternating sources can't burst one host, and a board that follows other work long
+   * enough waits for nothing.
    */
   paceMs?: number;
+  /** Clock (epoch ms) for the `maxRunMs` budget and the per-key pacing. Defaults to `Date.now`; a test
+   *  injects one to drive both deterministically. */
+  clock?: () => number;
   /** Forwarded to `fetchJobs`/`runAdapter` — a Worker may LOWER `hydrateConcurrency` for subrequests. */
   adapter?: RunAdapterOptions;
   /**
@@ -174,8 +180,11 @@ const DEFAULT_PACE_MS = 500;
  */
 export async function runIngestion(db: Db, opts: IngestionOptions = {}): Promise<IngestionCounts> {
   const paceMs = opts.paceMs ?? DEFAULT_PACE_MS;
+  const clock = opts.clock ?? Date.now;
   const counts = emptyCounts();
-  const startMs = Date.now();
+  const startMs = clock();
+  // Pacing key → when its most recent board started (see opts.paceMs).
+  const lastStart = new Map<string, number>();
   const runId = await startRun(db, "ingestion", { source: opts.source });
   let errorSample: string | undefined;
 
@@ -195,14 +204,19 @@ export async function runIngestion(db: Db, opts: IngestionOptions = {}): Promise
       // spent, so `finishRun` is always reached within the Worker's 15-min limit. `i > 0` guarantees at
       // least one board runs (its own cost is bounded by adapter.maxItems); BREAK (not return) so the
       // finishRun + summary below still run and the handler advances the cursor to the last processed id.
-      if (i > 0 && opts.maxRunMs !== undefined && Date.now() - startMs >= opts.maxRunMs) break;
-      // Politeness is per ATS HOST, so pace only between consecutive boards of the SAME source (exactly
-      // as before for them); a board on a different source hits a different host and starts at once.
-      // The source IS the pacing group: no two adapters share a request host — boards-api.greenhouse.io,
-      // api.lever.co, api.ashbyhq.com, apply.workable.com, api.smartrecruiters.com, api.gem.com,
-      // jsapi.recruiterbox.com (Trakstar), and the per-tenant {slug}.recruitee.com / {slug}.pinpointhq.com
-      // (two different vendors' domains). Should two sources ever share a host, map them to one group here.
-      if (i > 0 && list[i - 1]?.source === company.source) await sleep(paceMs);
+      if (i > 0 && opts.maxRunMs !== undefined && clock() - startMs >= opts.maxRunMs) break;
+      // Politeness is per ATS HOST, i.e. per PACING KEY (the adapter's `pacingKey`, default its source —
+      // types.ts lists the host audit). Paced by TIME, not adjacency: keep this key's board starts ≥ paceMs
+      // apart by sleeping only the remainder since its last start. Adjacency alone let alternating sources
+      // (gh, lever, gh, lever…) hit one host back-to-back; time also skips the pause when other boards ran
+      // in between for long enough.
+      const pacingKey = pacingKeyOf(adapters[company.source]);
+      const keyLastStart = lastStart.get(pacingKey);
+      if (keyLastStart !== undefined) {
+        const wait = paceMs - (clock() - keyLastStart);
+        if (wait > 0) await sleep(wait);
+      }
+      lastStart.set(pacingKey, clock());
       counts.lastId = company.id; // advance the chunk cursor even when this board fails
       try {
         const normalized = await fetchJobs(company.source, company.slug, opts.adapter);

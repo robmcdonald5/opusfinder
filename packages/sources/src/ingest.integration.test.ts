@@ -6,6 +6,7 @@ import { upsertCompany, upsertJobs } from "@opusfinder/db/repos";
 import { companies, jobs, sourceRuns } from "@opusfinder/db/schema";
 import { companySlug, jobId, type SourceName } from "@opusfinder/shared";
 import {
+  adapters,
   runIngestion,
   type IngestEmbedFn,
   type IngestionCounts,
@@ -31,15 +32,17 @@ import { jsonResponse, routedFetch, textResponse, type Route } from "@test/http/
 // SQL (lifecycle.test.ts + the db repos), and the adapter mappers (per-adapter unit suites).
 
 // The inter-board pace `sleep` is STUBBED for the whole file: it records `sleep:<ms>` into `paced.events`
-// (beside the `fetch:<slug>` a pacing test's routes record) and resolves at once — no real timers, so the
-// pacing test asserts the exact interleaving. `backoff` stays real (NO_RETRY below never reaches it).
-const paced = vi.hoisted(() => ({ events: [] as string[] }));
+// (beside the `fetch:<slug>` a pacing test's routes record), advances the fake clock `paced.now` by `ms`
+// (the pacing tests inject `clock: () => paced.now`), and resolves at once — no real timers, so the pacing
+// tests assert the exact interleaving. `backoff` stays real (NO_RETRY below never reaches it).
+const paced = vi.hoisted(() => ({ events: [] as string[], now: 0 }));
 vi.mock("@opusfinder/shared/async", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@opusfinder/shared/async")>();
   return {
     ...actual,
     sleep: (ms: number): Promise<void> => {
       paced.events.push(`sleep:${ms}`);
+      paced.now += ms;
       return Promise.resolve();
     },
   };
@@ -132,6 +135,7 @@ describe("runIngestion — orchestration over real PGlite (fetch stubbed)", () =
   beforeEach(async () => {
     await truncate(db, companies, jobs, sourceRuns);
     paced.events.length = 0;
+    paced.now = 0;
     // mockReset (not mockClear) also drops an unconsumed mockRejectedValueOnce, restoring the pass-through.
     vi.mocked(upsertCompany).mockReset();
     vi.mocked(upsertJobs).mockReset();
@@ -762,18 +766,28 @@ describe("runIngestion — orchestration over real PGlite (fetch stubbed)", () =
     });
   });
 
-  describe("politeness pacing — only between consecutive boards of the SAME source", () => {
-    it("sleeps paceMs before a board whose predecessor shares its source, never across a source change", async () => {
-      const record = (slug: string, body: unknown) => (): Response => {
+  describe("politeness pacing — per pacing key, by TIME since that key's last board start", () => {
+    // Each board's fetch records `fetch:<slug>` and advances the injected fake clock by `tookMs` (the
+    // board's duration); the stubbed sleep advances it by what it slept. DB work takes 0 fake ms.
+    const record =
+      (slug: string, body: unknown, tookMs: number) =>
+      (): Response => {
         paced.events.push(`fetch:${slug}`);
+        paced.now += tookMs;
         return jsonResponse(body);
       };
-      const gh = (slug: string): Route => ({ match: boardMatch(slug), respond: record(slug, { jobs: [] }) });
-      const lever = (slug: string): Route => ({
-        match: (url) => url.includes(`api.lever.co/v0/postings/${slug}?`),
-        respond: record(slug, []), // Lever's envelope is a bare array
-      });
-      // id order: greenhouse, greenhouse, lever, lever, greenhouse.
+    const gh = (slug: string, tookMs = 0): Route => ({
+      match: boardMatch(slug),
+      respond: record(slug, { jobs: [] }, tookMs),
+    });
+    const lever = (slug: string, tookMs = 0): Route => ({
+      match: (url) => url.includes(`api.lever.co/v0/postings/${slug}?`),
+      respond: record(slug, [], tookMs), // Lever's envelope is a bare array
+    });
+    const clocked = { paceMs: 500, adapter: NO_RETRY, clock: () => paced.now };
+
+    it("instant same-key neighbours get the full pause; a source change starts at once", async () => {
+      // id order: greenhouse, greenhouse, lever, lever, greenhouse — every board instant (0 ms).
       await seedCompany({ slug: "pa", active: true });
       await seedCompany({ slug: "pb", active: true });
       await seedCompany({ slug: "pc", source: "lever", active: true });
@@ -781,10 +795,10 @@ describe("runIngestion — orchestration over real PGlite (fetch stubbed)", () =
       await seedCompany({ slug: "pe", active: true });
       installFetch([gh("pa"), gh("pb"), lever("pc"), lever("pd"), gh("pe")]);
 
-      const counts = await runIngestion(db, { paceMs: 500, adapter: NO_RETRY });
+      const counts = await runIngestion(db, clocked);
 
       expect(counts).toMatchObject({ processed: 5, ok: 5, failed: 0 });
-      // The exact pause, only where the source repeats (pa→pb, pc→pd); pb→pc and pd→pe start at once.
+      // pa→pb and pc→pd wait the whole 500; pe follows pb's start by the 500 slept for pd ⇒ no wait.
       expect(paced.events).toEqual([
         "fetch:pa",
         "sleep:500",
@@ -794,6 +808,74 @@ describe("runIngestion — orchestration over real PGlite (fetch stubbed)", () =
         "fetch:pd",
         "fetch:pe",
       ]);
+    });
+
+    it("ALTERNATING sources can't burst one host: each key waits only the remainder since its last start", async () => {
+      // greenhouse, lever, greenhouse, lever, greenhouse — every board takes 100 ms. Adjacency-only pacing
+      // would never sleep here and greenhouse would see starts at t=0, 200, 400.
+      await seedCompany({ slug: "aa", active: true });
+      await seedCompany({ slug: "ab", source: "lever", active: true });
+      await seedCompany({ slug: "ac", active: true });
+      await seedCompany({ slug: "ad", source: "lever", active: true });
+      await seedCompany({ slug: "ae", active: true });
+      installFetch([gh("aa", 100), lever("ab", 100), gh("ac", 100), lever("ad", 100), gh("ae", 100)]);
+
+      await runIngestion(db, clocked);
+
+      // aa@0 (→100), ab@100 (→200), ac: 200 since aa ⇒ sleep 300 ⇒ @500 (→600), ad: 500 since ab ⇒ no
+      // wait ⇒ @600 (→700), ae: 200 since ac ⇒ sleep 300 ⇒ @1000.
+      expect(paced.events).toEqual([
+        "fetch:aa",
+        "fetch:ab",
+        "sleep:300",
+        "fetch:ac",
+        "fetch:ad",
+        "sleep:300",
+        "fetch:ae",
+      ]);
+    });
+
+    it("the same injected clock drives the maxRunMs budget (stop STARTING boards once it's spent)", async () => {
+      const m1 = await seedCompany({ slug: "m1", active: true });
+      const m2 = await seedCompany({ slug: "m2", source: "lever", active: true });
+      await seedCompany({ slug: "m3", active: true });
+      installFetch([gh("m1", 600), lever("m2", 600), gh("m3", 600)]);
+
+      const counts = await runIngestion(db, { ...clocked, maxRunMs: 1000 });
+
+      // m1 @0→600, m2 @600 (600 < 1000)→1200, m3: 1200 ≥ 1000 ⇒ never started; the cursor stops at m2.
+      expect(counts).toMatchObject({ companies: 3, processed: 2, lastId: m2 });
+      expect(paced.events).toEqual(["fetch:m1", "fetch:m2"]);
+      expect(m1).toBeLessThan(m2);
+    });
+
+    it("a slow board in between means no pause at all", async () => {
+      await seedCompany({ slug: "sa", active: true });
+      await seedCompany({ slug: "sb", source: "lever", active: true });
+      await seedCompany({ slug: "sc", active: true });
+      installFetch([gh("sa"), lever("sb", 800), gh("sc")]); // 800 ms since sa started ≥ 500
+
+      await runIngestion(db, clocked);
+
+      expect(paced.events).toEqual(["fetch:sa", "fetch:sb", "fetch:sc"]);
+    });
+
+    it("paces by the adapter's pacingKey: two sources declaring one key share the clock", async () => {
+      // Simulate two sources on one vendor's host: lever declares greenhouse's key for this test.
+      const leverAdapter = adapters.lever as { pacingKey?: string };
+      leverAdapter.pacingKey = "greenhouse";
+      try {
+        await seedCompany({ slug: "ka", active: true });
+        await seedCompany({ slug: "kb", source: "lever", active: true });
+        installFetch([gh("ka"), lever("kb")]);
+
+        await runIngestion(db, clocked);
+
+        // A source change, yet the shared key makes lever wait out greenhouse's 500.
+        expect(paced.events).toEqual(["fetch:ka", "sleep:500", "fetch:kb"]);
+      } finally {
+        delete leverAdapter.pacingKey;
+      }
     });
   });
 

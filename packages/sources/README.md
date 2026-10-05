@@ -85,8 +85,10 @@ each board in a try/catch — one dead slug doesn't halt the run.
 
 `ingest:all` is now a thin CLI shell over the shared `runIngestion(db, opts)` library
 (`src/ingest.ts`), which the Phase-8 Worker cron also calls — the CLI commands are unchanged. Boards run
-one at a time; the `paceMs` politeness pause (500 ms) applies only between consecutive boards of the
-SAME source — no two adapters share a request host, so a source change needs no pause.
+one at a time. Politeness (`paceMs`, 500 ms) is per pacing key — an adapter's `pacingKey`, default its
+source, since no two adapters share a request host — and by TIME: a board waits only what's left of
+500 ms since its key's last board started, so alternating sources can't burst one host and a board
+after enough other work waits for nothing.
 
 **A failed hydrate never overwrites stored content.** `runAdapter` keeps every listed job but flags one
 whose detail fetch failed, and the flag decides its fate (`upsertJobs`, the single persistence choke point,

@@ -20,6 +20,17 @@ export interface SourceAdapter {
   readonly source: SourceName;
 
   /**
+   * Ingestion's politeness group: runIngestion keeps board STARTS of one pacing key at least `paceMs`
+   * apart (see {@link pacingKeyOf}). OMIT ⇒ the source itself. Two adapters whose boards hit the SAME
+   * request host (or one vendor's rate limiter) MUST declare the same key. Audit (2026-10): no two share
+   * one — boards-api.greenhouse.io, api.lever.co, api.ashbyhq.com, apply.workable.com,
+   * api.smartrecruiters.com, api.gem.com, jsapi.recruiterbox.com (Trakstar), and the per-tenant
+   * {slug}.recruitee.com / {slug}.pinpointhq.com (two different vendors' domains) — so every adapter
+   * defaults.
+   */
+  readonly pacingKey?: string;
+
+  /**
    * ATS-specific slug canonicalization, run ONCE before branding. Greenhouse/Workable
    * lowercase; Lever/Ashby/SmartRecruiters preserve case (their IDs are case-sensitive,
    * or apply URLs echo the casing). MUST end in `companySlug(...)` so the universal floor applies.
