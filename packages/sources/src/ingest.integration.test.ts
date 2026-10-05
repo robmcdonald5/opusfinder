@@ -576,7 +576,7 @@ describe("runIngestion — orchestration over real PGlite (fetch stubbed)", () =
       expect(await jobByExt("sr-2")).toBeUndefined(); // no content yet — waits for a run that fetches it
       expect((await jobByExt("sr-3"))!.descriptionText).toBe("About sr-3");
       // Persisted with the run row, so `pnpm runs` shows it.
-      expect((await allSourceRuns())[0]!.counts).toMatchObject({ hydrateSkipped: 3 });
+      expect((await allSourceRuns())[0]!.counts).toMatchObject({ hydrateSkipped: 3, hydrateListed: 4 });
     });
 
     it("a board whose EVERY detail fetch failed writes nothing yet is still present and certified", async () => {
@@ -671,6 +671,7 @@ describe("runIngestion — orchestration over real PGlite (fetch stubbed)", () =
       });
 
       expect(counts).toMatchObject({ ok: 1, jobs: 1, emptyContentKept: 1, hydrateSkipped: 0 });
+      expect(counts.hydrateListed).toBe(0); // Greenhouse doesn't hydrate: no health-ratio denominator
       expect(boards[0]).toMatchObject({ ok: true, emptyContentKept: 1 });
       const kept = (await jobByExt("1"))!;
       expect(kept.descriptionText).toBe("Stored body");

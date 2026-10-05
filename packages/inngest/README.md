@@ -152,8 +152,8 @@ integration (email ships in Phase 11 on the local dev runtime — locked at Phas
   `health_alerts` → `sendHealthAlert` a named-subsystem operator alert, page-once-per-`HEALTH_ALERT_COOLDOWN_H`
   (default 24h). Served alongside the digest + F8 functions in prod (`apps/web`). The CLI and the fn share
   `src/health-alert.ts` (`alertOnHealth` + the shape-only `formatMetric`/`checkDetail`) so they cannot drift on
-  which checks page, the body shape, or the cooldown. Enforcing checks is env-only (`HEALTH_ENFORCE`); the seven
-  checks still default `shadow`. No-creds smoke: `pnpm --filter @opusfinder/inngest test:health-alert`.
+  which checks page, the body shape, or the cooldown. Enforcing checks is env-only (`HEALTH_ENFORCE`); every
+  check (eight since `hydrate_skip_ratio`) still defaults `shadow`. No-creds smoke: `pnpm --filter @opusfinder/inngest test:health-alert`.
 
 The `digest_runs` / `digests` / `digest_items` tables live in the unified `@opusfinder/db` schema +
 migrations (`0007`/`0008`; `0009` adds the per-send `email_id`/`delivery_status`/`sent_at` columns);

@@ -23,7 +23,7 @@ import {
 import type { SourceName } from "@opusfinder/shared";
 import { sleep } from "@opusfinder/shared/async";
 
-import { fetchJobs } from "./adapters";
+import { adapters, fetchJobs } from "./adapters";
 import type { RunAdapterOptions } from "./adapters/run-adapter";
 
 /**
@@ -141,6 +141,7 @@ export interface IngestionCounts {
   jobs: number; // distinct postings persisted
   changed: number; // inserted-or-updated postings
   hydrateSkipped: number; // listed postings NOT written (detail fetch failed): stored row kept / new one deferred; still present
+  hydrateListed: number; // non-gone postings listed by HYDRATING boards (written + hydrateSkipped) — the health ratio's denominator
   hydrateGone: number; // listed postings whose detail says they're gone (404/410/not-available): not written, treated as ABSENT
   emptyContentKept: number; // written postings whose BLANK description was not allowed over their non-blank stored one (any source)
   embedded: number; // postings embedded inline (0 when `embed` omitted)
@@ -227,6 +228,9 @@ export async function runIngestion(db: Db, opts: IngestionOptions = {}): Promise
         counts.jobs += total;
         counts.changed += changed;
         counts.hydrateSkipped += upserted.contentMissing;
+        // The hydrate_skip_ratio health check's denominator: only boards whose adapter hydrates, so the
+        // many non-hydrating postings can't dilute a failing detail endpoint.
+        if (adapters[company.source].hydrate) counts.hydrateListed += total + upserted.contentMissing;
         counts.hydrateGone += upserted.gone;
         counts.emptyContentKept += upserted.emptyContentKept;
         counts.ok += 1;
@@ -395,6 +399,7 @@ function emptyCounts(): IngestionCounts {
     jobs: 0,
     changed: 0,
     hydrateSkipped: 0,
+    hydrateListed: 0,
     hydrateGone: 0,
     emptyContentKept: 0,
     embedded: 0,

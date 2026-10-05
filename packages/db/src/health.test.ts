@@ -31,6 +31,8 @@ const HEALTHY: HealthSignals = {
   latestIngestFailed: 0,
   latestIngestProcessed: 11,
   latestIngestCompanies: 11,
+  latestIngestHydrateSkipped: 2,
+  latestIngestHydrateListed: 100,
   discoveryAgeD: 1,
   discoveryLaneErrors: 0,
   embeddingBacklog: 0,
@@ -51,6 +53,7 @@ const BREACHES: Array<{ id: HealthCheckId; signalOverride: Partial<HealthSignals
     id: "board_fail_ratio",
     signalOverride: { latestIngestFailed: 11, latestIngestProcessed: 11, latestIngestCompanies: 11 },
   },
+  { id: "hydrate_skip_ratio", signalOverride: { latestIngestHydrateSkipped: 40 } },
   { id: "discovery_window", signalOverride: { discoveryAgeD: 30 } },
   { id: "embedding_backlog", signalOverride: { embeddingBacklog: 5000 } },
   { id: "digest_health", signalOverride: { digestErrors: 2 } },
@@ -67,9 +70,9 @@ function checkOf(report: HealthReport, id: HealthCheckId): HealthCheck {
 }
 
 describe("evaluateHealth — healthy baseline", () => {
-  it("all-green signals yield exactly 7 checks, none firing, not unhealthy", () => {
+  it("all-green signals yield exactly 8 checks, none firing, not unhealthy", () => {
     const r = evaluateHealth(HEALTHY);
-    expect(r.checks).toHaveLength(7);
+    expect(r.checks).toHaveLength(8);
     expect(r.checks.every((c) => c.state === "ok")).toBe(true);
     expect(r.checks.filter((c) => c.state === "firing")).toHaveLength(0);
     expect(r.unhealthy).toBe(false);
@@ -125,6 +128,34 @@ describe("evaluateHealth — ingestion_staleness default fits the 2-hourly cron"
 
   it("is 5 h by default", () => {
     expect(DEFAULT_HEALTH_THRESHOLDS.ingestMaxAgeH).toBe(5);
+  });
+});
+
+describe("evaluateHealth — hydrate_skip_ratio (failed detail fetches on hydrating boards)", () => {
+  it("holds the 0.2 default boundary with the real ratio as metric: 20/100 ok, 21/100 fires", () => {
+    const at = checkOf(evaluateHealth({ ...HEALTHY, latestIngestHydrateSkipped: 20 }), "hydrate_skip_ratio");
+    expect(at).toMatchObject({ state: "ok", metric: 0.2, threshold: 0.2, mode: "shadow" });
+    const over = checkOf(evaluateHealth({ ...HEALTHY, latestIngestHydrateSkipped: 21 }), "hydrate_skip_ratio");
+    expect(over).toMatchObject({ state: "firing", metric: 0.21 });
+  });
+
+  it("a tick with no hydrating postings (0 denominator) stays ok at metric 0 — no NaN", () => {
+    const r = evaluateHealth({ ...HEALTHY, latestIngestHydrateSkipped: 0, latestIngestHydrateListed: 0 });
+    expect(checkOf(r, "hydrate_skip_ratio")).toMatchObject({ state: "ok", metric: 0 });
+  });
+
+  it("is SHADOW by default — a firing never makes the report unhealthy until HEALTH_ENFORCE lists it", () => {
+    const signals = { ...HEALTHY, latestIngestHydrateSkipped: 90 };
+    expect(evaluateHealth(signals).unhealthy).toBe(false);
+    const enforced = evaluateHealth(signals, healthOptionsFromEnv({ HEALTH_ENFORCE: "hydrate_skip_ratio" }));
+    expect(enforced.unhealthy).toBe(true);
+  });
+
+  it("HEALTH_HYDRATE_SKIP_RATIO overrides the threshold", () => {
+    const opts = healthOptionsFromEnv({ HEALTH_HYDRATE_SKIP_RATIO: "0.5" });
+    expect(opts.thresholds?.hydrateSkipRatio).toBe(0.5);
+    const r = evaluateHealth({ ...HEALTHY, latestIngestHydrateSkipped: 40 }, opts);
+    expect(checkOf(r, "hydrate_skip_ratio").state).toBe("ok"); // 0.4 < 0.5
   });
 });
 
