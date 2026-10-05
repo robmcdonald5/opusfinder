@@ -10,18 +10,26 @@ compatibility_date = "2026-06-03"
 enabled = true
 
 [limits]
-# CPU time per invocation. Cloudflare's DEFAULT is 30s of CPU — and CPU time is COMPUTE ONLY (not
-# wall-clock), accumulated CUMULATIVELY across the whole invocation. A dense ingestion chunk (~130
-# boards each parsing + htmlToText-cleaning hundreds of postings) burns >30s of CPU and is hard-killed
-# BEFORE finishRun. That kill is UNCATCHABLE, so the KV cursor never advances and the same poison
-# chunk re-runs every tick forever (the 2026-06-16 outage, frozen at cursor 1436). Neither adapter.maxItems
-# (a PER-BOARD posting cap) nor maxRunMs (a between-boards WALL-clock budget) bounds CPU. Raise to the
-# 5-min (300,000 ms) maximum so a heavy chunk completes — or cleanly hits the 10-min maxRunMs wall
-# budget and PARTIALLY advances the cursor — instead of dying mid-chunk. Subrequests are NOT the limit
-# (Workers Paid = 10,000/invocation). `cpu_ms` requires the Standard Usage Model (this account is
-# Workers Paid/Standard). The lossless deeper fix (per-board offset pagination + per-board cursor
-# checkpoint) is a follow-up PR.
+# Both limits apply on the Standard usage model (this account: Workers Paid) and only when deployed.
+# Source: Cloudflare docs, developers.cloudflare.com/workers/platform/limits/ (Subrequests) and
+# /workers/wrangler/configuration/#limits.
+#
+# CPU time per invocation — COMPUTE only (not wall-clock), cumulative over the invocation. The 30 s default
+# was too low: a dense chunk burned more, was hard-killed BEFORE finishRun (uncatchable), and the KV cursor
+# re-pinned the same chunk every tick (the 2026-06-16 outage, frozen at cursor 1436). Neither
+# adapter.maxItems (per-board postings) nor maxRunMs (between-boards wall clock) bounds CPU, so this is the
+# 5-min maximum. Measured max: 11.8 s per 150 boards, so ~20 s per 250 — ample headroom.
 cpu_ms = 300000
+# Subrequests per invocation — Workers Paid defaults to 10,000 (max 10,000,000). EVERY fetch counts: each
+# ATS page, N+1 hydrate, retry attempt and neon-http query (KV calls too), and past the cap every fetch
+# fails. Cloudflare does not bill subrequests ("Cloudflare does not bill for subrequests you make from your
+# Worker" — /workers/platform/pricing/), so the cap is raised far clear of any tick rather than counted:
+#   a normal 250-board tick           ≈ 1,500  (≈ 1 page + 4 queries per board; SmartRecruiters more)
+#   worst board: a capped SmartRecruiters mega-board with EVERY request retried
+#     (1,500 hydrates + 15 list pages) x 4 attempts (maxRetries 3) + ~10 queries ≈ 6,070
+#   100,000 holds 16 such boards in ONE chunk plus all the rest — more than the 10-min maxRunMs budget even
+#   lets a tick start.
+subrequests = 100000
 
 [triggers]
 # SCHEDULING TOGGLE — pause/resume the deployed cron (see README "Pause / resume the schedule").
@@ -63,15 +71,12 @@ crons = [
 #     same-source board itself took time; budgeted at a conservative 0.25 s/board
 #   => ~1.7 s/board: 250 boards ~ 7.2 min (72% of the budget, so a tick ~40% slower than the median still
 #      completes); 300 would be ~8.7 min (87%), too close to the stop to call "normal".
-# A second graceful stop guards subrequests: src/index.ts stops starting boards at 8,000 of Workers Paid's
-# 10,000-per-invocation cap (250 normal boards use ~1,500). CPU needs no guard: ~20 s per 250 boards
-# (measured max 11.8 s per 150) against cpu_ms = 300,000.
 # 250 x 12 ticks = 3,000 board fetches/day vs 3,600 at hourly x 150, so a full sweep of the active boards
 # takes ~20% longer (N/250 x 2 h vs N/150 x 1 h). Raise it once `pnpm runs` (started/finished) shows real
-# ticks finishing well short of 10 min. History: 150 -> 75 (PR #28, a Neon 512MB-outage misdiagnosis — the real cause was jobs.raw
-# storage bloat, fixed in PR #29) -> 150 (2026-06-17). The genuine per-tick protections are cpu_ms above
-# + the per-tick Worker budget bounding (PR #27). Matches DEFAULT_INGEST_LIMIT in src/index.ts; clamped to
-# MAX_INGEST_LIMIT (500) there.
+# ticks finishing well short of 10 min. History: 150 -> 75 (PR #28, a Neon 512MB-outage misdiagnosis —
+# the real cause was jobs.raw storage bloat, fixed in PR #29) -> 150 (2026-06-17). The per-tick
+# protections are [limits] above + the per-tick Worker budget bounding (PR #27). Matches
+# DEFAULT_INGEST_LIMIT in src/index.ts; clamped to MAX_INGEST_LIMIT (500) there.
 INGEST_LIMIT = "250"
 
 # F2 lifecycle-close enforcement — the SINGLE switch across all three F2 arms (Arm A per-board sweep +

@@ -37,12 +37,6 @@ and the library it calls owns its own `source_runs` row (`startRun`/`finishRun`)
 
 - **Ingestion is chunked** (Option-A chunked cron): each tick processes the next `INGEST_LIMIT` boards
   using an id-keyset cursor stored in the `INGEST_CURSOR` KV namespace; the corpus drains across ticks.
-  Two graceful budgets stop a tick STARTING new boards (the cursor then advances past the boards that ran):
-  `MAX_RUN_MS` (10 min wall) and a subrequest budget — Workers Paid allows 10,000 subrequests per
-  invocation ([limits](https://developers.cloudflare.com/workers/platform/limits/#subrequests)), so the
-  tick stops at 8,000, keeping headroom for one in-flight SmartRecruiters mega-board (~1,525) plus the
-  post-loop writes. `pnpm runs` shows `subrequests` and which budget stopped a tick (`stoppedByTime` /
-  `stoppedBySubrequests`).
   Boards run one at a time; politeness keeps board starts of one source (its adapter's `pacingKey`)
   ≥ 500 ms apart, sleeping only the remainder, so alternating sources can't burst one host. A posting
   whose detail fetch failed is kept as stored, never overwritten (`hydrateSkipped` in `pnpm runs`); one

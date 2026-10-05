@@ -26,7 +26,7 @@ vi.mock("@opusfinder/shared", () => ({
 }));
 
 import wranglerToml from "../wrangler.toml?raw";
-import worker, { withSubrequestCounter } from "./index";
+import worker from "./index";
 
 // Mirrors the wrangler.toml / src/index.ts cron constants — must match character-for-character (esp.
 // the weekday "SUN", not "0"); a mismatch here is exactly the drift the default-case throw guards. The
@@ -40,7 +40,6 @@ const DEFAULT_INGEST_LIMIT = 250;
 const MAX_INGEST_LIMIT = 500;
 const MAX_JOBS_PER_BOARD = 1500;
 const MAX_RUN_MS = 10 * 60_000;
-const SUBREQUEST_STOP_AT = 10_000 - 2_000;
 
 // Sentinel returned by createDb — asserts the SAME client instance is threaded into the pipeline.
 const DB = { __db: "sentinel" } as const;
@@ -231,44 +230,8 @@ describe("runIngestionTick — fixed pipeline budget", () => {
     expect(ingestArgs).toMatchObject({
       activeOnly: true,
       maxRunMs: MAX_RUN_MS,
-      // Workers Paid's 10,000-subrequest cap minus 2,000 headroom for one in-flight mega-board + post-loop.
-      subrequests: { stopAt: SUBREQUEST_STOP_AT },
       adapter: { maxItems: MAX_JOBS_PER_BOARD },
     });
-  });
-
-  it("counts every global-fetch subrequest made DURING the run, and restores the global fetch after", async () => {
-    const fetchSpy = vi.fn().mockResolvedValue(new Response("{}"));
-    vi.stubGlobal("fetch", fetchSpy);
-    let usedDuringRun = -1;
-    mocks.runIngestion.mockImplementationOnce(
-      async (_db: unknown, opts: { subrequests: { used: () => number } }) => {
-        // Stand-ins for ATS pages / hydrates / neon-http queries — all go through the global fetch.
-        await fetch("https://ats.invalid/board");
-        await fetch("https://ats.invalid/detail/1");
-        await fetch("https://db.invalid/sql");
-        usedDuringRun = opts.subrequests.used();
-        return { processed: 0, companies: 0, lastId: 0 };
-      },
-    );
-    const env = { DATABASE_URL: "postgres://stub", INGEST_CURSOR: makeKv(null) };
-
-    await scheduled({ cron: INGEST_CRON }, env, makeCtx());
-
-    expect(usedDuringRun).toBe(3);
-    expect(fetchSpy).toHaveBeenCalledTimes(3); // each call still reached the real fetch, unchanged
-    expect(globalThis.fetch).toBe(fetchSpy); // the counting wrapper is gone after the tick
-  });
-
-  it("restores the global fetch even when the run throws", async () => {
-    const fetchSpy = vi.fn();
-    vi.stubGlobal("fetch", fetchSpy);
-    const boom = new Error("run blew up");
-
-    const err = await withSubrequestCounter(() => Promise.reject(boom)).catch((e: unknown) => e);
-
-    expect(err).toBe(boom);
-    expect(globalThis.fetch).toBe(fetchSpy);
   });
 
   it("threads both enforce switches independently (LIFECYCLE_CLOSE_ENFORCE vs STALE_SWEEP)", async () => {
@@ -448,6 +411,14 @@ describe("wrangler.toml ↔ src/index.ts cron sync (a drift silently skips a lan
     }
     // One lane call per registered cron (vacuous when paused).
     expect(mocks.runIngestion.mock.calls.length + mocks.runDiscovery.mock.calls.length).toBe(crons.length);
+  });
+
+  it("raises [limits] subrequests far above a worst-case tick (the Workers Paid default is only 10,000)", () => {
+    const cap = Number(/^subrequests = (\d+)$/m.exec(wranglerToml)?.[1]);
+    // A capped SmartRecruiters mega-board with EVERY hydrate and list page retried 3× (4 attempts) + queries.
+    const worstMegaBoard = (MAX_JOBS_PER_BOARD + 15) * 4 + 10;
+    expect(cap).toBeGreaterThanOrEqual(16 * worstMegaBoard + DEFAULT_INGEST_LIMIT * 9);
+    expect(cap).toBeLessThanOrEqual(10_000_000); // the documented Paid maximum
   });
 
   it("ships INGEST_LIMIT equal to the code default (the fallback when the var is unset or invalid)", () => {

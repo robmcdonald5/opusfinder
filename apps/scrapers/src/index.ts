@@ -65,7 +65,7 @@ const DISCOVERY_CRON = "0 3 * * SUN";
 // Matches wrangler.toml's INGEST_LIMIT (the fallback when the var is unset or invalid); sized there.
 const DEFAULT_INGEST_LIMIT = 250;
 // Upper bound: a misconfigured INGEST_LIMIT (e.g. "50000") is clamped so one tick can't blow the
-// subrequest/wall budget (~500 boards x up to ~20 subrequests ~= the Workers Paid 10K cap; §6).
+// subrequest/wall budget (~500 boards x up to ~20 subrequests; wrangler.toml [limits] sets the cap).
 const MAX_INGEST_LIMIT = 500;
 // Per-board posting cap — the real per-invocation budget guard. The ~20-subrequests/board assumption
 // above breaks on a mega-board: SmartRecruiters boschgroup (~4.6k postings, each an N+1 hydrate fetch)
@@ -78,19 +78,6 @@ const MAX_JOBS_PER_BOARD = 1500;
 // runIngestion stops starting new boards past this and finishes cleanly, so even a chunk of many medium
 // boards can't be killed mid-run. Belt-and-suspenders behind the per-board cap.
 const MAX_RUN_MS = 10 * 60_000;
-// Subrequest budget. Workers Paid allows 10,000 subrequests per invocation, and every fetch() counts — each
-// ATS list page, each N+1 hydrate, EACH retry attempt, each neon-http query — as do binding calls like KV
-// (Cloudflare docs: Workers → Platform → Limits → Subrequests; raisable up to 10M via [limits] subrequests,
-// left at the default here). Past the cap every fetch fails, so runIngestion stops
-// STARTING boards at SUBREQUEST_LIMIT − SUBREQUEST_HEADROOM, the same graceful stop as MAX_RUN_MS. The
-// headroom covers one worst-case board already in flight — a capped SmartRecruiters mega-board is
-// MAX_JOBS_PER_BOARD (1,500) hydrates + 15 list pages + ~10 neon-http queries ≈ 1,525 — plus the post-loop
-// stale sweep, finishRun, the KV cursor put and the watchdog ping, leaving ~470 for retries. 250 normal
-// boards use ~1,500 (≈ 1 page + 4 queries each, more for SmartRecruiters), so this binds only on an
-// unusually heavy chunk. (CPU is not a concern: the measured max was 11.8 s per 150 boards, so ~20 s per
-// 250 against cpu_ms = 300,000.)
-const SUBREQUEST_LIMIT = 10_000;
-const SUBREQUEST_HEADROOM = 2_000;
 // limit + reprobeLimit sized to the subrequest budget (REQUIRES Workers Paid).
 const DISCOVERY_LIMIT = 400;
 const DISCOVERY_REPROBE_LIMIT = 500;
@@ -197,8 +184,8 @@ export function pingWatchdogFail(env: Env, ctx: ExecutionContext, message: strin
 
 /**
  * One ingestion tick: read the chunk cursor from KV, process up to `INGEST_LIMIT` boards via
- * `runIngestion` (bounded per board by MAX_JOBS_PER_BOARD and per tick by MAX_RUN_MS and the subrequest
- * budget, so a heavy chunk can't be killed before finishRun), then advance or wrap the cursor. Wrap to the start only when the
+ * `runIngestion` (bounded per board by MAX_JOBS_PER_BOARD and per tick by MAX_RUN_MS so a heavy chunk
+ * can't be killed before finishRun), then advance or wrap the cursor. Wrap to the start only when the
  * whole chunk ran AND under-filled (`processed >= companies && companies < limit` ⇒ end of table);
  * otherwise advance past the last processed id (continuing a budget-truncated chunk next tick).
  */
@@ -223,48 +210,24 @@ async function runIngestionTick(db: Db, env: Env): Promise<void> {
   const staleTtlDays =
     ttlRaw !== undefined && Number.isFinite(ttlRaw) && ttlRaw > 0 ? Math.trunc(ttlRaw) : undefined;
 
-  const counts = await withSubrequestCounter((used) =>
-    runIngestion(db, {
-      activeOnly: true,
-      afterId,
-      limit,
-      maxRunMs: MAX_RUN_MS,
-      subrequests: { used, stopAt: SUBREQUEST_LIMIT - SUBREQUEST_HEADROOM },
-      adapter: { maxItems: MAX_JOBS_PER_BOARD },
-      enforceLifecycle: parseEnforceFlag(env.LIFECYCLE_CLOSE_ENFORCE),
-      // Tier-1 universal staleness sweep — runs EVERY tick (driven by the deployed feature, not gated on the
-      // switch) so the would-close population is observed in shadow; `enforce` rides its OWN STALE_SWEEP flag,
-      // independent of LIFECYCLE_CLOSE_ENFORCE, so it stays count-only until the owner flips it after reading the counts.
-      staleSweep: { ttlDays: staleTtlDays, enforce: parseEnforceFlag(env.STALE_SWEEP) },
-    }),
-  );
+  const counts = await runIngestion(db, {
+    activeOnly: true,
+    afterId,
+    limit,
+    maxRunMs: MAX_RUN_MS,
+    adapter: { maxItems: MAX_JOBS_PER_BOARD },
+    enforceLifecycle: parseEnforceFlag(env.LIFECYCLE_CLOSE_ENFORCE),
+    // Tier-1 universal staleness sweep — runs EVERY tick (driven by the deployed feature, not gated on the
+    // switch) so the would-close population is observed in shadow; `enforce` rides its OWN STALE_SWEEP flag,
+    // independent of LIFECYCLE_CLOSE_ENFORCE, so it stays count-only until the owner flips it after reading the counts.
+    staleSweep: { ttlDays: staleTtlDays, enforce: parseEnforceFlag(env.STALE_SWEEP) },
+  });
 
   // Wrap to the start (afterId 0) ONLY when the whole chunk was processed AND it under-filled
-  // (companies < limit ⇒ the id-keyset sweep reached the end of the table). If a budget (time or
-  // subrequests) stopped the loop early (processed < companies) there are still boards left in THIS
-  // chunk, so advance to the last processed id and continue it next tick — never wrap mid-chunk (that
-  // would skip the rest).
+  // (companies < limit ⇒ the id-keyset sweep reached the end of the table). If the maxRunMs budget
+  // stopped the loop early (processed < companies) there are still boards left in THIS chunk, so advance
+  // to the last processed id and continue it next tick — never wrap mid-chunk (that would skip the rest).
   const reachedEnd = counts.processed >= counts.companies && counts.companies < limit;
   const next = reachedEnd ? 0 : counts.lastId;
   await env.INGEST_CURSOR.put("afterId", String(next));
-}
-
-/**
- * Count the subrequests `run` makes by wrapping the global `fetch` for its duration — every ATS page,
- * hydrate and retry attempt goes through it, and the neon-http driver resolves the global `fetch` per
- * query — then restore the original, even on a throw. KV binding calls also count against the cap but
- * bypass `fetch`: a fixed couple per tick, inside SUBREQUEST_HEADROOM. Exported solely for the unit test.
- */
-export async function withSubrequestCounter<T>(run: (used: () => number) => Promise<T>): Promise<T> {
-  const original = globalThis.fetch;
-  let used = 0;
-  globalThis.fetch = ((...args: Parameters<typeof fetch>) => {
-    used += 1;
-    return original.apply(globalThis, args);
-  }) as typeof fetch;
-  try {
-    return await run(() => used);
-  } finally {
-    globalThis.fetch = original;
-  }
 }
