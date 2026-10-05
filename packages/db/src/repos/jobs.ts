@@ -13,7 +13,7 @@ import type { CompanySlug, JobId, NormalizedJob, SourceName } from "@opusfinder/
 
 import type { Db } from "../client";
 import { companies, jobs } from "../schema";
-import { NUL, resultRows, signatureSql } from "./sql";
+import { NUL, signatureSql } from "./sql";
 
 /** One row of the companies table, as the ingestion driver needs it (id + identity). */
 export interface CompanyRow {
@@ -99,9 +99,6 @@ export interface UpsertJobsResult {
   total: number;
   /** `contentMissing` postings: content NOT written (a stored row only has its company_id refreshed). */
   contentMissing: number;
-  /** Written postings whose BLANK incoming description was NOT allowed to replace their non-blank
-   *  stored one (the empty-description guard) — a fetch anomaly worth watching. */
-  emptyContentKept: number;
 }
 
 /**
@@ -119,8 +116,8 @@ export interface UpsertJobsResult {
  *    posting that moved boards isn't falsely closed by its old board's sweep. A posting not yet stored is
  *    not inserted until a run fetches its content.
  *  - ANY job (every source): a BLANK incoming description never replaces a non-blank stored one — the
- *    stored text, its content_signature and its embedding are kept (see `description` in the body;
- *    counted as `emptyContentKept`). A new posting is inserted as given, "" included.
+ *    stored text, its content_signature and its embedding are kept (see `description` in the body). A
+ *    new posting is inserted as given, "" included.
  * Presence is NOT this writer's job: the caller stamps every LISTED posting present (markJobsPresent /
  * sweepLifecycle), so a failed detail fetch never ages or sweeps a live job.
  */
@@ -149,13 +146,7 @@ export async function upsertJobs(
   const missing = distinct.filter((job) => job.contentMissing);
   if (missing.length > 0) await moveToListingBoard(db, companyId, missing);
   // Guard the empty case: `INSERT ... VALUES` with no rows is invalid SQL.
-  if (writable.length === 0) {
-    return { changed: 0, total: 0, contentMissing: missing.length, emptyContentKept: 0 };
-  }
-  // Count (BEFORE the upsert, while the stored text is still visible) the rows the empty-description guard
-  // below will protect — only when some incoming description looks blank, so a normal board pays no extra
-  // round-trip.
-  const emptyContentKept = await countEmptyContentKept(db, writable);
+  if (writable.length === 0) return { changed: 0, total: 0, contentMissing: missing.length };
 
   const values = writable.map((job) => {
     // Strip U+0000 from anything bound for text/jsonb (Postgres rejects it).
@@ -279,35 +270,7 @@ export async function upsertJobs(
     changed += updated.length;
   }
 
-  return { changed, total: writable.length, contentMissing: missing.length, emptyContentKept };
-}
-
-/**
- * How many of `list` have a BLANK incoming description over a NON-blank stored one — the rows the
- * empty-description guard keeps. Issued only when a candidate exists: JS pre-filters with `\s`, then the
- * SQL re-tests the incoming text with the guard's own BLANK_RE, so it never counts a row the guard
- * doesn't keep. (A body of only exotic whitespace JS `\s` lacks, e.g. U+0085, could escape the COUNT —
- * never the guard itself.) The candidates ride as ONE jsonb param (NUL stripped — jsonb rejects it; the
- * upsert binds the same stripped text).
- */
-async function countEmptyContentKept(db: Db, list: NormalizedJob[]): Promise<number> {
-  const blank = list.filter((job) => !/\S/.test(job.descriptionText.replaceAll(NUL, "")));
-  if (blank.length === 0) return 0;
-  const rows = JSON.stringify(
-    blank.map((job) => ({
-      source: job.source,
-      external_id: job.externalId.replaceAll(NUL, ""),
-      description_text: job.descriptionText.replaceAll(NUL, ""),
-    })),
-  );
-  const result: unknown = await db.execute(sql`
-    SELECT count(*)::int AS kept
-    FROM jsonb_to_recordset(${rows}::jsonb) AS v(source text, external_id text, description_text text)
-    JOIN ${jobs} ON jobs.source = v.source AND jobs.external_id = v.external_id
-    WHERE v.description_text ~ ${BLANK_RE} AND jobs.description_text !~ ${BLANK_RE}
-  `);
-  const row = resultRows(result)[0] as { kept?: unknown } | undefined;
-  return Number(row?.kept ?? 0);
+  return { changed, total: writable.length, contentMissing: missing.length };
 }
 
 /**

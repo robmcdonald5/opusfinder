@@ -107,10 +107,10 @@ enforces it for every caller):
   non-blank stored one — an inline-content board (Greenhouse `content=true`, Workable `details=true`, Lever)
   momentarily serving no body, or SmartRecruiters `jobAd.sections: {}`. The stored text, its signature and
   its embedding stay; a title change in the same fetch still applies. A brand-new posting is inserted as
-  given, `""` included. `counts.emptyContentKept` tallies these.
+  given, `""` included.
 
-The counters (in `pnpm runs` and on each `ingest:all` board line) count distinct postings on boards whose
-write succeeded.
+`hydrateSkipped` (in `pnpm runs` and on each `ingest:all` board line) counts distinct postings on boards
+whose write succeeded.
 
 Since Phase F2, `runIngestion` also runs a per-board **feed-absence lifecycle sweep** (`sweepLifecycle`, gated
 on a non-empty fetch) after each successful board: postings absent from a healthy fetch accrue a

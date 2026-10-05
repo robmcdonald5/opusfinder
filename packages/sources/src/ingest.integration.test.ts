@@ -658,7 +658,7 @@ describe("runIngestion — orchestration over real PGlite (fetch stubbed)", () =
   });
 
   describe("an inline-content board serving a blank description (the empty-description guard)", () => {
-    it("keeps the stored text, counts it on the run and the board, and never NULLs the embedding", async () => {
+    it("keeps the stored text and never NULLs the embedding", async () => {
       // Greenhouse (content=true) — no hydrate, so no contentMissing flag: only the upsertJobs guard stands
       // between a momentarily-blank `content` and the stored description.
       const gh = await seedCompany({ slug: "inline", active: true });
@@ -667,16 +667,10 @@ describe("runIngestion — orchestration over real PGlite (fetch stubbed)", () =
       await db.update(jobs).set({ embedding: oneHot(1) }).where(eq(jobs.companyId, gh));
       installFetch([boardRoute("inline", [ghJob(1)])]); // ghJob carries no `content` ⇒ descriptionText ""
 
-      const boards: IngestBoardResult[] = [];
-      const counts = await runIngestion(db, {
-        paceMs: 0,
-        adapter: NO_RETRY,
-        onBoard: (b) => boards.push(b),
-      });
+      const counts = await runIngestion(db, { paceMs: 0, adapter: NO_RETRY });
 
-      expect(counts).toMatchObject({ ok: 1, jobs: 1, emptyContentKept: 1, hydrateSkipped: 0 });
+      expect(counts).toMatchObject({ ok: 1, jobs: 1, hydrateSkipped: 0 });
       expect(counts.hydrateListed).toBe(0); // Greenhouse doesn't hydrate: no health-ratio denominator
-      expect(boards[0]).toMatchObject({ ok: true, emptyContentKept: 1 });
       const kept = (await jobByExt("1"))!;
       expect(kept.descriptionText).toBe("Stored body");
       expect(kept.embedding).not.toBeNull();

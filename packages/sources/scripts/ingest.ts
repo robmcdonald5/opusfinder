@@ -35,15 +35,14 @@ async function main(): Promise<void> {
   const companyId = await upsertCompany(db, adapters[source].normalizeSlug(slug), source);
   // upsertJobs never writes a failed hydrate's content (NormalizedJob.contentMissing — its stored row
   // keeps its content), so those are reported apart from the duplicates it collapsed.
-  const { changed, total, contentMissing, emptyContentKept } = await upsertJobs(db, companyId, jobs);
+  const { changed, total, contentMissing } = await upsertJobs(db, companyId, jobs);
 
   const collapsed = jobs.length - total - contentMissing;
   console.log(
     `Upserted ${total} jobs for ${source}:"${slug}" (company_id=${companyId}): ` +
       `changed ${changed}, unchanged ${total - changed}` +
       (collapsed > 0 ? ` (collapsed ${collapsed} duplicate id${collapsed === 1 ? "" : "s"})` : "") +
-      (contentMissing > 0 ? `; ${contentMissing} not written (detail fetch failed)` : "") +
-      (emptyContentKept > 0 ? `; ${emptyContentKept} blank description(s) kept as stored` : ""),
+      (contentMissing > 0 ? `; ${contentMissing} not written (detail fetch failed)` : ""),
   );
 
   const policy = embedPolicy(noEmbed);

@@ -52,8 +52,6 @@ export interface IngestBoardResult {
    *  follows the board; still present) — so a board whose every hydrate failed reads as such, not as an
    *  empty board. */
   hydrateSkipped: number;
-  /** Postings whose blank description was not written over their non-blank stored one. */
-  emptyContentKept: number;
   embedded: number;
   embedTokens: number;
   error?: string;
@@ -147,7 +145,6 @@ export interface IngestionCounts {
   changed: number; // inserted-or-updated postings
   hydrateSkipped: number; // listed postings whose detail fetch failed: content kept (only company_id refreshed) / new one deferred; still present
   hydrateListed: number; // postings listed by HYDRATING boards (written + hydrateSkipped) — the health ratio's denominator
-  emptyContentKept: number; // written postings whose BLANK description was not allowed over their non-blank stored one (any source)
   embedded: number; // postings embedded inline (0 when `embed` omitted)
   embedTokens: number; // Voyage tokens used
   embedFailed: number; // boards whose embed step threw (jobs still persisted)
@@ -243,7 +240,6 @@ export async function runIngestion(db: Db, opts: IngestionOptions = {}): Promise
         // The hydrate_skip_ratio health check's denominator: only boards whose adapter hydrates, so the
         // many non-hydrating postings can't dilute a failing detail endpoint.
         if (adapters[company.source].hydrate) counts.hydrateListed += total + upserted.contentMissing;
-        counts.emptyContentKept += upserted.emptyContentKept;
         counts.ok += 1;
 
         // Liveness stamp (EVERY board, capped or not — see markJobsPresent): refresh last_seen_at for
@@ -332,7 +328,6 @@ export async function runIngestion(db: Db, opts: IngestionOptions = {}): Promise
           jobs: total,
           changed,
           hydrateSkipped: upserted.contentMissing,
-          emptyContentKept: upserted.emptyContentKept,
           embedded: boardEmbedded,
           embedTokens: boardTokens,
           error: embedWarning,
@@ -348,7 +343,6 @@ export async function runIngestion(db: Db, opts: IngestionOptions = {}): Promise
           jobs: 0,
           changed: 0,
           hydrateSkipped: 0,
-          emptyContentKept: 0,
           embedded: 0,
           embedTokens: 0,
           error: message,
@@ -408,7 +402,6 @@ function emptyCounts(): IngestionCounts {
     changed: 0,
     hydrateSkipped: 0,
     hydrateListed: 0,
-    emptyContentKept: 0,
     embedded: 0,
     embedTokens: 0,
     embedFailed: 0,
@@ -443,9 +436,6 @@ function logSummary(counts: IngestionCounts, embedEnabled: boolean): void {
       (counts.cappedBoards > 0 ? `; ${counts.cappedBoards} capped board(s)` : "") +
       (counts.hydrateSkipped > 0
         ? `; ${counts.hydrateSkipped} posting(s) not written (detail fetch failed; stored content kept)`
-        : "") +
-      (counts.emptyContentKept > 0
-        ? `; ${counts.emptyContentKept} blank description(s) not written over stored text`
         : "") +
       (counts.staleWouldClose > 0 || counts.staleClosed > 0 || counts.staleSweepFailed > 0
         ? `; stale: ${counts.staleWouldClose} would-close, ${counts.staleClosed} closed` +
