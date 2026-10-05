@@ -23,8 +23,8 @@ import {
 import type { SourceName } from "@opusfinder/shared";
 import { sleep } from "@opusfinder/shared/async";
 
-import { adapters, fetchJobs, isSourceName, pacingKeyOf } from "./adapters";
-import type { RunAdapterOptions } from "./adapters/run-adapter";
+import { adapterFor, pacingKeyOf } from "./adapters";
+import { runAdapter, type RunAdapterOptions } from "./adapters/run-adapter";
 
 /**
  * The injected embedder — the structural MINIMUM that `backfillJobEmbeddings` accepts. The real
@@ -200,23 +200,26 @@ export async function runIngestion(db: Db, opts: IngestionOptions = {}): Promise
       // least one board runs (its own cost is bounded by adapter.maxItems); BREAK (not return) so the
       // finishRun + summary below still run and the handler advances the cursor to the last processed id.
       if (i > 0 && opts.maxRunMs !== undefined && clock() - startMs >= opts.maxRunMs) break;
-      // Politeness is per ATS HOST, i.e. per PACING KEY (the adapter's `pacingKey`, default its source —
-      // types.ts lists the host audit). Paced by TIME, not adjacency: start a board only ≥ paceMs after its
-      // key's previous board FINISHED, sleeping just the remainder. Adjacency alone let alternating sources
-      // (gh, lever, gh, lever…) hit one host back-to-back; time also skips the pause when other boards ran
-      // in between for long enough. The key is resolved WITHOUT throwing: a row whose source has no
-      // adapter (a poison row) paces under its raw source and then fails only its own board, in the try.
-      const pacingKey = isSourceName(company.source)
-        ? pacingKeyOf(adapters[company.source])
-        : company.source;
-      const keyLastFinish = lastFinish.get(pacingKey);
-      if (keyLastFinish !== undefined) {
-        const wait = paceMs - (clock() - keyLastFinish);
-        if (wait > 0) await sleep(wait);
-      }
       counts.lastId = company.id; // advance the chunk cursor even when this board fails
+      // Recorded after the board (see the end of the loop body); the raw source until the adapter resolves.
+      let pacingKey: string = company.source;
       try {
-        const normalized = await fetchJobs(company.source, company.slug, opts.adapter);
+        // The adapter is looked up ONCE, INSIDE the try: a row whose source has no adapter (a poison row)
+        // throws `unknown source "<x>"` here and fails only its own board. Reused for pacing, the fetch and
+        // the hydrate check below.
+        const adapter = adapterFor(company.source);
+        // Politeness is per ATS HOST, i.e. per PACING KEY (the adapter's `pacingKey`, default its source —
+        // types.ts lists the host audit). Paced by TIME, not adjacency: start a board only ≥ paceMs after
+        // its key's previous board FINISHED, sleeping just the remainder. Adjacency alone let alternating
+        // sources (gh, lever, gh, lever…) hit one host back-to-back; time also skips the pause when other
+        // boards ran in between for long enough.
+        pacingKey = pacingKeyOf(adapter);
+        const keyLastFinish = lastFinish.get(pacingKey);
+        if (keyLastFinish !== undefined) {
+          const wait = paceMs - (clock() - keyLastFinish);
+          if (wait > 0) await sleep(wait);
+        }
+        const normalized = await runAdapter(adapter, company.slug, opts.adapter);
         // A capped board (adapter.maxItems truncated the fetch) is PARTIAL — its present-set is
         // incomplete, so the F2 feed-absence sweep below MUST be skipped or it would false-close the
         // un-fetched tail. runAdapter trims to EXACTLY maxItems, so length >= cap ⇔ capped.
@@ -241,7 +244,7 @@ export async function runIngestion(db: Db, opts: IngestionOptions = {}): Promise
         counts.hydrateSkipped += upserted.contentMissing;
         // The hydrate_skip_ratio health check's denominator: only boards whose adapter hydrates, so the
         // many non-hydrating postings can't dilute a failing detail endpoint.
-        if (adapters[company.source].hydrate) counts.hydrateListed += total + upserted.contentMissing;
+        if (adapter.hydrate) counts.hydrateListed += total + upserted.contentMissing;
         counts.ok += 1;
 
         // Liveness stamp (EVERY board, capped or not — see markJobsPresent): refresh last_seen_at for

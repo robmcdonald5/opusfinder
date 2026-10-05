@@ -44,14 +44,24 @@ export function isSourceName(value: string): value is SourceName {
 }
 
 /**
+ * The adapter for `source`, or a clear `unknown source "<x>"` error — never an undefined adapter that
+ * fails later as an opaque TypeError. A `companies` row is typed SourceName but read from the DB, so a
+ * stale or hand-written source can still arrive here. Shape-only message (the source string only).
+ */
+export function adapterFor(source: string): SourceAdapter {
+  if (!isSourceName(source)) throw new Error(`unknown source "${source}"`);
+  return adapters[source];
+}
+
+/**
  * Fetch + normalize all live postings for one board on `source`. The single public entry
  * point: `runAdapter` drives the descriptor (slug normalization → pagination → fetch →
- * map → hydrate).
+ * map → hydrate). An unknown source rejects with {@link adapterFor}'s error.
  */
-export function fetchJobs(
+export async function fetchJobs(
   source: SourceName,
   slug: string,
   opts?: RunAdapterOptions,
 ): Promise<NormalizedJob[]> {
-  return runAdapter(adapters[source], slug, opts);
+  return runAdapter(adapterFor(source), slug, opts);
 }

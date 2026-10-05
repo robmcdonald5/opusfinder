@@ -894,8 +894,14 @@ describe("runIngestion — orchestration over real PGlite (fetch stubbed)", () =
       const p3 = await seedCompany({ slug: "p3", active: true });
       installFetch([boardRoute("p1", [ghJob(1)]), boardRoute("p3", [ghJob(3)])]);
 
-      // Default pacing (no paceMs override): the pacing-key lookup itself must not throw on p2.
-      const counts = await runIngestion(db, { adapter: NO_RETRY, clock: () => paced.now });
+      // Default pacing (no paceMs override): nothing about p2 — its adapter lookup included — may throw
+      // outside its own board's try.
+      const boards: IngestBoardResult[] = [];
+      const counts = await runIngestion(db, {
+        adapter: NO_RETRY,
+        clock: () => paced.now,
+        onBoard: (b) => boards.push(b),
+      });
 
       expect(counts).toMatchObject({ companies: 3, processed: 3, ok: 2, failed: 1, lastId: p3 });
       expect((await jobsFor(p1)).length).toBe(1);
@@ -903,7 +909,9 @@ describe("runIngestion — orchestration over real PGlite (fetch stubbed)", () =
       expect(p2).toBeGreaterThan(p1);
       const runs = await allSourceRuns();
       expect(runs[0]!.status).toBe("ok"); // isolated, not an infrastructural failure
-      expect(runs[0]!.errorSample).toMatch(/^nonesuch:p2 /);
+      // A clear, shape-only cause (no opaque TypeError), exactly.
+      expect(runs[0]!.errorSample).toBe('nonesuch:p2 unknown source "nonesuch"');
+      expect(boards[1]).toMatchObject({ slug: "p2", ok: false, error: 'unknown source "nonesuch"' });
     });
   });
 
