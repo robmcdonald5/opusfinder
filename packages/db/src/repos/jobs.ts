@@ -151,9 +151,10 @@ export async function upsertJobs(
       remote: job.remote,
       applyUrl: job.applyUrl.replaceAll(NUL, ""),
       postedAt: job.postedAt,
-      // `raw` (job.raw) is DEPRECATED and intentionally NOT written — write-only debug data that grew to
-      // dominate the DB. The column is nullable; omitting it from the INSERT leaves it NULL. See schema.ts
-      // jobs doc. content_signature: md5 over the SAME normalized title+desc, computed SQL-side from the
+      // The `raw` column is DEPRECATED and intentionally NOT written — write-only debug data that grew to
+      // dominate the DB (NormalizedJob no longer even carries it). The column is nullable; omitting it from
+      // the INSERT leaves it NULL. See schema.ts jobs doc.
+      // content_signature: md5 over the SAME normalized title+desc, computed SQL-side from the
       // bound (NUL-stripped) values via the ONE signatureSql definition — byte-identical to the ON CONFLICT
       // SET and the backfill, so an insert and any later re-ingest/backfill of the same content always
       // produce the same signature. (embedding omitted — populated by the embedding backfill.)

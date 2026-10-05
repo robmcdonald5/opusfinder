@@ -66,7 +66,10 @@ export async function runAdapter(
   const tag = `${adapter.source} "${ctx.slug}"`;
   const fetchJson: FetchJson = (req) => fetchJsonResilient(req, tag, maxRetries, fetchTimeoutMs);
 
-  // Pagination loop. Keep each raw item beside its mapped job so hydrate has both.
+  // Pagination loop. Keep each raw list item beside its mapped job ONLY when there is a hydrate to
+  // hand it to (the job itself carries no raw — it is not stored); otherwise drop the reference so a
+  // multi-page board doesn't pin every parsed page until the loop ends.
+  const hydrate = adapter.hydrate;
   const mapped: { raw: unknown; job: NormalizedJob }[] = [];
   let skipped = 0;
   let cursor: Cursor | null = null;
@@ -86,7 +89,7 @@ export async function runAdapter(
         // Canonical location order: keeps the in-memory job identical to what upsertJobs
         // persists, and keeps its order-sensitive jsonb compare from churning on a reorder.
         job.locations = [...job.locations].sort();
-        mapped.push({ raw, job });
+        mapped.push({ raw: hydrate ? raw : undefined, job });
       } else {
         skipped++;
       }
@@ -111,7 +114,6 @@ export async function runAdapter(
   // on the next good hydrate.
   let jobs: NormalizedJob[];
   let unhydrated = 0;
-  const hydrate = adapter.hydrate;
   if (hydrate) {
     jobs = await mapWithConcurrency(mapped, hydrateConcurrency, async ({ raw, job }) => {
       try {

@@ -91,7 +91,6 @@ function toNormalizedJob(raw: unknown, ctx: SourceContext): NormalizedJob | null
     descriptionText: htmlToText(raw.description),
     applyUrl,
     postedAt,
-    raw,
   };
 }
 

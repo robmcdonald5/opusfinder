@@ -50,7 +50,6 @@ function mkJob(item: RawItem, ctx: SourceContext): NormalizedJob {
     descriptionText: "",
     applyUrl: `https://x/${item.id}`,
     postedAt: null,
-    raw: item,
   };
 }
 
@@ -84,17 +83,24 @@ describe("runAdapter — invariant ATS plumbing over MSW", () => {
           return HttpResponse.json({ jobs: [raw(1, { locations: ["Zeta", "Alpha"] }), raw(2)] });
         }),
       );
+      const items: RawItem[] = [];
+      const adapter = makeAdapter({
+        mapItem: (item, ctx) => {
+          items.push(item as RawItem);
+          return mkJob(item as RawItem, ctx);
+        },
+      });
 
-      const jobs = await runAdapter(makeAdapter(), "acme");
+      const jobs = await runAdapter(adapter, "acme");
 
       expect(method).toBe("GET");
       expect(url).toBe(LIST);
       expect(ids(jobs)).toEqual(["1", "2"]);
       // runAdapter canonicalizes location order (keeps the persisted jsonb stable) — ["Zeta","Alpha"] → sorted.
       expect(jobs[0]?.locations).toEqual(["Alpha", "Zeta"]);
-      // The sort must COPY: mkJob aliases job.locations into job.raw, and job.raw is persisted as jobs.raw
-      // jsonb (an input to content_signature). An in-place `.sort()` would reorder raw too — assert it didn't.
-      expect((jobs[0]?.raw as RawItem).locations).toEqual(["Zeta", "Alpha"]);
+      // The sort must COPY: mkJob aliases job.locations to the raw item's array, and that raw item is what a
+      // hydrate is handed. An in-place `.sort()` would reorder the raw item too — assert it didn't.
+      expect(items[0]?.locations).toEqual(["Zeta", "Alpha"]);
     });
 
     it("normalizes the raw slug into ctx.slug before mapping (never passes rawSlug through)", async () => {
@@ -509,6 +515,26 @@ describe("runAdapter — invariant ATS plumbing over MSW", () => {
       expect(jobs.map((j) => j.descriptionText)).toEqual(["desc-1", "", "desc-3"]);
       expect(jobs.map((j) => j.contentMissing)).toEqual([undefined, true, undefined]);
       expect(warn).toHaveBeenCalledWith(expect.stringMatching(/1 un-hydrated/));
+    });
+
+    it("hands each hydrate ITS OWN raw list item, and returns jobs that carry no raw", async () => {
+      const items = [raw(1, { title: "one" }), raw(2, { title: "two" })];
+      server.use(http.get(LIST, () => HttpResponse.json({ jobs: items })));
+      const seen: unknown[] = [];
+      const adapter = makeAdapter({
+        hydrate: (job, item) => {
+          seen.push(item);
+          return Promise.resolve({ descriptionText: `desc-${job.externalId}` });
+        },
+      });
+
+      const jobs = await runAdapter(adapter, "acme", { hydrateConcurrency: 1 });
+
+      // The list item rides to hydrate as its own argument (the job has no raw to read it from) — the
+      // parsed item for THAT posting, not another posting's, not undefined.
+      expect(seen).toEqual(items);
+      // jobs.raw is not stored, so the returned jobs don't carry the source object either.
+      for (const job of jobs) expect(job).not.toHaveProperty("raw");
     });
 
     it("bounds concurrent hydrate calls to hydrateConcurrency", async () => {

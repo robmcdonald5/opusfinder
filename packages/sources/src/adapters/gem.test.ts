@@ -60,8 +60,8 @@ describe("gemAdapter.mapItem", () => {
     expect(job?.applyUrl).toBe("https://jobs.gem.com/acme-corp/12345");
     expect(job?.postedAt).toBeInstanceOf(Date);
     expect(job?.postedAt?.toISOString()).toBe("2026-03-15T09:00:00.000Z");
-    // raw is preserved by REFERENCE for debugging/reprocessing.
-    expect(job?.raw).toBe(FULL_RAW);
+    // The raw source object is NOT carried (jobs.raw isn't stored).
+    expect(job).not.toHaveProperty("raw");
   });
 
   describe("returns null (skip+count, never throw) for malformed items", () => {

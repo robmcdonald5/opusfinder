@@ -105,9 +105,9 @@ export const companies = pgTable(
  * posting still counts present (last_seen_at / the absence streak), since it was listed.
  *
  * `raw` (the untouched source payload) is DEPRECATED and NO LONGER WRITTEN — it was
- * write-only debug data that ballooned the DB. The column is kept NULLABLE for
- * rollback/backfill safety and emptied to NULL to reclaim space. To re-derive richer
- * text from a posting, re-ingest the board.
+ * write-only debug data that ballooned the DB, and `NormalizedJob` no longer carries it. The
+ * column is kept NULLABLE for rollback/backfill safety and emptied to NULL to reclaim space.
+ * To re-derive richer text from a posting, re-ingest the board.
  */
 export const jobs = pgTable(
   "jobs",

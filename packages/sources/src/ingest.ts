@@ -18,7 +18,6 @@ import {
   startRun,
   sweepLifecycle,
   sweepStaleJobs,
-  upsertCompany,
   upsertJobs,
 } from "@opusfinder/db/repos";
 import type { SourceName } from "@opusfinder/shared";
@@ -76,7 +75,10 @@ export interface IngestionOptions {
   limit?: number;
   /** Inline embedder (injected). Omit ⇒ no inline embedding. */
   embed?: IngestEmbedFn;
-  /** ms between boards so we don't hammer shared ATS infra (Workable 429s on rapid calls). */
+  /**
+   * ms between two CONSECUTIVE boards of the SAME source, so we don't hammer one ATS's infra (Workable
+   * 429s on rapid calls). Not applied when the source changes — the next board hits a different host.
+   */
   paceMs?: number;
   /** Forwarded to `fetchJobs`/`runAdapter` — a Worker may LOWER `hydrateConcurrency` for subrequests. */
   adapter?: RunAdapterOptions;
@@ -184,7 +186,13 @@ export async function runIngestion(db: Db, opts: IngestionOptions = {}): Promise
       // least one board runs (its own cost is bounded by adapter.maxItems); BREAK (not return) so the
       // finishRun + summary below still run and the handler advances the cursor to the last processed id.
       if (i > 0 && opts.maxRunMs !== undefined && Date.now() - startMs >= opts.maxRunMs) break;
-      if (i > 0) await sleep(paceMs);
+      // Politeness is per ATS HOST, so pace only between consecutive boards of the SAME source (exactly
+      // as before for them); a board on a different source hits a different host and starts at once.
+      // The source IS the pacing group: no two adapters share a request host — boards-api.greenhouse.io,
+      // api.lever.co, api.ashbyhq.com, apply.workable.com, api.smartrecruiters.com, api.gem.com,
+      // jsapi.recruiterbox.com (Trakstar), and the per-tenant {slug}.recruitee.com / {slug}.pinpointhq.com
+      // (two different vendors' domains). Should two sources ever share a host, map them to one group here.
+      if (i > 0 && list[i - 1]?.source === company.source) await sleep(paceMs);
       counts.lastId = company.id; // advance the chunk cursor even when this board fails
       try {
         const normalized = await fetchJobs(company.source, company.slug, opts.adapter);
@@ -198,9 +206,10 @@ export async function runIngestion(db: Db, opts: IngestionOptions = {}): Promise
         // source_runs.counts. These boards aren't exempt overall: the post-loop staleness timer
         // (sweepStaleJobs) is their close path.
         if (capped) counts.cappedBoards += 1;
-        // Idempotent get-or-create from the canonical slug (not jobs[0]) keeps a valid-but-
-        // empty board recorded too.
-        const companyId = await upsertCompany(db, company.slug, company.source);
+        // The company id comes straight from listCompanies. (A per-board upsertCompany here was a no-op
+        // `ON CONFLICT DO UPDATE SET slug = excluded.slug` whose only output was this same id — a wasted
+        // neon-http round-trip plus a dead tuple per board per tick.)
+        const companyId = company.id;
         // upsertJobs never writes a `contentMissing` posting (a failed hydrate — see its guard), so its
         // stored row keeps its content and a new one waits for a later run. `contentMissing` counts those
         // DISTINCT postings; tallied only once the write succeeded (a throw fails the board, counting none).

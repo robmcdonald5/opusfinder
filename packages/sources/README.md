@@ -18,7 +18,8 @@ The abstraction was **extracted** from concrete Greenhouse + Lever + SmartRecrui
   `mapItem`) → the single resilient fetch (retry + exponential backoff + `Retry-After`, with a
   non-JSON-body guard) → two-tier resilience (`locate` fails LOUD on a bad envelope; `mapItem`
   fails SOFT, skipping one bad posting) → the optional bounded-concurrency hydrate pool →
-  per-board accounting. Returns `NormalizedJob[]`.
+  per-board accounting. Returns `NormalizedJob[]` (no source `raw` on them — `jobs.raw` isn't stored;
+  a `hydrate` gets its list item as an argument instead).
 - **`SourceAdapter` descriptors (`src/adapters/{greenhouse,lever,ashby,workable,smartrecruiters,recruitee,pinpoint,gem,trakstar}.ts`)**
   — per-source data: `source`, `normalizeSlug`, `jobsRequest`, `locate`, `mapItem`, the Phase-7
   discovery pair `matchUrl` (REQUIRED — the URL→raw-slug inverse of `jobsRequest`; must not throw;
@@ -76,13 +77,16 @@ pnpm ingest trakstar instacart
 pnpm ingest:all                        # [--no-embed] [--source=<name>]
 ```
 
-Each board upserts via `@opusfinder/db` (`upsertCompany` + `upsertJobs`), then embeds the
+Each board upserts via `@opusfinder/db`'s `upsertJobs` (`pnpm ingest` first get-or-creates the company
+with `upsertCompany`; `ingest:all` takes the id from the `companies` row it iterates), then embeds the
 new/changed postings via `@opusfinder/embeddings` (best-effort: a Voyage failure is warned, not
 fatal; skipped when `VOYAGE_API_KEY` is unset or `--no-embed` is passed). `ingest:all` isolates
 each board in a try/catch — one dead slug doesn't halt the run.
 
 `ingest:all` is now a thin CLI shell over the shared `runIngestion(db, opts)` library
-(`src/ingest.ts`), which the Phase-8 Worker cron also calls — the CLI commands are unchanged.
+(`src/ingest.ts`), which the Phase-8 Worker cron also calls — the CLI commands are unchanged. Boards run
+one at a time; the `paceMs` politeness pause (500 ms) applies only between consecutive boards of the
+SAME source — no two adapters share a request host, so a source change needs no pause.
 
 **A failed hydrate never overwrites stored content.** When a posting's detail fetch fails — or
 SmartRecruiters answers `200` with no `jobAd.sections` (e.g. `{"message":"Posting not available"}`) —
@@ -112,7 +116,7 @@ location string. `postedAt` = `first_published` ‖ `updated_at`.
 **Lever** — `api.lever.co/v0/postings/{slug}?mode=json`. Response is a BARE array (no envelope).
 Slugs CASE-SENSITIVE (don't lowercase). `id` is a UUID string; title is on `text`; `createdAt`
 is ms-epoch. Structured `workplaceType` (`remote`⇒true, `hybrid`/`onsite`⇒false). Description
-from `descriptionPlain` (collapse only); the `lists[]`/`additional` sections stay on `raw`.
+from `descriptionPlain` (collapse only); the `lists[]`/`additional` sections are not mapped.
 **US host only** — EU tenants (`api.eu.lever.co` / `jobs.eu.lever.co`) return `null` from `matchUrl`
 and stay deferred (EU needs a per-company region channel; Phase 8).
 
@@ -127,7 +131,7 @@ casing — seed one canonical casing per board). `isRemote` is a TRAP (true on H
 the per-job widget path 404s). Slugs lowercase. `id` is `shortcode`; `remote` from
 `telecommuting` ‖ text; `published_on`/`created_at` are `YYYY-MM-DD`. The host RATE-LIMITS rapid
 calls (429 with an HTML body) — runAdapter's backoff + non-JSON guard handle it; `ingest:all`
-paces between boards.
+paces between consecutive Workable boards.
 
 **SmartRecruiters** — `api.smartrecruiters.com/v1/companies/{slug}/postings`. OFFSET-paginated
 (`{ content, totalFound }`). Slugs CASE-SENSITIVE. The list item has neither a description nor a
@@ -176,9 +180,9 @@ fallback). Unknown slug ⇒ 400; real-but-empty ⇒ `200 meta.total:0`.
 ## Deferred
 
 Structured facets (`workplaceType`/hybrid, salary, employment type, department) are NOT promoted
-to `NormalizedJob` columns — they're captured losslessly on `raw` and promoted later (Phase 9/10,
-eval-driven). EU Lever and Lever offset pagination are deferred
-(see `research/specs/IMPLEMENTATION_PLAN.md`); `source_runs` run-tracking landed in Phase 7
+to `NormalizedJob` columns — the source object isn't kept (`raw` is no longer stored or carried), so
+promoting one later (Phase 9/10, eval-driven) means a mapper change plus a re-ingest. EU Lever and
+Lever offset pagination are deferred (see `research/specs/IMPLEMENTATION_PLAN.md`); `source_runs` run-tracking landed in Phase 7
 (see `@opusfinder/db`). **Wave B ATS** — Polymer, Workday,
 Eightfold, Rippling, Personio — are deferred too: each adds a new axis of variation (an N+1
 hydrate, POST/page pagination, or custom career domains beyond a clean slug). Polymer

@@ -79,8 +79,8 @@ describe("ashbyAdapter.mapItem — happy path field-by-field", () => {
     expect(job.postedAt).toEqual(new Date("2026-06-01T12:00:00.000Z"));
   });
 
-  it("preserves the untouched raw object", () => {
-    expect(job.raw).toBe(RAW_JOB);
+  it("does not carry the raw source object (jobs.raw isn't stored)", () => {
+    expect(job).not.toHaveProperty("raw");
   });
 });
 

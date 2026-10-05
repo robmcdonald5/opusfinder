@@ -54,8 +54,8 @@ describe("smartRecruitersAdapter.mapItem — happy path", () => {
       "https://jobs.smartrecruiters.com/SmartRecruitersInc/743999874523456",
     );
     expect(job?.postedAt).toEqual(new Date("2026-06-01T09:30:00.000Z"));
-    // `raw` is passed through untouched (same reference) for lossless reprocessing.
-    expect(job?.raw).toBe(RAW);
+    // The raw source object is NOT carried (jobs.raw isn't stored).
+    expect(job).not.toHaveProperty("raw");
   });
 
   it("keeps the title verbatim and preserves company slug casing (no lowercasing)", () => {
@@ -191,7 +191,7 @@ describe("smartRecruitersAdapter.hydrate — content, or a throw (never an empty
   const job = mapItem(RAW, CTX)!;
   const run = (detail: unknown) => hydrate(job, RAW, CTX, () => Promise.resolve(detail));
 
-  it("patches the description (fixed section order), the real applyUrl and remote", async () => {
+  it("patches the description (fixed section order), the real applyUrl and remote — and no raw", async () => {
     const patch = await run({
       applyUrl: "https://jobs.smartrecruiters.com/oneclick-ui/apply/743999874523456",
       location: { remote: true },
@@ -203,15 +203,17 @@ describe("smartRecruitersAdapter.hydrate — content, or a throw (never an empty
         },
       },
     });
-    expect(patch).toMatchObject({
+    expect(patch).toEqual({
       descriptionText: "Build APIs\n\nGo & SQL",
       applyUrl: "https://jobs.smartrecruiters.com/oneclick-ui/apply/743999874523456",
       remote: true,
     });
+    // The detail JSON is NOT kept on the job (jobs.raw isn't stored; it pinned every detail in memory).
+    expect(patch).not.toHaveProperty("raw");
   });
 
   it("a detail WITH sections that are all blank is real (empty) content, not a failure", async () => {
-    expect(await run({ jobAd: { sections: {} } })).toMatchObject({ descriptionText: "" });
+    expect(await run({ jobAd: { sections: {} } })).toEqual({ descriptionText: "" });
   });
 
   // No jobAd.sections ⇒ no content: THROW, so runAdapter flags the listed job contentMissing and

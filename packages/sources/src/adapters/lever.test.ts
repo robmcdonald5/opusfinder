@@ -67,8 +67,8 @@ describe("leverAdapter.mapItem", () => {
     expect(job?.postedAt).toBeInstanceOf(Date);
     expect(job?.postedAt?.getTime()).toBe(1717200000000);
     expect(job?.postedAt?.toISOString()).toBe("2024-06-01T00:00:00.000Z");
-    // raw is preserved by identity for downstream reprocessing.
-    expect(job?.raw).toBe(RAW_JOB);
+    // The raw source object is NOT carried (jobs.raw isn't stored).
+    expect(job).not.toHaveProperty("raw");
   });
 
   it("keeps the title verbatim from `text` (no casing/whitespace normalization here)", () => {

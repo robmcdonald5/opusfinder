@@ -48,13 +48,11 @@ describe("workableAdapter.mapItem", () => {
       descriptionText: "Build the platform & ship.",
       applyUrl: "https://apply.workable.com/acme/j/A1B2C3D4/",
       postedAt: new Date("2026-06-01"),
-      raw: RAW_POSTING,
     });
   });
 
-  it("preserves the untouched raw object by identity", () => {
-    const job = workableAdapter.mapItem(RAW_POSTING, ctx);
-    expect(job?.raw).toBe(RAW_POSTING);
+  it("does not carry the raw source object (jobs.raw isn't stored)", () => {
+    expect(workableAdapter.mapItem(RAW_POSTING, ctx)).not.toHaveProperty("raw");
   });
 
   describe("skip guards return null (never throw)", () => {

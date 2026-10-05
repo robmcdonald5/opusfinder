@@ -77,11 +77,10 @@ function toNormalizedJob(raw: unknown, ctx: SourceContext): NormalizedJob | null
     locations,
     remote,
     // `description` is raw HTML tags + SINGLE-encoded entities (strip → decode once → collapse);
-    // the separate `requirements` field stays on `raw`.
+    // the separate `requirements` field is not mapped.
     descriptionText: htmlToText(raw.description),
     applyUrl,
     postedAt: parsePublishedAt(raw.published_at),
-    raw,
   };
 }
 

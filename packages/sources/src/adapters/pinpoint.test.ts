@@ -44,7 +44,6 @@ describe("pinpointAdapter.mapItem", () => {
       descriptionText: "Build & ship the platform.",
       applyUrl: "https://acme-corp.pinpointhq.com/en/postings/4f1e2d3c-9b8a-4c1d-8e2f-1a2b3c4d5e6f",
       postedAt: null,
-      raw: RAW_REMOTE,
     });
   });
 
@@ -67,8 +66,8 @@ describe("pinpointAdapter.mapItem", () => {
     expect(pinpointAdapter.mapItem(raw, CTX)?.externalId).toBe("posting-77");
   });
 
-  it("keeps the untouched raw object on the normalized job", () => {
-    expect(pinpointAdapter.mapItem(RAW_REMOTE, CTX)?.raw).toBe(RAW_REMOTE);
+  it("does not carry the raw source object (jobs.raw isn't stored)", () => {
+    expect(pinpointAdapter.mapItem(RAW_REMOTE, CTX)).not.toHaveProperty("raw");
   });
 
   it("coerces a missing description to an empty string instead of throwing", () => {

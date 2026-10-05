@@ -125,7 +125,6 @@ function toNormalizedJob(raw: unknown, ctx: SourceContext): NormalizedJob | null
     descriptionText: "",
     applyUrl: `${PUBLIC_BASE}/${ctx.slug}/${externalId}`, // hydrate overwrites with the real applyUrl
     postedAt,
-    raw,
   };
 }
 
@@ -140,8 +139,8 @@ function isRemoteLocation(loc: unknown): boolean {
 
 /**
  * The N+1 hydrate (one fetch per posting, via the injected resilient `fetchJson`). Fills
- * `descriptionText` from the jobAd sections (HTML → plain text), the real `applyUrl`, the
- * detail's `remote`, and replaces `raw` with the FULL hydrated posting (a superset of the list item).
+ * `descriptionText` from the jobAd sections (HTML → plain text), the real `applyUrl`, and the
+ * detail's `remote`. Nothing else from the detail is kept (it is not stored).
  *
  * A detail WITHOUT `jobAd.sections` THROWS rather than patching an empty description: that covers a
  * non-object body (JSON null/string from an edge or maintenance response) AND SmartRecruiters' `200` +
@@ -164,7 +163,7 @@ async function hydratePosting(
     throw new Error(`SmartRecruiters detail for "${job.externalId}" has no jobAd.sections`);
   }
 
-  const patch: Partial<NormalizedJob> = { raw: detail, descriptionText: cleanSections(sections) };
+  const patch: Partial<NormalizedJob> = { descriptionText: cleanSections(sections) };
 
   const applyUrl =
     (typeof detail.applyUrl === "string" && detail.applyUrl) ||

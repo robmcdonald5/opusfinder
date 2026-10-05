@@ -78,13 +78,12 @@ function toNormalizedJob(raw: unknown, ctx: SourceContext): NormalizedJob | null
     remote,
     // `description` is raw HTML tags (incl. <!--block--> markers, removed by the tag regex)
     // plus SINGLE-encoded entities: strip → decode once → collapse. The richer
-    // key_responsibilities / skills_knowledge_expertise / benefits sections stay on `raw`.
+    // key_responsibilities / skills_knowledge_expertise / benefits sections are not mapped.
     descriptionText: htmlToText(raw.description),
     applyUrl,
     // No posted/created date on the posting — only deadline_at (an application-CLOSE date),
     // which must NOT be used. postedAt is therefore always null (contract-valid).
     postedAt: null,
-    raw,
   };
 }
 

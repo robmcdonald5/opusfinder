@@ -49,13 +49,11 @@ describe("trakstarAdapter.mapItem", () => {
       descriptionText: "Build great things & ship daily.",
       applyUrl: "https://acme.hire.trakstar.com/jobs/fk0745/",
       postedAt: null, // close_date is an EXPIRY date and must NOT be used
-      raw: RAW_OPENING,
     });
   });
 
-  it("keeps the original raw object by reference for reprocessing", () => {
-    const job = trakstarAdapter.mapItem(RAW_OPENING, ctx);
-    expect(job?.raw).toBe(RAW_OPENING);
+  it("does not carry the raw source object (jobs.raw isn't stored)", () => {
+    expect(trakstarAdapter.mapItem(RAW_OPENING, ctx)).not.toHaveProperty("raw");
   });
 
   describe("apply URL fallback", () => {

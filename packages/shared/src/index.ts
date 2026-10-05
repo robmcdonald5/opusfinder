@@ -201,8 +201,8 @@ export interface NormalizedJob {
   remote: boolean;
   /**
    * Plain-text job description: HTML entities decoded, tags stripped, whitespace
-   * collapsed. May be "" when the ATS supplies no body. The original markup is
-   * always preserved in `raw`, so downstream consumers can re-derive richer text.
+   * collapsed. May be "" when the ATS supplies no body (and is a placeholder "" on a
+   * `contentMissing` job). The original markup is not kept: re-fetch the board to re-derive it.
    */
   descriptionText: string;
   /** Public apply / listing URL. */
@@ -221,13 +221,12 @@ export interface NormalizedJob {
    * a stored row keeps its title/description/signature/embedding, and a brand-new posting waits for a run
    * that fetches its content. Writing it would overwrite the description, NULL the embedding (a paid
    * re-embed) and flip content_signature — then flip it all back on the next good hydrate.
+   *
+   * (There is deliberately no `raw` source object on this type: `jobs.raw` is no longer stored, and
+   * keeping it pinned every posting's full source JSON in memory for the whole board. An adapter whose
+   * hydrate needs the list item receives it as hydrate's own `raw` argument.)
    */
   contentMissing?: true;
-  /**
-   * The untouched source object, for debugging and reprocessing. Typed `unknown`
-   * (never `any`) so callers must narrow before reading source-specific fields.
-   */
-  raw: unknown;
 }
 
 /** Narrow an `unknown` to a plain object (record). */

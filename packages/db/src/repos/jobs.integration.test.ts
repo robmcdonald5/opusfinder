@@ -27,7 +27,6 @@ function job(externalId: string, overrides: Partial<NormalizedJob> = {}): Normal
     descriptionText: "Senior Platform Engineer description body",
     applyUrl: `https://example.test/${externalId}`,
     postedAt: null,
-    raw: {},
     ...overrides,
   };
 }
@@ -391,8 +390,8 @@ describe("upsertCompany + upsertJobs — board persistence semantics (integratio
       expect(row.createdAt).toEqual(SENTINEL_2020);
       // last_seen_at is OWNED by lifecycle.markJobsPresent, never this writer.
       expect(row.lastSeenAt).toEqual(SENTINEL_2020);
-      // raw is DEPRECATED write-only debug data — re-adding `raw: job.raw` to the VALUES map is
-      // byte-for-byte the Neon 512MB bloat outage, and every seed carries raw: {} so it would land.
+      // raw is DEPRECATED write-only debug data — writing it again is byte-for-byte the Neon 512MB
+      // bloat outage. NormalizedJob no longer carries a raw, so the column must stay NULL.
       expect(row.raw).toBeNull();
       expect(row.updatedAt.getTime()).toBeGreaterThan(SENTINEL_2020.getTime());
     });
