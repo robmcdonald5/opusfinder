@@ -12,7 +12,7 @@ import type { Cursor, FetchJson, JobsRequest, SourceAdapter, SourceContext } fro
  * resilience (locate fails LOUD on a bad envelope; mapItem fails SOFT, skipping one bad
  * posting) → the optional bounded-concurrency hydrate pool → per-board accounting. Returns
  * `NormalizedJob[]` — every LISTED posting, a failed hydrate's job included but flagged
- * `contentMissing` (transient) or `gone` (explicitly unavailable) — see the hydrate pool below.
+ * `contentMissing` (see the hydrate pool below).
  *
  * Worker-forward: global `fetch`/`RequestInit` only, `setTimeout`-based backoff, `Math.random`
  * jitter, no Node-only APIs and no `process.env` reads.
@@ -44,33 +44,6 @@ export interface RunAdapterOptions {
    * sweep (an incomplete present-set would false-close the un-fetched tail).
    */
   maxItems?: number;
-}
-
-/**
- * The resilient fetch's FINAL non-OK answer (a non-retryable status, or a 429/5xx after the retries ran
- * out), carrying the HTTP status so a hydrate can tell a definitive "gone" (404/410) from a transient
- * failure. The message is unchanged from a plain fetch failure — tag + status, never a body.
- */
-export class HttpStatusError extends Error {
-  constructor(
-    message: string,
-    readonly status: number,
-  ) {
-    super(message);
-    this.name = "HttpStatusError";
-  }
-}
-
-/**
- * Thrown by an adapter's `hydrate` when the ATS says EXPLICITLY that a listed posting is gone (e.g. its
- * detail answers 404/410, or an explicit not-available body). runAdapter flags that job `gone` — absent,
- * never written — instead of `contentMissing` (transient, still present). Shape-only message.
- */
-export class PostingGoneError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "PostingGoneError";
-  }
 }
 
 const DEFAULT_HYDRATE_CONCURRENCY = 5;
@@ -133,26 +106,19 @@ export async function runAdapter(
   }
 
   // Optional hydrate (N+1 second fetch) through a bounded-concurrency pool, each call handed its own
-  // list item. Every LISTED posting is returned; a per-item failure only flags it:
-  //  - PostingGoneError (the ATS said explicitly the posting is gone) ⇒ `gone`: ingestion treats it as
-  //    ABSENT (not written, not counted present), so the normal absence streak / staleness timer closes it.
-  //  - anything else (retries exhausted, a timeout, a read error, a detail with no content) is TRANSIENT ⇒
-  //    `contentMissing`: it WAS listed, so it is live and still counts present, but its description is
-  //    mapItem's placeholder "", not the posting's text, so upsertJobs never writes its content —
-  //    persisted, it would overwrite the stored description, NULL the embedding (a paid re-embed) and flip
-  //    content_signature, then flip it all back on the next good hydrate.
+  // list item. A per-item failure — ANY failed or empty detail fetch (retries exhausted, a timeout, a
+  // 404/410, a body with no content; the adapter throws) — keeps the listed job, because it WAS listed and
+  // so is live: ingestion must still count it present. But its description is mapItem's placeholder "",
+  // not the posting's text, so it is flagged `contentMissing` and upsertJobs never writes its content —
+  // persisted, it would overwrite the stored description, NULL the embedding (a paid re-embed) and flip
+  // content_signature, then flip it all back on the next good hydrate.
   let jobs: NormalizedJob[];
   let unhydrated = 0;
-  let gone = 0;
   if (hydrate) {
     jobs = await mapWithConcurrency(mapped, hydrateConcurrency, async ({ raw, job }) => {
       try {
         return { ...job, ...(await hydrate(job, raw, ctx, fetchJson)) };
-      } catch (err) {
-        if (err instanceof PostingGoneError) {
-          gone++;
-          return { ...job, gone: true as const };
-        }
+      } catch {
         unhydrated++;
         return { ...job, contentMissing: true as const };
       }
@@ -161,12 +127,11 @@ export async function runAdapter(
     jobs = mapped.map((m) => m.job);
   }
 
-  if (skipped > 0 || unhydrated > 0 || gone > 0) {
+  if (skipped > 0 || unhydrated > 0) {
     console.warn(
       `${tag}: ${jobs.length} job(s)` +
         (skipped > 0 ? `, skipped ${skipped} malformed` : "") +
-        (unhydrated > 0 ? `, ${unhydrated} un-hydrated (content missing, not written)` : "") +
-        (gone > 0 ? `, ${gone} gone (detail says unavailable; treated as absent)` : ""),
+        (unhydrated > 0 ? `, ${unhydrated} un-hydrated (content missing, not written)` : ""),
     );
   }
   return jobs;
@@ -229,7 +194,7 @@ async function fetchJsonResilient(
       await backoff(attempt++, retryAfter);
       continue;
     }
-    throw new HttpStatusError(`${tag} fetch failed: ${res.status} ${res.statusText}`, res.status);
+    throw new Error(`${tag} fetch failed: ${res.status} ${res.statusText}`);
   }
 }
 

@@ -90,22 +90,19 @@ source, since no two adapters share a request host — and by TIME: a board wait
 500 ms since its key's last board started, so alternating sources can't burst one host and a board
 after enough other work waits for nothing.
 
-**A failed hydrate never overwrites stored content.** `runAdapter` keeps every listed job but flags one
-whose detail fetch failed, and the flag decides its fate (`upsertJobs`, the single persistence choke point,
-enforces the write side for every caller):
+**A failed hydrate never overwrites stored content** (`upsertJobs`, the single persistence choke point,
+enforces it for every caller):
 
-- **Transient → `contentMissing`** (a timeout, 5xx/429 after retries, a network/read error, or a detail with
-  no content such as a JSON null or a `jobAd` without sections): its description is the list item's
-  placeholder `""`, so its content is never written — the stored title, description, `content_signature`
-  and embedding stay as they are, and a brand-new posting waits for a run that fetches its content. Its
-  list-sourced fields (company, locations, remote, posted date) still refresh, so a posting that moved
-  boards follows its board. It still counts present (`markJobsPresent`, the absence sweep), so a transient
-  failure never ages or closes a live job. `counts.hydrateSkipped` tallies these.
-- **Gone → `gone`** (the adapter throws `PostingGoneError` when the ATS says explicitly the posting no
-  longer exists — on SmartRecruiters a `404`/`410` detail, or `200` `{"message":"Posting not available"}`
-  with no `jobAd`): not written at all and NOT counted present, so the absence streak or the staleness timer
-  closes it — a stale list entry can't keep a dead posting alive. `counts.hydrateGone` tallies these.
-
+- **Any failed or empty detail fetch → `contentMissing`** (a timeout, 5xx/429 after retries, a `404`/`410`,
+  JSON null, SmartRecruiters' `200` `{"message":"Posting not available"}`, a `jobAd` without sections):
+  `runAdapter` keeps the listed job but flags it, since its description is the list item's placeholder
+  `""`. Its content is never written — the stored title, description, `content_signature` and embedding stay
+  as they are, and a brand-new posting waits for a run that fetches its content. Only its `company_id`
+  follows the board listing it, so a posting that moved boards isn't closed by its old board's sweep. It
+  still counts present (`markJobsPresent`, the absence sweep). `counts.hydrateSkipped` tallies these.
+  **Known limitation:** a posting whose detail STAYS unavailable while the ATS still lists it stays open
+  until the ATS delists it; the `hydrate_skip_ratio` health check surfaces a detail endpoint that keeps
+  failing.
 - **Any source → blank description kept out**: a blank (empty/whitespace) description never replaces a
   non-blank stored one — an inline-content board (Greenhouse `content=true`, Workable `details=true`, Lever)
   momentarily serving no body, or SmartRecruiters `jobAd.sections: {}`. The stored text, its signature and
@@ -154,10 +151,9 @@ paces between consecutive Workable boards.
 **SmartRecruiters** — `api.smartrecruiters.com/v1/companies/{slug}/postings`. OFFSET-paginated
 (`{ content, totalFound }`). Slugs CASE-SENSITIVE. The list item has neither a description nor a
 public apply URL, so `mapItem` reconstructs `applyUrl` + sets `descriptionText: ""` and
-`hydrate` (the N+1 `GET .../postings/{id}`) patches them. A `404`/`410` detail or `200`
-`{"message":"Posting not available"}` (no `jobAd`) flags the listed job `gone` (absent); any other
-failure or a detail with no `jobAd.sections` flags it `contentMissing` (present, content not written).
-Sections are concatenated in a FIXED order (stable re-ingest). NOTE: an unknown slug returns
+`hydrate` (the N+1 `GET .../postings/{id}`) patches them. Any failed or empty detail (a `404`, `200`
+`{"message":"Posting not available"}`, no `jobAd.sections`) flags the listed job `contentMissing`
+(present, content not written). Sections are concatenated in a FIXED order (stable re-ingest). NOTE: an unknown slug returns
 `200 + totalFound:0` (not 404), so slug existence can't be asserted here (Phase 7).
 
 ### Phase 6.5 Wave A (zero-hydrate public boards)

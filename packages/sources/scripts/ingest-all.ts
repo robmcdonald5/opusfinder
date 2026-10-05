@@ -59,7 +59,6 @@ async function main(): Promise<void> {
       console.log(
         `  ${board.source}:${board.slug} -> ${board.jobs} job(s), changed ${board.changed}` +
           (board.hydrateSkipped > 0 ? `, ${board.hydrateSkipped} not written (detail fetch failed)` : "") +
-          (board.hydrateGone > 0 ? `, ${board.hydrateGone} gone per their detail` : "") +
           (board.emptyContentKept > 0
             ? `, ${board.emptyContentKept} blank description(s) kept as stored`
             : "") +

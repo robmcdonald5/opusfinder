@@ -100,12 +100,10 @@ export const companies = pgTable(
  *
  * Content columns (title, description_text, content_signature, embedding) are written ONLY from
  * fetched content: `upsertJobs` never writes a `NormalizedJob.contentMissing` posting's content (its
- * detail fetch failed transiently, so its description is a placeholder ""), so the failure leaves the
- * stored content untouched instead of blanking its description and NULLing its embedding — only its
- * list-sourced fields (company_id, locations, remote, posted_at) refresh. Such a posting still counts
- * present (last_seen_at / the absence streak), since it was listed. A `gone` posting (its detail said
- * it no longer exists) is not written at all and counts ABSENT, so the lifecycle writers close it. From
- * ANY source, a blank fetched description never replaces a non-blank stored description_text.
+ * detail fetch failed, so its description is a placeholder ""), so the failure leaves the stored content
+ * untouched instead of blanking its description and NULLing its embedding — only its company_id follows
+ * the board listing it. Such a posting still counts present (last_seen_at / the absence streak), since it
+ * was listed. From ANY source, a blank fetched description never replaces a non-blank stored one.
  *
  * `raw` (the untouched source payload) is DEPRECATED and NO LONGER WRITTEN — it was
  * write-only debug data that ballooned the DB, and `NormalizedJob` no longer carries it. The

@@ -70,8 +70,8 @@ export interface SourceAdapter {
    * MUST emit a FULLY-VALID job even for hydrate-only sources — e.g. SmartRecruiters
    * reconstructs `applyUrl` and sets a placeholder `descriptionText: ""` here, which `hydrate`
    * then patches. That is what lets a hydrate failure degrade gracefully: runAdapter keeps the
-   * listed job (flagged `contentMissing`, or `gone` — see `hydrate`), and upsertJobs never writes a
-   * flagged job's placeholder content over the stored posting.
+   * listed job (so ingestion still counts it present) but flags it `contentMissing`, and upsertJobs
+   * never writes a flagged job's placeholder content over the stored posting.
    * Never put the raw item on the job — it is not stored (see `hydrate` for the one consumer).
    */
   mapItem(raw: unknown, ctx: SourceContext): NormalizedJob | null;
@@ -89,10 +89,7 @@ export interface SourceAdapter {
    * raw), fetch extra data through the injected resilient `fetchJson` and return a PATCH to merge.
    * OMIT ⇒ no second fetch (Greenhouse, Lever, Ashby; Workable hydrates inline via a `jobsRequest`
    * query param instead). runAdapter runs these through a bounded-concurrency pool and tolerates
-   * per-item failure: a THROW keeps the listed job flagged — `gone` (absent: never written, not
-   * counted present) when the error is a `PostingGoneError` (throw it ONLY when the ATS says
-   * EXPLICITLY the posting no longer exists, e.g. the detail answers 404/410 — the resilient fetch's
-   * `HttpStatusError` carries the status), else `contentMissing` (transient: still present). So a
+   * per-item failure: a THROW keeps the listed job flagged `contentMissing` (still present). So a
    * hydrate whose response carries no content MUST throw, never return an empty patch — an empty
    * patch "succeeds" and the mapItem placeholder would be persisted as the posting's real content.
    */

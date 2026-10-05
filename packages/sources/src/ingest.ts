@@ -48,11 +48,10 @@ export interface IngestBoardResult {
   ok: boolean;
   jobs: number;
   changed: number;
-  /** Listed postings whose detail fetch failed (content not written; still present) — so a board whose
-   *  every hydrate failed reads as such, not as an empty board. */
+  /** Listed postings whose detail fetch failed (content not written — only a stored row's company_id
+   *  follows the board; still present) — so a board whose every hydrate failed reads as such, not as an
+   *  empty board. */
   hydrateSkipped: number;
-  /** Listed postings the ATS says are gone (not written; treated as absent). */
-  hydrateGone: number;
   /** Postings whose blank description was not written over their non-blank stored one. */
   emptyContentKept: number;
   embedded: number;
@@ -146,9 +145,8 @@ export interface IngestionCounts {
   failed: number; // boards that threw (isolated — does NOT fail the run)
   jobs: number; // distinct postings persisted
   changed: number; // inserted-or-updated postings
-  hydrateSkipped: number; // listed postings NOT written (detail fetch failed): stored row kept / new one deferred; still present
-  hydrateListed: number; // non-gone postings listed by HYDRATING boards (written + hydrateSkipped) — the health ratio's denominator
-  hydrateGone: number; // listed postings whose detail says they're gone (404/410/not-available): not written, treated as ABSENT
+  hydrateSkipped: number; // listed postings whose detail fetch failed: content kept (only company_id refreshed) / new one deferred; still present
+  hydrateListed: number; // postings listed by HYDRATING boards (written + hydrateSkipped) — the health ratio's denominator
   emptyContentKept: number; // written postings whose BLANK description was not allowed over their non-blank stored one (any source)
   embedded: number; // postings embedded inline (0 when `embed` omitted)
   embedTokens: number; // Voyage tokens used
@@ -234,9 +232,9 @@ export async function runIngestion(db: Db, opts: IngestionOptions = {}): Promise
         // which was a no-op `ON CONFLICT DO UPDATE SET slug = excluded.slug` returning that same id (a
         // wasted neon-http round-trip plus a dead tuple per board per tick).
         // upsertJobs never writes a failed hydrate's content (see its guard): a `contentMissing` posting's
-        // stored row keeps its content (only its list fields refresh) and a new one waits for a later run;
-        // a `gone` posting is not written at all. Its counts are DISTINCT postings, tallied only once the
-        // write succeeded (a throw fails the board, counting none).
+        // stored row keeps its content (only its company_id follows this board) and a new one waits for a
+        // later run. Its counts are DISTINCT postings, tallied only once the write succeeded (a throw fails
+        // the board, counting none).
         const upserted = await upsertJobs(db, company.id, normalized);
         const { changed, total } = upserted;
         counts.jobs += total;
@@ -245,7 +243,6 @@ export async function runIngestion(db: Db, opts: IngestionOptions = {}): Promise
         // The hydrate_skip_ratio health check's denominator: only boards whose adapter hydrates, so the
         // many non-hydrating postings can't dilute a failing detail endpoint.
         if (adapters[company.source].hydrate) counts.hydrateListed += total + upserted.contentMissing;
-        counts.hydrateGone += upserted.gone;
         counts.emptyContentKept += upserted.emptyContentKept;
         counts.ok += 1;
 
@@ -255,20 +252,21 @@ export async function runIngestion(db: Db, opts: IngestionOptions = {}): Promise
         // board is fetchable. GATED on `listed` (the board listed ≥1 posting): an empty/ambiguous fetch
         // (e.g. SmartRecruiters 200+totalFound:0 → []) must NOT stamp presence OR certify health. The gate
         // is the LISTING, not `total` — a board whose every hydrate failed writes nothing but is live.
-        // `presentIds` is every de-duplicated external_id the board listed EXCEPT those the ATS says are
-        // gone (unless another copy of the id is live): a transient detail failure (`contentMissing`) is
-        // still live, so it must neither age toward the staleness timer nor count as absent in the sweep
-        // below, while a `gone` posting must do exactly that, so the absence streak / timer close it.
+        // `listedIds` is every de-duplicated external_id the board listed — what upsertJobs persisted PLUS the
+        // contentMissing postings it did not write: a posting whose detail fetch failed is still listed, so it
+        // must neither age toward the staleness timer nor count as absent in the sweep below. (Known
+        // limitation: one whose detail STAYS unavailable while still listed stays open until the ATS delists
+        // it; hydrate_skip_ratio surfaces a detail endpoint that keeps failing.)
         // Isolated like the sweep/embed steps: a stamp fault leaves jobs persisted and self-heals next cycle.
         // ORDER IS LOAD-BEARING — markJobsPresent (stamp last_seen) BEFORE markCompanyIngested (certify
         // board health): if the company were certified first and the job-stamp then threw, the timer could
         // close jobs that were never re-stamped. This order fails SAFE (jobs stamped, board left
         // uncertified ⇒ guard spares it).
-        const listed = normalized.length > 0;
-        const presentIds = [...new Set(normalized.filter((j) => !j.gone).map((j) => j.externalId))];
+        const listedIds = [...new Set(normalized.map((j) => j.externalId))];
+        const listed = listedIds.length > 0;
         if (listed) {
           try {
-            const present = await markJobsPresent(db, company.id, presentIds);
+            const present = await markJobsPresent(db, company.id, listedIds);
             counts.revived += present.revived; // closed→active revivals (works for capped boards too)
             await markCompanyIngested(db, company.id);
           } catch (err) {
@@ -287,11 +285,9 @@ export async function runIngestion(db: Db, opts: IngestionOptions = {}): Promise
         // those boards rely on the staleness timer (sweepStaleJobs) instead. Enforcement rides
         // parseEnforceFlag(LIFECYCLE_CLOSE_ENFORCE). Isolated like the stamp/embed steps. Closed→active revivals are
         // owned by markJobsPresent above; sweepLifecycle.revived here counts only still-active streak resets.
-        // (A board whose every listed posting is gone has an EMPTY present set: sweepLifecycle no-ops on it —
-        // its `<> ALL('{}')` guard — so those close on the staleness timer instead; the board is certified.)
         if (listed && !capped) {
           try {
-            const sweep = await sweepLifecycle(db, company.id, presentIds, {
+            const sweep = await sweepLifecycle(db, company.id, listedIds, {
               enforce: opts.enforceLifecycle ?? false,
             });
             counts.revived += sweep.revived;
@@ -336,7 +332,6 @@ export async function runIngestion(db: Db, opts: IngestionOptions = {}): Promise
           jobs: total,
           changed,
           hydrateSkipped: upserted.contentMissing,
-          hydrateGone: upserted.gone,
           emptyContentKept: upserted.emptyContentKept,
           embedded: boardEmbedded,
           embedTokens: boardTokens,
@@ -353,7 +348,6 @@ export async function runIngestion(db: Db, opts: IngestionOptions = {}): Promise
           jobs: 0,
           changed: 0,
           hydrateSkipped: 0,
-          hydrateGone: 0,
           emptyContentKept: 0,
           embedded: 0,
           embedTokens: 0,
@@ -414,7 +408,6 @@ function emptyCounts(): IngestionCounts {
     changed: 0,
     hydrateSkipped: 0,
     hydrateListed: 0,
-    hydrateGone: 0,
     emptyContentKept: 0,
     embedded: 0,
     embedTokens: 0,
@@ -451,7 +444,6 @@ function logSummary(counts: IngestionCounts, embedEnabled: boolean): void {
       (counts.hydrateSkipped > 0
         ? `; ${counts.hydrateSkipped} posting(s) not written (detail fetch failed; stored content kept)`
         : "") +
-      (counts.hydrateGone > 0 ? `; ${counts.hydrateGone} posting(s) gone per their detail (absent)` : "") +
       (counts.emptyContentKept > 0
         ? `; ${counts.emptyContentKept} blank description(s) not written over stored text`
         : "") +

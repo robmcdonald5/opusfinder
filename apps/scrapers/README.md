@@ -39,8 +39,7 @@ and the library it calls owns its own `source_runs` row (`startRun`/`finishRun`)
   using an id-keyset cursor stored in the `INGEST_CURSOR` KV namespace; the corpus drains across ticks.
   Boards run one at a time; politeness keeps board starts of one source (its adapter's `pacingKey`)
   ≥ 500 ms apart, sleeping only the remainder, so alternating sources can't burst one host. A posting
-  whose detail fetch failed is kept as stored, never overwritten (`hydrateSkipped` in `pnpm runs`); one
-  whose detail says it is gone is treated as absent (`hydrateGone`).
+  whose detail fetch failed is kept as stored, never overwritten (`hydrateSkipped` in `pnpm runs`).
   Inline embedding is **not wired** — the Voyage free tier throttles to 3 RPM, and importing the
   embeddings package would pull a Node env-module into the Worker (and require `nodejs_compat`). Jobs
   are upserted regardless; the still-NULL vectors are filled by `pnpm embeddings:backfill`. See the
