@@ -254,8 +254,30 @@ pnpm exec wrangler d1 execute opusfinder-control --remote --command "UPDATE stat
   still rule.
 - `HealthCheckId` still lives in `packages/db/src/health.ts`; a sync test in `@opusfinder/db` pins the
   registry to it until it moves here.
-- The stage crons and the ingest/discover knob bounds still copy their runtimes' constants. Sync tests
-  (`control-registry.test.ts` in `apps/scrapers` and `packages/inngest`) fail when either side changes
-  alone.
+- The registry copies its runtimes' crons, platform ids and knob values (`packages/control` can't
+  import them). Sync tests (`control-registry.test.ts` in `apps/scrapers`, `packages/inngest` and
+  `packages/db`) fail when one side changes alone, but they pin only:
+  - the `ingest` and `discover` crons, through the scrapers Worker's own dispatch;
+  - the Inngest stage crons (`embed`, `alerts`, `digest`) and their `platformId`s, read off the
+    functions the serve routes register;
+  - `ingest.boardsPerTick`'s default, min and max;
+  - the `discover` knob defaults;
+  - the `health.*` check ids, threshold defaults and env var names.
+
+  **Not pinned** (keep both sides in step by hand): the `live_integration` cron
+  (`.github/workflows/live-integration.yml`), the `discover` knobs' min/max, every `expect` period
+  (update it with its cron), `embed.pagesPerRun`, `digest.topK`, `stale_sweep.ttlDays` and
+  `alerts.cooldownH`.
 - Approvals don't force a fresh Access login (feasibility unverified).
 - Proposals expire lazily (read-time), with no notification.
+
+### Follow-ups
+
+- Pin each value listed as **not pinned** above.
+- Move the scrapers Worker's schedule and limit constants into a sibling module (e.g.
+  `apps/scrapers/src/schedule.ts`; workerd rejects only the main module's `export const`), so
+  `dispatch.test.ts` imports them instead of keeping literal copies.
+- Merge the duplicated test scaffolding: the scrapers Worker's `dispatch.test.ts` and
+  `control-registry.test.ts` each mock the pipelines and drive `scheduled()`, and the Inngest
+  `crons.test.ts` and `control-registry.test.ts` each build the functions to read their triggers.
+- Add a test that derives each stage's `expect.everyMin` from the shape of its cron.

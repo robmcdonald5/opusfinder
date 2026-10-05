@@ -33,8 +33,10 @@ const set = (target: Target, from: string | null, to: string | null): Change => 
 
 /**
  * The entries the owner put under "approval" (decisions 2026-10-04): the master switch, the alerts stage
- * and every health check — their modes AND their knobs. Spelled out here rather than read from the
- * registry, so a registry edit that drops one of them fails these tests instead of silently moving them.
+ * and every health check — their modes AND their knobs. `global` and `alerts` are spelled out here rather
+ * than read from the registry, so a registry edit that drops either from approval fails these tests
+ * instead of silently moving it. The health checks ARE read from the registry (every `health.*` policy),
+ * so a new check is covered the moment it is declared, and one that loses its approval rule still fails.
  */
 const APPROVAL_ENTRIES = new Set<string>([
   "global",

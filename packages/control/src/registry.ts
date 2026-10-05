@@ -163,9 +163,16 @@ export const globalSwitch: GlobalDef = {
   agent: "approval",
 };
 
-// The crons, the Inngest platform ids and the ingest/discover knob values mirror their runtimes, which this
-// pure package can't import. Sync tests in those sources pin them (control-registry.test.ts in
-// apps/scrapers and packages/inngest), so a schedule or clamp changed on one side only fails there.
+// Crons, platform ids and knob values here copy their runtimes, which this pure package can't import. Sync
+// tests in those sources (control-registry.test.ts) pin SOME of them, so a change on one side fails there:
+//   - apps/scrapers: the ingest and discover crons (through the Worker's own dispatch),
+//     ingest.boardsPerTick's default, min and max, and the discover knobs' defaults;
+//   - packages/inngest: each Inngest stage's platformId and the cron its served function registers;
+//   - packages/db (for the health.* policies below): the check ids, threshold defaults and env var names.
+// NOT pinned, so keep them in step by hand: live_integration's cron (.github/workflows/
+// live-integration.yml), the discover knobs' min/max, every `expect` period (change it with its cron),
+// embed.pagesPerRun, digest.topK, stale_sweep.ttlDays and alerts.cooldownH. (embed.tokensPerRun and
+// digest.maxRecipientsPerRun have no runtime counterpart yet.)
 export const stages = {
   ingest: {
     label: "Ingest job boards",
