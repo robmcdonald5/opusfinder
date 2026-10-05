@@ -2,6 +2,7 @@ import { eq } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Db } from "@opusfinder/db";
+import { upsertJobs } from "@opusfinder/db/repos";
 import { companies, jobs, sourceRuns } from "@opusfinder/db/schema";
 import { companySlug, jobId, type SourceName } from "@opusfinder/shared";
 import { runIngestion, type IngestEmbedFn, type IngestionOptions } from "@opusfinder/sources";
@@ -16,11 +17,19 @@ import { jsonResponse, routedFetch, textResponse, type Route } from "@test/http/
 // stamp presence/health, sweep, embed, and close on the staleness timer, all under one source_runs row.
 // Focus is the wiring NO other suite owns: per-board error ISOLATION (one bad board never fails the run),
 // the activeOnly/afterId/limit SQL chunk, the maxRunMs budget break (finishRun still reached), the capped-
-// board sweep SKIP with presence still stamped, the total>0 gate, closed-job revival, the injected embedder
-// (+ its failure isolation), and the post-loop staleness sweep (shadow/enforce, INDEPENDENT of the per-board
-// enforce switch). NOT this file's job: upsertJobs batch/dedupe/setWhere semantics (jobs.integration.test.ts),
+// board sweep SKIP with presence still stamped, the non-empty-fetch gate, closed-job revival, the injected
+// embedder (+ its failure isolation), the post-loop staleness sweep (shadow/enforce, INDEPENDENT of the per-board
+// enforce switch), and a failed hydrate end to end (stored content kept, still present, hydrateSkipped
+// counted accurately).
+// NOT this file's job: upsertJobs batch/dedupe/setWhere semantics (jobs.integration.test.ts),
 // the run-row once-only terminalize (runs.integration.test.ts), the sweepLifecycle/sweepStaleJobs internal
 // SQL (lifecycle.test.ts + the db repos), and the adapter mappers (per-adapter unit suites).
+
+// A pass-through spy on upsertJobs, so a test can make one board's write throw (a failed write).
+vi.mock("@opusfinder/db/repos", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@opusfinder/db/repos")>();
+  return { ...actual, upsertJobs: vi.fn(actual.upsertJobs) };
+});
 
 // Adapter tuning that removes real waits: no retries (a 5xx fails the board on the first attempt, no
 // `backoff` setTimeout) — paired with paceMs:0 (no inter-board sleep).
@@ -48,6 +57,30 @@ const failRoute = (slug: string, status = 500): Route => ({
   respond: () => textResponse("err", status),
 });
 
+// ── SmartRecruiters routing: the list `…/companies/{slug}/postings?…`, then one N+1 detail fetch per
+// posting `…/companies/{slug}/postings/{id}` — the hydrate whose failure is a contentMissing posting. ──
+const srDetail = (id: string) => ({
+  jobAd: { sections: { jobDescription: { text: `<p>About ${id}</p>` } } },
+  applyUrl: `https://x/${id}`,
+});
+/** An SR board listing `ids` (repeats allowed); `detail(id)` answers each posting's detail fetch. */
+function srBoard(slug: string, ids: string[], detail: (id: string) => Response): Route[] {
+  return [
+    {
+      match: (url) => url.includes(`/companies/${slug}/postings?`),
+      respond: () =>
+        jsonResponse({
+          totalFound: ids.length,
+          content: ids.map((id) => ({ id, name: `SR ${id}` })),
+        }),
+    },
+    {
+      match: (url) => url.includes(`/companies/${slug}/postings/`),
+      respond: (url) => detail(url.slice(url.lastIndexOf("/") + 1)),
+    },
+  ];
+}
+
 interface CompanySeed {
   slug: string;
   source?: SourceName;
@@ -56,7 +89,9 @@ interface CompanySeed {
 }
 interface JobSeed {
   externalId: string;
+  source?: SourceName;
   title?: string;
+  descriptionText?: string;
   lifecycleState?: "active" | "closed";
   closedAt?: Date | null;
   consecutiveAbsences?: number;
@@ -72,6 +107,8 @@ describe("runIngestion — orchestration over real PGlite (fetch stubbed)", () =
   });
   beforeEach(async () => {
     await truncate(db, companies, jobs, sourceRuns);
+    // mockReset (not mockClear) also drops an unconsumed mockRejectedValueOnce, restoring the pass-through.
+    vi.mocked(upsertJobs).mockReset();
   });
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -103,8 +140,9 @@ describe("runIngestion — orchestration over real PGlite (fetch stubbed)", () =
     await db.insert(jobs).values({
       externalId: jobId(seed.externalId),
       companyId,
-      source: "greenhouse",
+      source: seed.source ?? "greenhouse",
       title: seed.title ?? "seeded job",
+      descriptionText: seed.descriptionText,
       remote: false,
       applyUrl: "https://x/apply",
       lifecycleState: seed.lifecycleState,
@@ -150,7 +188,7 @@ describe("runIngestion — orchestration over real PGlite (fetch stubbed)", () =
       });
       // Both postings persisted.
       expect(await jobsFor(acme)).toHaveLength(2);
-      // markCompanyIngested certified board health (total>0) — the staleness timer's precondition.
+      // markCompanyIngested certified board health (a non-empty fetch) — the staleness timer's precondition.
       expect((await companyById(acme)).lastIngestedAt).toBeInstanceOf(Date);
       // The run row, opened + terminalized ok with the counts bag verbatim.
       const runs = await allSourceRuns();
@@ -318,7 +356,7 @@ describe("runIngestion — orchestration over real PGlite (fetch stubbed)", () =
       const counts = await runIngestion(db, { paceMs: 0, adapter: NO_RETRY });
 
       expect(counts).toMatchObject({ companies: 1, ok: 1, jobs: 0, changed: 0, revived: 0 });
-      // The total>0 gate held: an empty/ambiguous fetch must NOT certify the board healthy (which would
+      // The non-empty-fetch gate held: an empty/ambiguous fetch must NOT certify the board healthy (which would
       // then let the staleness timer close its still-live jobs).
       expect((await companyById(emptyco)).lastIngestedAt).toBeNull();
     });
@@ -458,6 +496,126 @@ describe("runIngestion — orchestration over real PGlite (fetch stubbed)", () =
       // The opt gate: with no staleSweep, sweepStaleJobs is never called (a dropped gate would close t1).
       expect(counts).toMatchObject({ staleWouldClose: 0, staleClosed: 0 });
       expect((await jobByExt(timerJobExt))!.lifecycleState).toBe("active");
+    });
+  });
+
+  describe("a posting whose detail fetch failed (contentMissing) keeps its stored content", () => {
+    it("keeps stored content, stamps the posting present, defers a new one, and counts all three", async () => {
+      const sr = await seedCompany({ slug: "srco", source: "smartrecruiters", active: true });
+      // sr-1: stored, its detail 500s. sr-4: stored, its detail is SR's 200 "Posting not available".
+      for (const id of ["sr-1", "sr-4"]) {
+        await seedJob(sr, {
+          externalId: id,
+          source: "smartrecruiters",
+          descriptionText: `Stored ${id}`,
+          consecutiveAbsences: 1,
+          lastSeenAt: daysAgo(2),
+        });
+      }
+      await db
+        .update(jobs)
+        .set({ embedding: oneHot(0), contentSignature: "stored-sig" })
+        .where(eq(jobs.companyId, sr));
+      // sr-2 is brand new and its detail 500s too; sr-3 hydrates normally.
+      installFetch(
+        srBoard("srco", ["sr-1", "sr-2", "sr-3", "sr-4"], (id) =>
+          id === "sr-4"
+            ? jsonResponse({ message: "Posting not available" })
+            : id === "sr-3"
+              ? jsonResponse(srDetail(id))
+              : textResponse("err", 500),
+        ),
+      );
+      const freshSince = new Date(Date.now() - 1_000);
+
+      const counts = await runIngestion(db, { paceMs: 0, adapter: NO_RETRY });
+
+      expect(counts).toMatchObject({ ok: 1, failed: 0, jobs: 1, changed: 1, hydrateSkipped: 3 });
+      expect(counts).toMatchObject({ swept: 0, wouldClose: 0, markFailed: 0 });
+      for (const id of ["sr-1", "sr-4"]) {
+        const kept = (await jobByExt(id))!;
+        // Never overwritten with the list-level title / placeholder "" — so the embedding is never NULLed
+        // (no paid re-embed) and the signature never recomputed from the title alone.
+        expect(kept.title).toBe("seeded job");
+        expect(kept.descriptionText).toBe(`Stored ${id}`);
+        expect(kept.contentSignature).toBe("stored-sig");
+        expect(kept.embedding).not.toBeNull();
+        // Still PRESENT: the sweep reset its streak (an absent job's would grow to 2) and markJobsPresent
+        // refreshed last_seen_at (so the staleness timer never ages a live job).
+        expect(kept.lifecycleState).toBe("active");
+        expect(kept.consecutiveAbsences).toBe(0);
+        expect(kept.lastSeenAt.getTime()).toBeGreaterThanOrEqual(freshSince.getTime());
+      }
+      expect(await jobByExt("sr-2")).toBeUndefined(); // no content yet — waits for a run that fetches it
+      expect((await jobByExt("sr-3"))!.descriptionText).toBe("About sr-3");
+      // Persisted with the run row, so `pnpm runs` shows it.
+      expect((await allSourceRuns())[0]!.counts).toMatchObject({ hydrateSkipped: 3 });
+    });
+
+    it("a board whose EVERY detail fetch failed writes nothing yet is still present and certified", async () => {
+      // The presence gate keys on the LISTING, not on rows written: total is 0 here, but the list was fetched.
+      const sr = await seedCompany({
+        slug: "srdown",
+        source: "smartrecruiters",
+        active: true,
+        lastIngestedAt: null,
+      });
+      await seedJob(sr, {
+        externalId: "d-1",
+        source: "smartrecruiters",
+        descriptionText: "Stored d-1",
+        consecutiveAbsences: 1,
+        lastSeenAt: daysAgo(2),
+      });
+      installFetch(srBoard("srdown", ["d-1"], () => textResponse("err", 503)));
+
+      const counts = await runIngestion(db, { paceMs: 0, adapter: NO_RETRY });
+
+      expect(counts).toMatchObject({ ok: 1, jobs: 0, changed: 0, hydrateSkipped: 1, swept: 0 });
+      const kept = (await jobByExt("d-1"))!;
+      expect(kept.descriptionText).toBe("Stored d-1");
+      expect(kept.consecutiveAbsences).toBe(0);
+      expect(kept.lastSeenAt.getTime()).toBeGreaterThan(daysAgo(1).getTime());
+      expect((await companyById(sr)).lastIngestedAt).toBeInstanceOf(Date);
+    });
+
+    it("counts DISTINCT postings, never one whose duplicate copy was written", async () => {
+      await seedCompany({ slug: "srdup", source: "smartrecruiters", active: true });
+      // dup-1 is listed twice: one copy's detail fails, the other's succeeds → written, not counted.
+      // dup-2 is listed twice and both details fail → counted ONCE.
+      let dup1Calls = 0;
+      installFetch(
+        srBoard("srdup", ["dup-1", "dup-1", "dup-2", "dup-2"], (id) =>
+          id === "dup-1" && dup1Calls++ > 0 ? jsonResponse(srDetail(id)) : textResponse("err", 500),
+        ),
+      );
+
+      const counts = await runIngestion(db, { paceMs: 0, adapter: NO_RETRY });
+
+      expect(dup1Calls).toBe(2); // both dup-1 copies were hydrated (one failed, one didn't)
+      expect(counts).toMatchObject({ ok: 1, jobs: 1, hydrateSkipped: 1 });
+      expect((await jobByExt("dup-1"))!.descriptionText).toBe("About dup-1");
+      expect(await jobByExt("dup-2")).toBeUndefined();
+    });
+
+    it("counts nothing for a board whose write failed — the board fails, and hydrateSkipped stays 0", async () => {
+      await seedCompany({ slug: "srfail", source: "smartrecruiters", active: true });
+      installFetch(
+        srBoard("srfail", ["f-1", "f-2"], (id) =>
+          id === "f-2" ? jsonResponse(srDetail(id)) : textResponse("err", 500),
+        ),
+      );
+      vi.mocked(upsertJobs).mockRejectedValueOnce(new Error("write failed"));
+
+      const counts = await runIngestion(db, { paceMs: 0, adapter: NO_RETRY });
+
+      // The write WAS attempted, with f-1 flagged. Assert on mock.calls, never a toHaveBeenCalled*
+      // matcher on these repo spies: its failure message prints the call's `db` argument (the whole
+      // PGlite instance) and runs the worker out of heap instead of failing cleanly.
+      expect(vi.mocked(upsertJobs).mock.calls.length).toBe(1);
+      const attempted = vi.mocked(upsertJobs).mock.calls[0]![2];
+      expect(attempted.filter((j) => j.contentMissing).map((j) => j.externalId)).toEqual(["f-1"]);
+      expect(counts).toMatchObject({ ok: 0, failed: 1, jobs: 0, hydrateSkipped: 0 });
     });
   });
 });

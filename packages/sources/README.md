@@ -84,8 +84,17 @@ each board in a try/catch — one dead slug doesn't halt the run.
 `ingest:all` is now a thin CLI shell over the shared `runIngestion(db, opts)` library
 (`src/ingest.ts`), which the Phase-8 Worker cron also calls — the CLI commands are unchanged.
 
+**A failed hydrate never overwrites stored content.** When a posting's detail fetch fails — or
+SmartRecruiters answers `200` with no `jobAd.sections` (e.g. `{"message":"Posting not available"}`) —
+`runAdapter` keeps the listed job but flags it `contentMissing` (its description is the list item's
+placeholder `""`). `upsertJobs`, the single persistence choke point, never writes such a job: the stored
+title, description, `content_signature` and embedding stay as they are, and a brand-new posting waits for
+a run that fetches its content. It still counts present (`markJobsPresent`, the absence sweep), so a
+transient failure never ages or closes a live job. `counts.hydrateSkipped` (in `pnpm runs`) tallies the
+distinct postings left unwritten on boards whose write succeeded.
+
 Since Phase F2, `runIngestion` also runs a per-board **feed-absence lifecycle sweep** (`sweepLifecycle`, gated
-on a `total > 0` upsert) after each successful board: postings absent from a healthy fetch accrue a
+on a non-empty fetch) after each successful board: postings absent from a healthy fetch accrue a
 `consecutive_absences` streak and soft-close at the threshold, reviving on reappearance — tallied onto
 `IngestionCounts` (`revived` / `swept` / `closed` / `wouldClose` / `sweepFailed`) and the `logSummary` line.
 Shipped SHADOW (count-only): the close is tallied as `wouldClose`, not yet written. Enforcement is the
@@ -123,9 +132,10 @@ paces between boards.
 **SmartRecruiters** — `api.smartrecruiters.com/v1/companies/{slug}/postings`. OFFSET-paginated
 (`{ content, totalFound }`). Slugs CASE-SENSITIVE. The list item has neither a description nor a
 public apply URL, so `mapItem` reconstructs `applyUrl` + sets `descriptionText: ""` and
-`hydrate` (the N+1 `GET .../postings/{id}`) patches them — a hydrate failure keeps the valid
-un-hydrated job. Sections are concatenated in a FIXED order (stable re-ingest). NOTE: an unknown
-slug returns `200 + totalFound:0` (not 404), so slug existence can't be asserted here (Phase 7).
+`hydrate` (the N+1 `GET .../postings/{id}`) patches them. A hydrate failure, or a `200` detail with no
+`jobAd.sections`, keeps the listed job flagged `contentMissing` (present, but never written). Sections
+are concatenated in a FIXED order (stable re-ingest). NOTE: an unknown slug returns
+`200 + totalFound:0` (not 404), so slug existence can't be asserted here (Phase 7).
 
 ### Phase 6.5 Wave A (zero-hydrate public boards)
 

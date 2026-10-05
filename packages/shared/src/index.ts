@@ -214,6 +214,16 @@ export interface NormalizedJob {
    */
   postedAt: Date | null;
   /**
+   * Set by runAdapter when this posting's CONTENT could not be fetched this run — its hydrate (the N+1
+   * detail fetch) failed or came back without content — so the job carries only list-level fields and a
+   * placeholder "" description that is NOT the posting's text. The posting WAS listed, so it is live:
+   * ingestion still counts it present. `upsertJobs` (the single persistence choke point) never writes it:
+   * a stored row keeps its title/description/signature/embedding, and a brand-new posting waits for a run
+   * that fetches its content. Writing it would overwrite the description, NULL the embedding (a paid
+   * re-embed) and flip content_signature — then flip it all back on the next good hydrate.
+   */
+  contentMissing?: true;
+  /**
    * The untouched source object, for debugging and reprocessing. Typed `unknown`
    * (never `any`) so callers must narrow before reading source-specific fields.
    */

@@ -33,13 +33,16 @@ async function main(): Promise<void> {
   // Seed the company from the canonical slug (not jobs[0]) so a valid-but-currently-empty
   // board is still recorded — ingest:all then re-checks it when it later posts jobs.
   const companyId = await upsertCompany(db, adapters[source].normalizeSlug(slug), source);
-  const { changed, total } = await upsertJobs(db, companyId, jobs);
+  // upsertJobs never writes a posting whose detail fetch failed (NormalizedJob.contentMissing) — its
+  // stored row stays as it is — so those are reported apart from the duplicates it collapsed.
+  const { changed, total, contentMissing } = await upsertJobs(db, companyId, jobs);
 
-  const collapsed = jobs.length - total;
+  const collapsed = jobs.length - total - contentMissing;
   console.log(
     `Upserted ${total} jobs for ${source}:"${slug}" (company_id=${companyId}): ` +
       `changed ${changed}, unchanged ${total - changed}` +
-      (collapsed > 0 ? ` (collapsed ${collapsed} duplicate id${collapsed === 1 ? "" : "s"})` : ""),
+      (collapsed > 0 ? ` (collapsed ${collapsed} duplicate id${collapsed === 1 ? "" : "s"})` : "") +
+      (contentMissing > 0 ? `; ${contentMissing} not written (detail fetch failed)` : ""),
   );
 
   const policy = embedPolicy(noEmbed);

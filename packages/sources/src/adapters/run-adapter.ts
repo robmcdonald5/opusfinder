@@ -11,7 +11,8 @@ import type { Cursor, FetchJson, JobsRequest, SourceAdapter, SourceContext } fro
  * map) → the single resilient fetch (retry/backoff/Retry-After + non-JSON guard) → two-tier
  * resilience (locate fails LOUD on a bad envelope; mapItem fails SOFT, skipping one bad
  * posting) → the optional bounded-concurrency hydrate pool → per-board accounting. Returns
- * `NormalizedJob[]`.
+ * `NormalizedJob[]` — every LISTED posting, a failed hydrate's job included but flagged
+ * `contentMissing` (see the hydrate pool below).
  *
  * Worker-forward: global `fetch`/`RequestInit` only, `setTimeout`-based backoff, `Math.random`
  * jitter, no Node-only APIs and no `process.env` reads.
@@ -101,8 +102,13 @@ export async function runAdapter(
     cursor = next;
   }
 
-  // Optional hydrate (N+1 second fetch) through a bounded-concurrency pool. A per-item
-  // failure keeps the already-valid mapped job (mapItem's contract guarantees it is usable).
+  // Optional hydrate (N+1 second fetch) through a bounded-concurrency pool, each call handed its own
+  // list item. A per-item failure (retries exhausted, a timeout, or a detail with no content — the
+  // adapter throws) keeps the listed job, because it WAS listed and so is live: ingestion must still
+  // count it present. But its description is mapItem's placeholder "", not the posting's text, so it is
+  // flagged `contentMissing` and upsertJobs never writes it — persisted, it would overwrite the stored
+  // description, NULL the embedding (a paid re-embed) and flip content_signature, then flip it all back
+  // on the next good hydrate.
   let jobs: NormalizedJob[];
   let unhydrated = 0;
   const hydrate = adapter.hydrate;
@@ -112,7 +118,7 @@ export async function runAdapter(
         return { ...job, ...(await hydrate(job, raw, ctx, fetchJson)) };
       } catch {
         unhydrated++;
-        return job;
+        return { ...job, contentMissing: true as const };
       }
     });
   } else {
@@ -123,7 +129,7 @@ export async function runAdapter(
     console.warn(
       `${tag}: ${jobs.length} job(s)` +
         (skipped > 0 ? `, skipped ${skipped} malformed` : "") +
-        (unhydrated > 0 ? `, ${unhydrated} un-hydrated` : ""),
+        (unhydrated > 0 ? `, ${unhydrated} un-hydrated (content missing, not written)` : ""),
     );
   }
   return jobs;

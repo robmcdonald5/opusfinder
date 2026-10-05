@@ -131,10 +131,11 @@ export interface IngestionCounts {
   failed: number; // boards that threw (isolated — does NOT fail the run)
   jobs: number; // distinct postings persisted
   changed: number; // inserted-or-updated postings
+  hydrateSkipped: number; // listed postings NOT written (detail fetch failed): stored row kept / new one deferred; still present
   embedded: number; // postings embedded inline (0 when `embed` omitted)
   embedTokens: number; // Voyage tokens used
   embedFailed: number; // boards whose embed step threw (jobs still persisted)
-  // Per-board lifecycle sweep (gated total>0). Count-only/shadow mode keeps `closed` at 0 and
+  // Per-board lifecycle sweep (gated on a non-empty fetch). Count-only/shadow mode keeps `closed` at 0 and
   // reports `wouldClose` as the standing "would close if enforced" population; enforce flips the write on.
   revived: number; // reappeared postings: active-streak resets + closed→active revivals
   swept: number; // absent postings whose streak incremented but is still below the close threshold
@@ -200,25 +201,32 @@ export async function runIngestion(db: Db, opts: IngestionOptions = {}): Promise
         // Idempotent get-or-create from the canonical slug (not jobs[0]) keeps a valid-but-
         // empty board recorded too.
         const companyId = await upsertCompany(db, company.slug, company.source);
-        const { changed, total } = await upsertJobs(db, companyId, normalized);
+        // upsertJobs never writes a `contentMissing` posting (a failed hydrate — see its guard), so its
+        // stored row keeps its content and a new one waits for a later run. `contentMissing` counts those
+        // DISTINCT postings; tallied only once the write succeeded (a throw fails the board, counting none).
+        const { changed, total, contentMissing } = await upsertJobs(db, companyId, normalized);
         counts.jobs += total;
         counts.changed += changed;
+        counts.hydrateSkipped += contentMissing;
         counts.ok += 1;
 
         // Liveness stamp (EVERY board, capped or not — see markJobsPresent): refresh last_seen_at for
         // the jobs this fetch returned + revive any reappearing closed ones, then certify a successful
         // non-empty fetch (markCompanyIngested) so the staleness timer's board-health guard knows this
-        // board is fetchable. GATED on total > 0: an empty/ambiguous fetch (e.g. SmartRecruiters
-        // 200+totalFound:0 → []) must NOT stamp presence OR certify health. `presentExternalIds` is the
-        // board's de-duplicated external_ids (== what upsertJobs persisted; length === total). Isolated
-        // like the sweep/embed steps: a stamp fault leaves jobs persisted and self-heals next cycle.
+        // board is fetchable. GATED on a non-empty fetch: an empty/ambiguous fetch (e.g. SmartRecruiters
+        // 200+totalFound:0 → []) must NOT stamp presence OR certify health. `presentExternalIds` is every
+        // de-duplicated external_id the board LISTED — what upsertJobs persisted PLUS the contentMissing
+        // postings it did not write: a posting whose detail fetch failed this run is still live, so it must
+        // neither age toward the staleness timer nor count as absent in the sweep below. (So the gate is
+        // the listing, not `total` — a board whose every hydrate failed writes nothing but is still live.)
+        // Isolated like the sweep/embed steps: a stamp fault leaves jobs persisted and self-heals next cycle.
         // ORDER IS LOAD-BEARING — markJobsPresent (stamp last_seen) BEFORE markCompanyIngested (certify
         // board health): if the company were certified first and the job-stamp then threw, the timer could
         // close jobs that were never re-stamped. This order fails SAFE (jobs stamped, board left
         // uncertified ⇒ guard spares it).
-        let presentExternalIds: string[] | undefined;
-        if (total > 0) {
-          presentExternalIds = [...new Set(normalized.map((j) => j.externalId))];
+        const listedIds = [...new Set(normalized.map((j) => j.externalId))];
+        const presentExternalIds = listedIds.length > 0 ? listedIds : undefined;
+        if (presentExternalIds !== undefined) {
           try {
             const present = await markJobsPresent(db, companyId, presentExternalIds);
             counts.revived += present.revived; // closed→active revivals (works for capped boards too)
@@ -356,6 +364,7 @@ function emptyCounts(): IngestionCounts {
     failed: 0,
     jobs: 0,
     changed: 0,
+    hydrateSkipped: 0,
     embedded: 0,
     embedTokens: 0,
     embedFailed: 0,
@@ -388,6 +397,9 @@ function logSummary(counts: IngestionCounts, embedEnabled: boolean): void {
       (counts.sweepFailed > 0 ? `, ${counts.sweepFailed} sweep-failed` : "") +
       (counts.markFailed > 0 ? `, ${counts.markFailed} mark-failed` : "") +
       (counts.cappedBoards > 0 ? `; ${counts.cappedBoards} capped board(s)` : "") +
+      (counts.hydrateSkipped > 0
+        ? `; ${counts.hydrateSkipped} posting(s) not written (detail fetch failed; stored content kept)`
+        : "") +
       (counts.staleWouldClose > 0 || counts.staleClosed > 0 || counts.staleSweepFailed > 0
         ? `; stale: ${counts.staleWouldClose} would-close, ${counts.staleClosed} closed` +
           (counts.staleSweepFailed > 0 ? `, ${counts.staleSweepFailed} stale-sweep-failed` : "")

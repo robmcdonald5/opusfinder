@@ -491,7 +491,7 @@ describe("runAdapter — invariant ATS plumbing over MSW", () => {
       expect(jobs.map((j) => j.descriptionText)).toEqual(["h-1", "h-2", "h-3"]);
     });
 
-    it("keeps the base job when hydrate throws for one item (per-item failure isolation)", async () => {
+    it("keeps the listed job when ITS hydrate throws, flagged contentMissing (per-item failure isolation)", async () => {
       const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
       server.use(http.get(LIST, () => HttpResponse.json({ jobs: [raw(1), raw(2), raw(3)] })));
       const adapter = makeAdapter({
@@ -503,7 +503,11 @@ describe("runAdapter — invariant ATS plumbing over MSW", () => {
 
       const jobs = await runAdapter(adapter, "acme");
 
-      expect(jobs.map((j) => j.descriptionText)).toEqual(["desc-1", "", "desc-3"]); // item 2 kept as its base job
+      // Item 2 is still returned — it was LISTED, so it is live and ingestion must count it present — but its
+      // "" is mapItem's placeholder, not content: the flag is what stops upsertJobs writing it over the stored
+      // description. Only the failed item is flagged; the hydrated ones carry no flag at all.
+      expect(jobs.map((j) => j.descriptionText)).toEqual(["desc-1", "", "desc-3"]);
+      expect(jobs.map((j) => j.contentMissing)).toEqual([undefined, true, undefined]);
       expect(warn).toHaveBeenCalledWith(expect.stringMatching(/1 un-hydrated/));
     });
 

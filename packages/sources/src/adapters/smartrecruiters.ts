@@ -26,8 +26,10 @@ const SECTION_ORDER = [
 /**
  * SmartRecruiters company adapter — BOTH offset-paginated AND requires an N+1 hydrate. The list
  * item carries neither a description nor a public apply URL, so `mapItem` emits a fully-valid job
- * (reconstructed apply URL, empty description) that `hydrate` then patches; a hydrate failure
- * therefore keeps a usable job. Company IDs are case-sensitive, so `normalizeSlug` preserves casing.
+ * (reconstructed apply URL, placeholder empty description) that `hydrate` then patches. A hydrate
+ * that fails — or gets a detail with no content — THROWS, so runAdapter keeps the listed job (still
+ * present) flagged `contentMissing`, and upsertJobs never writes its placeholder over the stored
+ * posting. Company IDs are case-sensitive, so `normalizeSlug` preserves casing.
  *
  * Pagination uses `body.totalFound`; `nextCursor` and `locate` both read the same envelope (one is
  * the array, the other the count) — an accepted seam. An unknown slug returns 200 + `totalFound:0`
@@ -95,7 +97,8 @@ export const smartRecruitersAdapter: SourceAdapter = {
 /**
  * Map ONE raw list item to a fully-valid job (apply URL reconstructed from the public
  * pattern, description empty — both patched by hydrate). Producing a valid job here is what
- * lets a hydrate failure be non-fatal. List fields: `id`, `name`, `location`, `releasedDate`.
+ * lets a hydrate failure be non-fatal: the listed job still counts present (flagged
+ * `contentMissing`, never written as content). List fields: `id`, `name`, `location`, `releasedDate`.
  */
 function toNormalizedJob(raw: unknown, ctx: SourceContext): NormalizedJob | null {
   if (!isRecord(raw)) return null;
@@ -137,9 +140,15 @@ function isRemoteLocation(loc: unknown): boolean {
 
 /**
  * The N+1 hydrate (one fetch per posting, via the injected resilient `fetchJson`). Fills
- * `descriptionText` from the jobAd sections (HTML → plain text), the real `applyUrl`, and
- * replaces `raw` with the FULL hydrated posting (a superset of the list item) so nothing
- * is lost — required for a lossless `raw` payload.
+ * `descriptionText` from the jobAd sections (HTML → plain text), the real `applyUrl`, the
+ * detail's `remote`, and replaces `raw` with the FULL hydrated posting (a superset of the list item).
+ *
+ * A detail WITHOUT `jobAd.sections` THROWS rather than patching an empty description: that covers a
+ * non-object body (JSON null/string from an edge or maintenance response) AND SmartRecruiters' `200` +
+ * `{"message":"Posting not available"}` for a posting still in the list. Both carry no content, so the
+ * throw makes runAdapter flag the job `contentMissing` — patching `""` would "succeed" and upsertJobs
+ * would write it over the stored description (NULLing its embedding). A detail WITH sections is real
+ * content even when every section is blank. The message is shape-only (a posting id, never body text).
  */
 async function hydratePosting(
   job: NormalizedJob,
@@ -147,16 +156,15 @@ async function hydratePosting(
   fetchJson: FetchJson,
 ): Promise<Partial<NormalizedJob>> {
   const detail = await fetchJson({ url: `${API}/${ctx.slug}/postings/${job.externalId}` });
-  // A non-object detail (valid JSON null/string from an edge/maintenance response) carries
-  // nothing to patch — keep the valid pre-hydrate job (list-item raw, reconstructed apply
-  // URL, list-derived remote) rather than clobbering raw with the garbage.
-  if (!isRecord(detail)) return {};
-
-  const patch: Partial<NormalizedJob> = { raw: detail };
-
   const sections =
-    isRecord(detail.jobAd) && isRecord(detail.jobAd.sections) ? detail.jobAd.sections : undefined;
-  patch.descriptionText = sections ? cleanSections(sections) : "";
+    isRecord(detail) && isRecord(detail.jobAd) && isRecord(detail.jobAd.sections)
+      ? detail.jobAd.sections
+      : undefined;
+  if (!isRecord(detail) || sections === undefined) {
+    throw new Error(`SmartRecruiters detail for "${job.externalId}" has no jobAd.sections`);
+  }
+
+  const patch: Partial<NormalizedJob> = { raw: detail, descriptionText: cleanSections(sections) };
 
   const applyUrl =
     (typeof detail.applyUrl === "string" && detail.applyUrl) ||

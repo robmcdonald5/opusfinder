@@ -3,8 +3,9 @@
  * injected (no module-level singleton), matching `createDb()` in ../client.
  *
  * Both upserts are idempotent. `upsertCompany` is get-or-create; `upsertJobs`
- * dedupes the batch, then only advances `updated_at` when a job's content
- * actually changed, so re-ingesting an unchanged board is a no-op.
+ * dedupes the batch, never writes a job whose content is missing (a failed hydrate),
+ * then only advances `updated_at` when a job's content actually changed, so
+ * re-ingesting an unchanged board is a no-op.
  */
 import { and, type AnyColumn, eq, gt, sql, type SQL } from "drizzle-orm";
 
@@ -89,29 +90,48 @@ const UPSERT_BATCH_SIZE = 500;
  * Batch-upsert a board's jobs via INSERT ... ON CONFLICT, split into {@link UPSERT_BATCH_SIZE}-row
  * batches (one neon-http round-trip each). Conflict key is `(source, external_id)`.
  *
- * Returns `{ changed, total }`: `total` is the count of DISTINCT jobs after
- * de-duplication; `changed` is how many were inserted or updated (rows whose
- * content was unchanged are skipped by `setWhere` and not returned). The caller
- * reports `unchanged = total - changed` and `collapsed = input.length - total`.
+ * Returns `{ changed, total, contentMissing }`: `total` is the count of DISTINCT jobs
+ * WRITTEN after de-duplication; `changed` is how many were inserted or updated (rows whose
+ * content was unchanged are skipped by `setWhere` and not returned); `contentMissing` is how
+ * many DISTINCT postings were NOT written because their content is missing (below). The caller
+ * reports `unchanged = total - changed` and `collapsed = input.length - total - contentMissing`.
+ *
+ * CONTENT-MISSING GUARD — enforced HERE, the single persistence choke point, so EVERY caller is
+ * protected rather than each filtering for itself. A job flagged `NormalizedJob.contentMissing` (its
+ * hydrate failed or returned no content, so its description is mapItem's placeholder "") is never
+ * written: a stored row keeps its title, description, content_signature and embedding (no column is
+ * touched), and a posting not yet stored is not inserted until a run fetches its content. Writing it
+ * would overwrite the description, NULL the embedding (a paid re-embed) and recompute the signature
+ * from the title alone (an F1 de-dupe collapse) — then flip it all back on the next good hydrate.
+ * Presence is NOT this writer's job: the caller still stamps every LISTED posting present
+ * (markJobsPresent / sweepLifecycle), so a transient detail failure never ages or sweeps a live job.
  */
 export async function upsertJobs(
   db: Db,
   companyId: number,
   list: NormalizedJob[],
-): Promise<{ changed: number; total: number }> {
+): Promise<{ changed: number; total: number; contentMissing: number }> {
   // Collapse duplicate (source, external_id) BEFORE the batch: a single
   // INSERT ... ON CONFLICT cannot affect the same conflict key twice (Postgres
   // raises 21000), and a board can repeat a posting id (cross-listed roles) or a
-  // future source may reuse ids. Last occurrence wins; richer merging of
+  // future source may reuse ids. Last occurrence wins — EXCEPT that a copy WITH content
+  // always beats a contentMissing copy, in either order, so a duplicated posting whose
+  // other copy hydrated is written from it (and not counted missing). Richer merging of
   // duplicates (e.g. multi-location postings) is an adapter concern, not here.
   const deduped = new Map<string, NormalizedJob>();
   for (const job of list) {
-    deduped.set(JSON.stringify([job.source, job.externalId]), job);
+    const key = JSON.stringify([job.source, job.externalId]);
+    const kept = deduped.get(key);
+    if (job.contentMissing && kept && !kept.contentMissing) continue;
+    deduped.set(key, job);
   }
+  // The content-missing guard (see the doc above): drop them AFTER the dedupe, so each is counted once.
+  const writable = [...deduped.values()].filter((job) => !job.contentMissing);
+  const contentMissing = deduped.size - writable.length;
   // Guard the empty case: `INSERT ... VALUES` with no rows is invalid SQL.
-  if (deduped.size === 0) return { changed: 0, total: 0 };
+  if (writable.length === 0) return { changed: 0, total: 0, contentMissing };
 
-  const values = [...deduped.values()].map((job) => {
+  const values = writable.map((job) => {
     // Strip U+0000 from anything bound for text/jsonb (Postgres rejects it).
     const title = job.title.replaceAll(NUL, "");
     const descriptionText = job.descriptionText.replaceAll(NUL, "");
@@ -216,5 +236,5 @@ export async function upsertJobs(
     changed += updated.length;
   }
 
-  return { changed, total: deduped.size };
+  return { changed, total: writable.length, contentMissing };
 }

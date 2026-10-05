@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { companySlug } from "@opusfinder/shared";
+import { rejectionOf } from "@test/rejection";
 
 import { smartRecruitersAdapter } from "./smartrecruiters";
 import type { SourceContext } from "./types";
@@ -181,5 +182,48 @@ describe("smartRecruitersAdapter.mapItem — skips malformed items (returns null
   it("skips an interior-whitespace id without throwing", () => {
     expect(() => mapItem({ ...RAW, id: "ab cd" }, CTX)).not.toThrow();
     expect(mapItem({ ...RAW, id: "ab cd" }, CTX)).toBeNull();
+  });
+});
+
+describe("smartRecruitersAdapter.hydrate — content, or a throw (never an empty patch)", () => {
+  // hydrate is called by runAdapter with the resilient fetchJson; here a stub returns the parsed detail.
+  const hydrate = smartRecruitersAdapter.hydrate!;
+  const job = mapItem(RAW, CTX)!;
+  const run = (detail: unknown) => hydrate(job, RAW, CTX, () => Promise.resolve(detail));
+
+  it("patches the description (fixed section order), the real applyUrl and remote", async () => {
+    const patch = await run({
+      applyUrl: "https://jobs.smartrecruiters.com/oneclick-ui/apply/743999874523456",
+      location: { remote: true },
+      jobAd: {
+        sections: {
+          // Deliberately out of SECTION_ORDER: the output order must not follow the key order.
+          qualifications: { text: "<p>Go &amp; SQL</p>" },
+          jobDescription: { text: "<p>Build APIs</p>" },
+        },
+      },
+    });
+    expect(patch).toMatchObject({
+      descriptionText: "Build APIs\n\nGo & SQL",
+      applyUrl: "https://jobs.smartrecruiters.com/oneclick-ui/apply/743999874523456",
+      remote: true,
+    });
+  });
+
+  it("a detail WITH sections that are all blank is real (empty) content, not a failure", async () => {
+    expect(await run({ jobAd: { sections: {} } })).toMatchObject({ descriptionText: "" });
+  });
+
+  // No jobAd.sections ⇒ no content: THROW, so runAdapter flags the listed job contentMissing and
+  // upsertJobs keeps the stored posting. Returning a patch (the old `{}` / `descriptionText: ""`) would
+  // "succeed" and write mapItem's placeholder "" over the stored description, NULLing its embedding.
+  it.each([
+    ["SR's 200 'Posting not available' object", { message: "Posting not available" }],
+    ["an object whose jobAd has no sections", { jobAd: { title: "x" }, applyUrl: "https://x/1" }],
+    ["JSON null (an edge/maintenance body)", null],
+    ["a JSON string", "maintenance"],
+  ])("throws on %s", async (_label, detail) => {
+    const err = await rejectionOf(run(detail));
+    expect(err.message).toBe('SmartRecruiters detail for "743999874523456" has no jobAd.sections');
   });
 });
