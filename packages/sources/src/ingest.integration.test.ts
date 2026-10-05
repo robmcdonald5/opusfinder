@@ -338,6 +338,8 @@ describe("runIngestion — orchestration over real PGlite (fetch stubbed)", () =
       const counts = await runIngestion(db, { maxRunMs: 0, paceMs: 0, adapter: NO_RETRY });
 
       expect(counts).toMatchObject({ companies: 3, processed: 1, ok: 1, lastId: c1 });
+      // The run row says WHY it stopped early.
+      expect(counts).toMatchObject({ stoppedByTime: 1, stoppedBySubrequests: 0 });
       // BREAK (not return): finishRun is still reached and the run terminalizes ok.
       const runs = await allSourceRuns();
       expect(runs).toHaveLength(1);
@@ -345,6 +347,48 @@ describe("runIngestion — orchestration over real PGlite (fetch stubbed)", () =
       // Boards 2 and 3 were never started.
       expect(fx.calls.some((u) => boardMatch("c2")(u))).toBe(false);
       expect(fx.calls.some((u) => boardMatch("c3")(u))).toBe(false);
+    });
+  });
+
+  describe("subrequests budget", () => {
+    it("stops STARTING boards once used() reaches stopAt — same graceful stop: finishRun, partial cursor", async () => {
+      vi.spyOn(console, "warn").mockImplementation(() => {});
+      await seedCompany({ slug: "s1", active: true });
+      const s2 = await seedCompany({ slug: "s2", active: true });
+      await seedCompany({ slug: "s3", active: true });
+      // Every board is ONE fetch here, so the routed fetch's call count IS the subrequest count.
+      const fx = installFetch([
+        boardRoute("s1", [ghJob(1)]),
+        boardRoute("s2", [ghJob(2)]),
+        boardRoute("s3", [ghJob(3)]),
+      ]);
+
+      const counts = await runIngestion(db, {
+        paceMs: 0,
+        adapter: NO_RETRY,
+        subrequests: { used: () => fx.calls.length, stopAt: 2 },
+      });
+
+      // s1 (used 0→1) and s2 (1 < 2 → 2) ran; before s3, used 2 ≥ 2 ⇒ stop. The in-flight board finished.
+      expect(counts).toMatchObject({ companies: 3, processed: 2, ok: 2, lastId: s2 });
+      expect(counts).toMatchObject({ stoppedBySubrequests: 1, stoppedByTime: 0, subrequests: 2 });
+      expect(fx.calls.some((u) => boardMatch("s3")(u))).toBe(false);
+      const runs = await allSourceRuns();
+      expect(runs[0]!.status).toBe("ok");
+      expect(runs[0]!.counts).toMatchObject({ stoppedBySubrequests: 1, subrequests: 2 });
+    });
+
+    it("a run inside its budget records the tally and no stop", async () => {
+      await seedCompany({ slug: "u1", active: true });
+      const fx = installFetch([boardRoute("u1", [ghJob(1)])]);
+
+      const counts = await runIngestion(db, {
+        paceMs: 0,
+        adapter: NO_RETRY,
+        subrequests: { used: () => fx.calls.length, stopAt: 100 },
+      });
+
+      expect(counts).toMatchObject({ processed: 1, stoppedBySubrequests: 0, stoppedByTime: 0, subrequests: 1 });
     });
   });
 

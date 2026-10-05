@@ -63,6 +63,9 @@ crons = [
 #     same-source board itself took time; budgeted at a conservative 0.25 s/board
 #   => ~1.7 s/board: 250 boards ~ 7.2 min (72% of the budget, so a tick ~40% slower than the median still
 #      completes); 300 would be ~8.7 min (87%), too close to the stop to call "normal".
+# A second graceful stop guards subrequests: src/index.ts stops starting boards at 8,000 of Workers Paid's
+# 10,000-per-invocation cap (250 normal boards use ~1,500). CPU needs no guard: ~20 s per 250 boards
+# (measured max 11.8 s per 150) against cpu_ms = 300,000.
 # 250 x 12 ticks = 3,000 board fetches/day vs 3,600 at hourly x 150, so a full sweep of the active boards
 # takes ~20% longer (N/250 x 2 h vs N/150 x 1 h). Raise it once `pnpm runs` (started/finished) shows real
 # ticks finishing well short of 10 min. History: 150 -> 75 (PR #28, a Neon 512MB-outage misdiagnosis — the real cause was jobs.raw

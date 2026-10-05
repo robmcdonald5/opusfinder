@@ -104,6 +104,14 @@ export interface IngestionOptions {
    */
   maxRunMs?: number;
   /**
+   * Subrequest budget for the whole run (Worker-only — Cloudflare caps subrequests per invocation and
+   * fails every fetch past the cap). `used()` reports the subrequests made so far; once it reaches
+   * `stopAt`, the loop stops STARTING new boards exactly like the maxRunMs budget (break → finishRun →
+   * the cursor advances past the boards that ran), so `stopAt` must leave headroom for one worst-case
+   * board in flight plus the post-loop writes. Omit ⇒ no budget (the CLI). See `counts.subrequests`.
+   */
+  subrequests?: { used: () => number; stopAt: number };
+  /**
    * Optional per-board progress hook, fired once per board as it finishes (success or failure).
    * The library stays quiet by default (only the run summary is logged); the CLI supplies this to
    * restore real-time per-board output, the Worker omits it. MUST NOT throw — a throwing hook is
@@ -135,13 +143,13 @@ export interface IngestionOptions {
  * `companies` is the size of the `afterId`/`limit` SQL chunk (after `activeOnly`) — NOT the total
  * active board count; the chunk-cursor wrap test (`companies < limit` ⇒ end of table ⇒ reset)
  * depends on that. `processed` is how many of those boards actually ran: it equals `companies`
- * unless the `maxRunMs` budget stopped the loop early, which the handler uses to advance (not wrap)
+ * unless a budget (`maxRunMs` or `subrequests`) stopped the loop early, which the handler uses to advance (not wrap)
  * the cursor mid-chunk.
  */
 export interface IngestionCounts {
   [key: string]: number;
   companies: number; // size of the activeOnly + afterId + limit SQL chunk (NOT necessarily all processed)
-  processed: number; // boards actually processed (< companies ⇒ the maxRunMs budget stopped the loop early)
+  processed: number; // boards actually processed (< companies ⇒ a budget stopped the loop early — see stoppedBy*)
   ok: number; // boards fetched + upserted cleanly
   failed: number; // boards that threw (isolated — does NOT fail the run)
   jobs: number; // distinct postings persisted
@@ -167,6 +175,10 @@ export interface IngestionCounts {
   staleWouldClose: number; // active jobs past the TTL the timer WOULD close (shadow standing population; 0 in enforce)
   staleSweepFailed: number; // 1 if the post-loop stale sweep threw (jobs untouched; self-heals next tick), else 0
   lastId: number; // max company id seen — the next tick's `afterId` cursor (0 if none)
+  // Why the loop stopped early (processed < companies), and the run's subrequest tally.
+  stoppedByTime: number; // 1 if the maxRunMs budget stopped the loop starting boards, else 0
+  stoppedBySubrequests: number; // 1 if the subrequests budget stopped it, else 0
+  subrequests: number; // subrequests used by the run as `opts.subrequests.used()` reports (0 when no budget)
 }
 
 const DEFAULT_PACE_MS = 500;
@@ -204,7 +216,20 @@ export async function runIngestion(db: Db, opts: IngestionOptions = {}): Promise
       // spent, so `finishRun` is always reached within the Worker's 15-min limit. `i > 0` guarantees at
       // least one board runs (its own cost is bounded by adapter.maxItems); BREAK (not return) so the
       // finishRun + summary below still run and the handler advances the cursor to the last processed id.
-      if (i > 0 && opts.maxRunMs !== undefined && clock() - startMs >= opts.maxRunMs) break;
+      if (i > 0 && opts.maxRunMs !== undefined && clock() - startMs >= opts.maxRunMs) {
+        counts.stoppedByTime = 1;
+        break;
+      }
+      // Subrequest budget (Worker-only — see opts.subrequests): the same graceful stop, before the
+      // invocation's subrequest cap would start failing fetches mid-board. Shape-only warning (counts).
+      if (i > 0 && opts.subrequests && opts.subrequests.used() >= opts.subrequests.stopAt) {
+        counts.stoppedBySubrequests = 1;
+        console.warn(
+          `Ingestion stopped starting boards: ${opts.subrequests.used()} subrequests used ` +
+            `(stop at ${opts.subrequests.stopAt}); processed ${counts.processed} of ${list.length}.`,
+        );
+        break;
+      }
       // Politeness is per ATS HOST, i.e. per PACING KEY (the adapter's `pacingKey`, default its source —
       // types.ts lists the host audit). Paced by TIME, not adjacency: keep this key's board starts ≥ paceMs
       // apart by sleeping only the remainder since its last start. Adjacency alone let alternating sources
@@ -388,6 +413,7 @@ export async function runIngestion(db: Db, opts: IngestionOptions = {}): Promise
       }
     }
 
+    counts.subrequests = opts.subrequests?.used() ?? 0;
     await finishRun(db, runId, { status: "ok", counts, errorSample });
     logSummary(counts, opts.embed !== undefined);
     return counts;
@@ -430,6 +456,9 @@ function emptyCounts(): IngestionCounts {
     staleWouldClose: 0,
     staleSweepFailed: 0,
     lastId: 0,
+    stoppedByTime: 0,
+    stoppedBySubrequests: 0,
+    subrequests: 0,
   };
 }
 
@@ -459,6 +488,11 @@ function logSummary(counts: IngestionCounts, embedEnabled: boolean): void {
         ? `; stale: ${counts.staleWouldClose} would-close, ${counts.staleClosed} closed` +
           (counts.staleSweepFailed > 0 ? `, ${counts.staleSweepFailed} stale-sweep-failed` : "")
         : "") +
+      (counts.stoppedByTime > 0 ? `; stopped early: time budget (${counts.processed} processed)` : "") +
+      (counts.stoppedBySubrequests > 0
+        ? `; stopped early: subrequest budget (${counts.processed} processed)`
+        : "") +
+      (counts.subrequests > 0 ? `; ${counts.subrequests} subrequests` : "") +
       ".",
   );
 }
