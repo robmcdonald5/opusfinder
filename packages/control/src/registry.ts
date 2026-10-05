@@ -163,6 +163,9 @@ export const globalSwitch: GlobalDef = {
   agent: "approval",
 };
 
+// The crons, the Inngest platform ids and the ingest/discover knob values mirror their runtimes, which this
+// pure package can't import. Sync tests in those sources pin them (control-registry.test.ts in
+// apps/scrapers and packages/inngest), so a schedule or clamp changed on one side only fails there.
 export const stages = {
   ingest: {
     label: "Ingest job boards",

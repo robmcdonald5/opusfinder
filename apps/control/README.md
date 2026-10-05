@@ -254,5 +254,8 @@ pnpm exec wrangler d1 execute opusfinder-control --remote --command "UPDATE stat
   still rule.
 - `HealthCheckId` still lives in `packages/db/src/health.ts`; a sync test in `@opusfinder/db` pins the
   registry to it until it moves here.
+- The stage crons and the ingest/discover knob bounds still copy their runtimes' constants. Sync tests
+  (`control-registry.test.ts` in `apps/scrapers` and `packages/inngest`) fail when either side changes
+  alone.
 - Approvals don't force a fresh Access login (feasibility unverified).
 - Proposals expire lazily (read-time), with no notification.
