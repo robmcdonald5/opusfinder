@@ -64,7 +64,8 @@ function makeHealthCheck(deps: HealthCheckDeps) {
 }
 
 /** The health functions, built with injected deps — concatenated alongside the digest + backfill functions
- *  in the serve routes. Mirrors `createBackfillFunctions`. */
+ *  by `createAllFunctions` (./functions), the list the serve routes register. Mirrors
+ *  `createBackfillFunctions`. */
 export function createHealthFunctions(deps: HealthCheckDeps) {
   return [makeHealthCheck(deps)];
 }

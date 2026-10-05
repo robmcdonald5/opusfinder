@@ -13,12 +13,7 @@
  * (absent during the build). Deferring to the first request reads env at runtime (cold start), where Vercel
  * provides it; the handler is memoized per serverless instance.
  */
-import {
-  createBackfillFunctions,
-  createDigestFunctions,
-  createHealthFunctions,
-  inngest,
-} from "@opusfinder/inngest";
+import { createAllFunctions, inngest } from "@opusfinder/inngest";
 import { buildBackfillDeps } from "@opusfinder/inngest/backfill-deps";
 import { buildDigestDeps } from "@opusfinder/inngest/deps";
 import { buildHealthDeps } from "@opusfinder/inngest/health-deps";
@@ -31,11 +26,11 @@ let handler: ReturnType<typeof serve> | undefined;
 function getHandler(): ReturnType<typeof serve> {
   return (handler ??= serve({
     client: inngest,
-    functions: [
-      ...createDigestFunctions(buildDigestDeps()),
-      ...createBackfillFunctions(buildBackfillDeps()),
-      ...createHealthFunctions(buildHealthDeps()),
-    ],
+    functions: createAllFunctions({
+      digest: buildDigestDeps(),
+      backfill: buildBackfillDeps(),
+      health: buildHealthDeps(),
+    }),
   }));
 }
 

@@ -2,9 +2,10 @@ import { describe, expect, it } from "vitest";
 
 import { STAGE_IDS, stageDef } from "@opusfinder/control";
 
-import { createBackfillFunctions, type BackfillDeps } from "./backfill";
-import { createDigestFunctions, type DigestDeps } from "./digest";
-import { createHealthFunctions, type HealthCheckDeps } from "./health-check";
+import type { BackfillDeps } from "./backfill";
+import type { DigestDeps } from "./digest";
+import { createAllFunctions } from "./functions";
+import type { HealthCheckDeps } from "./health-check";
 
 // The control registry's Inngest stages name their platform function (`platformId`) and copy its cron, but
 // the pure registry can't import this package. So the sync lives here and reads the cron ACTUALLY
@@ -12,12 +13,15 @@ import { createHealthFunctions, type HealthCheckDeps } from "./health-check";
 // changed on one side only, or a new cron function with no stage, fails. Building a function only records
 // its config, so the deps are never touched.
 
-/** What the serve routes (apps/web /api/inngest, scripts/serve.ts) register, as `{ id, triggers }`. */
-const served = [
-  ...createDigestFunctions({} as DigestDeps),
-  ...createBackfillFunctions({} as BackfillDeps),
-  ...createHealthFunctions({} as HealthCheckDeps),
-].map((fn) => (fn as unknown as { opts: { id: string; triggers?: unknown } }).opts);
+/**
+ * What the serve routes (apps/web /api/inngest, scripts/serve.ts) register — both pass createAllFunctions'
+ * list straight to serve() — as `{ id, triggers }`.
+ */
+const served = createAllFunctions({
+  digest: {} as DigestDeps,
+  backfill: {} as BackfillDeps,
+  health: {} as HealthCheckDeps,
+}).map((fn) => (fn as unknown as { opts: { id: string; triggers?: unknown } }).opts);
 
 const inngestStages = STAGE_IDS.filter((id) => stageDef(id).runtime === "inngest:opusfinder");
 

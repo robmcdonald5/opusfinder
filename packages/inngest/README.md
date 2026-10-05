@@ -130,11 +130,12 @@ integration (email ships in Phase 11 on the local dev runtime — locked at Phas
   `step`/db/email harness deduped from the email smoke).
 - `scripts/serve.ts` (`pnpm inngest:serve`) — the local serve endpoint over a bare Node `http` server
   (`inngest/node`) on port 3000 (pinned — the root `inngest:dev` registers exactly that URL), so the
-  dev server can discover + invoke the functions. It now serves
-  `[...createDigestFunctions(...), ...createBackfillFunctions(...), ...createHealthFunctions(...)]` (digest +
-  F8 backfill + H1b health-check alerter). Dev-only —
+  dev server can discover + invoke the functions. It serves `createAllFunctions({ digest, backfill, health })`
+  (`src/functions.ts`: digest + F8 backfill + H1b health-check alerter — the ONE list of served functions,
+  which `control-registry.test.ts` checks against the control registry; add a new function group there,
+  never at a serve route). Dev-only —
   the Phase-12a **production** serve home is `apps/web/src/routes/api/inngest/+server.ts`
-  (`inngest/sveltekit` on Vercel), which hosts the same function set; the Inngest SDK reads
+  (`inngest/sveltekit` on Vercel), which serves the same `createAllFunctions` list; the Inngest SDK reads
   `INNGEST_SIGNING_KEY`/`INNGEST_EVENT_KEY` from the environment itself (auto-provisioned by the
   Inngest↔Vercel integration in prod).
 - `scripts/digest.ts` (`pnpm digest`) — the manual trigger CLI: send `digest/run.requested`, then poll
