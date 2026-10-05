@@ -45,13 +45,11 @@ describe("recruiteeAdapter.mapItem", () => {
       descriptionText: "Build the platform . & ship it fast.",
       applyUrl: "https://acme-corp.recruitee.com/o/senior-platform-engineer/c/new",
       postedAt: new Date("2026-06-20T14:30:00.000Z"),
-      raw: RAW_OFFER,
     });
   });
 
-  it("keeps the original raw object by reference for reprocessing", () => {
-    const job = recruiteeAdapter.mapItem(RAW_OFFER, ctx);
-    expect(job?.raw).toBe(RAW_OFFER);
+  it("does not carry the raw source object (jobs.raw isn't stored)", () => {
+    expect(recruiteeAdapter.mapItem(RAW_OFFER, ctx)).not.toHaveProperty("raw");
   });
 
   describe("apply URL fallback", () => {

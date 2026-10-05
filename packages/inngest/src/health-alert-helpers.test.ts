@@ -1,6 +1,6 @@
 /**
  * Unit suite for the pure health-alert render helpers (src/health-alert-helpers.ts). Locks the per-check-id
- * formatMetric switch (7 arms + the null-metric short-circuit + the defensive default), the thresholdSuffix
+ * formatMetric switch (8 arms + the null-metric short-circuit + the defensive default), the thresholdSuffix
  * two-branch, and the checkDetail composition + its shape-only / no-leak invariant (email line === stored
  * health_alerts.detail; no NaN / undefined / '[threshold null]').
  */
@@ -19,6 +19,7 @@ describe("formatMetric", () => {
     ["ingestion_staleness", 4.2, "4.2h since last ok"],
     ["discovery_window", 4.2, "4.2d since last ok"],
     ["board_fail_ratio", 0.25, "25% boards failed"],
+    ["hydrate_skip_ratio", 0.35, "35% of hydrated postings' detail fetches failed"],
     ["embedding_backlog", 128, "128 rows"],
     ["digest_health", 3, "3 errored run(s)"],
     ["bounce_suppression", 5, "5 affected user(s)"],

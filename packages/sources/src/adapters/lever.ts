@@ -88,14 +88,13 @@ function toNormalizedJob(raw: unknown, ctx: SourceContext): NormalizedJob | null
     locations,
     remote,
     // `descriptionPlain` is pre-stripped plain text (opening + body), so only collapse is
-    // needed. The richer `lists[]`/`additional` sections + the HTML `description` stay on `raw`.
+    // needed. The richer `lists[]`/`additional` sections + the HTML `description` are not mapped.
     descriptionText: cleanHtml(
       typeof raw.descriptionPlain === "string" ? raw.descriptionPlain : "",
       ["collapse"],
     ),
     applyUrl,
     postedAt,
-    raw,
   };
 }
 

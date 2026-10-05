@@ -25,15 +25,18 @@ vi.mock("@opusfinder/shared", () => ({
   parseEnforceFlag: (value?: string) => value === "enforce",
 }));
 
+import wranglerToml from "../wrangler.toml?raw";
 import worker from "./index";
 
 // Mirrors the wrangler.toml / src/index.ts cron constants — must match character-for-character (esp.
-// the weekday "SUN", not "0"); a mismatch here is exactly the drift the default-case throw guards.
-const INGEST_CRON = "0 * * * *";
+// the weekday "SUN", not "0"); a mismatch here is exactly the drift the default-case throw guards. The
+// "wrangler.toml ↔ src/index.ts cron sync" suite below pins all three together: the toml's crons ARE
+// these strings, and each routes to its lane (so src/index.ts's constants equal them too).
+const INGEST_CRON = "0 */2 * * *";
 const DISCOVERY_CRON = "0 3 * * SUN";
 
 // Production constants the cursor/limit math is pinned against (src/index.ts).
-const DEFAULT_INGEST_LIMIT = 150;
+const DEFAULT_INGEST_LIMIT = 250;
 const MAX_INGEST_LIMIT = 500;
 const MAX_JOBS_PER_BOARD = 1500;
 const MAX_RUN_MS = 10 * 60_000;
@@ -165,7 +168,7 @@ describe("scheduled() dispatch", () => {
     ).rejects.toBe(error);
 
     expect(consoleSpy).toHaveBeenCalledWith(
-      expect.stringContaining("scheduled(0 * * * *) failed: Error: kv exploded"),
+      expect.stringContaining(`scheduled(${INGEST_CRON}) failed: Error: kv exploded`),
     );
     // HEALTH_PING_URL unset ⇒ neither the heartbeat nor the fail ping touches the network.
     expect(fetchSpy).not.toHaveBeenCalled();
@@ -204,7 +207,7 @@ describe("scheduled() dispatch", () => {
     expect(fetchSpy).toHaveBeenCalledWith("https://hc.example/abc");
   });
 
-  it("does NOT heartbeat on the weekly discovery lane (the watchdog is calibrated to the hourly ingest cadence)", async () => {
+  it("does NOT heartbeat on the weekly discovery lane (the watchdog is calibrated to the 2-hourly ingest cadence)", async () => {
     mocks.runDiscovery.mockResolvedValue(undefined);
     const fetchSpy = vi.fn().mockResolvedValue(undefined);
     vi.stubGlobal("fetch", fetchSpy);
@@ -322,5 +325,103 @@ describe("runIngestionTick — cursor wrap math (wrap to 0 only at end of table,
     const { kv } = await runIngestTick({ cursorRaw: "123", counts: { processed: 1, companies: 1, lastId: 200 } });
     expect(kv.get).toHaveBeenCalledWith("afterId");
     expect(kv.put.mock.calls[0]![0]).toBe("afterId");
+  });
+});
+
+/**
+ * The string values of a top-level TOML array `key = [ ... ]`, in order — a minimal reader for exactly
+ * what wrangler.toml's `crons` needs: a one-line `[]` (the documented PAUSE toggle) or a multi-line array;
+ * basic `"..."` (with `\` escapes) and literal `'...'` strings; `#` comments OUTSIDE strings skipped (a
+ * commented-out entry included), while a `#` INSIDE a string is kept (e.g. `"0 3 * * SUN#1"`). A line
+ * that merely mentions `crons = []` inside a comment is not the key. Throws when the key is absent, so a
+ * renamed key can't silently read as "paused".
+ */
+function tomlStringArray(toml: string, key: string): string[] {
+  const start = new RegExp(`^[ \\t]*${key}[ \\t]*=[ \\t]*\\[`, "m").exec(toml);
+  if (!start) throw new Error(`no \`${key} = [...]\` array`);
+  const values: string[] = [];
+  let i = start.index + start[0].length;
+  for (;;) {
+    const ch = toml[i];
+    if (ch === undefined) throw new Error(`unterminated \`${key}\` array`);
+    if (ch === "]") return values;
+    if (ch === "#") {
+      const eol = toml.indexOf("\n", i);
+      if (eol === -1) throw new Error(`unterminated \`${key}\` array`);
+      i = eol;
+    } else if (ch === '"' || ch === "'") {
+      let value = "";
+      for (i += 1; toml[i] !== ch; i += 1) {
+        if (toml[i] === undefined) throw new Error(`unterminated string in \`${key}\``);
+        if (ch === '"' && toml[i] === "\\") i += 1; // basic string: take the escaped char literally
+        value += toml[i];
+      }
+      values.push(value);
+    }
+    i += 1; // past the closing quote / newline / whitespace / comma
+  }
+}
+
+describe("tomlStringArray — the cron-sync suite's reader for wrangler.toml", () => {
+  it("reads the documented PAUSED form `crons = []` as no crons (a comment mentioning it is not the key)", () => {
+    const paused = ["[triggers]", "#   PAUSED  : crons = []  + deploy", "crons = []", "", "[vars]"].join("\n");
+    expect(tomlStringArray(paused, "crons")).toEqual([]);
+  });
+
+  it("keeps a `#` INSIDE a quoted cron; skips `#` comments and commented-out entries", () => {
+    const toml = [
+      "crons = [",
+      '  "0 */2 * * *", # ingestion — a "quoted" word in a comment',
+      '  # "0 * * * *", # an old, commented-out entry',
+      '  "0 3 * * SUN#1", # first Sunday of the month',
+      "  '5 4 * * *', # a literal string",
+      "]",
+    ].join("\n");
+    expect(tomlStringArray(toml, "crons")).toEqual(["0 */2 * * *", "0 3 * * SUN#1", "5 4 * * *"]);
+  });
+
+  it("throws when the key is missing — never reads a renamed key as paused", () => {
+    expect(() => tomlStringArray("[triggers]\nschedules = []\n", "crons")).toThrow(/no `crons/);
+  });
+});
+
+describe("wrangler.toml ↔ src/index.ts cron sync (a drift silently skips a lane or throws Unhandled cron)", () => {
+  // wrangler.toml is read as TEXT (Vite's `?raw` import — no node:fs in this Worker-typed graph).
+  const tomlCrons = (): string[] => tomlStringArray(wranglerToml, "crons");
+
+  it("registers exactly the mirrored constants whenever crons are registered (`crons = []` = paused, valid)", () => {
+    const crons = tomlCrons();
+    // Paused is a documented state (README "Pause / resume"); otherwise the set must match the constants.
+    expect(crons.length === 0 ? [INGEST_CRON, DISCOVERY_CRON] : crons).toEqual([
+      INGEST_CRON,
+      DISCOVERY_CRON,
+    ]);
+  });
+
+  it("routes EVERY cron wrangler.toml registers to a handler case — none hits the Unhandled-cron throw", async () => {
+    mocks.runDiscovery.mockResolvedValue(undefined);
+    mocks.runIngestion.mockResolvedValue({ processed: 0, companies: 0, lastId: 0 });
+    const crons = tomlCrons();
+    for (const cron of crons) {
+      await scheduled(
+        { cron },
+        { DATABASE_URL: "postgres://stub", INGEST_CURSOR: makeKv(null) },
+        makeCtx(),
+      );
+    }
+    // One lane call per registered cron (vacuous when paused).
+    expect(mocks.runIngestion.mock.calls.length + mocks.runDiscovery.mock.calls.length).toBe(crons.length);
+  });
+
+  it("raises [limits] subrequests far above a worst-case tick (the Workers Paid default is only 10,000)", () => {
+    const cap = Number(/^subrequests = (\d+)$/m.exec(wranglerToml)?.[1]);
+    // A capped SmartRecruiters mega-board with EVERY hydrate and list page retried 3× (4 attempts) + queries.
+    const worstMegaBoard = (MAX_JOBS_PER_BOARD + 15) * 4 + 10;
+    expect(cap).toBeGreaterThanOrEqual(16 * worstMegaBoard + DEFAULT_INGEST_LIMIT * 9);
+    expect(cap).toBeLessThanOrEqual(10_000_000); // the documented Paid maximum
+  });
+
+  it("ships INGEST_LIMIT equal to the code default (the fallback when the var is unset or invalid)", () => {
+    expect(/^INGEST_LIMIT = "(\d+)"$/m.exec(wranglerToml)?.[1]).toBe(String(DEFAULT_INGEST_LIMIT));
   });
 });

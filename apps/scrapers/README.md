@@ -10,11 +10,13 @@ dispatch shell; the real work lives in the already-Worker-forward libraries it c
 
 | Cron (UTC)    | Handler   | Calls                                              |
 | ------------- | --------- | -------------------------------------------------- |
-| `0 * * * *`   | ingestion | `runIngestion(db, …)` from `@opusfinder/sources`   |
+| `0 */2 * * *` | ingestion | `runIngestion(db, …)` from `@opusfinder/sources`   |
 | `0 3 * * SUN` | discovery | `runDiscovery(db, …)` from `@opusfinder/discovery` |
 
-> **Ingestion is RESUMED, hourly** as of Phase F6 — it is the liveness driver for the health checker +
-> watchdog heartbeat (dialed back from the original `*/30`). **Discovery is RESUMED, weekly**
+> **Ingestion runs every 2 hours** (`0 */2 * * *`, 250 boards per tick) — the liveness driver for the
+> health checker + watchdog heartbeat. It was `*/30`, then hourly × 150 boards (Phase F6); 2-hourly × 250
+> halves Neon's wake-ups (each costs the tick plus a 5-min autosuspend tail) while re-fetching each board
+> nearly as often — the sizing is in `wrangler.toml`. **Discovery is RESUMED, weekly**
 > (`0 3 * * SUN`) as of Phase F5 (Workers Paid is now active). The Worker calls
 > `runDiscovery({ workerOnly: true })`, so only `workerSafe` lanes (`outscal` + `hn`) run; a future
 > Node-only lane (F5-LANES-2) is filtered out. See "Pause / resume the schedule" below for the toggle.
@@ -35,6 +37,10 @@ and the library it calls owns its own `source_runs` row (`startRun`/`finishRun`)
 
 - **Ingestion is chunked** (Option-A chunked cron): each tick processes the next `INGEST_LIMIT` boards
   using an id-keyset cursor stored in the `INGEST_CURSOR` KV namespace; the corpus drains across ticks.
+  Boards run one at a time; politeness starts a board ≥ 500 ms after the previous board of its source
+  (its adapter's `pacingKey`) finished, sleeping only the remainder, so alternating sources can't burst
+  one host. A posting
+  whose detail fetch failed is kept as stored, never overwritten (`hydrateSkipped` in `pnpm runs`).
   Inline embedding is **not wired** — the Voyage free tier throttles to 3 RPM, and importing the
   embeddings package would pull a Node env-module into the Worker (and require `nodejs_compat`). Jobs
   are upserted regardless; the still-NULL vectors are filled by `pnpm embeddings:backfill`. See the
@@ -55,7 +61,7 @@ and the library it calls owns its own `source_runs` row (`startRun`/`finishRun`)
 
 ## Local development (no deploy)
 
-```powershell
+```bash
 pnpm --filter @opusfinder/scrapers types:generate   # emits worker-configuration.d.ts (run before typecheck)
 pnpm --filter @opusfinder/scrapers typecheck
 pnpm --filter @opusfinder/scrapers exec wrangler deploy --dry-run --outdir dist   # bundle-only gate
@@ -63,8 +69,8 @@ pnpm --filter @opusfinder/scrapers exec wrangler deploy --dry-run --outdir dist 
 # Run the scheduled handlers locally against real Neon (needs .dev.vars — see below):
 pnpm --filter @opusfinder/scrapers dev
 # In another terminal, trigger a cron via the canonical local endpoint (spaces -> + in the query):
-Invoke-WebRequest "http://localhost:8787/cdn-cgi/handler/scheduled?cron=0+*+*+*+*"   # ingestion (hourly)
-Invoke-WebRequest "http://localhost:8787/cdn-cgi/handler/scheduled?cron=0+3+*+*+SUN"    # discovery
+curl "http://localhost:8787/cdn-cgi/handler/scheduled?cron=0+*/2+*+*+*"  # ingestion (every 2 h)
+curl "http://localhost:8787/cdn-cgi/handler/scheduled?cron=0+3+*+*+SUN"    # discovery
 ```
 
 `wrangler dev`'s `fetch` calls hit real remote servers (Neon HTTP + the ATS APIs are real even in local
@@ -81,7 +87,7 @@ changes (it is committed so `typecheck` works without a generate step first).
 
 These require the Cloudflare account / real secrets / billing:
 
-```powershell
+```bash
 wrangler login
 wrangler kv namespace create INGEST_CURSOR   # then uncomment the `id` line in wrangler.toml + paste it
 wrangler secret put DATABASE_URL
@@ -94,12 +100,19 @@ wrangler tail opusfinder-scrapers             # stream live cron invocations
 - **Workers Paid is required for the weekly discovery cron** (now **active** as of Phase F5) — the Free
   plan caps at 50 subrequests per invocation, which the seed fetch + a handful of probes exhaust.
   Ingestion's `INGEST_LIMIT` keeps a tick under budget either way.
+- **When the ingestion cadence changes, retune the external watchdog in the SAME deploy window.** The
+  heartbeat (`HEALTH_PING_URL`) pings once per successful ingestion tick, so the watchdog check's period
+  must equal the cron period. For the current `0 */2 * * *`, set the healthchecks.io check to **period
+  2 h, grace ~1 h** — the grace covers a tick's run time (≤ ~10 min) plus cron jitter yet stays under one
+  period, so a single missed tick alerts within ~3 h. Do it BEFORE `pnpm --filter @opusfinder/scrapers
+  deploy`: an hourly-period check would page on every healthy 2-hour gap. (If `HEALTH_INGEST_MAX_AGE_H` is
+  set anywhere — `packages/db/.env`, Vercel — make it 5 or unset it; the code default is 5.)
 
 ## Pause / resume the schedule
 
-As of Phase F6 the **ingestion** cron is **active** (hourly); as of Phase F5 **discovery** is **active**
-weekly on Sunday (`0 3 * * SUN`, Workers Paid). Both live in `wrangler.toml` under `[triggers]`. An
-idle/paused Worker costs nothing and never touches Neon — it only does anything when a cron fires. A
+As of Phase F6 the **ingestion** cron is **active** (every 2 h since 2026-10; hourly before); as of
+Phase F5 **discovery** is **active** weekly on Sunday (`0 3 * * SUN`, Workers Paid). Both live in
+`wrangler.toml` under `[triggers]`. An idle/paused Worker costs nothing and never touches Neon — it only does anything when a cron fires. A
 change to the toggle takes effect on the **next deploy**:
 
 - **Pause** (stop all scheduled runs): set `crons = []`, then

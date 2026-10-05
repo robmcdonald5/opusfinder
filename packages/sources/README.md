@@ -18,7 +18,8 @@ The abstraction was **extracted** from concrete Greenhouse + Lever + SmartRecrui
   `mapItem`) → the single resilient fetch (retry + exponential backoff + `Retry-After`, with a
   non-JSON-body guard) → two-tier resilience (`locate` fails LOUD on a bad envelope; `mapItem`
   fails SOFT, skipping one bad posting) → the optional bounded-concurrency hydrate pool →
-  per-board accounting. Returns `NormalizedJob[]`.
+  per-board accounting. Returns `NormalizedJob[]` (no source `raw` on them — `jobs.raw` isn't stored;
+  a `hydrate` gets its list item as an argument instead).
 - **`SourceAdapter` descriptors (`src/adapters/{greenhouse,lever,ashby,workable,smartrecruiters,recruitee,pinpoint,gem,trakstar}.ts`)**
   — per-source data: `source`, `normalizeSlug`, `jobsRequest`, `locate`, `mapItem`, the Phase-7
   discovery pair `matchUrl` (REQUIRED — the URL→raw-slug inverse of `jobsRequest`; must not throw;
@@ -76,16 +77,46 @@ pnpm ingest trakstar instacart
 pnpm ingest:all                        # [--no-embed] [--source=<name>]
 ```
 
-Each board upserts via `@opusfinder/db` (`upsertCompany` + `upsertJobs`), then embeds the
+Each board upserts via `@opusfinder/db`'s `upsertJobs` (`pnpm ingest` first get-or-creates the company
+with `upsertCompany`; `ingest:all` takes the id from the `companies` row it iterates), then embeds the
 new/changed postings via `@opusfinder/embeddings` (best-effort: a Voyage failure is warned, not
 fatal; skipped when `VOYAGE_API_KEY` is unset or `--no-embed` is passed). `ingest:all` isolates
 each board in a try/catch — one dead slug doesn't halt the run.
 
 `ingest:all` is now a thin CLI shell over the shared `runIngestion(db, opts)` library
-(`src/ingest.ts`), which the Phase-8 Worker cron also calls — the CLI commands are unchanged.
+(`src/ingest.ts`), which the Phase-8 Worker cron also calls — the CLI commands are unchanged. Boards run
+one at a time. Politeness (`paceMs`, 500 ms) is per pacing key — an adapter's `pacingKey`, default its
+source, since no two adapters share a request host — and by TIME: a board starts ≥ 500 ms after its
+key's previous board FINISHED, sleeping only the remainder, so alternating sources can't burst one host
+and a board after enough other work waits for nothing.
+
+**A failed hydrate never overwrites stored content** (`upsertJobs`, the single persistence choke point,
+enforces it for every caller):
+
+- **Any failed or empty detail fetch → `contentMissing`** (a timeout, 5xx/429 after retries, a `404`/`410`,
+  JSON null, SmartRecruiters' `200` `{"message":"Posting not available"}`, a `jobAd` without sections):
+  `runAdapter` keeps the listed job but flags it, since its description is the list item's placeholder
+  `""`. Its content is never written — the stored title, description, `content_signature` and embedding stay
+  as they are, and a brand-new posting waits for a run that fetches its content. Only its `company_id`
+  follows the board listing it, so a posting that moved boards isn't closed by its old board's sweep. It
+  still counts present (`markJobsPresent`, the absence sweep). `counts.hydrateSkipped` tallies these.
+  **Known limitation (an accepted trade-off — a not-found detail isn't treated as "gone"):** a stored
+  posting whose detail is `404`/`410`/"Posting not available" while the ATS still LISTS it stays `active`
+  and digest-eligible (retrieved and reranked, on its last stored content) until the ATS delists it. And
+  `hydrate_skip_ratio` can't tell those not-founds from 5xx/timeouts, so steady list-vs-detail lag can hold
+  the ratio up while the detail endpoint is healthy. **Known follow-up:** count not-found details
+  separately (a not-found counter) so the ratio tracks real failures and such postings can be held back.
+- **Any source → blank description kept out**: a blank (empty/whitespace) description never replaces a
+  non-blank stored one — an inline-content board (Greenhouse `content=true`, Workable `details=true`, Lever)
+  momentarily serving no body, or SmartRecruiters `jobAd.sections: {}`. The stored text, its signature and
+  its embedding stay; a title change in the same fetch still applies. A brand-new posting is inserted as
+  given, `""` included.
+
+`hydrateSkipped` (in `pnpm runs` and on each `ingest:all` board line) counts distinct postings on boards
+whose write succeeded.
 
 Since Phase F2, `runIngestion` also runs a per-board **feed-absence lifecycle sweep** (`sweepLifecycle`, gated
-on a `total > 0` upsert) after each successful board: postings absent from a healthy fetch accrue a
+on a non-empty fetch) after each successful board: postings absent from a healthy fetch accrue a
 `consecutive_absences` streak and soft-close at the threshold, reviving on reappearance — tallied onto
 `IngestionCounts` (`revived` / `swept` / `closed` / `wouldClose` / `sweepFailed`) and the `logSummary` line.
 Shipped SHADOW (count-only): the close is tallied as `wouldClose`, not yet written. Enforcement is the
@@ -103,7 +134,7 @@ location string. `postedAt` = `first_published` ‖ `updated_at`.
 **Lever** — `api.lever.co/v0/postings/{slug}?mode=json`. Response is a BARE array (no envelope).
 Slugs CASE-SENSITIVE (don't lowercase). `id` is a UUID string; title is on `text`; `createdAt`
 is ms-epoch. Structured `workplaceType` (`remote`⇒true, `hybrid`/`onsite`⇒false). Description
-from `descriptionPlain` (collapse only); the `lists[]`/`additional` sections stay on `raw`.
+from `descriptionPlain` (collapse only); the `lists[]`/`additional` sections are not mapped.
 **US host only** — EU tenants (`api.eu.lever.co` / `jobs.eu.lever.co`) return `null` from `matchUrl`
 and stay deferred (EU needs a per-company region channel; Phase 8).
 
@@ -118,14 +149,15 @@ casing — seed one canonical casing per board). `isRemote` is a TRAP (true on H
 the per-job widget path 404s). Slugs lowercase. `id` is `shortcode`; `remote` from
 `telecommuting` ‖ text; `published_on`/`created_at` are `YYYY-MM-DD`. The host RATE-LIMITS rapid
 calls (429 with an HTML body) — runAdapter's backoff + non-JSON guard handle it; `ingest:all`
-paces between boards.
+paces between consecutive Workable boards.
 
 **SmartRecruiters** — `api.smartrecruiters.com/v1/companies/{slug}/postings`. OFFSET-paginated
 (`{ content, totalFound }`). Slugs CASE-SENSITIVE. The list item has neither a description nor a
 public apply URL, so `mapItem` reconstructs `applyUrl` + sets `descriptionText: ""` and
-`hydrate` (the N+1 `GET .../postings/{id}`) patches them — a hydrate failure keeps the valid
-un-hydrated job. Sections are concatenated in a FIXED order (stable re-ingest). NOTE: an unknown
-slug returns `200 + totalFound:0` (not 404), so slug existence can't be asserted here (Phase 7).
+`hydrate` (the N+1 `GET .../postings/{id}`) patches them. Any failed or empty detail (a `404`, `200`
+`{"message":"Posting not available"}`, no `jobAd.sections`) flags the listed job `contentMissing`
+(present, content not written). Sections are concatenated in a FIXED order (stable re-ingest). NOTE: an unknown slug returns
+`200 + totalFound:0` (not 404), so slug existence can't be asserted here (Phase 7).
 
 ### Phase 6.5 Wave A (zero-hydrate public boards)
 
@@ -166,9 +198,9 @@ fallback). Unknown slug ⇒ 400; real-but-empty ⇒ `200 meta.total:0`.
 ## Deferred
 
 Structured facets (`workplaceType`/hybrid, salary, employment type, department) are NOT promoted
-to `NormalizedJob` columns — they're captured losslessly on `raw` and promoted later (Phase 9/10,
-eval-driven). EU Lever and Lever offset pagination are deferred
-(see `research/specs/IMPLEMENTATION_PLAN.md`); `source_runs` run-tracking landed in Phase 7
+to `NormalizedJob` columns — the source object isn't kept (`raw` is no longer stored or carried), so
+promoting one later (Phase 9/10, eval-driven) means a mapper change plus a re-ingest. EU Lever and
+Lever offset pagination are deferred (see `research/specs/IMPLEMENTATION_PLAN.md`); `source_runs` run-tracking landed in Phase 7
 (see `@opusfinder/db`). **Wave B ATS** — Polymer, Workday,
 Eightfold, Rippling, Personio — are deferred too: each adds a new axis of variation (an N+1
 hydrate, POST/page pagination, or custom career domains beyond a clean slug). Polymer

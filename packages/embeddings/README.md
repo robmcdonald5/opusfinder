@@ -78,7 +78,7 @@ to reuse the `jobs.embedding vector(1024)` column — the eval harness's OpenAI 
 
 ## Scripts
 
-```powershell
+```bash
 # Backfill every job missing an embedding (idempotent — re-runs skip embedded rows):
 pnpm embeddings:backfill            # or: pnpm --filter @opusfinder/embeddings backfill
 

@@ -5,7 +5,7 @@ import { resultRows } from "./repos/sql";
 
 /**
  * Pipeline health checker — "kill silent failure". Health data is recorded across five tables but
- * read by nobody on a schedule; this module is the watcher. It computes seven liveness checks + a
+ * read by nobody on a schedule; this module is the watcher. It computes eight liveness checks + a
  * cost rollup from EXISTING columns (pure Neon reads, no migration) and returns a shape-only
  * {@link HealthReport} the `pnpm health` CLI prints/alerts on AND a future dev panel renders.
  *
@@ -22,10 +22,11 @@ import { resultRows } from "./repos/sql";
  * No secrets / no PII: every metric is a count / age / ratio; nothing here reads job or user text.
  */
 
-/** The seven checks (stable ids — the panel + env modes key off these). */
+/** The eight checks (stable ids — the panel + env modes key off these). */
 export type HealthCheckId =
   | "ingestion_staleness" // last successful ingestion age
   | "board_fail_ratio" // within-run failed/companies — the status='ok' trap
+  | "hydrate_skip_ratio" // latest ingestion run: detail fetches that failed / postings on hydrating boards
   | "discovery_window" // discovery last-run age
   | "embedding_backlog" // jobs WHERE embedding IS NULL
   | "digest_health" // any digest_runs with status='error' in the window
@@ -39,12 +40,20 @@ export type HealthMode = "off" | "shadow" | "enforce";
 /** Env-tunable numeric thresholds. Defaults seed the watermark; real values are validated on live
  *  traffic in `shadow` before any check is flipped to `enforce`. */
 export interface HealthThresholds {
-  /** (a) hours since the last `status='ok'` ingestion run before staleness fires. Default 3 = ~3× the
-   *  hourly cron period — a single missed tick pushes the next success to ~2h, so 3h tolerates it
-   *  without flapping. */
+  /** (a) hours since the last `status='ok'` ingestion run (its finished_at) before staleness fires.
+   *  Default 5 = 2.5× the 2-hourly cron period: a healthy age peaks just past 2 h (one period plus the
+   *  next tick's run time), a single missed tick pushes it to ~4.2 h — tolerated without flapping — and
+   *  two missed ticks (~6.2 h) fire. */
   ingestMaxAgeH: number;
   /** (b) within-run `counts.failed / counts.companies` ratio that fires the board-failure check. */
   failRatio: number;
+  /** (i) latest ingestion run's `hydrateSkipped / hydrateListed` — the share of postings on HYDRATING boards
+   *  (today only SmartRecruiters) whose detail fetch failed or came back empty, so their content wasn't
+   *  written. Default 0.2: a healthy tick loses a handful; a fifth means the detail endpoint is degraded
+   *  or rate-limiting us — or postings stay listed while their detail is unavailable (they stay open until
+   *  delisted) — and those descriptions are going stale. The denominator is hydrating boards only, so
+   *  non-hydrating sources can't dilute the signal. */
+  hydrateSkipRatio: number;
   /** (c) days since the last successful discovery run before the window fires. Default 13 ≈ ~2× the weekly
    *  Sunday cron period — tolerates a late/jittered run but still fires on a fully missed week (~14d). */
   discoveryMaxAgeD: number;
@@ -57,8 +66,9 @@ export interface HealthThresholds {
 }
 
 export const DEFAULT_HEALTH_THRESHOLDS: HealthThresholds = {
-  ingestMaxAgeH: 3,
+  ingestMaxAgeH: 5,
   failRatio: 0.5,
+  hydrateSkipRatio: 0.2,
   discoveryMaxAgeD: 13,
   backlogMax: 2000,
   digestWindowN: 10,
@@ -104,7 +114,7 @@ export interface HealthCost {
 export interface HealthSignals {
   /** (a) hours since the last `status='ok'` ingestion run; `null` if none ever succeeded. */
   ingestionAgeH: number | null;
-  /** (b) the latest ingestion run's status + `counts.failed` over the boards actually ATTEMPTED
+  /** (b) the latest FINISHED ingestion run's status + `counts.failed` over the boards actually ATTEMPTED
    *  (`counts.processed`), falling back to `counts.companies` (the chunk size) when `processed` is
    *  absent/0. Divide by processed — not companies — to keep the ratio exact on a budget-truncated tick
    *  (`processed < companies`), where `failed/companies` dilutes the real failure rate. `status` also lets
@@ -113,6 +123,11 @@ export interface HealthSignals {
   latestIngestFailed: number;
   latestIngestProcessed: number;
   latestIngestCompanies: number;
+  /** (i) the latest ingestion run's `counts.hydrateSkipped` (postings whose detail fetch failed) and
+   *  `counts.hydrateListed` (postings listed by HYDRATING boards). 0 when absent (an older run row without
+   *  the keys). */
+  latestIngestHydrateSkipped: number;
+  latestIngestHydrateListed: number;
   /** (c) days since the last `status='ok'` discovery run; `null` if none ever succeeded. Like (a),
    *  this is last-SUCCESS (finished_at), not last-attempt — a crash-looping discovery that keeps
    *  starting must not read fresh. */
@@ -147,6 +162,7 @@ export const isEnforceFiring = (c: HealthCheck): boolean => c.mode === "enforce"
 const CHECK_LABELS: Record<HealthCheckId, string> = {
   ingestion_staleness: "Ingestion staleness",
   board_fail_ratio: "Board fail-ratio",
+  hydrate_skip_ratio: "Hydrate skip-ratio",
   discovery_window: "Discovery window",
   embedding_backlog: "Embedding backlog",
   digest_health: "Digest health",
@@ -190,14 +206,21 @@ export async function gatherHealthSignals(
         SELECT extract(epoch FROM (now() - max(finished_at))) / 3600.0 AS age_h
         FROM source_runs WHERE pipeline = 'ingestion' AND status = 'ok'
       `),
-      // (b) latest ingestion run's status + fail-ratio inputs (see latestIngestStatus). `::numeric` (not
-      //     `::int`) so a non-integer value can never abort the query and take the checker dark.
+      // (b) + (i) latest FINISHED ingestion run's status, fail-ratio inputs (see latestIngestStatus) and
+      //     hydrate-skip inputs — one row, no extra query. A `running` row is skipped: its counts are still the
+      //     `{}` default, so reading it would score an in-flight tick as a healthy 0 — and the health cron
+      //     fires at :10, inside a tick that runs long. (A zombie running row is terminalized `error` by the
+      //     next startRun's failStaleRuns, and then counts.) `::numeric` (not `::int`) so a non-integer value
+      //     can never abort the query and take the checker dark.
       db.execute(sql`
         SELECT status,
-               coalesce((counts->>'failed')::numeric, 0)     AS failed,
-               coalesce((counts->>'processed')::numeric, 0)  AS processed,
-               coalesce((counts->>'companies')::numeric, 0)  AS companies
-        FROM source_runs WHERE pipeline = 'ingestion' ORDER BY started_at DESC LIMIT 1
+               coalesce((counts->>'failed')::numeric, 0)          AS failed,
+               coalesce((counts->>'processed')::numeric, 0)       AS processed,
+               coalesce((counts->>'companies')::numeric, 0)       AS companies,
+               coalesce((counts->>'hydrateSkipped')::numeric, 0)  AS hydrate_skipped,
+               coalesce((counts->>'hydrateListed')::numeric, 0)   AS hydrate_listed
+        FROM source_runs WHERE pipeline = 'ingestion' AND status <> 'running'
+        ORDER BY started_at DESC LIMIT 1
       `),
       // (c) discovery window — last SUCCESS (finished_at WHERE status='ok'), mirroring (a).
       db.execute(sql`
@@ -235,7 +258,14 @@ export async function gatherHealthSignals(
 
   const ingestAge = resultRows(ingestAgeResult)[0] as { age_h: unknown } | undefined;
   const latestIngest = resultRows(latestIngestResult)[0] as
-    | { status: unknown; failed: unknown; processed: unknown; companies: unknown }
+    | {
+        status: unknown;
+        failed: unknown;
+        processed: unknown;
+        companies: unknown;
+        hydrate_skipped: unknown;
+        hydrate_listed: unknown;
+      }
     | undefined;
   const discoveryAge = resultRows(discoveryAgeResult)[0] as { age_d: unknown } | undefined;
   const backlogs = resultRows(backlogResult)[0] as
@@ -266,6 +296,8 @@ export async function gatherHealthSignals(
     latestIngestFailed: num(latestIngest?.failed),
     latestIngestProcessed: num(latestIngest?.processed),
     latestIngestCompanies: num(latestIngest?.companies),
+    latestIngestHydrateSkipped: num(latestIngest?.hydrate_skipped),
+    latestIngestHydrateListed: num(latestIngest?.hydrate_listed),
     discoveryAgeD: discoveryAge?.age_d == null ? null : num(discoveryAge.age_d),
     discoveryLaneErrors,
     embeddingBacklog: num(backlogs?.embedding_backlog),
@@ -300,6 +332,8 @@ export function evaluateHealth(signals: HealthSignals, opts?: HealthOptions): He
   // check never goes dark (see latestIngestStatus for the budget-truncated-tick rationale).
   const failDenom = signals.latestIngestProcessed > 0 ? signals.latestIngestProcessed : signals.latestIngestCompanies;
   const failRatio = failDenom > 0 ? signals.latestIngestFailed / failDenom : 0;
+  const hydrateListed = signals.latestIngestHydrateListed;
+  const hydrateSkipRatio = hydrateListed > 0 ? signals.latestIngestHydrateSkipped / hydrateListed : 0;
   const bounceTotal = signals.hardBounces + signals.suppressed;
 
   const checks: HealthCheck[] = [
@@ -317,6 +351,14 @@ export function evaluateHealth(signals: HealthSignals, opts?: HealthOptions): He
       failRatio,
       thresholds.failRatio,
       signals.latestIngestStatus === "error" || (failDenom > 0 && failRatio > thresholds.failRatio),
+    ),
+    // (i) fire when the hydrating boards' failed-detail share breaches the threshold. No hydrating posting
+    //     listed (0 denominator — e.g. the tick's chunk had no SmartRecruiters board) reads ok, metric 0.
+    make(
+      "hydrate_skip_ratio",
+      hydrateSkipRatio,
+      thresholds.hydrateSkipRatio,
+      hydrateListed > 0 && hydrateSkipRatio > thresholds.hydrateSkipRatio,
     ),
     // (c) null age (no discovery run) → firing.
     make(
@@ -365,9 +407,9 @@ export async function checkHealth(db: Db, opts?: HealthOptions): Promise<HealthR
 
 /**
  * Build {@link HealthOptions} from `HEALTH_*` env (kept OUT of the pure core on purpose). Thresholds:
- * `HEALTH_INGEST_MAX_AGE_H` / `HEALTH_FAIL_RATIO` / `HEALTH_DISCOVERY_MAX_AGE_D` / `HEALTH_BACKLOG_MAX` /
- * `HEALTH_DIGEST_WINDOW_N` / `HEALTH_COST_ROLLUP_N`. Modes (default
- * `shadow`): `HEALTH_ENFORCE` and `HEALTH_OFF` are comma-separated check-id lists.
+ * `HEALTH_INGEST_MAX_AGE_H` / `HEALTH_FAIL_RATIO` / `HEALTH_HYDRATE_SKIP_RATIO` /
+ * `HEALTH_DISCOVERY_MAX_AGE_D` / `HEALTH_BACKLOG_MAX` / `HEALTH_DIGEST_WINDOW_N` / `HEALTH_COST_ROLLUP_N`.
+ * Modes (default `shadow`): `HEALTH_ENFORCE` and `HEALTH_OFF` are comma-separated check-id lists.
  */
 export function healthOptionsFromEnv(
   env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {},
@@ -384,6 +426,7 @@ export function healthOptionsFromEnv(
   const thresholds: Partial<HealthThresholds> = {
     ingestMaxAgeH: parseEnvNumber("HEALTH_INGEST_MAX_AGE_H"),
     failRatio: parseEnvNumber("HEALTH_FAIL_RATIO"),
+    hydrateSkipRatio: parseEnvNumber("HEALTH_HYDRATE_SKIP_RATIO"),
     discoveryMaxAgeD: parseEnvNumber("HEALTH_DISCOVERY_MAX_AGE_D"),
     backlogMax: parseEnvNumber("HEALTH_BACKLOG_MAX"),
     digestWindowN: parseEnvNumber("HEALTH_DIGEST_WINDOW_N"),

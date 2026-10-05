@@ -24,7 +24,6 @@ function job(externalId: string, title: string): NormalizedJob {
     descriptionText: `${title} description body`,
     applyUrl: `https://example.test/${externalId}`,
     postedAt: null,
-    raw: {},
   };
 }
 

@@ -43,7 +43,6 @@ function toJob(spec: SeedSpec): NormalizedJob {
     descriptionText: spec.description ?? `${spec.title} description body`,
     applyUrl: `https://example.test/${spec.externalId}`,
     postedAt: spec.postedAt ?? null,
-    raw: {},
   };
 }
 

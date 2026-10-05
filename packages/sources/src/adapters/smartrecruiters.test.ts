@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { companySlug } from "@opusfinder/shared";
+import { rejectionOf, rejectionReasonOf } from "@test/rejection";
 
 import { smartRecruitersAdapter } from "./smartrecruiters";
 import type { SourceContext } from "./types";
@@ -53,8 +54,8 @@ describe("smartRecruitersAdapter.mapItem — happy path", () => {
       "https://jobs.smartrecruiters.com/SmartRecruitersInc/743999874523456",
     );
     expect(job?.postedAt).toEqual(new Date("2026-06-01T09:30:00.000Z"));
-    // `raw` is passed through untouched (same reference) for lossless reprocessing.
-    expect(job?.raw).toBe(RAW);
+    // The raw source object is NOT carried (jobs.raw isn't stored).
+    expect(job).not.toHaveProperty("raw");
   });
 
   it("keeps the title verbatim and preserves company slug casing (no lowercasing)", () => {
@@ -181,5 +182,55 @@ describe("smartRecruitersAdapter.mapItem — skips malformed items (returns null
   it("skips an interior-whitespace id without throwing", () => {
     expect(() => mapItem({ ...RAW, id: "ab cd" }, CTX)).not.toThrow();
     expect(mapItem({ ...RAW, id: "ab cd" }, CTX)).toBeNull();
+  });
+});
+
+describe("smartRecruitersAdapter.hydrate — content, or a throw (never an empty patch)", () => {
+  // hydrate is called by runAdapter with the resilient fetchJson; here a stub returns the parsed detail.
+  const hydrate = smartRecruitersAdapter.hydrate!;
+  const job = mapItem(RAW, CTX)!;
+  const run = (detail: unknown) => hydrate(job, RAW, CTX, () => Promise.resolve(detail));
+
+  it("patches the description (fixed section order), the real applyUrl and remote — and no raw", async () => {
+    const patch = await run({
+      applyUrl: "https://jobs.smartrecruiters.com/oneclick-ui/apply/743999874523456",
+      location: { remote: true },
+      jobAd: {
+        sections: {
+          // Deliberately out of SECTION_ORDER: the output order must not follow the key order.
+          qualifications: { text: "<p>Go &amp; SQL</p>" },
+          jobDescription: { text: "<p>Build APIs</p>" },
+        },
+      },
+    });
+    expect(patch).toEqual({
+      descriptionText: "Build APIs\n\nGo & SQL",
+      applyUrl: "https://jobs.smartrecruiters.com/oneclick-ui/apply/743999874523456",
+      remote: true,
+    });
+    // The detail JSON is NOT kept on the job (jobs.raw isn't stored; it pinned every detail in memory).
+    expect(patch).not.toHaveProperty("raw");
+  });
+
+  it("a detail WITH sections that are all blank is real (empty) content, not a failure", async () => {
+    expect(await run({ jobAd: { sections: {} } })).toEqual({ descriptionText: "" });
+  });
+
+  // No jobAd.sections ⇒ no content: THROW, so runAdapter flags the listed job contentMissing and upsertJobs
+  // keeps the stored posting. Returning a patch (the old `{}` / `descriptionText: ""`) would "succeed" and
+  // write mapItem's placeholder "" over the stored description, NULLing its embedding.
+  it.each([
+    ["SR's 200 'Posting not available' object", { message: "Posting not available" }],
+    ["an object whose jobAd has no sections", { jobAd: { title: "x" }, applyUrl: "https://x/1" }],
+    ["JSON null (an edge/maintenance body)", null],
+    ["a JSON string", "maintenance"],
+  ])("throws on %s", async (_label, detail) => {
+    const err = await rejectionOf(run(detail));
+    expect(err.message).toBe('SmartRecruiters detail for "743999874523456" has no jobAd.sections');
+  });
+
+  it("rethrows a failed detail fetch (e.g. a 404) unchanged — any failure is contentMissing", async () => {
+    const cause = new Error('smartrecruiters "SmartRecruitersInc" fetch failed: 404 Not Found');
+    expect(await rejectionReasonOf(hydrate(job, RAW, CTX, () => Promise.reject(cause)))).toBe(cause);
   });
 });

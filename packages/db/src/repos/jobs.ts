@@ -3,16 +3,17 @@
  * injected (no module-level singleton), matching `createDb()` in ../client.
  *
  * Both upserts are idempotent. `upsertCompany` is get-or-create; `upsertJobs`
- * dedupes the batch, then only advances `updated_at` when a job's content
- * actually changed, so re-ingesting an unchanged board is a no-op.
+ * dedupes the batch, never writes a failed hydrate's placeholder content (its stored row only
+ * follows the board listing it), then only advances `updated_at` when a job actually changed, so
+ * re-ingesting an unchanged board is a no-op.
  */
-import { and, type AnyColumn, eq, gt, sql, type SQL } from "drizzle-orm";
+import { and, type AnyColumn, eq, gt, inArray, ne, or, sql, type SQL } from "drizzle-orm";
 
-import type { CompanySlug, NormalizedJob, SourceName } from "@opusfinder/shared";
+import type { CompanySlug, JobId, NormalizedJob, SourceName } from "@opusfinder/shared";
 
 import type { Db } from "../client";
 import { companies, jobs } from "../schema";
-import { NUL, signatureSql } from "./sql";
+import { NUL, signatureSql, stripNul } from "./sql";
 
 /** One row of the companies table, as the ingestion driver needs it (id + identity). */
 export interface CompanyRow {
@@ -85,33 +86,69 @@ export async function upsertCompany(
  */
 const UPSERT_BATCH_SIZE = 500;
 
+/** Postgres regex for a BLANK description (empty or whitespace only) — the empty-description guard's one
+ *  definition, used SQL-side so it matches exactly what Postgres stores. POSIX `[[:space:]]` (no
+ *  backslash: inside a `sql` template a `\s` would cook to a bare `s` — see signatureSql). */
+const BLANK_RE = sql.raw(`'^[[:space:]]*$'`);
+
+/** What {@link upsertJobs} did with a board's postings (all counts are DISTINCT postings). */
+export interface UpsertJobsResult {
+  /** Rows inserted or updated (an unchanged re-ingest is skipped by `setWhere` and not counted). */
+  changed: number;
+  /** Postings WRITTEN with their content (`unchanged = total - changed`). */
+  total: number;
+  /** `contentMissing` postings: content NOT written (a stored row only has its company_id refreshed). */
+  contentMissing: number;
+}
+
 /**
  * Batch-upsert a board's jobs via INSERT ... ON CONFLICT, split into {@link UPSERT_BATCH_SIZE}-row
- * batches (one neon-http round-trip each). Conflict key is `(source, external_id)`.
+ * batches (one neon-http round-trip each). Conflict key is `(source, external_id)`. Returns an
+ * {@link UpsertJobsResult}; the caller reports `collapsed = input.length - total - contentMissing`.
  *
- * Returns `{ changed, total }`: `total` is the count of DISTINCT jobs after
- * de-duplication; `changed` is how many were inserted or updated (rows whose
- * content was unchanged are skipped by `setWhere` and not returned). The caller
- * reports `unchanged = total - changed` and `collapsed = input.length - total`.
+ * CONTENT GUARD — enforced HERE, the single persistence choke point, so EVERY caller is protected
+ * rather than each filtering for itself:
+ *  - A `NormalizedJob.contentMissing` job (a failed or empty hydrate: its title/description are list-level
+ *    placeholders) never writes CONTENT. A stored row keeps its title, description, content_signature and
+ *    embedding; writing the placeholder would overwrite the description, NULL the embedding (a paid
+ *    re-embed) and recompute the signature from the title alone (an F1 de-dupe collapse), then flip it all
+ *    back on the next good hydrate. Only its company_id is refreshed ({@link moveToListingBoard}), so a
+ *    posting that moved boards isn't falsely closed by its old board's sweep. A posting not yet stored is
+ *    not inserted until a run fetches its content.
+ *  - ANY job (every source): a BLANK incoming description never replaces a non-blank stored one — the
+ *    stored text, its content_signature and its embedding are kept (see `description` in the body). A
+ *    new posting is inserted as given, "" included.
+ * Presence is NOT this writer's job: the caller stamps every LISTED posting present (markJobsPresent /
+ * sweepLifecycle), so a failed detail fetch never ages or sweeps a live job.
  */
 export async function upsertJobs(
   db: Db,
   companyId: number,
   list: NormalizedJob[],
-): Promise<{ changed: number; total: number }> {
+): Promise<UpsertJobsResult> {
   // Collapse duplicate (source, external_id) BEFORE the batch: a single
   // INSERT ... ON CONFLICT cannot affect the same conflict key twice (Postgres
   // raises 21000), and a board can repeat a posting id (cross-listed roles) or a
-  // future source may reuse ids. Last occurrence wins; richer merging of
+  // future source may reuse ids. Last occurrence wins — EXCEPT that a copy WITH content
+  // always beats a contentMissing copy, in either order, so a duplicated posting whose
+  // other copy hydrated is written from it (and not counted missing). Richer merging of
   // duplicates (e.g. multi-location postings) is an adapter concern, not here.
   const deduped = new Map<string, NormalizedJob>();
   for (const job of list) {
-    deduped.set(JSON.stringify([job.source, job.externalId]), job);
+    const key = JSON.stringify([job.source, job.externalId]);
+    const kept = deduped.get(key);
+    if (job.contentMissing && kept && !kept.contentMissing) continue;
+    deduped.set(key, job);
   }
+  // The content guard (see the doc above), applied AFTER the dedupe so each posting is counted once.
+  const distinct = [...deduped.values()];
+  const writable = distinct.filter((job) => !job.contentMissing);
+  const missing = distinct.filter((job) => job.contentMissing);
+  if (missing.length > 0) await moveToListingBoard(db, companyId, missing);
   // Guard the empty case: `INSERT ... VALUES` with no rows is invalid SQL.
-  if (deduped.size === 0) return { changed: 0, total: 0 };
+  if (writable.length === 0) return { changed: 0, total: 0, contentMissing: missing.length };
 
-  const values = [...deduped.values()].map((job) => {
+  const values = writable.map((job) => {
     // Strip U+0000 from anything bound for text/jsonb (Postgres rejects it).
     const title = job.title.replaceAll(NUL, "");
     const descriptionText = job.descriptionText.replaceAll(NUL, "");
@@ -131,15 +168,31 @@ export async function upsertJobs(
       remote: job.remote,
       applyUrl: job.applyUrl.replaceAll(NUL, ""),
       postedAt: job.postedAt,
-      // `raw` (job.raw) is DEPRECATED and intentionally NOT written — write-only debug data that grew to
-      // dominate the DB. The column is nullable; omitting it from the INSERT leaves it NULL. See schema.ts
-      // jobs doc. content_signature: md5 over the SAME normalized title+desc, computed SQL-side from the
+      // The `raw` column is DEPRECATED and intentionally NOT written — write-only debug data that grew to
+      // dominate the DB (NormalizedJob no longer even carries it). The column is nullable; omitting it from
+      // the INSERT leaves it NULL. See schema.ts jobs doc.
+      // content_signature: md5 over the SAME normalized title+desc, computed SQL-side from the
       // bound (NUL-stripped) values via the ONE signatureSql definition — byte-identical to the ON CONFLICT
       // SET and the backfill, so an insert and any later re-ingest/backfill of the same content always
       // produce the same signature. (embedding omitted — populated by the embedding backfill.)
       contentSignature: signatureSql(sql`${title}`, sql`${descriptionText}`),
     };
   });
+
+  // EMPTY-DESCRIPTION GUARD (any source): a blank (empty/whitespace) incoming description never replaces a
+  // NON-blank stored one — the stored text is kept, so content_signature and the embedding don't move for
+  // it either. A blank body over real text is a fetch anomaly, not an edit: an inline-content source (e.g.
+  // Greenhouse `content=true`, Workable `details=true`, Lever) momentarily serving "", or SmartRecruiters'
+  // `jobAd.sections: {}`. Writing it would NULL the embedding (a paid re-embed) and collapse the signature
+  // to the title alone (F1 de-dupe), then flip back. Every description reference below goes through this
+  // ONE expression (the SET, the signature, the embedding reset, setWhere) so they can't disagree. A title
+  // change in the same row still applies normally. A posting with NO stored row is inserted as given, ""
+  // included (its first fetch is all we have; some postings genuinely have no body).
+  const description = sql`CASE
+          WHEN excluded.description_text ~ ${BLANK_RE} AND ${jobs.descriptionText} !~ ${BLANK_RE}
+          THEN ${jobs.descriptionText}
+          ELSE excluded.description_text
+        END`;
 
   // The content-derived `embedding` resets to NULL when (and only when) title/description_text change, so
   // the backfill re-embeds next pass; any other (setWhere) churn KEEPS the existing vector (re-embedding
@@ -150,7 +203,7 @@ export async function upsertJobs(
   // unconditional rewrite rather than this preserve-or-null CASE.)
   const nullIfContentChanged = (col: AnyColumn): SQL => sql`CASE
           WHEN ${jobs.title} IS DISTINCT FROM excluded.title
-            OR ${jobs.descriptionText} IS DISTINCT FROM excluded.description_text
+            OR ${jobs.descriptionText} IS DISTINCT FROM (${description})
           THEN NULL
           ELSE ${col}
         END`;
@@ -165,7 +218,8 @@ export async function upsertJobs(
     set: {
       companyId: sql`excluded.company_id`,
       title: sql`excluded.title`,
-      descriptionText: sql`excluded.description_text`,
+      // The empty-description guard (see `description` above): the stored text survives a blank re-fetch.
+      descriptionText: description,
       locations: sql`excluded.locations`,
       remote: sql`excluded.remote`,
       applyUrl: sql`excluded.apply_url`,
@@ -174,7 +228,7 @@ export async function upsertJobs(
       embedding: nullIfContentChanged(jobs.embedding),
       // content_signature: rewritten unconditionally from excluded title+desc via the ONE signatureSql
       // definition (the setWhere note below explains why it is written but NOT also tested).
-      contentSignature: signatureSql(sql`excluded.title`, sql`excluded.description_text`),
+      contentSignature: signatureSql(sql`excluded.title`, sql`(${description})`),
       updatedAt: sql`now()`,
     },
     // Advance the row only when a real change differs. Fields written above but deliberately EXCLUDED
@@ -194,7 +248,7 @@ export async function upsertJobs(
     setWhere: sql`
         ${jobs.companyId} IS DISTINCT FROM excluded.company_id OR
         ${jobs.title} IS DISTINCT FROM excluded.title OR
-        ${jobs.descriptionText} IS DISTINCT FROM excluded.description_text OR
+        ${jobs.descriptionText} IS DISTINCT FROM (${description}) OR
         ${jobs.locations} IS DISTINCT FROM excluded.locations OR
         ${jobs.remote} IS DISTINCT FROM excluded.remote OR
         ${jobs.applyUrl} IS DISTINCT FROM excluded.apply_url
@@ -216,5 +270,38 @@ export async function upsertJobs(
     changed += updated.length;
   }
 
-  return { changed, total: deduped.size };
+  return { changed, total: writable.length, contentMissing: missing.length };
+}
+
+/**
+ * Point the STORED rows of `contentMissing` postings at `companyId` — the board listing them now — and
+ * write nothing else (never a content column). A posting that moved boards while its detail fetch fails
+ * would otherwise keep its OLD company_id: markJobsPresent (company-scoped) would miss it on the new board
+ * and the old board's absence sweep would close a live job. One UPDATE, scoped to exactly the listed
+ * (source, external_id) pairs, and only rows that actually moved are rewritten; a posting with no stored
+ * row matches nothing. An EMPTY list returns at once: with no pairs the OR would vanish and the UPDATE
+ * would move every row of every other board onto this one. (Exported for its own scope tests.)
+ */
+export async function moveToListingBoard(
+  db: Db,
+  companyId: number,
+  list: NormalizedJob[],
+): Promise<void> {
+  if (list.length === 0) return;
+  const idsBySource = new Map<SourceName, JobId[]>();
+  for (const job of list) {
+    // NUL-stripped like the lifecycle writers' present sets: Postgres text rejects U+0000, and one bad id
+    // would fail the whole statement (and with it the board).
+    const id = stripNul(job.externalId) as JobId;
+    const ids = idsBySource.get(job.source);
+    if (ids) ids.push(id);
+    else idsBySource.set(job.source, [id]);
+  }
+  const listed = [...idsBySource].map(([source, ids]) =>
+    and(eq(jobs.source, source), inArray(jobs.externalId, ids)),
+  );
+  await db
+    .update(jobs)
+    .set({ companyId, updatedAt: sql`now()` })
+    .where(and(ne(jobs.companyId, companyId), or(...listed)));
 }

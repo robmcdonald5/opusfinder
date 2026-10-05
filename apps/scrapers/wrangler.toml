@@ -10,18 +10,26 @@ compatibility_date = "2026-06-03"
 enabled = true
 
 [limits]
-# CPU time per invocation. Cloudflare's DEFAULT is 30s of CPU — and CPU time is COMPUTE ONLY (not
-# wall-clock), accumulated CUMULATIVELY across the whole invocation. A dense ingestion chunk (~130
-# boards each parsing + htmlToText-cleaning hundreds of postings) burns >30s of CPU and is hard-killed
-# BEFORE finishRun. That kill is UNCATCHABLE, so the KV cursor never advances and the same poison
-# chunk re-runs hourly forever (the 2026-06-16 outage, frozen at cursor 1436). Neither adapter.maxItems
-# (a PER-BOARD posting cap) nor maxRunMs (a between-boards WALL-clock budget) bounds CPU. Raise to the
-# 5-min (300,000 ms) maximum so a heavy chunk completes — or cleanly hits the 10-min maxRunMs wall
-# budget and PARTIALLY advances the cursor — instead of dying mid-chunk. Subrequests are NOT the limit
-# (Workers Paid = 10,000/invocation). `cpu_ms` requires the Standard Usage Model (this account is
-# Workers Paid/Standard). The lossless deeper fix (per-board offset pagination + per-board cursor
-# checkpoint) is a follow-up PR.
+# Both limits apply on the Standard usage model (this account: Workers Paid) and only when deployed.
+# Source: Cloudflare docs, developers.cloudflare.com/workers/platform/limits/ (Subrequests) and
+# /workers/wrangler/configuration/#limits.
+#
+# CPU time per invocation — COMPUTE only (not wall-clock), cumulative over the invocation. The 30 s default
+# was too low: a dense chunk burned more, was hard-killed BEFORE finishRun (uncatchable), and the KV cursor
+# re-pinned the same chunk every tick (the 2026-06-16 outage, frozen at cursor 1436). Neither
+# adapter.maxItems (per-board postings) nor maxRunMs (between-boards wall clock) bounds CPU, so this is the
+# 5-min maximum. Measured max: 11.8 s per 150 boards, so ~20 s per 250 — ample headroom.
 cpu_ms = 300000
+# Subrequests per invocation — Workers Paid defaults to 10,000 (max 10,000,000). EVERY fetch counts: each
+# ATS page, N+1 hydrate, retry attempt and neon-http query (KV calls too), and past the cap every fetch
+# fails. Cloudflare does not bill subrequests ("Cloudflare does not bill for subrequests you make from your
+# Worker" — /workers/platform/pricing/), so the cap is raised far clear of any tick rather than counted:
+#   a normal 250-board tick           ≈ 1,500  (≈ 1 page + 4 queries per board; SmartRecruiters more)
+#   worst board: a capped SmartRecruiters mega-board with EVERY request retried
+#     (1,500 hydrates + 15 list pages) x 4 attempts (maxRetries 3) + ~10 queries ≈ 6,070
+#   100,000 holds 16 such boards in ONE chunk plus all the rest — more than the 10-min maxRunMs budget even
+#   lets a tick start.
+subrequests = 100000
 
 [triggers]
 # SCHEDULING TOGGLE — pause/resume the deployed cron (see README "Pause / resume the schedule").
@@ -31,30 +39,50 @@ cpu_ms = 300000
 # triggers; omitting [triggers] entirely would instead LEAVE the deployed ones untouched.
 #
 # >>> RESUMED in Phase F6 (the liveness DRIVER for the F6 health checker + the watchdog heartbeat). <<<
-# Ingestion runs HOURLY — dialed back from the original */30. The tick is chunked (INGEST_LIMIT boards
-# per fire, KV cursor), and on the current board set one tick re-sweeps everything, so */30 meant ~48
-# full re-scrapes/day of a slowly-changing set; hourly is ample freshness for a daily/weekly digest,
-# halves the load, and still keeps full-sweep latency reasonable as the board set grows (see
-# PHASE_F6_PLAN.md). Discovery RESUMED in Phase F5 (2026-06-15): Workers Paid is active, so the weekly
-# Sunday tick runs the workerSafe lanes (outscal + hn) via runDiscovery({ workerOnly: true }).
+# Ingestion runs EVERY 2 HOURS (*/30 → hourly in F6 → 2-hourly, 2026-10). The tick is chunked
+# (INGEST_LIMIT boards per fire, KV cursor). Why 2 h: Neon bills per awake minute, and the ingestion tick
+# is what keeps it awake — each tick holds it up for the tick itself PLUS a fixed 5-min autosuspend tail,
+# so the tail alone cost 24 × 5 min = 2 h/day hourly. Half the wakes with a bigger chunk per wake (see
+# INGEST_LIMIT below) re-fetches each board nearly as often (3,000 vs 3,600 board fetches/day) for far
+# fewer awake hours. 2-hourly is ample freshness for a daily/weekly digest. Discovery RESUMED in Phase F5 (2026-06-15): Workers Paid is
+# active, so the weekly Sunday tick runs the workerSafe lanes (outscal + hn) via
+# runDiscovery({ workerOnly: true }).
 # (UTC; CF weekdays are 1=Sun..7=Sat — Sunday is "SUN", never "0"; the strings MUST match the `case`
-# literals in src/index.ts character-for-character. USER: `wrangler deploy` to register the trigger.)
+# literals in src/index.ts character-for-character — src/dispatch.test.ts reads this array and fails on
+# drift. USER: `wrangler deploy` to register the trigger, and set the external watchdog's expected period
+# to 2 h — an hourly-period check would page on every healthy gap.)
 crons = [
-  "0 * * * *", # ingestion — hourly
+  "0 */2 * * *", # ingestion — every 2 h, at :00 of even UTC hours
   "0 3 * * SUN", # discovery — Sunday 03:00 (Workers Paid; F5f resumed) — workerSafe lanes via workerOnly:true
 ]
 
 [vars]
 # Non-secret config only. The secret (DATABASE_URL) is set with `wrangler secret put` and arrives as
 # env.DATABASE_URL.
-# Boards per ingestion tick. RESTORED 75 -> 150 (2026-06-17). The 150 -> 75 halving (PR #28, 2026-06-16)
-# was added during the Neon 512MB-outage misdiagnosis as a CPU/wall/memory "blast radius" throttle — but
-# the real cause was Neon hitting its free-tier STORAGE limit (jobs.raw bloat), fixed by upgrading Neon +
-# dropping the raw write (PR #29), not by throttling the tick. The genuine per-tick protections stay in
-# place: cpu_ms = 300000 above + the per-tick Worker budget bounding (PR #27). 150 matches
-# DEFAULT_INGEST_LIMIT in src/index.ts and halves full-sweep latency (~21h -> ~11h over ~1.6k boards).
-# Clamped to MAX_INGEST_LIMIT (500) in src/index.ts.
-INGEST_LIMIT = "150"
+# Boards per ingestion tick. 150 -> 250 with the 2-hourly cron (2026-10). Sized so a NORMAL tick ends well
+# inside the 10-min MAX_RUN_MS budget (src/index.ts), leaving the graceful budget stop (cursor advances
+# past the boards that ran; the rest carry to the next tick) as the fallback for a slow chunk:
+#   measured (hourly x 150): median tick 5.2 min wall = 2.08 s/board, of which 0.5 s is the inter-board
+#     pace sleep (149 x 0.5 s = 75 s, ~24% of the tick) => ~1.58 s/board of ATS fetch + ~5 neon-http
+#     round trips + CPU.
+#   - the dropped per-board upsertCompany round trip   => ~ -0.1 s  (~1.48 s/board)
+#   - pace per pacing key, from the key's previous board's FINISH (a board waits whatever is left of 0.5 s):
+#     a board right after a same-key neighbour waits the FULL 0.5 s; one after other-key boards waits only
+#     if they took < 0.5 s together (short/failed boards — a typical ~1.5 s board clears it), allowed for
+#     at ~0.05 s/board. With f = the share of same-key neighbours (set by how the id-ordered chunk clusters
+#     by source): pace ~ 0.5 s x f + 0.05 s
+#   => f = 30%: ~1.68 s/board -> 250 boards ~ 7.0 min (70% of MAX_RUN_MS; a tick ~40% slower still fits)
+#      f = 80%: ~1.93 s/board -> 250 boards ~ 8.0 min (80%; ~25% slower still fits)
+#      (even f = 100%, every board paced the full 0.5 s: 1.98 s/board -> ~8.3 min, 83%)
+#   so 250 stays: the high end is under ~85% of the budget. 300 would be ~8.4-9.7 min (84-97%), too close
+#   to the stop to call "normal". These are ESTIMATES: real tick times in `pnpm runs` (started/finished)
+#   decide any raise — raise only once real ticks finish well short of 10 min.
+# 250 x 12 ticks = 3,000 board fetches/day vs 3,600 at hourly x 150, so a full sweep of the active boards
+# takes ~20% longer (N/250 x 2 h vs N/150 x 1 h). History: 150 -> 75 (PR #28, a Neon 512MB-outage
+# misdiagnosis — the real cause was jobs.raw storage bloat, fixed in PR #29) -> 150 (2026-06-17). The per-tick
+# protections are [limits] above + the per-tick Worker budget bounding (PR #27). Matches
+# DEFAULT_INGEST_LIMIT in src/index.ts; clamped to MAX_INGEST_LIMIT (500) there.
+INGEST_LIMIT = "250"
 
 # F2 lifecycle-close enforcement — the SINGLE switch across all three F2 arms (Arm A per-board sweep +
 # Arm B board-death close here in the Worker; Arm C 410-close in the digest runtime). "shadow" = count-only:

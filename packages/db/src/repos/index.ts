@@ -2,7 +2,7 @@
 // Drizzle schema. Imported by ingestion scripts (and later Workers) to write
 // normalized jobs through to Neon.
 export { upsertCompany, upsertJobs, listCompanies } from "./jobs";
-export type { CompanyRow } from "./jobs";
+export type { CompanyRow, UpsertJobsResult } from "./jobs";
 export {
   startRun,
   finishRun,

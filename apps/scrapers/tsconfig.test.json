@@ -6,7 +6,8 @@
   // so both are redeclared here. The node-graph test typecheck (root tsconfig.test.json) deliberately
   // EXCLUDES apps/scrapers — the two ambient environments cannot share one compilation. Run via
   // `pnpm --filter @opusfinder/scrapers typecheck:test` (chained into the root `typecheck:test`).
+  // test-env.d.ts adds the test-only ambient types (Vite's `?raw` text import of wrangler.toml).
   "extends": "./tsconfig.json",
-  "include": ["src/**/*.ts", "worker-configuration.d.ts"],
+  "include": ["src/**/*.ts", "worker-configuration.d.ts", "test-env.d.ts"],
   "exclude": ["node_modules", ".wrangler", "dist"]
 }

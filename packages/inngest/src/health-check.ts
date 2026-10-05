@@ -27,9 +27,18 @@ export interface HealthCheckDeps {
 }
 
 /**
- * health-check-alert — every 30 min, recompute the verdict and page the operator for any ENFORCE-mode firing
- * check not already paged inside the cooldown. The full check+dedup+send+record runs in ONE `step.run`, so a
- * transient failure (e.g. the send) retries the whole unit — NOT transactionally: a retry after a successful
+ * The cron: every 2 h at :10 — 10 min after each ingestion tick starts (`0 *\/2 * * *`, the scrapers
+ * Worker), so its Neon reads land while the tick has Neon awake. A check on its own schedule (it was every
+ * 30 min) woke Neon by itself, each wake billing a fixed 5-min autosuspend tail. 2 h is ample for a
+ * monitor whose ingestion staleness threshold is 5 h and whose re-page cooldown is 24 h. Its latest-run
+ * checks read the latest FINISHED ingestion run, so a tick still in flight at :10 isn't misread.
+ */
+export const HEALTH_CHECK_CRON = "10 */2 * * *";
+
+/**
+ * health-check-alert — every 2 h (HEALTH_CHECK_CRON), recompute the verdict and page the operator for any
+ * ENFORCE-mode firing check not already paged inside the cooldown. The full check+dedup+send+record runs in
+ * ONE `step.run`, so a transient failure (e.g. the send) retries the whole unit — NOT transactionally: a retry after a successful
  * send may re-page once, so the cooldown ROW is the cross-run dedup, not within-run atomicity. A
  * healthy/cooled-down report is a no-op. `singleton skip` (keyless ⇒ one global flight) drops a tick that
  * fires while the previous run is still in flight.
@@ -37,7 +46,7 @@ export interface HealthCheckDeps {
 function makeHealthCheck(deps: HealthCheckDeps) {
   return inngest.createFunction(
     { id: "health-check-alert", singleton: { mode: "skip" } },
-    { cron: "*/30 * * * *" },
+    { cron: HEALTH_CHECK_CRON },
     async ({ step }) =>
       step.run("check-and-alert", async () => {
         const report = await checkHealth(deps.db, deps.healthOptions);

@@ -173,7 +173,9 @@ Run from the repo root via the workspace filter so the cwd is `packages/db`:
 - **Health checker (Phase F6) — NO migration.** `src/health.ts` (subpath `@opusfinder/db/health`) computes seven
   liveness checks (`ingestion_staleness`, `board_fail_ratio`, `discovery_window`, `embedding_backlog`,
   `digest_health` [error-runs only], `bounce_suppression`, `discovery_lane_errors` [F5f —
-  per-lane `lane_<name>_error` on the latest all-source discovery run]) + a rerank-cache cost rollup from
+  per-lane `lane_<name>_error` on the latest all-source discovery run]; since 2026-10 an eighth,
+  `hydrate_skip_ratio` — the latest ingestion run's `hydrateSkipped / hydrateListed`, the share of postings on
+  hydrating boards whose detail fetch failed, default 0.2, `HEALTH_HYDRATE_SKIP_RATIO`) + a rerank-cache cost rollup from
   EXISTING columns across `source_runs` / `jobs` / `digest_runs` / `digests` / `user_preferences` — pure Neon
   reads, ZERO schema change. Split into `gatherHealthSignals` (the only impure fn — the reads issued
   concurrently, ages computed SQL-side so the evaluator needs no clock) + the PURE `evaluateHealth` (thresholds +

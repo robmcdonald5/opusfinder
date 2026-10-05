@@ -69,7 +69,7 @@ pnpm db:ping      # round-trips SELECT 1 against Neon
 | `pnpm db:backfill-signatures`             | Backfill `jobs.content_signature` for unsigned rows (idempotent; Phase F1d)                                                                                                    |
 | `pnpm db:ping`                            | Connectivity check against Neon                                                                                                                                                |
 | `pnpm runs`                               | Print the most recent `source_runs` rows (pipeline health at a glance)                                                                                                         |
-| `pnpm health`                             | Run the pipeline health checker over Neon — print 7 checks + a cost rollup; on an enforce-mode firing email `ALERT_TO` + exit non-zero (Phase F6)                              |
+| `pnpm health`                             | Run the pipeline health checker over Neon — print 8 checks + a cost rollup; on an enforce-mode firing email `ALERT_TO` + exit non-zero (Phase F6)                              |
 | `pnpm ingest <source> <slug>`             | Fetch + normalize one ATS board, upsert to Neon, embed new postings (`--no-embed` to skip)                                                                                     |
 | `pnpm ingest:all`                         | Ingest every seeded company across all sources (`[--no-embed] [--source=<name>]`)                                                                                              |
 | `pnpm discover`                           | Discover + validate + upsert company slugs from the seed lanes (`[--source=<name>] [--lanes=<a,b>] [--limit=<n>] [--dry-run]`)                                                  |
@@ -87,6 +87,20 @@ pnpm db:ping      # round-trips SELECT 1 against Neon
 | `pnpm inngest:serve`                      | Local Inngest serve endpoint for the digest functions (bare Node http, port 3000; dev-only)                                                                                    |
 | `pnpm inngest:dev`                        | Local Inngest dev server (keyless; registers the serve URL for discovery + invocation)                                                                                         |
 | `pnpm guard:worker`                       | Assert auth / neon-serverless / the Inngest digest stack (`inngest`, `@opusfinder/llm`, `@opusfinder/rerank`, `@anthropic-ai/sdk`) never leak into the scrapers Worker (#6665) |
+
+## Deploying a schedule change
+
+The schedules live in two runtimes; a change ships per runtime, and the watchdog must move with it:
+
+1. **External watchdog first** (healthchecks.io, the check behind `HEALTH_PING_URL`): its period must equal
+   the ingestion cron's. For the current `0 */2 * * *`, set **period 2 h, grace ~1 h** — an hourly period
+   pages on every healthy 2-hour gap; ~1 h grace covers a tick's run time plus jitter yet still alerts within
+   ~3 h of one missed tick.
+2. **Scrapers Worker**: `pnpm --filter @opusfinder/scrapers deploy` (`wrangler deploy` registers the
+   `[triggers]` crons and the `[vars]` such as `INGEST_LIMIT`). See `apps/scrapers/README.md`.
+3. **Inngest crons** (`health-check-alert` `10 */2 * * *`, `digest-cadence` `10 12 * * *`): ship with the
+   next `apps/web` deploy + Inngest app sync. They are paused in the Inngest dashboard until resumed.
+4. If `HEALTH_INGEST_MAX_AGE_H` is overridden anywhere (`packages/db/.env`, Vercel), set it to 5 or unset it.
 
 ## Documentation (local planning docs — not committed)
 
@@ -110,7 +124,7 @@ Phase 12a stood up the **headless production runtime**. `apps/web` became a real
 (svelte 5 / `@sveltejs/kit` 2 / `adapter-vercel` 6 / vite 8) whose only two routes are `/api/inngest`
 (`inngest/sveltekit`, hosting the digest functions + the F8 backfills) and `/api/health` (over the pure
 `checkHealth` core) — Node serverless (not edge; `maxDuration` 300), deployed to Vercel with Inngest
-Cloud. Three new pieces ride this runtime: a **cadence cron** (`makeCadenceOrchestrator`, `0 13 * * *`,
+Cloud. Three new pieces ride this runtime: a **cadence cron** (`makeCadenceOrchestrator`, `0 13 * * *` — `10 12 * * *` since 2026-10,
 `singleton:skip`) that emits `digest/run.requested {trigger:'cron'}` so `listDigestRecipients`'s opt-in
 `cadenceDue` predicate picks the daily/weekly/monthly-due users (manual `pnpm digest --all` unchanged) —
 with a new `markDigestConsidered` repo fn stamping the no-send skip paths for cadence backoff; the **F8
@@ -132,7 +146,8 @@ errors, bounce/suppression, discovery lane-errors) + a rerank-cache cost rollup 
 operator (a new `sendHealthAlert` in `@opusfinder/email` → a dedicated `ALERT_TO`) on an enforce-firing check. The
 scrapers Worker fires a content-free watchdog heartbeat (`HEALTH_PING_URL`) on each successful ingestion tick to
 catch the cron's own death, and **ingestion is resumed hourly** (`0 * * * *`, dialed back from `*/30`; deployed
-live 2026-06-15); F5 also **resumed the weekly discovery cron** (`0 3 * * SUN`). Merged to `main` (PR #22).
+live 2026-06-15; since 2026-10 it runs every 2 h × 250 boards, `0 */2 * * *`, to cut Neon awake time); F5
+also **resumed the weekly discovery cron** (`0 3 * * SUN`). Merged to `main` (PR #22).
 
 Phase F5 added **discovery scale-out** — a `SeedLane` registry (`SEED_LANES`) replaces the single
 `loadSeed()` call with a per-lane loop (`selectLanes` / `resolveLanes`; isolated non-`failLoud` lanes

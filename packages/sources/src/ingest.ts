@@ -18,14 +18,13 @@ import {
   startRun,
   sweepLifecycle,
   sweepStaleJobs,
-  upsertCompany,
   upsertJobs,
 } from "@opusfinder/db/repos";
 import type { SourceName } from "@opusfinder/shared";
 import { sleep } from "@opusfinder/shared/async";
 
-import { fetchJobs } from "./adapters";
-import type { RunAdapterOptions } from "./adapters/run-adapter";
+import { adapterFor, pacingKeyOf } from "./adapters";
+import { runAdapter, type RunAdapterOptions } from "./adapters/run-adapter";
 
 /**
  * The injected embedder — the structural MINIMUM that `backfillJobEmbeddings` accepts. The real
@@ -49,6 +48,10 @@ export interface IngestBoardResult {
   ok: boolean;
   jobs: number;
   changed: number;
+  /** Listed postings whose detail fetch failed (content not written — only a stored row's company_id
+   *  follows the board; still present) — so a board whose every hydrate failed reads as such, not as an
+   *  empty board. */
+  hydrateSkipped: number;
   embedded: number;
   embedTokens: number;
   error?: string;
@@ -76,8 +79,17 @@ export interface IngestionOptions {
   limit?: number;
   /** Inline embedder (injected). Omit ⇒ no inline embedding. */
   embed?: IngestEmbedFn;
-  /** ms between boards so we don't hammer shared ATS infra (Workable 429s on rapid calls). */
+  /**
+   * Minimum ms between a board FINISHING and the next board with the same pacing key (the adapter's
+   * `pacingKey`, default its source) starting, so we don't hammer one ATS's infra (Workable 429s on rapid
+   * calls) — the old "≥ paceMs after the previous board", kept per key. Paced by TIME, not adjacency:
+   * before a board, sleep only what's left of `paceMs` since its key's last board finished — so
+   * alternating sources can't burst one host, and a board after enough other work waits for nothing.
+   */
   paceMs?: number;
+  /** Clock (epoch ms) for the `maxRunMs` budget and the per-key pacing. Defaults to `Date.now`; a test
+   *  injects one to drive both deterministically. */
+  clock?: () => number;
   /** Forwarded to `fetchJobs`/`runAdapter` — a Worker may LOWER `hydrateConcurrency` for subrequests. */
   adapter?: RunAdapterOptions;
   /**
@@ -131,10 +143,12 @@ export interface IngestionCounts {
   failed: number; // boards that threw (isolated — does NOT fail the run)
   jobs: number; // distinct postings persisted
   changed: number; // inserted-or-updated postings
+  hydrateSkipped: number; // listed postings whose detail fetch failed: content kept (only company_id refreshed) / new one deferred; still present
+  hydrateListed: number; // postings listed by HYDRATING boards (written + hydrateSkipped) — the health ratio's denominator
   embedded: number; // postings embedded inline (0 when `embed` omitted)
   embedTokens: number; // Voyage tokens used
   embedFailed: number; // boards whose embed step threw (jobs still persisted)
-  // Per-board lifecycle sweep (gated total>0). Count-only/shadow mode keeps `closed` at 0 and
+  // Per-board lifecycle sweep (gated on a non-empty fetch). Count-only/shadow mode keeps `closed` at 0 and
   // reports `wouldClose` as the standing "would close if enforced" population; enforce flips the write on.
   revived: number; // reappeared postings: active-streak resets + closed→active revivals
   swept: number; // absent postings whose streak incremented but is still below the close threshold
@@ -161,8 +175,11 @@ const DEFAULT_PACE_MS = 500;
  */
 export async function runIngestion(db: Db, opts: IngestionOptions = {}): Promise<IngestionCounts> {
   const paceMs = opts.paceMs ?? DEFAULT_PACE_MS;
+  const clock = opts.clock ?? Date.now;
   const counts = emptyCounts();
-  const startMs = Date.now();
+  const startMs = clock();
+  // Pacing key → when its most recent board FINISHED (see opts.paceMs).
+  const lastFinish = new Map<string, number>();
   const runId = await startRun(db, "ingestion", { source: opts.source });
   let errorSample: string | undefined;
 
@@ -182,11 +199,27 @@ export async function runIngestion(db: Db, opts: IngestionOptions = {}): Promise
       // spent, so `finishRun` is always reached within the Worker's 15-min limit. `i > 0` guarantees at
       // least one board runs (its own cost is bounded by adapter.maxItems); BREAK (not return) so the
       // finishRun + summary below still run and the handler advances the cursor to the last processed id.
-      if (i > 0 && opts.maxRunMs !== undefined && Date.now() - startMs >= opts.maxRunMs) break;
-      if (i > 0) await sleep(paceMs);
+      if (i > 0 && opts.maxRunMs !== undefined && clock() - startMs >= opts.maxRunMs) break;
       counts.lastId = company.id; // advance the chunk cursor even when this board fails
+      // Recorded after the board (see the end of the loop body); the raw source until the adapter resolves.
+      let pacingKey: string = company.source;
       try {
-        const normalized = await fetchJobs(company.source, company.slug, opts.adapter);
+        // The adapter is looked up ONCE, INSIDE the try: a row whose source has no adapter (a poison row)
+        // throws `unknown source "<x>"` here and fails only its own board. Reused for pacing, the fetch and
+        // the hydrate check below.
+        const adapter = adapterFor(company.source);
+        // Politeness is per ATS HOST, i.e. per PACING KEY (the adapter's `pacingKey`, default its source —
+        // types.ts lists the host audit). Paced by TIME, not adjacency: start a board only ≥ paceMs after
+        // its key's previous board FINISHED, sleeping just the remainder. Adjacency alone let alternating
+        // sources (gh, lever, gh, lever…) hit one host back-to-back; time also skips the pause when other
+        // boards ran in between for long enough.
+        pacingKey = pacingKeyOf(adapter);
+        const keyLastFinish = lastFinish.get(pacingKey);
+        if (keyLastFinish !== undefined) {
+          const wait = paceMs - (clock() - keyLastFinish);
+          if (wait > 0) await sleep(wait);
+        }
+        const normalized = await runAdapter(adapter, company.slug, opts.adapter);
         // A capped board (adapter.maxItems truncated the fetch) is PARTIAL — its present-set is
         // incomplete, so the F2 feed-absence sweep below MUST be skipped or it would false-close the
         // un-fetched tail. runAdapter trims to EXACTLY maxItems, so length >= cap ⇔ capped.
@@ -197,37 +230,53 @@ export async function runIngestion(db: Db, opts: IngestionOptions = {}): Promise
         // source_runs.counts. These boards aren't exempt overall: the post-loop staleness timer
         // (sweepStaleJobs) is their close path.
         if (capped) counts.cappedBoards += 1;
-        // Idempotent get-or-create from the canonical slug (not jobs[0]) keeps a valid-but-
-        // empty board recorded too.
-        const companyId = await upsertCompany(db, company.slug, company.source);
-        const { changed, total } = await upsertJobs(db, companyId, normalized);
+        // The company id comes straight from listCompanies (`company.id`) — no per-board upsertCompany,
+        // which was a no-op `ON CONFLICT DO UPDATE SET slug = excluded.slug` returning that same id (a
+        // wasted neon-http round-trip plus a dead tuple per board per tick).
+        // upsertJobs never writes a failed hydrate's content (see its guard): a `contentMissing` posting's
+        // stored row keeps its content (only its company_id follows this board) and a new one waits for a
+        // later run. Its counts are DISTINCT postings, tallied only once the write succeeded (a throw fails
+        // the board, counting none).
+        const upserted = await upsertJobs(db, company.id, normalized);
+        const { changed, total } = upserted;
         counts.jobs += total;
         counts.changed += changed;
+        counts.hydrateSkipped += upserted.contentMissing;
+        // The hydrate_skip_ratio health check's denominator: only boards whose adapter hydrates, so the
+        // many non-hydrating postings can't dilute a failing detail endpoint.
+        if (adapter.hydrate) counts.hydrateListed += total + upserted.contentMissing;
         counts.ok += 1;
 
         // Liveness stamp (EVERY board, capped or not — see markJobsPresent): refresh last_seen_at for
         // the jobs this fetch returned + revive any reappearing closed ones, then certify a successful
         // non-empty fetch (markCompanyIngested) so the staleness timer's board-health guard knows this
-        // board is fetchable. GATED on total > 0: an empty/ambiguous fetch (e.g. SmartRecruiters
-        // 200+totalFound:0 → []) must NOT stamp presence OR certify health. `presentExternalIds` is the
-        // board's de-duplicated external_ids (== what upsertJobs persisted; length === total). Isolated
-        // like the sweep/embed steps: a stamp fault leaves jobs persisted and self-heals next cycle.
+        // board is fetchable. GATED on `listed` (the board listed ≥1 posting): an empty/ambiguous fetch
+        // (e.g. SmartRecruiters 200+totalFound:0 → []) must NOT stamp presence OR certify health. The gate
+        // is the LISTING, not `total` — a board whose every hydrate failed writes nothing but is live.
+        // `listedIds` is every de-duplicated external_id the board listed — what upsertJobs persisted PLUS the
+        // contentMissing postings it did not write: a posting whose detail fetch failed is still listed, so it
+        // must neither age toward the staleness timer nor count as absent in the sweep below. (Known
+        // limitation, an accepted trade-off: a stored posting whose detail is 404/410/"not available" while
+        // still listed stays active and digest-eligible — retrieved and reranked — until the ATS delists it;
+        // and hydrate_skip_ratio can't tell those not-founds from 5xx, so steady list lag can hold the ratio
+        // up. Known follow-up: a separate not-found counter. See smartrecruiters.ts hydratePosting.)
+        // Isolated like the sweep/embed steps: a stamp fault leaves jobs persisted and self-heals next cycle.
         // ORDER IS LOAD-BEARING — markJobsPresent (stamp last_seen) BEFORE markCompanyIngested (certify
         // board health): if the company were certified first and the job-stamp then threw, the timer could
         // close jobs that were never re-stamped. This order fails SAFE (jobs stamped, board left
         // uncertified ⇒ guard spares it).
-        let presentExternalIds: string[] | undefined;
-        if (total > 0) {
-          presentExternalIds = [...new Set(normalized.map((j) => j.externalId))];
+        const listedIds = [...new Set(normalized.map((j) => j.externalId))];
+        const listed = listedIds.length > 0;
+        if (listed) {
           try {
-            const present = await markJobsPresent(db, companyId, presentExternalIds);
+            const present = await markJobsPresent(db, company.id, listedIds);
             counts.revived += present.revived; // closed→active revivals (works for capped boards too)
-            await markCompanyIngested(db, companyId);
+            await markCompanyIngested(db, company.id);
           } catch (err) {
             counts.markFailed += 1;
-            // Shape-only (no job text); companyId is a non-secret int.
+            // Shape-only (no job text); company.id is a non-secret int.
             console.warn(
-              `markJobsPresent/markCompanyIngested failed for company ${companyId}: ` +
+              `markJobsPresent/markCompanyIngested failed for company ${company.id}: ` +
                 `${err instanceof Error ? err.message : String(err)}`.slice(0, 200),
             );
           }
@@ -239,9 +288,9 @@ export async function runIngestion(db: Db, opts: IngestionOptions = {}): Promise
         // those boards rely on the staleness timer (sweepStaleJobs) instead. Enforcement rides
         // parseEnforceFlag(LIFECYCLE_CLOSE_ENFORCE). Isolated like the stamp/embed steps. Closed→active revivals are
         // owned by markJobsPresent above; sweepLifecycle.revived here counts only still-active streak resets.
-        if (presentExternalIds !== undefined && !capped) {
+        if (listed && !capped) {
           try {
-            const sweep = await sweepLifecycle(db, companyId, presentExternalIds, {
+            const sweep = await sweepLifecycle(db, company.id, listedIds, {
               enforce: opts.enforceLifecycle ?? false,
             });
             counts.revived += sweep.revived;
@@ -250,9 +299,9 @@ export async function runIngestion(db: Db, opts: IngestionOptions = {}): Promise
             counts.wouldClose += sweep.wouldClose;
           } catch (err) {
             counts.sweepFailed += 1;
-            // Shape-only (no job text): the count feeds item-6 health; companyId is a non-secret int.
+            // Shape-only (no job text): the count feeds item-6 health; company.id is a non-secret int.
             console.warn(
-              `sweepLifecycle failed for company ${companyId}: ` +
+              `sweepLifecycle failed for company ${company.id}: ` +
                 `${err instanceof Error ? err.message : String(err)}`.slice(0, 200),
             );
           }
@@ -264,7 +313,7 @@ export async function runIngestion(db: Db, opts: IngestionOptions = {}): Promise
         if (opts.embed && total > 0) {
           try {
             const { embedded, tokens } = await backfillJobEmbeddings(db, opts.embed, {
-              companyId,
+              companyId: company.id,
               inputType: "document",
             });
             boardEmbedded = embedded;
@@ -285,6 +334,7 @@ export async function runIngestion(db: Db, opts: IngestionOptions = {}): Promise
           ok: true,
           jobs: total,
           changed,
+          hydrateSkipped: upserted.contentMissing,
           embedded: boardEmbedded,
           embedTokens: boardTokens,
           error: embedWarning,
@@ -299,11 +349,13 @@ export async function runIngestion(db: Db, opts: IngestionOptions = {}): Promise
           ok: false,
           jobs: 0,
           changed: 0,
+          hydrateSkipped: 0,
           embedded: 0,
           embedTokens: 0,
           error: message,
         });
       }
+      lastFinish.set(pacingKey, clock()); // ok or failed — either way this key's host was just hit
       counts.processed += 1; // boards we got through (ok or failed) — the early-stop cursor signal
     }
 
@@ -356,6 +408,8 @@ function emptyCounts(): IngestionCounts {
     failed: 0,
     jobs: 0,
     changed: 0,
+    hydrateSkipped: 0,
+    hydrateListed: 0,
     embedded: 0,
     embedTokens: 0,
     embedFailed: 0,
@@ -388,6 +442,9 @@ function logSummary(counts: IngestionCounts, embedEnabled: boolean): void {
       (counts.sweepFailed > 0 ? `, ${counts.sweepFailed} sweep-failed` : "") +
       (counts.markFailed > 0 ? `, ${counts.markFailed} mark-failed` : "") +
       (counts.cappedBoards > 0 ? `; ${counts.cappedBoards} capped board(s)` : "") +
+      (counts.hydrateSkipped > 0
+        ? `; ${counts.hydrateSkipped} posting(s) not written (detail fetch failed; stored content kept)`
+        : "") +
       (counts.staleWouldClose > 0 || counts.staleClosed > 0 || counts.staleSweepFailed > 0
         ? `; stale: ${counts.staleWouldClose} would-close, ${counts.staleClosed} closed` +
           (counts.staleSweepFailed > 0 ? `, ${counts.staleSweepFailed} stale-sweep-failed` : "")

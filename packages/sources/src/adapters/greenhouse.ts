@@ -86,6 +86,5 @@ function toNormalizedJob(raw: unknown, ctx: SourceContext): NormalizedJob | null
     ]),
     applyUrl: absolute_url,
     postedAt,
-    raw,
   };
 }

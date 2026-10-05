@@ -11,7 +11,8 @@ import type { Cursor, FetchJson, JobsRequest, SourceAdapter, SourceContext } fro
  * map) → the single resilient fetch (retry/backoff/Retry-After + non-JSON guard) → two-tier
  * resilience (locate fails LOUD on a bad envelope; mapItem fails SOFT, skipping one bad
  * posting) → the optional bounded-concurrency hydrate pool → per-board accounting. Returns
- * `NormalizedJob[]`.
+ * `NormalizedJob[]` — every LISTED posting, a failed hydrate's job included but flagged
+ * `contentMissing` (see the hydrate pool below).
  *
  * Worker-forward: global `fetch`/`RequestInit` only, `setTimeout`-based backoff, `Math.random`
  * jitter, no Node-only APIs and no `process.env` reads.
@@ -65,7 +66,10 @@ export async function runAdapter(
   const tag = `${adapter.source} "${ctx.slug}"`;
   const fetchJson: FetchJson = (req) => fetchJsonResilient(req, tag, maxRetries, fetchTimeoutMs);
 
-  // Pagination loop. Keep each raw item beside its mapped job so hydrate has both.
+  // Pagination loop. Keep each raw list item beside its mapped job ONLY when there is a hydrate to
+  // hand it to (the job itself carries no raw — it is not stored); otherwise drop the reference so a
+  // multi-page board doesn't pin every parsed page until the loop ends.
+  const hydrate = adapter.hydrate;
   const mapped: { raw: unknown; job: NormalizedJob }[] = [];
   let skipped = 0;
   let cursor: Cursor | null = null;
@@ -85,7 +89,7 @@ export async function runAdapter(
         // Canonical location order: keeps the in-memory job identical to what upsertJobs
         // persists, and keeps its order-sensitive jsonb compare from churning on a reorder.
         job.locations = [...job.locations].sort();
-        mapped.push({ raw, job });
+        mapped.push({ raw: hydrate ? raw : undefined, job });
       } else {
         skipped++;
       }
@@ -101,18 +105,22 @@ export async function runAdapter(
     cursor = next;
   }
 
-  // Optional hydrate (N+1 second fetch) through a bounded-concurrency pool. A per-item
-  // failure keeps the already-valid mapped job (mapItem's contract guarantees it is usable).
+  // Optional hydrate (N+1 second fetch) through a bounded-concurrency pool, each call handed its own
+  // list item. A per-item failure — ANY failed or empty detail fetch (retries exhausted, a timeout, a
+  // 404/410, a body with no content; the adapter throws) — keeps the listed job, because it WAS listed and
+  // so is live: ingestion must still count it present. But its description is mapItem's placeholder "",
+  // not the posting's text, so it is flagged `contentMissing` and upsertJobs never writes its content —
+  // persisted, it would overwrite the stored description, NULL the embedding (a paid re-embed) and flip
+  // content_signature, then flip it all back on the next good hydrate.
   let jobs: NormalizedJob[];
   let unhydrated = 0;
-  const hydrate = adapter.hydrate;
   if (hydrate) {
     jobs = await mapWithConcurrency(mapped, hydrateConcurrency, async ({ raw, job }) => {
       try {
         return { ...job, ...(await hydrate(job, raw, ctx, fetchJson)) };
       } catch {
         unhydrated++;
-        return job;
+        return { ...job, contentMissing: true as const };
       }
     });
   } else {
@@ -123,7 +131,7 @@ export async function runAdapter(
     console.warn(
       `${tag}: ${jobs.length} job(s)` +
         (skipped > 0 ? `, skipped ${skipped} malformed` : "") +
-        (unhydrated > 0 ? `, ${unhydrated} un-hydrated` : ""),
+        (unhydrated > 0 ? `, ${unhydrated} un-hydrated (content missing, not written)` : ""),
     );
   }
   return jobs;

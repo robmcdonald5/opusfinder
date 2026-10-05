@@ -131,7 +131,6 @@ function toNormalizedJob(raw: unknown, ctx: SourceContext): NormalizedJob | null
     applyUrl,
     // No posted/created date — only close_date (an EXPIRY date), which must NOT be used.
     postedAt: null,
-    raw,
   };
 }
 

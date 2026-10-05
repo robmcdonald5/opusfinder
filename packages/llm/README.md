@@ -85,7 +85,7 @@ stay provider-agnostic. opusfinder ships only the Anthropic provider.
 
 ## Test
 
-```powershell
+```bash
 pnpm llm:test   # from repo root, or: pnpm --filter @opusfinder/llm test:llm
 ```
 

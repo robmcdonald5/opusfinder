@@ -1,10 +1,17 @@
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Db } from "@opusfinder/db";
+import { upsertCompany, upsertJobs } from "@opusfinder/db/repos";
 import { companies, jobs, sourceRuns } from "@opusfinder/db/schema";
 import { companySlug, jobId, type SourceName } from "@opusfinder/shared";
-import { runIngestion, type IngestEmbedFn, type IngestionOptions } from "@opusfinder/sources";
+import {
+  adapters,
+  runIngestion,
+  type IngestEmbedFn,
+  type IngestionCounts,
+  type IngestionOptions,
+} from "@opusfinder/sources";
 
 import { createTestDb } from "@test/db/pglite";
 import { truncate } from "@test/db/truncate";
@@ -16,14 +23,43 @@ import { jsonResponse, routedFetch, textResponse, type Route } from "@test/http/
 // stamp presence/health, sweep, embed, and close on the staleness timer, all under one source_runs row.
 // Focus is the wiring NO other suite owns: per-board error ISOLATION (one bad board never fails the run),
 // the activeOnly/afterId/limit SQL chunk, the maxRunMs budget break (finishRun still reached), the capped-
-// board sweep SKIP with presence still stamped, the total>0 gate, closed-job revival, the injected embedder
-// (+ its failure isolation), and the post-loop staleness sweep (shadow/enforce, INDEPENDENT of the per-board
-// enforce switch). NOT this file's job: upsertJobs batch/dedupe/setWhere semantics (jobs.integration.test.ts),
+// board sweep SKIP with presence still stamped, the non-empty-fetch gate, closed-job revival, the injected
+// embedder (+ its failure isolation), the post-loop staleness sweep (shadow/enforce, INDEPENDENT of the per-board
+// enforce switch), same-source-only pacing, the company id taken from listCompanies (no upsertCompany), and a
+// failed hydrate end to end (stored content kept, still present, hydrateSkipped counted accurately).
+// NOT this file's job: upsertJobs batch/dedupe/setWhere semantics (jobs.integration.test.ts),
 // the run-row once-only terminalize (runs.integration.test.ts), the sweepLifecycle/sweepStaleJobs internal
 // SQL (lifecycle.test.ts + the db repos), and the adapter mappers (per-adapter unit suites).
 
+// The inter-board pace `sleep` is STUBBED for the whole file: it records `sleep:<ms>` into `paced.events`
+// (beside the `fetch:<slug>` a pacing test's routes record), advances the fake clock `paced.now` by `ms`
+// (the pacing tests inject `clock: () => paced.now`), and resolves at once — no real timers, so the pacing
+// tests assert the exact interleaving. `backoff` stays real (NO_RETRY below never reaches it).
+const paced = vi.hoisted(() => ({ events: [] as string[], now: 0 }));
+vi.mock("@opusfinder/shared/async", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@opusfinder/shared/async")>();
+  return {
+    ...actual,
+    sleep: (ms: number): Promise<void> => {
+      paced.events.push(`sleep:${ms}`);
+      paced.now += ms;
+      return Promise.resolve();
+    },
+  };
+});
+// Pass-through spies on the two writers runIngestion could call per board: upsertCompany must never be
+// (the id comes from listCompanies), and upsertJobs can be made to throw once (a failed write).
+vi.mock("@opusfinder/db/repos", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@opusfinder/db/repos")>();
+  return {
+    ...actual,
+    upsertCompany: vi.fn(actual.upsertCompany),
+    upsertJobs: vi.fn(actual.upsertJobs),
+  };
+});
+
 // Adapter tuning that removes real waits: no retries (a 5xx fails the board on the first attempt, no
-// `backoff` setTimeout) — paired with paceMs:0 (no inter-board sleep).
+// `backoff` setTimeout) — paired with paceMs:0 (the stubbed sleep is a no-op anyway).
 // IngestBoardResult isn't re-exported from the sources barrel; derive it from the onBoard param so the
 // test needs no production surface change.
 type IngestBoardResult = Parameters<NonNullable<IngestionOptions["onBoard"]>>[0];
@@ -48,6 +84,30 @@ const failRoute = (slug: string, status = 500): Route => ({
   respond: () => textResponse("err", status),
 });
 
+// ── SmartRecruiters routing: the list `…/companies/{slug}/postings?…`, then one N+1 detail fetch per
+// posting `…/companies/{slug}/postings/{id}` — the hydrate whose failure is a contentMissing posting. ──
+const srDetail = (id: string) => ({
+  jobAd: { sections: { jobDescription: { text: `<p>About ${id}</p>` } } },
+  applyUrl: `https://x/${id}`,
+});
+/** An SR board listing `ids` (repeats allowed); `detail(id)` answers each posting's detail fetch. */
+function srBoard(slug: string, ids: string[], detail: (id: string) => Response): Route[] {
+  return [
+    {
+      match: (url) => url.includes(`/companies/${slug}/postings?`),
+      respond: () =>
+        jsonResponse({
+          totalFound: ids.length,
+          content: ids.map((id) => ({ id, name: `SR ${id}` })),
+        }),
+    },
+    {
+      match: (url) => url.includes(`/companies/${slug}/postings/`),
+      respond: (url) => detail(url.slice(url.lastIndexOf("/") + 1)),
+    },
+  ];
+}
+
 interface CompanySeed {
   slug: string;
   source?: SourceName;
@@ -56,7 +116,9 @@ interface CompanySeed {
 }
 interface JobSeed {
   externalId: string;
+  source?: SourceName;
   title?: string;
+  descriptionText?: string;
   lifecycleState?: "active" | "closed";
   closedAt?: Date | null;
   consecutiveAbsences?: number;
@@ -72,6 +134,11 @@ describe("runIngestion — orchestration over real PGlite (fetch stubbed)", () =
   });
   beforeEach(async () => {
     await truncate(db, companies, jobs, sourceRuns);
+    paced.events.length = 0;
+    paced.now = 0;
+    // mockReset (not mockClear) also drops an unconsumed mockRejectedValueOnce, restoring the pass-through.
+    vi.mocked(upsertCompany).mockReset();
+    vi.mocked(upsertJobs).mockReset();
   });
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -103,8 +170,9 @@ describe("runIngestion — orchestration over real PGlite (fetch stubbed)", () =
     await db.insert(jobs).values({
       externalId: jobId(seed.externalId),
       companyId,
-      source: "greenhouse",
+      source: seed.source ?? "greenhouse",
       title: seed.title ?? "seeded job",
+      descriptionText: seed.descriptionText,
       remote: false,
       applyUrl: "https://x/apply",
       lifecycleState: seed.lifecycleState,
@@ -150,7 +218,7 @@ describe("runIngestion — orchestration over real PGlite (fetch stubbed)", () =
       });
       // Both postings persisted.
       expect(await jobsFor(acme)).toHaveLength(2);
-      // markCompanyIngested certified board health (total>0) — the staleness timer's precondition.
+      // markCompanyIngested certified board health (a non-empty fetch) — the staleness timer's precondition.
       expect((await companyById(acme)).lastIngestedAt).toBeInstanceOf(Date);
       // The run row, opened + terminalized ok with the counts bag verbatim.
       const runs = await allSourceRuns();
@@ -318,7 +386,7 @@ describe("runIngestion — orchestration over real PGlite (fetch stubbed)", () =
       const counts = await runIngestion(db, { paceMs: 0, adapter: NO_RETRY });
 
       expect(counts).toMatchObject({ companies: 1, ok: 1, jobs: 0, changed: 0, revived: 0 });
-      // The total>0 gate held: an empty/ambiguous fetch must NOT certify the board healthy (which would
+      // The non-empty-fetch gate held: an empty/ambiguous fetch must NOT certify the board healthy (which would
       // then let the staleness timer close its still-live jobs).
       expect((await companyById(emptyco)).lastIngestedAt).toBeNull();
     });
@@ -458,6 +526,424 @@ describe("runIngestion — orchestration over real PGlite (fetch stubbed)", () =
       // The opt gate: with no staleSweep, sweepStaleJobs is never called (a dropped gate would close t1).
       expect(counts).toMatchObject({ staleWouldClose: 0, staleClosed: 0 });
       expect((await jobByExt(timerJobExt))!.lifecycleState).toBe("active");
+    });
+  });
+
+  describe("a posting whose detail fetch failed (contentMissing) keeps its stored content", () => {
+    it("keeps stored content, stamps the posting present, defers a new one, and counts all three", async () => {
+      const sr = await seedCompany({ slug: "srco", source: "smartrecruiters", active: true });
+      // sr-1: stored, its detail 500s. sr-4: stored, its detail is JSON null (an edge/maintenance body):
+      // both content missing, still present.
+      for (const id of ["sr-1", "sr-4"]) {
+        await seedJob(sr, {
+          externalId: id,
+          source: "smartrecruiters",
+          descriptionText: `Stored ${id}`,
+          consecutiveAbsences: 1,
+          lastSeenAt: daysAgo(2),
+        });
+      }
+      await db
+        .update(jobs)
+        .set({ embedding: oneHot(0), contentSignature: "stored-sig" })
+        .where(eq(jobs.companyId, sr));
+      // sr-2 is brand new and its detail 500s too; sr-3 hydrates normally.
+      installFetch(
+        srBoard("srco", ["sr-1", "sr-2", "sr-3", "sr-4"], (id) =>
+          id === "sr-4"
+            ? jsonResponse(null)
+            : id === "sr-3"
+              ? jsonResponse(srDetail(id))
+              : textResponse("err", 500),
+        ),
+      );
+      const freshSince = new Date(Date.now() - 1_000);
+
+      const counts = await runIngestion(db, { paceMs: 0, adapter: NO_RETRY });
+
+      expect(counts).toMatchObject({ ok: 1, failed: 0, jobs: 1, changed: 1, hydrateSkipped: 3 });
+      expect(counts).toMatchObject({ swept: 0, wouldClose: 0, markFailed: 0 });
+      for (const id of ["sr-1", "sr-4"]) {
+        const kept = (await jobByExt(id))!;
+        // Never overwritten with the list-level title / placeholder "" — so the embedding is never NULLed
+        // (no paid re-embed) and the signature never recomputed from the title alone.
+        expect(kept.title).toBe("seeded job");
+        expect(kept.descriptionText).toBe(`Stored ${id}`);
+        expect(kept.contentSignature).toBe("stored-sig");
+        expect(kept.embedding).not.toBeNull();
+        // Still PRESENT: the sweep reset its streak (an absent job's would grow to 2) and markJobsPresent
+        // refreshed last_seen_at (so the staleness timer never ages a live job).
+        expect(kept.lifecycleState).toBe("active");
+        expect(kept.consecutiveAbsences).toBe(0);
+        expect(kept.lastSeenAt.getTime()).toBeGreaterThanOrEqual(freshSince.getTime());
+      }
+      expect(await jobByExt("sr-2")).toBeUndefined(); // no content yet — waits for a run that fetches it
+      expect((await jobByExt("sr-3"))!.descriptionText).toBe("About sr-3");
+      // Persisted with the run row, so `pnpm runs` shows it.
+      expect((await allSourceRuns())[0]!.counts).toMatchObject({ hydrateSkipped: 3, hydrateListed: 4 });
+    });
+
+    it("a board whose EVERY detail fetch failed writes nothing yet is still present and certified", async () => {
+      // The presence gate keys on the LISTING, not on rows written: total is 0 here, but the list was fetched.
+      const sr = await seedCompany({
+        slug: "srdown",
+        source: "smartrecruiters",
+        active: true,
+        lastIngestedAt: null,
+      });
+      await seedJob(sr, {
+        externalId: "d-1",
+        source: "smartrecruiters",
+        descriptionText: "Stored d-1",
+        consecutiveAbsences: 1,
+        lastSeenAt: daysAgo(2),
+      });
+      installFetch(srBoard("srdown", ["d-1"], () => textResponse("err", 503)));
+
+      const boards: IngestBoardResult[] = [];
+      const counts = await runIngestion(db, {
+        paceMs: 0,
+        adapter: NO_RETRY,
+        onBoard: (b) => boards.push(b),
+      });
+
+      expect(counts).toMatchObject({ ok: 1, jobs: 0, changed: 0, hydrateSkipped: 1, swept: 0 });
+      // The per-board result says so too — `ingest:all` prints it, so this board doesn't read as empty.
+      expect(boards[0]).toMatchObject({ ok: true, jobs: 0, hydrateSkipped: 1 });
+      const kept = (await jobByExt("d-1"))!;
+      expect(kept.descriptionText).toBe("Stored d-1");
+      expect(kept.consecutiveAbsences).toBe(0);
+      expect(kept.lastSeenAt.getTime()).toBeGreaterThan(daysAgo(1).getTime());
+      expect((await companyById(sr)).lastIngestedAt).toBeInstanceOf(Date);
+    });
+
+    it("counts DISTINCT postings, never one whose duplicate copy was written", async () => {
+      await seedCompany({ slug: "srdup", source: "smartrecruiters", active: true });
+      // dup-1 is listed twice: one copy's detail fails, the other's succeeds → written, not counted.
+      // dup-2 is listed twice and both details fail → counted ONCE.
+      let dup1Calls = 0;
+      installFetch(
+        srBoard("srdup", ["dup-1", "dup-1", "dup-2", "dup-2"], (id) =>
+          id === "dup-1" && dup1Calls++ > 0 ? jsonResponse(srDetail(id)) : textResponse("err", 500),
+        ),
+      );
+
+      const counts = await runIngestion(db, { paceMs: 0, adapter: NO_RETRY });
+
+      expect(dup1Calls).toBe(2); // both dup-1 copies were hydrated (one failed, one didn't)
+      expect(counts).toMatchObject({ ok: 1, jobs: 1, hydrateSkipped: 1 });
+      expect((await jobByExt("dup-1"))!.descriptionText).toBe("About dup-1");
+      expect(await jobByExt("dup-2")).toBeUndefined();
+    });
+
+    it("counts nothing for a board whose write failed — the board fails, and hydrateSkipped stays 0", async () => {
+      await seedCompany({ slug: "srfail", source: "smartrecruiters", active: true });
+      installFetch(
+        srBoard("srfail", ["f-1", "f-2"], (id) =>
+          id === "f-2" ? jsonResponse(srDetail(id)) : textResponse("err", 500),
+        ),
+      );
+      vi.mocked(upsertJobs).mockRejectedValueOnce(new Error("write failed"));
+
+      const counts = await runIngestion(db, { paceMs: 0, adapter: NO_RETRY });
+
+      // The write WAS attempted, with f-1 flagged. Assert on mock.calls, never a toHaveBeenCalled*
+      // matcher on these repo spies: its failure message prints the call's `db` argument (the whole
+      // PGlite instance) and runs the worker out of heap instead of failing cleanly.
+      expect(vi.mocked(upsertJobs).mock.calls.length).toBe(1);
+      const attempted = vi.mocked(upsertJobs).mock.calls[0]![2];
+      expect(attempted.filter((j) => j.contentMissing).map((j) => j.externalId)).toEqual(["f-1"]);
+      expect(counts).toMatchObject({ ok: 0, failed: 1, jobs: 0, hydrateSkipped: 0 });
+    });
+  });
+
+  describe("an inline-content board serving a blank description (the empty-description guard)", () => {
+    it("keeps the stored text and never NULLs the embedding", async () => {
+      // Greenhouse (content=true) — no hydrate, so no contentMissing flag: only the upsertJobs guard stands
+      // between a momentarily-blank `content` and the stored description.
+      const gh = await seedCompany({ slug: "inline", active: true });
+      // Same title as ghJob(1), so only the description differs (a title change would rightly re-embed).
+      await seedJob(gh, { externalId: "1", title: "Job 1", descriptionText: "Stored body" });
+      await db.update(jobs).set({ embedding: oneHot(1) }).where(eq(jobs.companyId, gh));
+      installFetch([boardRoute("inline", [ghJob(1)])]); // ghJob carries no `content` ⇒ descriptionText ""
+
+      const counts = await runIngestion(db, { paceMs: 0, adapter: NO_RETRY });
+
+      expect(counts).toMatchObject({ ok: 1, jobs: 1, hydrateSkipped: 0 });
+      expect(counts.hydrateListed).toBe(0); // Greenhouse doesn't hydrate: no health-ratio denominator
+      const kept = (await jobByExt("1"))!;
+      expect(kept.descriptionText).toBe("Stored body");
+      expect(kept.embedding).not.toBeNull();
+    });
+  });
+
+  describe("a failed detail fetch across runs (enforce): the posting stays live, moved boards included", () => {
+    // ABSENCE_CLOSE_THRESHOLD (3) enforced sweeps close an absent job, so three runs prove the outcome.
+    const RUNS = 3;
+    async function runTimes(n: number): Promise<IngestionCounts[]> {
+      const all: IngestionCounts[] = [];
+      for (let i = 0; i < n; i++) {
+        all.push(await runIngestion(db, { paceMs: 0, adapter: NO_RETRY, enforceLifecycle: true }));
+      }
+      return all;
+    }
+
+    it("a posting that MOVED boards and whose detail fails moves to the new board and stays live (never closed)", async () => {
+      // srold (lower id, processed first) listed mv-1 before; now only srnew lists it — and its detail 500s.
+      const oldBoard = await seedCompany({ slug: "srold", source: "smartrecruiters", active: true });
+      const newBoard = await seedCompany({ slug: "srnew", source: "smartrecruiters", active: true });
+      await seedJob(oldBoard, {
+        externalId: "mv-1",
+        source: "smartrecruiters",
+        descriptionText: "Stored mv-1",
+        lastSeenAt: daysAgo(2),
+      });
+      installFetch([
+        ...srBoard("srold", ["keep-1"], (id) => jsonResponse(srDetail(id))),
+        ...srBoard("srnew", ["mv-1"], () => textResponse("err", 500)),
+      ]);
+
+      const runs = await runTimes(RUNS);
+
+      expect(runs.map((c) => c.hydrateSkipped)).toEqual([1, 1, 1]);
+      expect(runs.reduce((n, c) => n + c.closed, 0)).toBe(0);
+      const moved = (await jobByExt("mv-1"))!;
+      // Its company_id followed the listing: the board that lists it NOW owns it, so markJobsPresent
+      // (company-scoped) stamps it and the OLD board's sweep no longer sees it as its absent posting.
+      expect(moved.companyId).toBe(newBoard);
+      expect(moved.lifecycleState).toBe("active");
+      expect(moved.consecutiveAbsences).toBe(0);
+      expect(moved.lastSeenAt.getTime()).toBeGreaterThan(daysAgo(1).getTime());
+      expect(moved.descriptionText).toBe("Stored mv-1"); // content still never overwritten
+    });
+
+    it("a 404 or SR's 'Posting not available' detail is contentMissing like any failure: present, never closed", async () => {
+      // The known limitation, pinned: while SR still LISTS the posting it stays open (content kept), however
+      // many runs its detail is unavailable; hydrate_skip_ratio is what surfaces it.
+      const sr = await seedCompany({ slug: "srunavail", source: "smartrecruiters", active: true });
+      for (const id of ["g-404", "g-msg"]) {
+        await seedJob(sr, { externalId: id, source: "smartrecruiters", descriptionText: `Stored ${id}` });
+      }
+      installFetch(
+        srBoard("srunavail", ["g-404", "g-msg"], (id) =>
+          id === "g-404" ? textResponse("missing", 404) : jsonResponse({ message: "Posting not available" }),
+        ),
+      );
+
+      const runs = await runTimes(RUNS);
+
+      expect(runs.map((c) => c.hydrateSkipped)).toEqual([2, 2, 2]);
+      for (const id of ["g-404", "g-msg"]) {
+        const kept = (await jobByExt(id))!;
+        expect(kept.lifecycleState).toBe("active");
+        expect(kept.consecutiveAbsences).toBe(0);
+        expect(kept.descriptionText).toBe(`Stored ${id}`);
+      }
+    });
+  });
+
+  describe("politeness pacing — per pacing key, ≥ paceMs after that key's previous board FINISHED", () => {
+    // Each board's fetch records `fetch:<slug>` and advances the injected fake clock by `tookMs` (the
+    // board's duration); the stubbed sleep advances it by what it slept. DB work takes 0 fake ms.
+    const record =
+      (slug: string, body: unknown, tookMs: number) =>
+      (): Response => {
+        paced.events.push(`fetch:${slug}`);
+        paced.now += tookMs;
+        return jsonResponse(body);
+      };
+    const gh = (slug: string, tookMs = 0): Route => ({
+      match: boardMatch(slug),
+      respond: record(slug, { jobs: [] }, tookMs),
+    });
+    const lever = (slug: string, tookMs = 0): Route => ({
+      match: (url) => url.includes(`api.lever.co/v0/postings/${slug}?`),
+      respond: record(slug, [], tookMs), // Lever's envelope is a bare array
+    });
+    const clocked = { paceMs: 500, adapter: NO_RETRY, clock: () => paced.now };
+
+    it("instant same-key neighbours get the full pause; a source change starts at once", async () => {
+      // id order: greenhouse, greenhouse, lever, lever, greenhouse — every board instant (0 ms).
+      await seedCompany({ slug: "pa", active: true });
+      await seedCompany({ slug: "pb", active: true });
+      await seedCompany({ slug: "pc", source: "lever", active: true });
+      await seedCompany({ slug: "pd", source: "lever", active: true });
+      await seedCompany({ slug: "pe", active: true });
+      installFetch([gh("pa"), gh("pb"), lever("pc"), lever("pd"), gh("pe")]);
+
+      const counts = await runIngestion(db, clocked);
+
+      expect(counts).toMatchObject({ processed: 5, ok: 5, failed: 0 });
+      // pa→pb and pc→pd wait the whole 500; pe follows pb's finish by the 500 slept for pd ⇒ no wait.
+      expect(paced.events).toEqual([
+        "fetch:pa",
+        "sleep:500",
+        "fetch:pb",
+        "fetch:pc",
+        "sleep:500",
+        "fetch:pd",
+        "fetch:pe",
+      ]);
+    });
+
+    it("ALTERNATING sources can't burst one host: each key waits only the remainder since its last finish", async () => {
+      // greenhouse, lever, greenhouse, lever, greenhouse — every board takes 100 ms. Adjacency-only pacing
+      // would never sleep here and greenhouse would see a board start 100 ms after the last one finished.
+      await seedCompany({ slug: "aa", active: true });
+      await seedCompany({ slug: "ab", source: "lever", active: true });
+      await seedCompany({ slug: "ac", active: true });
+      await seedCompany({ slug: "ad", source: "lever", active: true });
+      await seedCompany({ slug: "ae", active: true });
+      installFetch([gh("aa", 100), lever("ab", 100), gh("ac", 100), lever("ad", 100), gh("ae", 100)]);
+
+      await runIngestion(db, clocked);
+
+      // aa 0→100, ab 100→200, ac: 100 since aa finished ⇒ sleep 400 ⇒ 600→700, ad: 500 since ab finished
+      // ⇒ no wait ⇒ 700→800, ae: 100 since ac finished ⇒ sleep 400 ⇒ 1200.
+      expect(paced.events).toEqual([
+        "fetch:aa",
+        "fetch:ab",
+        "sleep:400",
+        "fetch:ac",
+        "fetch:ad",
+        "sleep:400",
+        "fetch:ae",
+      ]);
+    });
+
+    it("a SLOW board is followed by the full gap after it FINISHES before the next same-key board", async () => {
+      // sa takes 800 ms. Measured from its START the next greenhouse board could go at once (800 ≥ 500);
+      // measured from its FINISH — the old "≥ paceMs after the previous board" — it must still wait 500.
+      await seedCompany({ slug: "fa", active: true });
+      await seedCompany({ slug: "fb", active: true });
+      installFetch([gh("fa", 800), gh("fb")]);
+
+      await runIngestion(db, clocked);
+
+      expect(paced.events).toEqual(["fetch:fa", "sleep:500", "fetch:fb"]);
+    });
+
+    it("a FAILED board counts as finished for its key too (the host was still hit)", async () => {
+      await seedCompany({ slug: "xa", active: true });
+      await seedCompany({ slug: "xb", active: true });
+      installFetch([
+        {
+          match: boardMatch("xa"),
+          respond: () => {
+            paced.events.push("fetch:xa");
+            return textResponse("err", 500);
+          },
+        },
+        gh("xb"),
+      ]);
+
+      const counts = await runIngestion(db, clocked);
+
+      expect(counts).toMatchObject({ processed: 2, ok: 1, failed: 1 });
+      expect(paced.events).toEqual(["fetch:xa", "sleep:500", "fetch:xb"]);
+    });
+
+    it("the same injected clock drives the maxRunMs budget (stop STARTING boards once it's spent)", async () => {
+      const m1 = await seedCompany({ slug: "m1", active: true });
+      const m2 = await seedCompany({ slug: "m2", source: "lever", active: true });
+      await seedCompany({ slug: "m3", active: true });
+      installFetch([gh("m1", 600), lever("m2", 600), gh("m3", 600)]);
+
+      const counts = await runIngestion(db, { ...clocked, maxRunMs: 1000 });
+
+      // m1 @0→600, m2 @600 (600 < 1000)→1200, m3: 1200 ≥ 1000 ⇒ never started; the cursor stops at m2.
+      expect(counts).toMatchObject({ companies: 3, processed: 2, lastId: m2 });
+      expect(paced.events).toEqual(["fetch:m1", "fetch:m2"]);
+      expect(m1).toBeLessThan(m2);
+    });
+
+    it("a slow board in between means no pause at all", async () => {
+      await seedCompany({ slug: "sa", active: true });
+      await seedCompany({ slug: "sb", source: "lever", active: true });
+      await seedCompany({ slug: "sc", active: true });
+      installFetch([gh("sa"), lever("sb", 800), gh("sc")]); // 800 ms since sa finished ≥ 500
+
+      await runIngestion(db, clocked);
+
+      expect(paced.events).toEqual(["fetch:sa", "fetch:sb", "fetch:sc"]);
+    });
+
+    it("paces by the adapter's pacingKey: two sources declaring one key share the clock", async () => {
+      // Simulate two sources on one vendor's host: lever declares greenhouse's key for this test.
+      const leverAdapter = adapters.lever as { pacingKey?: string };
+      leverAdapter.pacingKey = "greenhouse";
+      try {
+        await seedCompany({ slug: "ka", active: true });
+        await seedCompany({ slug: "kb", source: "lever", active: true });
+        installFetch([gh("ka"), lever("kb")]);
+
+        await runIngestion(db, clocked);
+
+        // A source change, yet the shared key makes lever wait out greenhouse's 500.
+        expect(paced.events).toEqual(["fetch:ka", "sleep:500", "fetch:kb"]);
+      } finally {
+        delete leverAdapter.pacingKey;
+      }
+    });
+  });
+
+  describe("a poison row (a company whose source has no adapter)", () => {
+    it("fails only its own board — the others process and the cursor advances past it", async () => {
+      const p1 = await seedCompany({ slug: "p1", active: true });
+      const p2 = await seedCompany({ slug: "p2", source: "nonesuch" as SourceName, active: true });
+      const p3 = await seedCompany({ slug: "p3", active: true });
+      installFetch([boardRoute("p1", [ghJob(1)]), boardRoute("p3", [ghJob(3)])]);
+
+      // Default pacing (no paceMs override): nothing about p2 — its adapter lookup included — may throw
+      // outside its own board's try.
+      const boards: IngestBoardResult[] = [];
+      const counts = await runIngestion(db, {
+        adapter: NO_RETRY,
+        clock: () => paced.now,
+        onBoard: (b) => boards.push(b),
+      });
+
+      expect(counts).toMatchObject({ companies: 3, processed: 3, ok: 2, failed: 1, lastId: p3 });
+      expect((await jobsFor(p1)).length).toBe(1);
+      expect((await jobsFor(p3)).length).toBe(1);
+      expect(p2).toBeGreaterThan(p1);
+      const runs = await allSourceRuns();
+      expect(runs[0]!.status).toBe("ok"); // isolated, not an infrastructural failure
+      // A clear, shape-only cause (no opaque TypeError), exactly.
+      expect(runs[0]!.errorSample).toBe('nonesuch:p2 unknown source "nonesuch"');
+      expect(boards[1]).toMatchObject({ slug: "p2", ok: false, error: 'unknown source "nonesuch"' });
+    });
+  });
+
+  describe("company id from listCompanies (no per-board upsertCompany)", () => {
+    it("never calls upsertCompany, lands jobs on the listed id, and leaves the companies rows unchanged", async () => {
+      const full = await seedCompany({ slug: "fullco", active: true });
+      const bare = await seedCompany({ slug: "bareco", active: true });
+      installFetch([boardRoute("fullco", [ghJob(1)]), boardRoute("bareco", [])]);
+      const xminOf = async (id: number): Promise<string> => {
+        const rows = await db
+          .select({ xmin: sql<string>`xmin::text` })
+          .from(companies)
+          .where(eq(companies.id, id));
+        return rows[0]!.xmin;
+      };
+      const before = await db.select().from(companies).orderBy(companies.id);
+      const bareXmin = await xminOf(bare);
+
+      const counts = await runIngestion(db, { paceMs: 0, adapter: NO_RETRY });
+
+      expect(counts).toMatchObject({ ok: 2, failed: 0, jobs: 1 });
+      expect(vi.mocked(upsertCompany).mock.calls.length).toBe(0); // (mock.calls — see the failed-write test)
+      expect((await jobsFor(full)).map((j) => j.externalId)).toEqual(["1"]);
+      // The DB state the old path produced (its upsert wrote no column): no row added, nothing changed bar
+      // the last_ingested_at markCompanyIngested stamps on the non-empty board...
+      const after = await db.select().from(companies).orderBy(companies.id);
+      const sansIngested = (rows: typeof before) =>
+        rows.map(({ lastIngestedAt: _stamped, ...rest }) => rest);
+      expect(sansIngested(after)).toEqual(sansIngested(before));
+      // ...and the empty board's row was not written AT ALL: same tuple version. The old no-op
+      // `ON CONFLICT DO UPDATE SET slug = excluded.slug` wrote a new version — a dead tuple — every tick.
+      expect(await xminOf(bare)).toBe(bareXmin);
     });
   });
 });

@@ -4,7 +4,7 @@ import { parseEnforceFlag } from "@opusfinder/shared";
 import { runIngestion } from "@opusfinder/sources";
 
 /**
- * The opusfinder scrapers Worker: two scheduled (cron) handlers — ingestion (frequent) and discovery
+ * The opusfinder scrapers Worker: two scheduled (cron) handlers — ingestion (every 2 h) and discovery
  * (weekly) — dispatched on `controller.cron`. Each builds the neon-http client with
  * `createDb(env.DATABASE_URL)` (fetch-only, no `process.env`) and calls an already-Worker-forward
  * library (`runIngestion` / `runDiscovery`) that owns its own `source_runs` row.
@@ -31,7 +31,7 @@ interface Env {
   DATABASE_URL: string;
   /** Chunk-cursor store for the chunked-cron ingestion lane (a KV namespace binding). */
   INGEST_CURSOR: KVNamespace;
-  /** Boards per ingestion tick (the wall/subrequest budget). Default 150. */
+  /** Boards per ingestion tick (the wall/subrequest budget). Default 250 (see DEFAULT_INGEST_LIMIT). */
   INGEST_LIMIT?: string;
   /** External-watchdog ping URL (a `wrangler secret`) — the liveness heartbeat. OPTIONAL: unset ⇒ skipped
    *  silently (redeploy before the watchdog account exists). See {@link pingWatchdog}. */
@@ -54,13 +54,18 @@ interface Env {
   STALE_SWEEP_TTL_DAYS?: string;
 }
 
-// Must equal the wrangler.toml cron strings exactly (esp. the weekday — "SUN", not "0").
-const INGEST_CRON = "0 * * * *";
+// Must equal the wrangler.toml cron strings exactly (esp. the weekday — "SUN", not "0"); dispatch.test.ts
+// pins all three (toml, these constants, the routing) together.
+// Ingestion every 2 h (at :00 of even UTC hours): Neon wakes 12×/day instead of 24, and each wake costs the
+// tick PLUS a fixed 5-min autosuspend tail. A bigger chunk per tick (INGEST_LIMIT) keeps each board
+// re-fetched nearly as often as the old hourly × 150 — wrangler.toml has the sizing arithmetic.
+const INGEST_CRON = "0 */2 * * *";
 const DISCOVERY_CRON = "0 3 * * SUN";
 
-const DEFAULT_INGEST_LIMIT = 150;
+// Matches wrangler.toml's INGEST_LIMIT (the fallback when the var is unset or invalid); sized there.
+const DEFAULT_INGEST_LIMIT = 250;
 // Upper bound: a misconfigured INGEST_LIMIT (e.g. "50000") is clamped so one tick can't blow the
-// subrequest/wall budget (~500 boards x up to ~20 subrequests ~= the Workers Paid 10K cap; §6).
+// subrequest/wall budget (~500 boards x up to ~20 subrequests; wrangler.toml [limits] sets the cap).
 const MAX_INGEST_LIMIT = 500;
 // Per-board posting cap — the real per-invocation budget guard. The ~20-subrequests/board assumption
 // above breaks on a mega-board: SmartRecruiters boschgroup (~4.6k postings, each an N+1 hydrate fetch)

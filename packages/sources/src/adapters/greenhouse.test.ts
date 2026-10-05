@@ -54,8 +54,8 @@ describe("greenhouseAdapter.mapItem", () => {
     // numeric id is stringified before branding.
     expect(job?.externalId).toBe("4567890");
     expect(job?.postedAt?.toISOString()).toBe("2026-06-01T12:00:00.000Z");
-    // raw is preserved by identity for downstream reprocessing.
-    expect(job?.raw).toBe(RAW_JOB);
+    // The raw source object is NOT carried (jobs.raw isn't stored).
+    expect(job).not.toHaveProperty("raw");
   });
 
   it("maps an id of 0 (falsy but finite — a `!id` guard would wrongly drop it)", () => {

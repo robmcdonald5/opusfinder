@@ -58,14 +58,16 @@ export interface SweepOptions {
 /**
  * Soft-close jobs that have disappeared from a company's board (streak hysteresis) and revive any that
  * reappeared — in ONE race-safe UPDATE, scoped to ONE company (NEVER a run-level seen-set, the cron
- * processes only a ≤150-board chunk per tick). `presentExternalIds` is the de-duplicated external_id list
- * the board's fetch just produced (== what upsertJobs persisted).
+ * processes only a chunk of boards per tick). `presentExternalIds` is the de-duplicated external_id list
+ * the board's fetch just LISTED — what upsertJobs persisted PLUS any `contentMissing` posting it left
+ * as stored (or did not insert): a posting whose detail fetch failed this run was still listed, so it is
+ * live and must never count as absent.
  *
  * Lives OUTSIDE upsertJobs because a reappearing closed job must revive even when its content is
  * byte-unchanged, which upsertJobs's content-gated setWhere cannot do.
  *
  * HARD no-op on an empty present set: `<> ALL('{}')` is TRUE for every row and would close the whole
- * board — belt-and-suspenders behind the `total > 0` call-gate.
+ * board — belt-and-suspenders behind the caller's non-empty-fetch gate.
  */
 export async function sweepLifecycle(
   db: Db,
@@ -236,7 +238,8 @@ export function closeJobsByIds(
 
 /**
  * The completeness-INDEPENDENT positive "I saw this job live" writer, called per board from runIngestion
- * for the de-duplicated external_ids a fetch returned. It (1) refreshes last_seen_at (the staleness clock
+ * for the de-duplicated external_ids a fetch LISTED — including a `contentMissing` posting upsertJobs did
+ * not write (a failed detail fetch is not an absence). It (1) refreshes last_seen_at (the staleness clock
  * {@link sweepStaleJobs} keys on) and (2) REVIVES any reappearing closed job (lifecycle_state→'active',
  * closed_at→NULL, streak→0). Runs for EVERY board, capped or not — UNLIKE the set-difference sweep
  * (sweepLifecycle), which is skipped on a capped/partial fetch; this is the path that lets a capped
@@ -303,7 +306,9 @@ export async function markJobsPresent(
 
 /**
  * Stamp companies.last_ingested_at = now() to record a SUCCESSFUL, non-empty fetch of this board.
- * runIngestion calls it only when total>0 (an empty/ambiguous fetch must not certify health).
+ * runIngestion calls it only when the board listed ≥1 posting (an empty/ambiguous fetch must not certify
+ * health) — even if every listed posting's detail fetch failed: the list, which is what presence and the
+ * absence sweep key on, was fetched.
  * {@link sweepStaleJobs} requires this stamp to be recent, so a board that fails or empties for >TTL is
  * not certified and its still-live jobs are SPARED from the timer.
  */

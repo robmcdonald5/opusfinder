@@ -20,6 +20,17 @@ export interface SourceAdapter {
   readonly source: SourceName;
 
   /**
+   * Ingestion's politeness group: runIngestion starts a board of one pacing key at least `paceMs` after
+   * that key's previous board finished (see {@link pacingKeyOf}). OMIT ⇒ the source itself. Two adapters whose boards hit the SAME
+   * request host (or one vendor's rate limiter) MUST declare the same key. Audit (2026-10): no two share
+   * one — boards-api.greenhouse.io, api.lever.co, api.ashbyhq.com, apply.workable.com,
+   * api.smartrecruiters.com, api.gem.com, jsapi.recruiterbox.com (Trakstar), and the per-tenant
+   * {slug}.recruitee.com / {slug}.pinpointhq.com (two different vendors' domains) — so every adapter
+   * defaults.
+   */
+  readonly pacingKey?: string;
+
+  /**
    * ATS-specific slug canonicalization, run ONCE before branding. Greenhouse/Workable
    * lowercase; Lever/Ashby/SmartRecruiters preserve case (their IDs are case-sensitive,
    * or apply URLs echo the casing). MUST end in `companySlug(...)` so the universal floor applies.
@@ -57,9 +68,11 @@ export interface SourceAdapter {
   /**
    * Map ONE raw item → NormalizedJob, or `null` to skip+count (never throw on bad data).
    * MUST emit a FULLY-VALID job even for hydrate-only sources — e.g. SmartRecruiters
-   * reconstructs `applyUrl` and sets `descriptionText: ""` here, which `hydrate` then
-   * patches. That is what lets a hydrate failure degrade gracefully (runAdapter keeps the
-   * already-valid job) with no plumbing changes.
+   * reconstructs `applyUrl` and sets a placeholder `descriptionText: ""` here, which `hydrate`
+   * then patches. That is what lets a hydrate failure degrade gracefully: runAdapter keeps the
+   * listed job (so ingestion still counts it present) but flags it `contentMissing`, and upsertJobs
+   * never writes a flagged job's placeholder content over the stored posting.
+   * Never put the raw item on the job — it is not stored (see `hydrate` for the one consumer).
    */
   mapItem(raw: unknown, ctx: SourceContext): NormalizedJob | null;
 
@@ -72,10 +85,13 @@ export interface SourceAdapter {
 
   /**
    * OPTIONAL per-item enrichment via a SECOND fetch (the N+1 case — SmartRecruiters).
-   * Given an already-mapped job + its raw item, fetch extra data through the injected
-   * resilient `fetchJson` and return a PATCH to merge. OMIT ⇒ no second fetch (Greenhouse,
-   * Lever, Ashby; Workable hydrates inline via a `jobsRequest` query param instead).
-   * runAdapter runs these through a bounded-concurrency pool and tolerates per-item failure.
+   * Given an already-mapped job + its raw list item (handed over directly — the job carries no
+   * raw), fetch extra data through the injected resilient `fetchJson` and return a PATCH to merge.
+   * OMIT ⇒ no second fetch (Greenhouse, Lever, Ashby; Workable hydrates inline via a `jobsRequest`
+   * query param instead). runAdapter runs these through a bounded-concurrency pool and tolerates
+   * per-item failure: a THROW keeps the listed job flagged `contentMissing` (still present). So a
+   * hydrate whose response carries no content MUST throw, never return an empty patch — an empty
+   * patch "succeeds" and the mapItem placeholder would be persisted as the posting's real content.
    */
   hydrate?(
     job: NormalizedJob,
