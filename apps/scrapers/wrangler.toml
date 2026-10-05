@@ -66,15 +66,20 @@ crons = [
 #     pace sleep (149 x 0.5 s = 75 s, ~24% of the tick) => ~1.58 s/board of ATS fetch + ~5 neon-http
 #     round trips + CPU.
 #   - the dropped per-board upsertCompany round trip   => ~ -0.1 s  (~1.48 s/board)
-#   - pace per source by TIME (a board waits only what's left of 0.5 s since its source's previous board
-#     finished) => at most 0.5 s x (share of same-source neighbours), less when other boards ran in
-#     between; budgeted at a conservative 0.25 s/board
-#   => ~1.7 s/board: 250 boards ~ 7.2 min (72% of the budget, so a tick ~40% slower than the median still
-#      completes); 300 would be ~8.7 min (87%), too close to the stop to call "normal".
+#   - pace per pacing key, from the key's previous board's FINISH (a board waits whatever is left of 0.5 s):
+#     a board right after a same-key neighbour waits the FULL 0.5 s; one after other-key boards waits only
+#     if they took < 0.5 s together (short/failed boards — a typical ~1.5 s board clears it), allowed for
+#     at ~0.05 s/board. With f = the share of same-key neighbours (set by how the id-ordered chunk clusters
+#     by source): pace ~ 0.5 s x f + 0.05 s
+#   => f = 30%: ~1.68 s/board -> 250 boards ~ 7.0 min (70% of MAX_RUN_MS; a tick ~40% slower still fits)
+#      f = 80%: ~1.93 s/board -> 250 boards ~ 8.0 min (80%; ~25% slower still fits)
+#      (even f = 100%, every board paced the full 0.5 s: 1.98 s/board -> ~8.3 min, 83%)
+#   so 250 stays: the high end is under ~85% of the budget. 300 would be ~8.4-9.7 min (84-97%), too close
+#   to the stop to call "normal". These are ESTIMATES: real tick times in `pnpm runs` (started/finished)
+#   decide any raise — raise only once real ticks finish well short of 10 min.
 # 250 x 12 ticks = 3,000 board fetches/day vs 3,600 at hourly x 150, so a full sweep of the active boards
-# takes ~20% longer (N/250 x 2 h vs N/150 x 1 h). Raise it once `pnpm runs` (started/finished) shows real
-# ticks finishing well short of 10 min. History: 150 -> 75 (PR #28, a Neon 512MB-outage misdiagnosis —
-# the real cause was jobs.raw storage bloat, fixed in PR #29) -> 150 (2026-06-17). The per-tick
+# takes ~20% longer (N/250 x 2 h vs N/150 x 1 h). History: 150 -> 75 (PR #28, a Neon 512MB-outage
+# misdiagnosis — the real cause was jobs.raw storage bloat, fixed in PR #29) -> 150 (2026-06-17). The per-tick
 # protections are [limits] above + the per-tick Worker budget bounding (PR #27). Matches
 # DEFAULT_INGEST_LIMIT in src/index.ts; clamped to MAX_INGEST_LIMIT (500) there.
 INGEST_LIMIT = "250"
