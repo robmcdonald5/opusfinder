@@ -113,7 +113,7 @@ export interface HealthCost {
 export interface HealthSignals {
   /** (a) hours since the last `status='ok'` ingestion run; `null` if none ever succeeded. */
   ingestionAgeH: number | null;
-  /** (b) the latest ingestion run's status + `counts.failed` over the boards actually ATTEMPTED
+  /** (b) the latest FINISHED ingestion run's status + `counts.failed` over the boards actually ATTEMPTED
    *  (`counts.processed`), falling back to `counts.companies` (the chunk size) when `processed` is
    *  absent/0. Divide by processed — not companies — to keep the ratio exact on a budget-truncated tick
    *  (`processed < companies`), where `failed/companies` dilutes the real failure rate. `status` also lets
@@ -205,9 +205,12 @@ export async function gatherHealthSignals(
         SELECT extract(epoch FROM (now() - max(finished_at))) / 3600.0 AS age_h
         FROM source_runs WHERE pipeline = 'ingestion' AND status = 'ok'
       `),
-      // (b) + (i) latest ingestion run's status, fail-ratio inputs (see latestIngestStatus) and hydrate-skip
-      //     inputs — one row, no extra query. `::numeric` (not `::int`) so a non-integer value can never abort
-      //     the query and take the checker dark.
+      // (b) + (i) latest FINISHED ingestion run's status, fail-ratio inputs (see latestIngestStatus) and
+      //     hydrate-skip inputs — one row, no extra query. A `running` row is skipped: its counts are still the
+      //     `{}` default, so reading it would score an in-flight tick as a healthy 0 — and the health cron
+      //     fires at :10, inside a tick that runs long. (A zombie running row is terminalized `error` by the
+      //     next startRun's failStaleRuns, and then counts.) `::numeric` (not `::int`) so a non-integer value
+      //     can never abort the query and take the checker dark.
       db.execute(sql`
         SELECT status,
                coalesce((counts->>'failed')::numeric, 0)          AS failed,
@@ -215,7 +218,8 @@ export async function gatherHealthSignals(
                coalesce((counts->>'companies')::numeric, 0)       AS companies,
                coalesce((counts->>'hydrateSkipped')::numeric, 0)  AS hydrate_skipped,
                coalesce((counts->>'hydrateListed')::numeric, 0)   AS hydrate_listed
-        FROM source_runs WHERE pipeline = 'ingestion' ORDER BY started_at DESC LIMIT 1
+        FROM source_runs WHERE pipeline = 'ingestion' AND status <> 'running'
+        ORDER BY started_at DESC LIMIT 1
       `),
       // (c) discovery window — last SUCCESS (finished_at WHERE status='ok'), mirroring (a).
       db.execute(sql`

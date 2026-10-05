@@ -110,7 +110,7 @@ Phase 12a stood up the **headless production runtime**. `apps/web` became a real
 (svelte 5 / `@sveltejs/kit` 2 / `adapter-vercel` 6 / vite 8) whose only two routes are `/api/inngest`
 (`inngest/sveltekit`, hosting the digest functions + the F8 backfills) and `/api/health` (over the pure
 `checkHealth` core) — Node serverless (not edge; `maxDuration` 300), deployed to Vercel with Inngest
-Cloud. Three new pieces ride this runtime: a **cadence cron** (`makeCadenceOrchestrator`, `0 13 * * *`,
+Cloud. Three new pieces ride this runtime: a **cadence cron** (`makeCadenceOrchestrator`, `0 13 * * *` — `10 12 * * *` since 2026-10,
 `singleton:skip`) that emits `digest/run.requested {trigger:'cron'}` so `listDigestRecipients`'s opt-in
 `cadenceDue` predicate picks the daily/weekly/monthly-due users (manual `pnpm digest --all` unchanged) —
 with a new `markDigestConsidered` repo fn stamping the no-send skip paths for cadence backoff; the **F8

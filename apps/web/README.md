@@ -7,7 +7,8 @@ The SvelteKit app — the production runtime host (Phase 12). No React/JSX; this
 A minimal SvelteKit skeleton with two routes: the **Inngest serve endpoint**
 (`src/routes/api/inngest/+server.ts`, `inngest/sveltekit`) and a **`/api/health` endpoint** (over the
 pure `checkHealth` core). The serve endpoint hosts the Phase-10 digest functions, the daily
-cadence cron (`0 13 * * *`, `makeCadenceOrchestrator`), and the F8 embedding backfill drain
+cadence cron (`10 12 * * *` — 12:10 UTC, riding the 12:00 ingestion tick; `0 13 * * *` until 2026-10 —
+`makeCadenceOrchestrator`), and the F8 embedding backfill drain
 (`0 4 * * *`) on Inngest Cloud — **deployed live on Vercel + Inngest Cloud**. There are **no
 user-facing pages yet** — friends are onboarded via the CLIs (`pnpm user:create` → `pnpm ingest-cv` → `pnpm user:set-prefs`).
 

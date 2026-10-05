@@ -569,17 +569,26 @@ function makePerUser(deps: DigestDeps) {
 }
 
 /**
+ * The daily digest fire time: 12:10 UTC (Inngest cron is UTC) = 8:10am US-Eastern in summer (EDT), 7:10am
+ * in winter (EST). It was 13:00; moved to 10 min after the 12:00 ingestion tick starts (the scrapers
+ * Worker's 2-hourly cron), so the digest's Neon work rides that tick's wake instead of paying its own
+ * 5-min autosuspend tail. The daily window (20 h, `listDigestRecipients`) still catches every user once a
+ * day across the one-time 50-min shift.
+ */
+export const DIGEST_CADENCE_CRON = "10 12 * * *";
+
+/**
  * The cadence cron: a daily {cron} that EMITS `digest/run.requested {trigger:'cron'}`, reusing the
  * orchestrator's recipient sweep + fan-out. The orchestrator applies the cadence "due now" predicate
  * (only for trigger='cron'), so each user is sent on their own cadence (daily/weekly/monthly) while the
  * manual `pnpm digest --all` path stays cadence-agnostic. Emits only (no deps); all the work is the
- * orchestrator's. 13:00 UTC ≈ 8am US-Eastern (Inngest cron is UTC). The cadence WINDOWS that decide "due"
- * live in `listDigestRecipients` (db); change the FIRE TIME here.
+ * orchestrator's. Fires at DIGEST_CADENCE_CRON. The cadence WINDOWS that decide "due" live in
+ * `listDigestRecipients` (db); change the FIRE TIME here.
  */
 function makeCadenceOrchestrator() {
   return inngest.createFunction(
     { id: "digest-cadence", singleton: { mode: "skip" } },
-    { cron: "0 13 * * *" },
+    { cron: DIGEST_CADENCE_CRON },
     async ({ step }) => {
       await step.sendEvent("emit-cadence-run", {
         name: "digest/run.requested",

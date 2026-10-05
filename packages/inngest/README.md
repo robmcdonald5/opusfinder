@@ -51,7 +51,8 @@ integration (email ships in Phase 11 on the local dev runtime — locked at Phas
     so the run row records **dispatch**, not per-user completion (those land on `digests`). A step that
     exhausts its retries is caught and terminalized onto the run row (`status: 'error'` +
     `error_sample`) before the failure is rethrown.
-  - **Cadence** (`makeCadenceOrchestrator`, `{ cron: "0 13 * * *", singleton: { mode: "skip" } }`): the
+  - **Cadence** (`makeCadenceOrchestrator`, `{ cron: "10 12 * * *", singleton: { mode: "skip" } }` — 12:10 UTC,
+    10 min after the 12:00 ingestion tick so it rides that Neon wake; it was `0 13 * * *` until 2026-10): the
     Phase-12a daily tick. It just emits `digest/run.requested` with `{ trigger: 'cron' }` (reusing the
     orchestrator above rather than a parallel pipeline), so `listDigestRecipients`'s opt-in `cadenceDue`
     predicate (daily 20h / weekly 6d / monthly 28d off `last_digest_sent_at`) decides who is actually due
@@ -148,7 +149,8 @@ integration (email ships in Phase 11 on the local dev runtime — locked at Phas
   H1b note: it is **no longer purely read-only** — an enforce-firing check clear of the cooldown WRITES one
   `health_alerts` row + sends one email; `process.exitCode = 1` whenever unhealthy, even if cooldown-suppressed.
 - `src/health-check.ts` + `src/health-deps.ts` (Phase H1b) — `createHealthFunctions(buildHealthDeps())` is the
-  unattended **`health-check-alert`** Inngest cron fn (`*/30`, `singleton: skip`): `checkHealth` → dedup via
+  unattended **`health-check-alert`** Inngest cron fn (`10 */2 * * *` — 10 min after each 2-hourly ingestion tick,
+  so its reads ride that Neon wake; it was `*/30` until 2026-10 — `singleton: skip`): `checkHealth` → dedup via
   `health_alerts` → `sendHealthAlert` a named-subsystem operator alert, page-once-per-`HEALTH_ALERT_COOLDOWN_H`
   (default 24h). Served alongside the digest + F8 functions in prod (`apps/web`). The CLI and the fn share
   `src/health-alert.ts` (`alertOnHealth` + the shape-only `formatMetric`/`checkDetail`) so they cannot drift on
@@ -204,5 +206,5 @@ Per CLAUDE.md (external-platform integration), the work splits cleanly:
 | All package code, the local dev server (`pnpm inngest:dev` — keyless), the end-to-end gate | **Agent** |
 | Provide `DATABASE_URL` + `ANTHROPIC_API_KEY` (already in place since Phase 9) | **User** |
 | **Resend account + API key + verified sending domain (SPF/DKIM/DMARC) + `EMAIL_FROM`** | **User (Phase 11)** |
-| Production serve route (SvelteKit-on-Vercel, `apps/web`) + the cadence cron (`0 13 * * *`) + the F8 backfill cron | Built + deployed (12a; live 2026-06-17) |
+| Production serve route (SvelteKit-on-Vercel, `apps/web`) + the cadence cron (`10 12 * * *`; `0 13 * * *` until 2026-10) + the F8 backfill cron | Built + deployed (12a; live 2026-06-17) |
 | **Inngest Cloud account + app sync; `INNGEST_SIGNING_KEY`/`INNGEST_EVENT_KEY` auto-provisioned by the Inngest↔Vercel integration (`INNGEST_DEV` UNSET)** | Done (User, deployed 2026-06-17) |
