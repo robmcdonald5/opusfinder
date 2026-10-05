@@ -13,7 +13,7 @@ import type { CompanySlug, JobId, NormalizedJob, SourceName } from "@opusfinder/
 
 import type { Db } from "../client";
 import { companies, jobs } from "../schema";
-import { NUL, signatureSql } from "./sql";
+import { NUL, signatureSql, stripNul } from "./sql";
 
 /** One row of the companies table, as the ingestion driver needs it (id + identity). */
 export interface CompanyRow {
@@ -277,17 +277,25 @@ export async function upsertJobs(
  * Point the STORED rows of `contentMissing` postings at `companyId` — the board listing them now — and
  * write nothing else (never a content column). A posting that moved boards while its detail fetch fails
  * would otherwise keep its OLD company_id: markJobsPresent (company-scoped) would miss it on the new board
- * and the old board's absence sweep would close a live job. One UPDATE, issued only when a board has such
- * postings, and only rows that actually moved are rewritten; a posting with no stored row matches nothing.
+ * and the old board's absence sweep would close a live job. One UPDATE, scoped to exactly the listed
+ * (source, external_id) pairs, and only rows that actually moved are rewritten; a posting with no stored
+ * row matches nothing. An EMPTY list returns at once: with no pairs the OR would vanish and the UPDATE
+ * would move every row of every other board onto this one. (Exported for its own scope tests.)
  */
-async function moveToListingBoard(
+export async function moveToListingBoard(
   db: Db,
   companyId: number,
   list: NormalizedJob[],
 ): Promise<void> {
+  if (list.length === 0) return;
   const idsBySource = new Map<SourceName, JobId[]>();
   for (const job of list) {
-    idsBySource.set(job.source, [...(idsBySource.get(job.source) ?? []), job.externalId]);
+    // NUL-stripped like the lifecycle writers' present sets: Postgres text rejects U+0000, and one bad id
+    // would fail the whole statement (and with it the board).
+    const id = stripNul(job.externalId) as JobId;
+    const ids = idsBySource.get(job.source);
+    if (ids) ids.push(id);
+    else idsBySource.set(job.source, [id]);
   }
   const listed = [...idsBySource].map(([source, ids]) =>
     and(eq(jobs.source, source), inArray(jobs.externalId, ids)),

@@ -12,6 +12,7 @@ import { createTestDb } from "@test/db/pglite";
 import { truncate } from "@test/db/truncate";
 import { oneHot } from "@test/db/vectors";
 
+import { moveToListingBoard } from "./jobs";
 import { NUL, normalizeSignatureText } from "./sql";
 
 // Deterministic seed factory — same args always produce a byte-identical NormalizedJob, so the
@@ -450,6 +451,40 @@ describe("upsertCompany + upsertJobs — board persistence semantics (integratio
         updatedAt: expect.any(Date) as Date,
       });
       expect((await jobRow("ext-mv")).updatedAt.getTime()).toBeGreaterThan(SENTINEL_2020.getTime());
+    });
+
+    it("moves ONLY the listed (source, external_id) rows — never another board's row, nor the same id on another source", async () => {
+      const oldBoard = await upsertCompany(db, companySlug("acme"), "greenhouse");
+      const newBoard = await upsertCompany(db, companySlug("acme-new"), "greenhouse");
+      const otherBoard = await upsertCompany(db, companySlug("unrelated"), "greenhouse");
+      const leverBoard = await upsertCompany(db, companySlug("acme"), "lever");
+      await upsertJobs(db, oldBoard, [job("x-1")]); // the listed posting: must move
+      await upsertJobs(db, otherBoard, [job("y-9")]); // same source, unrelated board: must stay
+      await upsertJobs(db, leverBoard, [job("x-1", { source: "lever" })]); // same id, other source: must stay
+
+      await upsertJobs(db, newBoard, [missing("x-1")]); // greenhouse x-1, detail failed
+
+      const boardOf = async (source: "greenhouse" | "lever", externalId: string) =>
+        (
+          await db
+            .select({ companyId: jobs.companyId, source: jobs.source })
+            .from(jobs)
+            .where(eq(jobs.externalId, jobId(externalId)))
+        ).find((r) => r.source === source)!.companyId;
+      expect(await boardOf("greenhouse", "x-1")).toBe(newBoard);
+      expect(await boardOf("greenhouse", "y-9")).toBe(otherBoard);
+      expect(await boardOf("lever", "x-1")).toBe(leverBoard);
+    });
+
+    it("moveToListingBoard with an EMPTY list touches nothing (no pairs must never mean every row)", async () => {
+      const boardA = await upsertCompany(db, companySlug("acme"), "greenhouse");
+      const boardB = await upsertCompany(db, companySlug("beta-inc"), "greenhouse");
+      await upsertJobs(db, boardA, [job("e-1"), job("e-2")]);
+      const before = await db.select().from(jobs).orderBy(jobs.id);
+
+      await moveToListingBoard(db, boardB, []);
+
+      expect(await db.select().from(jobs).orderBy(jobs.id)).toEqual(before);
     });
 
     it("does not insert a brand-new contentMissing posting, while its board's complete postings still land", async () => {
