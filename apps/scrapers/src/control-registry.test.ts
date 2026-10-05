@@ -37,10 +37,16 @@ async function tick(cron: string, env: Record<string, string> = {}): Promise<voi
 const argsOf = (fn: typeof mocks.runIngestion) =>
   fn.mock.calls.at(-1)?.[1] as Record<string, unknown> | undefined;
 
-/** The board limit one ingest tick runs with when the knob's env var holds `raw` (unset when undefined). */
+/**
+ * The board limit one ingest tick runs with when the knob's env var holds `raw` (unset when undefined).
+ * Cleared first and asserted to have run exactly once: a tick that skipped ingestion must fail here, not
+ * hand back the previous call's limit.
+ */
 async function ingestLimit(raw?: string): Promise<unknown> {
   const knob = stages.ingest.knobs.boardsPerTick;
+  mocks.runIngestion.mockClear();
   await tick(stages.ingest.trigger.cron, raw === undefined ? {} : { [knob.legacyEnv]: raw });
+  expect(mocks.runIngestion).toHaveBeenCalledTimes(1);
   return argsOf(mocks.runIngestion)?.limit;
 }
 
