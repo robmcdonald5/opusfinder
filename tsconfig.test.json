@@ -17,8 +17,9 @@
   // so apps/scrapers is NOT globbed here (and is excluded so a test import can't pull its src in either).
   // The control Worker's suites ARE node-side (Miniflare + esbuild drive the real Worker in workerd over
   // HTTP/RPC), so they are checked here. The only Worker src they import directly is runtime-neutral
-  // (key-cache.ts, auth-config.ts: no Workers or Node globals), so it compiles under either type set; the
-  // rest of its src is checked by apps/control/tsconfig.json under Workers types (in `pnpm typecheck:test`).
+  // (key-cache.ts, auth-config.ts, limits.ts: no Workers or Node globals), so it compiles under either
+  // type set; the rest of its src is checked by apps/control/tsconfig.json under Workers types (in
+  // `pnpm typecheck:test`).
   "include": ["test/**/*.ts", "packages/*/src/**/*.test.ts", "apps/control/src/**/*.test.ts"],
   "exclude": ["**/node_modules", "**/dist", "**/.svelte-kit", "**/.wrangler", "apps/scrapers"]
 }

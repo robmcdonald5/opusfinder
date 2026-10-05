@@ -11,6 +11,8 @@ import {
 } from "@opusfinder/control";
 import { ORIGIN, startControl, type ControlHarness } from "@test/control/harness";
 
+import { MAX_BODY_BYTES } from "./limits";
+
 // The JSON API against a real local D1: seed = registry, classify() enforced per role, the approval queue,
 // the ledger, trips — and the C3 invariant that a state change and its change_log row land together or
 // not at all.
@@ -351,26 +353,43 @@ describe("POST /v1/changes", () => {
     expect(res.status).toBe(413);
   });
 
-  it("caps an undeclared (chunked) body while streaming it", async () => {
-    // No Content-Length: the up-front check can't fire, so only the running byte count stops it.
-    const chunk = new TextEncoder().encode(`"${"x".repeat(4000)}",`);
-    let sent = 0;
+  it("caps an undeclared (chunked) body while streaming it", { timeout: 15_000 }, async () => {
+    // No Content-Length: the up-front check can't fire, so only the running byte count stops it. The
+    // stream sends exactly one byte over the cap, then holds itself open (pull() waits) until the
+    // response is in. So nothing is left to write once the Worker answers (no write to a closed socket),
+    // and only a Worker that refuses MID-STREAM can answer at all: one that read to EOF before checking
+    // the size would wait forever on the held stream, and the test times out.
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let sent = false;
     const stream = new ReadableStream<Uint8Array>({
-      pull(controller) {
-        if (sent++ < 10) controller.enqueue(chunk);
-        else controller.close();
+      async pull(controller) {
+        if (!sent) {
+          sent = true;
+          controller.enqueue(new Uint8Array(MAX_BODY_BYTES + 1).fill(0x20)); // JSON whitespace
+          return;
+        }
+        await held;
+        controller.close();
       },
     });
-    const res = await h.mf.dispatchFetch(`${ORIGIN}/v1/changes`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "cf-access-jwt-assertion": await h.token("owner"),
-      },
-      body: stream,
-      duplex: "half",
-    } as never);
-    expect(res.status).toBe(413);
+    try {
+      const res = await h.mf.dispatchFetch(`${ORIGIN}/v1/changes`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "cf-access-jwt-assertion": await h.token("owner"),
+        },
+        body: stream,
+        duplex: "half",
+      } as never);
+      expect(res.status).toBe(413);
+      expect((await body(res as unknown as Response)).error.code).toBe("too_large");
+    } finally {
+      release();
+    }
   });
 
   it.each([

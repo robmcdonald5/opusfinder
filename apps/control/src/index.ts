@@ -5,6 +5,7 @@ import type { Role } from "@opusfinder/control";
 import { identify, type Caller } from "./auth";
 import { AUDIT_NAME_RE } from "./auth-config";
 import type { Env } from "./env";
+import { MAX_BODY_BYTES } from "./limits";
 import { renderError, renderPage } from "./page";
 import {
   ApiError,
@@ -50,7 +51,6 @@ const SECURITY_HEADERS: Record<string, string> = {
   "referrer-policy": "no-referrer",
   "cache-control": "no-store",
 };
-const MAX_BODY_BYTES = 16 * 1024;
 
 function withHeaders(
   body: string | null,

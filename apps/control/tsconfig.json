@@ -12,7 +12,8 @@
   },
   // Shippable Worker surface. The *.integration.test.ts suites beside it are NODE-side harnesses
   // (Miniflare, esbuild, node:fs) — type-checked by the root tsconfig.test.json under node types instead.
-  // They never import this src, so the two ambient environments never share a compilation.
+  // The only src they import is runtime-neutral (limits.ts: no Workers or Node globals), so no file that
+  // needs one ambient environment is ever compiled under the other.
   "include": ["src/**/*.ts"],
   "exclude": ["node_modules", ".wrangler", "dist", "src/**/*.test.ts"]
 }
