@@ -13,7 +13,7 @@ import type { CompanySlug, NormalizedJob, SourceName } from "@opusfinder/shared"
 
 import type { Db } from "../client";
 import { companies, jobs } from "../schema";
-import { NUL, signatureSql } from "./sql";
+import { NUL, resultRows, signatureSql } from "./sql";
 
 /** One row of the companies table, as the ingestion driver needs it (id + identity). */
 export interface CompanyRow {
@@ -86,6 +86,11 @@ export async function upsertCompany(
  */
 const UPSERT_BATCH_SIZE = 500;
 
+/** Postgres regex for a BLANK description (empty or whitespace only) — the empty-description guard's one
+ *  definition, used SQL-side so it matches exactly what Postgres stores. POSIX `[[:space:]]` (no
+ *  backslash: inside a `sql` template a `\s` would cook to a bare `s` — see signatureSql). */
+const BLANK_RE = sql.raw(`'^[[:space:]]*$'`);
+
 /** What {@link upsertJobs} did with a board's postings (all counts are DISTINCT postings). */
 export interface UpsertJobsResult {
   /** Rows inserted or updated (an unchanged re-ingest is skipped by `setWhere` and not counted). */
@@ -96,6 +101,9 @@ export interface UpsertJobsResult {
   contentMissing: number;
   /** `gone` postings: not written at all (the caller also leaves them out of presence). */
   gone: number;
+  /** Written postings whose BLANK incoming description was NOT allowed to replace their non-blank
+   *  stored one (the empty-description guard) — a fetch anomaly worth watching. */
+  emptyContentKept: number;
 }
 
 /**
@@ -115,6 +123,9 @@ export interface UpsertJobsResult {
  *    the OLD board's absence sweep closes a live job. A posting not yet stored is not inserted until a
  *    run fetches its content.
  *  - A `NormalizedJob.gone` job (the ATS said it no longer exists) is not written at all.
+ *  - ANY job (every source): a BLANK incoming description never replaces a non-blank stored one — the
+ *    stored text, its content_signature and its embedding are kept (see `description` in the body;
+ *    counted as `emptyContentKept`). A new posting is inserted as given, "" included.
  * Presence is NOT this writer's job: the caller stamps every listed, non-gone posting present
  * (markJobsPresent / sweepLifecycle), so a transient detail failure never ages or sweeps a live job.
  */
@@ -145,7 +156,13 @@ export async function upsertJobs(
   const gone = distinct.length - writable.length - missing.length;
   if (missing.length > 0) await refreshListFields(db, companyId, missing);
   // Guard the empty case: `INSERT ... VALUES` with no rows is invalid SQL.
-  if (writable.length === 0) return { changed: 0, total: 0, contentMissing: missing.length, gone };
+  if (writable.length === 0) {
+    return { changed: 0, total: 0, contentMissing: missing.length, gone, emptyContentKept: 0 };
+  }
+  // Count (BEFORE the upsert, while the stored text is still visible) the rows the empty-description guard
+  // below will protect — only when some incoming description looks blank, so a normal board pays no extra
+  // round-trip.
+  const emptyContentKept = await countEmptyContentKept(db, writable);
 
   const values = writable.map((job) => {
     // Strip U+0000 from anything bound for text/jsonb (Postgres rejects it).
@@ -178,6 +195,21 @@ export async function upsertJobs(
     };
   });
 
+  // EMPTY-DESCRIPTION GUARD (any source): a blank (empty/whitespace) incoming description never replaces a
+  // NON-blank stored one — the stored text is kept, so content_signature and the embedding don't move for
+  // it either. A blank body over real text is a fetch anomaly, not an edit: an inline-content source (e.g.
+  // Greenhouse `content=true`, Workable `details=true`, Lever) momentarily serving "", or SmartRecruiters'
+  // `jobAd.sections: {}`. Writing it would NULL the embedding (a paid re-embed) and collapse the signature
+  // to the title alone (F1 de-dupe), then flip back. Every description reference below goes through this
+  // ONE expression (the SET, the signature, the embedding reset, setWhere) so they can't disagree. A title
+  // change in the same row still applies normally. A posting with NO stored row is inserted as given, ""
+  // included (its first fetch is all we have; some postings genuinely have no body).
+  const description = sql`CASE
+          WHEN excluded.description_text ~ ${BLANK_RE} AND ${jobs.descriptionText} !~ ${BLANK_RE}
+          THEN ${jobs.descriptionText}
+          ELSE excluded.description_text
+        END`;
+
   // The content-derived `embedding` resets to NULL when (and only when) title/description_text change, so
   // the backfill re-embeds next pass; any other (setWhere) churn KEEPS the existing vector (re-embedding
   // identical prose is wasted work + tokens). The helper reads ${jobs.embedding} (the EXISTING row), NEVER
@@ -187,7 +219,7 @@ export async function upsertJobs(
   // unconditional rewrite rather than this preserve-or-null CASE.)
   const nullIfContentChanged = (col: AnyColumn): SQL => sql`CASE
           WHEN ${jobs.title} IS DISTINCT FROM excluded.title
-            OR ${jobs.descriptionText} IS DISTINCT FROM excluded.description_text
+            OR ${jobs.descriptionText} IS DISTINCT FROM (${description})
           THEN NULL
           ELSE ${col}
         END`;
@@ -202,7 +234,8 @@ export async function upsertJobs(
     set: {
       companyId: sql`excluded.company_id`,
       title: sql`excluded.title`,
-      descriptionText: sql`excluded.description_text`,
+      // The empty-description guard (see `description` above): the stored text survives a blank re-fetch.
+      descriptionText: description,
       locations: sql`excluded.locations`,
       remote: sql`excluded.remote`,
       applyUrl: sql`excluded.apply_url`,
@@ -211,7 +244,7 @@ export async function upsertJobs(
       embedding: nullIfContentChanged(jobs.embedding),
       // content_signature: rewritten unconditionally from excluded title+desc via the ONE signatureSql
       // definition (the setWhere note below explains why it is written but NOT also tested).
-      contentSignature: signatureSql(sql`excluded.title`, sql`excluded.description_text`),
+      contentSignature: signatureSql(sql`excluded.title`, sql`(${description})`),
       updatedAt: sql`now()`,
     },
     // Advance the row only when a real change differs. Fields written above but deliberately EXCLUDED
@@ -231,7 +264,7 @@ export async function upsertJobs(
     setWhere: sql`
         ${jobs.companyId} IS DISTINCT FROM excluded.company_id OR
         ${jobs.title} IS DISTINCT FROM excluded.title OR
-        ${jobs.descriptionText} IS DISTINCT FROM excluded.description_text OR
+        ${jobs.descriptionText} IS DISTINCT FROM (${description}) OR
         ${jobs.locations} IS DISTINCT FROM excluded.locations OR
         ${jobs.remote} IS DISTINCT FROM excluded.remote OR
         ${jobs.applyUrl} IS DISTINCT FROM excluded.apply_url
@@ -253,7 +286,35 @@ export async function upsertJobs(
     changed += updated.length;
   }
 
-  return { changed, total: writable.length, contentMissing: missing.length, gone };
+  return { changed, total: writable.length, contentMissing: missing.length, gone, emptyContentKept };
+}
+
+/**
+ * How many of `list` have a BLANK incoming description over a NON-blank stored one — the rows the
+ * empty-description guard keeps. Issued only when a candidate exists: JS pre-filters with `\s`, then the
+ * SQL re-tests the incoming text with the guard's own BLANK_RE, so it never counts a row the guard
+ * doesn't keep. (A body of only exotic whitespace JS `\s` lacks, e.g. U+0085, could escape the COUNT —
+ * never the guard itself.) The candidates ride as ONE jsonb param (NUL stripped — jsonb rejects it; the
+ * upsert binds the same stripped text).
+ */
+async function countEmptyContentKept(db: Db, list: NormalizedJob[]): Promise<number> {
+  const blank = list.filter((job) => !/\S/.test(job.descriptionText.replaceAll(NUL, "")));
+  if (blank.length === 0) return 0;
+  const rows = JSON.stringify(
+    blank.map((job) => ({
+      source: job.source,
+      external_id: job.externalId.replaceAll(NUL, ""),
+      description_text: job.descriptionText.replaceAll(NUL, ""),
+    })),
+  );
+  const result: unknown = await db.execute(sql`
+    SELECT count(*)::int AS kept
+    FROM jsonb_to_recordset(${rows}::jsonb) AS v(source text, external_id text, description_text text)
+    JOIN ${jobs} ON jobs.source = v.source AND jobs.external_id = v.external_id
+    WHERE v.description_text ~ ${BLANK_RE} AND jobs.description_text !~ ${BLANK_RE}
+  `);
+  const row = resultRows(result)[0] as { kept?: unknown } | undefined;
+  return Number(row?.kept ?? 0);
 }
 
 const GONE = 0;

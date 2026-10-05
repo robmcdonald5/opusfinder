@@ -653,6 +653,31 @@ describe("runIngestion — orchestration over real PGlite (fetch stubbed)", () =
     });
   });
 
+  describe("an inline-content board serving a blank description (the empty-description guard)", () => {
+    it("keeps the stored text, counts it on the run and the board, and never NULLs the embedding", async () => {
+      // Greenhouse (content=true) — no hydrate, so no contentMissing flag: only the upsertJobs guard stands
+      // between a momentarily-blank `content` and the stored description.
+      const gh = await seedCompany({ slug: "inline", active: true });
+      // Same title as ghJob(1), so only the description differs (a title change would rightly re-embed).
+      await seedJob(gh, { externalId: "1", title: "Job 1", descriptionText: "Stored body" });
+      await db.update(jobs).set({ embedding: oneHot(1) }).where(eq(jobs.companyId, gh));
+      installFetch([boardRoute("inline", [ghJob(1)])]); // ghJob carries no `content` ⇒ descriptionText ""
+
+      const boards: IngestBoardResult[] = [];
+      const counts = await runIngestion(db, {
+        paceMs: 0,
+        adapter: NO_RETRY,
+        onBoard: (b) => boards.push(b),
+      });
+
+      expect(counts).toMatchObject({ ok: 1, jobs: 1, emptyContentKept: 1, hydrateSkipped: 0 });
+      expect(boards[0]).toMatchObject({ ok: true, emptyContentKept: 1 });
+      const kept = (await jobByExt("1"))!;
+      expect(kept.descriptionText).toBe("Stored body");
+      expect(kept.embedding).not.toBeNull();
+    });
+  });
+
   describe("a failed detail fetch across runs (enforce): moved boards stay live, gone postings close", () => {
     // ABSENCE_CLOSE_THRESHOLD (3) enforced sweeps close an absent job, so three runs prove the outcome.
     const RUNS = 3;

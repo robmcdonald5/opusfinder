@@ -36,7 +36,11 @@ async function main(): Promise<void> {
   // upsertJobs never writes a failed hydrate's content (NormalizedJob.contentMissing — its stored row
   // keeps its content) nor a posting whose detail says it is gone, so those are reported apart from the
   // duplicates it collapsed.
-  const { changed, total, contentMissing, gone } = await upsertJobs(db, companyId, jobs);
+  const { changed, total, contentMissing, gone, emptyContentKept } = await upsertJobs(
+    db,
+    companyId,
+    jobs,
+  );
 
   const collapsed = jobs.length - total - contentMissing - gone;
   console.log(
@@ -44,7 +48,8 @@ async function main(): Promise<void> {
       `changed ${changed}, unchanged ${total - changed}` +
       (collapsed > 0 ? ` (collapsed ${collapsed} duplicate id${collapsed === 1 ? "" : "s"})` : "") +
       (contentMissing > 0 ? `; ${contentMissing} not written (detail fetch failed)` : "") +
-      (gone > 0 ? `; ${gone} gone per their detail (not written)` : ""),
+      (gone > 0 ? `; ${gone} gone per their detail (not written)` : "") +
+      (emptyContentKept > 0 ? `; ${emptyContentKept} blank description(s) kept as stored` : ""),
   );
 
   const policy = embedPolicy(noEmbed);

@@ -53,6 +53,8 @@ export interface IngestBoardResult {
   hydrateSkipped: number;
   /** Listed postings the ATS says are gone (not written; treated as absent). */
   hydrateGone: number;
+  /** Postings whose blank description was not written over their non-blank stored one. */
+  emptyContentKept: number;
   embedded: number;
   embedTokens: number;
   error?: string;
@@ -140,6 +142,7 @@ export interface IngestionCounts {
   changed: number; // inserted-or-updated postings
   hydrateSkipped: number; // listed postings NOT written (detail fetch failed): stored row kept / new one deferred; still present
   hydrateGone: number; // listed postings whose detail says they're gone (404/410/not-available): not written, treated as ABSENT
+  emptyContentKept: number; // written postings whose BLANK description was not allowed over their non-blank stored one (any source)
   embedded: number; // postings embedded inline (0 when `embed` omitted)
   embedTokens: number; // Voyage tokens used
   embedFailed: number; // boards whose embed step threw (jobs still persisted)
@@ -225,6 +228,7 @@ export async function runIngestion(db: Db, opts: IngestionOptions = {}): Promise
         counts.changed += changed;
         counts.hydrateSkipped += upserted.contentMissing;
         counts.hydrateGone += upserted.gone;
+        counts.emptyContentKept += upserted.emptyContentKept;
         counts.ok += 1;
 
         // Liveness stamp (EVERY board, capped or not — see markJobsPresent): refresh last_seen_at for
@@ -315,6 +319,7 @@ export async function runIngestion(db: Db, opts: IngestionOptions = {}): Promise
           changed,
           hydrateSkipped: upserted.contentMissing,
           hydrateGone: upserted.gone,
+          emptyContentKept: upserted.emptyContentKept,
           embedded: boardEmbedded,
           embedTokens: boardTokens,
           error: embedWarning,
@@ -331,6 +336,7 @@ export async function runIngestion(db: Db, opts: IngestionOptions = {}): Promise
           changed: 0,
           hydrateSkipped: 0,
           hydrateGone: 0,
+          emptyContentKept: 0,
           embedded: 0,
           embedTokens: 0,
           error: message,
@@ -390,6 +396,7 @@ function emptyCounts(): IngestionCounts {
     changed: 0,
     hydrateSkipped: 0,
     hydrateGone: 0,
+    emptyContentKept: 0,
     embedded: 0,
     embedTokens: 0,
     embedFailed: 0,
@@ -426,6 +433,9 @@ function logSummary(counts: IngestionCounts, embedEnabled: boolean): void {
         ? `; ${counts.hydrateSkipped} posting(s) not written (detail fetch failed; stored content kept)`
         : "") +
       (counts.hydrateGone > 0 ? `; ${counts.hydrateGone} posting(s) gone per their detail (absent)` : "") +
+      (counts.emptyContentKept > 0
+        ? `; ${counts.emptyContentKept} blank description(s) not written over stored text`
+        : "") +
       (counts.staleWouldClose > 0 || counts.staleClosed > 0 || counts.staleSweepFailed > 0
         ? `; stale: ${counts.staleWouldClose} would-close, ${counts.staleClosed} closed` +
           (counts.staleSweepFailed > 0 ? `, ${counts.staleSweepFailed} stale-sweep-failed` : "")

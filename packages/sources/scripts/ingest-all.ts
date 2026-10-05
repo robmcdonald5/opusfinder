@@ -60,6 +60,9 @@ async function main(): Promise<void> {
         `  ${board.source}:${board.slug} -> ${board.jobs} job(s), changed ${board.changed}` +
           (board.hydrateSkipped > 0 ? `, ${board.hydrateSkipped} not written (detail fetch failed)` : "") +
           (board.hydrateGone > 0 ? `, ${board.hydrateGone} gone per their detail` : "") +
+          (board.emptyContentKept > 0
+            ? `, ${board.emptyContentKept} blank description(s) kept as stored`
+            : "") +
           (board.embedded > 0 ? `, embedded ${board.embedded} (${formatEmbedCost(board.embedTokens)})` : "") +
           (board.error ? ` [embed failed: ${board.error}]` : ""),
       );

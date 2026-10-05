@@ -104,7 +104,13 @@ enforces the write side for every caller):
   with no `jobAd`): not written at all and NOT counted present, so the absence streak or the staleness timer
   closes it — a stale list entry can't keep a dead posting alive. `counts.hydrateGone` tallies these.
 
-Both counters (in `pnpm runs` and on each `ingest:all` board line) count distinct postings on boards whose
+- **Any source → blank description kept out**: a blank (empty/whitespace) description never replaces a
+  non-blank stored one — an inline-content board (Greenhouse `content=true`, Workable `details=true`, Lever)
+  momentarily serving no body, or SmartRecruiters `jobAd.sections: {}`. The stored text, its signature and
+  its embedding stay; a title change in the same fetch still applies. A brand-new posting is inserted as
+  given, `""` included. `counts.emptyContentKept` tallies these.
+
+The counters (in `pnpm runs` and on each `ingest:all` board line) count distinct postings on boards whose
 write succeeded.
 
 Since Phase F2, `runIngestion` also runs a per-board **feed-absence lifecycle sweep** (`sweepLifecycle`, gated

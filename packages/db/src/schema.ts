@@ -104,7 +104,8 @@ export const companies = pgTable(
  * stored content untouched instead of blanking its description and NULLing its embedding — only its
  * list-sourced fields (company_id, locations, remote, posted_at) refresh. Such a posting still counts
  * present (last_seen_at / the absence streak), since it was listed. A `gone` posting (its detail said
- * it no longer exists) is not written at all and counts ABSENT, so the lifecycle writers close it.
+ * it no longer exists) is not written at all and counts ABSENT, so the lifecycle writers close it. From
+ * ANY source, a blank fetched description never replaces a non-blank stored description_text.
  *
  * `raw` (the untouched source payload) is DEPRECATED and NO LONGER WRITTEN — it was
  * write-only debug data that ballooned the DB, and `NormalizedJob` no longer carries it. The
