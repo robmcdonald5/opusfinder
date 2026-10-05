@@ -43,7 +43,7 @@ const SENTINEL_2020 = new Date("2020-01-01T00:00:00Z");
 // This file proves the Postgres SEMANTICS of the board-persistence pipeline in repos/jobs.ts:
 // within-batch dedupe, batch splitting, NUL sanitization, canonical locations, the ON CONFLICT
 // setWhere idempotency gate, the conditional embedding reset, the SQL-side content signature, the
-// content-missing guard (a failed hydrate's job is never written), and the negative space
+// content guard (a failed hydrate writes list fields only; a gone posting nothing), and the negative space
 // (lifecycle/created_at/last_seen_at/raw columns this writer must NEVER touch).
 // NOT this file's job: intended SQL TEXT + param binding (unit suites via render()/stubExecDb())
 // and lifecycle close/revive transitions (repos/lifecycle.ts owns revival — see B11's comment).
@@ -83,7 +83,7 @@ describe("upsertCompany + upsertJobs — board persistence semantics (integratio
         job("ext-1", { title: "Title B" }),
       ]);
       // total reflects the DISTINCT count — a dedupe pass-through regression would report 3.
-      expect(res).toEqual({ changed: 2, total: 2, contentMissing: 0 });
+      expect(res).toEqual({ changed: 2, total: 2, contentMissing: 0, gone: 0 });
 
       const all = await db.select({ id: jobs.id }).from(jobs);
       expect(all).toHaveLength(2);
@@ -100,7 +100,7 @@ describe("upsertCompany + upsertJobs — board persistence semantics (integratio
         job("shared-1", { source: "greenhouse", title: "GH Role" }),
         job("shared-1", { source: "lever", title: "Lever Role" }),
       ]);
-      expect(res).toEqual({ changed: 2, total: 2, contentMissing: 0 });
+      expect(res).toEqual({ changed: 2, total: 2, contentMissing: 0, gone: 0 });
 
       const rows = await db
         .select({ source: jobs.source, externalId: jobs.externalId })
@@ -125,7 +125,7 @@ describe("upsertCompany + upsertJobs — board persistence semantics (integratio
       );
       const res = await upsertJobs(db, companyId, board);
       // `changed += updated.length` regressing to `=` would report 1 (second batch only).
-      expect(res).toEqual({ changed: 501, total: 501, contentMissing: 0 });
+      expect(res).toEqual({ changed: 501, total: 501, contentMissing: 0, gone: 0 });
 
       const all = await db.select({ id: jobs.id }).from(jobs);
       // A loop that only runs the first slice leaves count at 500.
@@ -149,7 +149,7 @@ describe("upsertCompany + upsertJobs — board persistence semantics (integratio
           applyUrl: `https://x.test/a${NUL}b`,
         }),
       ]);
-      expect(res).toEqual({ changed: 1, total: 1, contentMissing: 0 });
+      expect(res).toEqual({ changed: 1, total: 1, contentMissing: 0, gone: 0 });
 
       const row = await jobRow("ext-nul");
       // Joined equality (not just "no throw") catches a strip-to-space regression.
@@ -172,7 +172,7 @@ describe("upsertCompany + upsertJobs — board persistence semantics (integratio
       const res = await upsertJobs(db, companyId, [
         job("ext-loc", { locations: ["Berlin", "Zurich", "Austin"] }),
       ]);
-      expect(res).toEqual({ changed: 0, total: 1, contentMissing: 0 });
+      expect(res).toEqual({ changed: 0, total: 1, contentMissing: 0, gone: 0 });
       expect((await jobRow("ext-loc")).locations).toEqual(["Austin", "Berlin", "Zurich"]);
     });
 
@@ -205,7 +205,7 @@ describe("upsertCompany + upsertJobs — board persistence semantics (integratio
       // Deleting the empty guard reaches drizzle's .values([]) which throws — VALUES with zero
       // tuples is invalid SQL.
       const res = await upsertJobs(db, companyId, []);
-      expect(res).toEqual({ changed: 0, total: 0, contentMissing: 0 });
+      expect(res).toEqual({ changed: 0, total: 0, contentMissing: 0, gone: 0 });
       expect(await db.select({ id: jobs.id }).from(jobs)).toHaveLength(0);
     });
   });
@@ -220,7 +220,7 @@ describe("upsertCompany + upsertJobs — board persistence semantics (integratio
 
       const res = await upsertJobs(db, companyId, [job("ext-a"), job("ext-b")]);
       // Deleting the whole setWhere makes the DO UPDATE unconditional: changed becomes 2.
-      expect(res).toEqual({ changed: 0, total: 2, contentMissing: 0 });
+      expect(res).toEqual({ changed: 0, total: 2, contentMissing: 0, gone: 0 });
 
       const rows = await db.select({ updatedAt: jobs.updatedAt }).from(jobs);
       expect(rows).toHaveLength(2);
@@ -242,7 +242,7 @@ describe("upsertCompany + upsertJobs — board persistence semantics (integratio
       await db.update(jobs).set({ updatedAt: SENTINEL_2020 }).where(eq(jobs.id, before.id));
 
       const res = await upsertJobs(db, companyId, [job("ext-e", { title: "Beta Role" })]);
-      expect(res).toEqual({ changed: 1, total: 1, contentMissing: 0 });
+      expect(res).toEqual({ changed: 1, total: 1, contentMissing: 0, gone: 0 });
 
       const after = await jobRow("ext-e");
       expect(after.title).toBe("Beta Role");
@@ -266,7 +266,7 @@ describe("upsertCompany + upsertJobs — board persistence semantics (integratio
         job("ext-d", { descriptionText: "A freshly rewritten body" }),
       ]);
       // Deleting the descriptionText disjunct from setWhere makes changed 0.
-      expect(res).toEqual({ changed: 1, total: 1, contentMissing: 0 });
+      expect(res).toEqual({ changed: 1, total: 1, contentMissing: 0, gone: 0 });
 
       const after = await jobRow("ext-d");
       expect(after.descriptionText).toBe("A freshly rewritten body");
@@ -283,7 +283,7 @@ describe("upsertCompany + upsertJobs — board persistence semantics (integratio
       const res = await upsertJobs(db, companyId, [job("ext-r", { remote: false })]);
       // MANDATORY guard: the DO UPDATE must actually fire (remote disjunct) — without it every
       // preservation assertion below passes vacuously under any mutation.
-      expect(res).toEqual({ changed: 1, total: 1, contentMissing: 0 });
+      expect(res).toEqual({ changed: 1, total: 1, contentMissing: 0, gone: 0 });
 
       const after = await jobRow("ext-r");
       expect(after.remote).toBe(false);
@@ -317,7 +317,7 @@ describe("upsertCompany + upsertJobs — board persistence semantics (integratio
       // (a) postedAt-only delta: adding posted_at to setWhere (the adapter derives it from a
       // churning updated_at, so comparing it makes every re-fetch look "changed") flips this to 1.
       const resA = await upsertJobs(db, companyId, [job("ext-p", { postedAt: feb })]);
-      expect(resA).toEqual({ changed: 0, total: 1, contentMissing: 0 });
+      expect(resA).toEqual({ changed: 0, total: 1, contentMissing: 0, gone: 0 });
       // The set never ran, so the stored stamp is still January (not February).
       expect((await jobRow("ext-p")).postedAt).toEqual(jan);
 
@@ -326,7 +326,7 @@ describe("upsertCompany + upsertJobs — board persistence semantics (integratio
       const resB = await upsertJobs(db, companyId, [
         job("ext-p", { title: "Changed Title", postedAt: mar }),
       ]);
-      expect(resB).toEqual({ changed: 1, total: 1, contentMissing: 0 });
+      expect(resB).toEqual({ changed: 1, total: 1, contentMissing: 0, gone: 0 });
       expect((await jobRow("ext-p")).postedAt).toEqual(mar);
     });
 
@@ -339,7 +339,7 @@ describe("upsertCompany + upsertJobs — board persistence semantics (integratio
       // Deleting it from setWhere → changed 0; deleting the set entry alone → changed 1 but the
       // row stays on company A (the column assertion below).
       const res = await upsertJobs(db, idB, [job("ext-m")]);
-      expect(res).toEqual({ changed: 1, total: 1, contentMissing: 0 });
+      expect(res).toEqual({ changed: 1, total: 1, contentMissing: 0, gone: 0 });
 
       const rows = await db.select({ companyId: jobs.companyId }).from(jobs);
       expect(rows).toHaveLength(1);
@@ -358,7 +358,7 @@ describe("upsertCompany + upsertJobs — board persistence semantics (integratio
       // The FORCED title change is what makes this non-vacuous: with unchanged content setWhere
       // skips the row and any lifecycle-writing mutation would be invisible.
       const res = await upsertJobs(db, companyId, [job("ext-c", { title: "Beta Role" })]);
-      expect(res).toEqual({ changed: 1, total: 1, contentMissing: 0 });
+      expect(res).toEqual({ changed: 1, total: 1, contentMissing: 0, gone: 0 });
 
       const row = await jobRow("ext-c");
       expect(row.title).toBe("Beta Role"); // proves the set block actually ran
@@ -383,7 +383,7 @@ describe("upsertCompany + upsertJobs — board persistence semantics (integratio
         .where(eq(jobs.externalId, jobId("ext-t")));
 
       const res = await upsertJobs(db, companyId, [job("ext-t", { title: "Beta Role" })]);
-      expect(res).toEqual({ changed: 1, total: 1, contentMissing: 0 }); // the set demonstrably ran
+      expect(res).toEqual({ changed: 1, total: 1, contentMissing: 0, gone: 0 }); // the set demonstrably ran
 
       const row = await jobRow("ext-t");
       // created_at is first-seen — an added createdAt write in conflictUpdate.set destroys it.
@@ -397,14 +397,16 @@ describe("upsertCompany + upsertJobs — board persistence semantics (integratio
     });
   });
 
-  describe("upsertJobs — content-missing guard (a failed hydrate never overwrites stored content)", () => {
+  describe("upsertJobs — content guard (a failed hydrate never overwrites content; a gone posting is never written)", () => {
     // A contentMissing job is what runAdapter returns for a posting whose detail fetch failed: list-level
     // fields + a placeholder "" description. These call upsertJobs DIRECTLY (no runIngestion) — the guard
     // lives in this single choke point, so every caller is protected, not just the ingestion loop.
-    const missing = (externalId: string): NormalizedJob =>
-      job(externalId, { title: "List-level title", descriptionText: "", contentMissing: true });
+    const missing = (externalId: string, list: Partial<NormalizedJob> = {}): NormalizedJob =>
+      job(externalId, { title: "List-level title", descriptionText: "", ...list, contentMissing: true });
+    const gone = (externalId: string, list: Partial<NormalizedJob> = {}): NormalizedJob =>
+      job(externalId, { title: "List-level title", descriptionText: "", ...list, gone: true });
 
-    it("never touches a stored row — title, description, signature, embedding and updated_at all survive", async () => {
+    it("never touches a stored row whose list fields are unchanged — content, embedding, updated_at all survive", async () => {
       const companyId = await upsertCompany(db, companySlug("acme"), "greenhouse");
       await upsertJobs(db, companyId, [job("ext-k")]);
       const stored = await jobRow("ext-k");
@@ -415,11 +417,65 @@ describe("upsertCompany + upsertJobs — board persistence semantics (integratio
 
       // The title differs too, so a write of ANY kind would land (setWhere fires on title/description).
       const res = await upsertJobs(db, companyId, [missing("ext-k")]);
-      expect(res).toEqual({ changed: 0, total: 0, contentMissing: 1 });
+      expect(res).toEqual({ changed: 0, total: 0, contentMissing: 1, gone: 0 });
 
       // Byte-identical row: nothing overwritten, the embedding NOT NULLed (no paid re-embed), the
-      // signature NOT recomputed from the title alone (no F1 de-dupe collapse), updated_at frozen.
+      // signature NOT recomputed from the title alone (no F1 de-dupe collapse), updated_at frozen — and
+      // the list-field refresh is gated, so a repeat failure on an unchanged posting writes nothing.
       expect(await jobRow("ext-k")).toEqual(before);
+    });
+
+    it("refreshes a stored row's LIST fields (company, locations, remote, posted_at) but never its content or apply_url", async () => {
+      const oldBoard = await upsertCompany(db, companySlug("acme"), "greenhouse");
+      const newBoard = await upsertCompany(db, companySlug("acme-new"), "greenhouse");
+      await upsertJobs(db, oldBoard, [job("ext-mv", { applyUrl: "https://real.test/apply" })]);
+      const stored = await jobRow("ext-mv");
+      expect(await writeJobEmbeddings(db, [{ id: stored.id, embedding: oneHot(2) }])).toBe(1);
+      await db.update(jobs).set({ updatedAt: SENTINEL_2020 }).where(eq(jobs.id, stored.id));
+      const before = await jobRow("ext-mv");
+      const posted = new Date("2026-05-01T00:00:00Z");
+
+      // The posting moved boards and its list fields changed; its detail fetch failed (placeholders).
+      const res = await upsertJobs(db, newBoard, [
+        missing("ext-mv", {
+          locations: ["Zurich", "Berlin"],
+          remote: false,
+          postedAt: posted,
+          applyUrl: "https://placeholder.test/reconstructed",
+        }),
+      ]);
+
+      expect(res).toEqual({ changed: 0, total: 0, contentMissing: 1, gone: 0 });
+      const after = await jobRow("ext-mv");
+      // List-sourced fields land — company_id above all, so the board listing it now owns it.
+      expect(after.companyId).toBe(newBoard);
+      expect(after.locations).toEqual(["Berlin", "Zurich"]); // canonical order, like the upsert
+      expect(after.remote).toBe(false);
+      expect(after.postedAt).toEqual(posted);
+      expect(after.updatedAt.getTime()).toBeGreaterThan(SENTINEL_2020.getTime());
+      // ...content never: title/description/signature/embedding as stored, and the apply_url placeholder
+      // (SR's reconstructed un-hydrated link) never replaces the real one.
+      expect(after.title).toBe(before.title);
+      expect(after.descriptionText).toBe(before.descriptionText);
+      expect(after.contentSignature).toBe(before.contentSignature);
+      expect(after.embedding).toEqual(before.embedding);
+      expect(after.applyUrl).toBe("https://real.test/apply");
+    });
+
+    it("never writes a gone posting — not its content, not its list fields, not a new row", async () => {
+      const oldBoard = await upsertCompany(db, companySlug("acme"), "greenhouse");
+      const newBoard = await upsertCompany(db, companySlug("acme-new"), "greenhouse");
+      await upsertJobs(db, oldBoard, [job("ext-g")]);
+      const before = await jobRow("ext-g");
+
+      const res = await upsertJobs(db, newBoard, [
+        gone("ext-g", { locations: ["Elsewhere"], remote: false }),
+        gone("ext-g-new"),
+      ]);
+
+      expect(res).toEqual({ changed: 0, total: 0, contentMissing: 0, gone: 2 });
+      expect(await jobRow("ext-g")).toEqual(before);
+      expect(await db.select().from(jobs).where(eq(jobs.externalId, jobId("ext-g-new")))).toHaveLength(0);
     });
 
     it("does not insert a brand-new contentMissing posting, while its board's complete postings still land", async () => {
@@ -427,7 +483,7 @@ describe("upsertCompany + upsertJobs — board persistence semantics (integratio
 
       const res = await upsertJobs(db, companyId, [missing("ext-new"), job("ext-ok")]);
 
-      expect(res).toEqual({ changed: 1, total: 1, contentMissing: 1 });
+      expect(res).toEqual({ changed: 1, total: 1, contentMissing: 1, gone: 0 });
       const rows = await db.select({ externalId: jobs.externalId }).from(jobs);
       expect(rows.map((r) => r.externalId)).toEqual(["ext-ok"]);
     });
@@ -437,7 +493,7 @@ describe("upsertCompany + upsertJobs — board persistence semantics (integratio
 
       const res = await upsertJobs(db, companyId, [missing("ext-1"), missing("ext-2")]);
 
-      expect(res).toEqual({ changed: 0, total: 0, contentMissing: 2 });
+      expect(res).toEqual({ changed: 0, total: 0, contentMissing: 2, gone: 0 });
       expect(await db.select({ id: jobs.id }).from(jobs)).toHaveLength(0);
     });
 
@@ -457,11 +513,29 @@ describe("upsertCompany + upsertJobs — board persistence semantics (integratio
         missing("dup-c"),
       ]);
 
-      expect(res).toEqual({ changed: 2, total: 2, contentMissing: 1 });
+      expect(res).toEqual({ changed: 2, total: 2, contentMissing: 1, gone: 0 });
       expect((await jobRow("dup-a")).descriptionText).toBe("A body");
       expect((await jobRow("dup-b")).descriptionText).toBe("B body");
       const dupC = await db.select().from(jobs).where(eq(jobs.externalId, jobId("dup-c")));
       expect(dupC).toHaveLength(0);
+    });
+
+    it("ranks duplicate copies content > contentMissing > gone, in either order", async () => {
+      const companyId = await upsertCompany(db, companySlug("acme"), "greenhouse");
+
+      // g-1: gone LAST after a content copy → written (plain last-wins would drop it as gone).
+      // g-2: gone LAST after a missing copy → counted missing, not gone. g-3: gone twice → gone ONCE.
+      const res = await upsertJobs(db, companyId, [
+        job("g-1", { descriptionText: "G1 body" }),
+        gone("g-1"),
+        missing("g-2"),
+        gone("g-2"),
+        gone("g-3"),
+        gone("g-3"),
+      ]);
+
+      expect(res).toEqual({ changed: 1, total: 1, contentMissing: 1, gone: 1 });
+      expect((await jobRow("g-1")).descriptionText).toBe("G1 body");
     });
   });
 

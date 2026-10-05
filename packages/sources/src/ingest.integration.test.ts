@@ -5,7 +5,12 @@ import type { Db } from "@opusfinder/db";
 import { upsertCompany, upsertJobs } from "@opusfinder/db/repos";
 import { companies, jobs, sourceRuns } from "@opusfinder/db/schema";
 import { companySlug, jobId, type SourceName } from "@opusfinder/shared";
-import { runIngestion, type IngestEmbedFn, type IngestionOptions } from "@opusfinder/sources";
+import {
+  runIngestion,
+  type IngestEmbedFn,
+  type IngestionCounts,
+  type IngestionOptions,
+} from "@opusfinder/sources";
 
 import { createTestDb } from "@test/db/pglite";
 import { truncate } from "@test/db/truncate";
@@ -523,7 +528,8 @@ describe("runIngestion — orchestration over real PGlite (fetch stubbed)", () =
   describe("a posting whose detail fetch failed (contentMissing) keeps its stored content", () => {
     it("keeps stored content, stamps the posting present, defers a new one, and counts all three", async () => {
       const sr = await seedCompany({ slug: "srco", source: "smartrecruiters", active: true });
-      // sr-1: stored, its detail 500s. sr-4: stored, its detail is SR's 200 "Posting not available".
+      // sr-1: stored, its detail 500s. sr-4: stored, its detail is JSON null (an edge/maintenance body):
+      // both TRANSIENT — content missing, still present (contrast the `gone` suite below).
       for (const id of ["sr-1", "sr-4"]) {
         await seedJob(sr, {
           externalId: id,
@@ -541,7 +547,7 @@ describe("runIngestion — orchestration over real PGlite (fetch stubbed)", () =
       installFetch(
         srBoard("srco", ["sr-1", "sr-2", "sr-3", "sr-4"], (id) =>
           id === "sr-4"
-            ? jsonResponse({ message: "Posting not available" })
+            ? jsonResponse(null)
             : id === "sr-3"
               ? jsonResponse(srDetail(id))
               : textResponse("err", 500),
@@ -590,9 +596,16 @@ describe("runIngestion — orchestration over real PGlite (fetch stubbed)", () =
       });
       installFetch(srBoard("srdown", ["d-1"], () => textResponse("err", 503)));
 
-      const counts = await runIngestion(db, { paceMs: 0, adapter: NO_RETRY });
+      const boards: IngestBoardResult[] = [];
+      const counts = await runIngestion(db, {
+        paceMs: 0,
+        adapter: NO_RETRY,
+        onBoard: (b) => boards.push(b),
+      });
 
       expect(counts).toMatchObject({ ok: 1, jobs: 0, changed: 0, hydrateSkipped: 1, swept: 0 });
+      // The per-board result says so too — `ingest:all` prints it, so this board doesn't read as empty.
+      expect(boards[0]).toMatchObject({ ok: true, jobs: 0, hydrateSkipped: 1, hydrateGone: 0 });
       const kept = (await jobByExt("d-1"))!;
       expect(kept.descriptionText).toBe("Stored d-1");
       expect(kept.consecutiveAbsences).toBe(0);
@@ -637,6 +650,89 @@ describe("runIngestion — orchestration over real PGlite (fetch stubbed)", () =
       const attempted = vi.mocked(upsertJobs).mock.calls[0]![2];
       expect(attempted.filter((j) => j.contentMissing).map((j) => j.externalId)).toEqual(["f-1"]);
       expect(counts).toMatchObject({ ok: 0, failed: 1, jobs: 0, hydrateSkipped: 0 });
+    });
+  });
+
+  describe("a failed detail fetch across runs (enforce): moved boards stay live, gone postings close", () => {
+    // ABSENCE_CLOSE_THRESHOLD (3) enforced sweeps close an absent job, so three runs prove the outcome.
+    const RUNS = 3;
+    async function runTimes(n: number): Promise<IngestionCounts[]> {
+      const all: IngestionCounts[] = [];
+      for (let i = 0; i < n; i++) {
+        all.push(await runIngestion(db, { paceMs: 0, adapter: NO_RETRY, enforceLifecycle: true }));
+      }
+      return all;
+    }
+
+    it("a posting that MOVED boards and whose detail fails moves to the new board and stays live (never closed)", async () => {
+      // srold (lower id, processed first) listed mv-1 before; now only srnew lists it — and its detail 500s.
+      const oldBoard = await seedCompany({ slug: "srold", source: "smartrecruiters", active: true });
+      const newBoard = await seedCompany({ slug: "srnew", source: "smartrecruiters", active: true });
+      await seedJob(oldBoard, {
+        externalId: "mv-1",
+        source: "smartrecruiters",
+        descriptionText: "Stored mv-1",
+        lastSeenAt: daysAgo(2),
+      });
+      installFetch([
+        ...srBoard("srold", ["keep-1"], (id) => jsonResponse(srDetail(id))),
+        ...srBoard("srnew", ["mv-1"], () => textResponse("err", 500)),
+      ]);
+
+      const runs = await runTimes(RUNS);
+
+      expect(runs.map((c) => c.hydrateSkipped)).toEqual([1, 1, 1]);
+      expect(runs.reduce((n, c) => n + c.closed, 0)).toBe(0);
+      const moved = (await jobByExt("mv-1"))!;
+      // Its list fields followed the listing: the board that lists it NOW owns it, so markJobsPresent
+      // (company-scoped) stamps it and the OLD board's sweep no longer sees it as its absent posting.
+      expect(moved.companyId).toBe(newBoard);
+      expect(moved.lifecycleState).toBe("active");
+      expect(moved.consecutiveAbsences).toBe(0);
+      expect(moved.lastSeenAt.getTime()).toBeGreaterThan(daysAgo(1).getTime());
+      expect(moved.descriptionText).toBe("Stored mv-1"); // content still never overwritten
+    });
+
+    it("a posting whose detail says it is GONE (404, or SR's 'Posting not available') is absent and closes", async () => {
+      const sr = await seedCompany({ slug: "srgone", source: "smartrecruiters", active: true });
+      for (const id of ["g-404", "g-msg", "t-500"]) {
+        await seedJob(sr, {
+          externalId: id,
+          source: "smartrecruiters",
+          descriptionText: `Stored ${id}`,
+          lastSeenAt: daysAgo(2),
+        });
+      }
+      installFetch(
+        srBoard("srgone", ["g-404", "g-msg", "t-500", "ok-1"], (id) =>
+          id === "g-404"
+            ? textResponse("missing", 404)
+            : id === "g-msg"
+              ? jsonResponse({ message: "Posting not available" })
+              : id === "t-500"
+                ? textResponse("err", 500)
+                : jsonResponse(srDetail(id)),
+        ),
+      );
+
+      const runs = await runTimes(RUNS);
+
+      expect(runs.map((c) => [c.hydrateGone, c.hydrateSkipped])).toEqual([
+        [2, 1],
+        [2, 1],
+        [2, 1],
+      ]);
+      // GONE ⇒ absent: never stamped present, so the enforced absence streak closes them on the 3rd sweep.
+      for (const id of ["g-404", "g-msg"]) {
+        const closed = (await jobByExt(id))!;
+        expect(closed.lifecycleState).toBe("closed");
+        expect(closed.lastSeenAt.getTime()).toBeLessThan(daysAgo(1).getTime());
+        expect(closed.descriptionText).toBe(`Stored ${id}`); // never written, not even blanked
+      }
+      // TRANSIENT (a 500) ⇒ still present: never closed, however many runs it fails.
+      const live = (await jobByExt("t-500"))!;
+      expect(live.lifecycleState).toBe("active");
+      expect(live.consecutiveAbsences).toBe(0);
     });
   });
 

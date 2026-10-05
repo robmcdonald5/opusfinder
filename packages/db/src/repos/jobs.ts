@@ -3,8 +3,8 @@
  * injected (no module-level singleton), matching `createDb()` in ../client.
  *
  * Both upserts are idempotent. `upsertCompany` is get-or-create; `upsertJobs`
- * dedupes the batch, never writes a job whose content is missing (a failed hydrate),
- * then only advances `updated_at` when a job's content actually changed, so
+ * dedupes the batch, never writes a failed hydrate's placeholder content (nor a posting
+ * the ATS says is gone), then only advances `updated_at` when a job actually changed, so
  * re-ingesting an unchanged board is a no-op.
  */
 import { and, type AnyColumn, eq, gt, sql, type SQL } from "drizzle-orm";
@@ -86,50 +86,66 @@ export async function upsertCompany(
  */
 const UPSERT_BATCH_SIZE = 500;
 
+/** What {@link upsertJobs} did with a board's postings (all counts are DISTINCT postings). */
+export interface UpsertJobsResult {
+  /** Rows inserted or updated (an unchanged re-ingest is skipped by `setWhere` and not counted). */
+  changed: number;
+  /** Postings WRITTEN with their content (`unchanged = total - changed`). */
+  total: number;
+  /** `contentMissing` postings: content NOT written (a stored row's list fields may be refreshed). */
+  contentMissing: number;
+  /** `gone` postings: not written at all (the caller also leaves them out of presence). */
+  gone: number;
+}
+
 /**
  * Batch-upsert a board's jobs via INSERT ... ON CONFLICT, split into {@link UPSERT_BATCH_SIZE}-row
- * batches (one neon-http round-trip each). Conflict key is `(source, external_id)`.
+ * batches (one neon-http round-trip each). Conflict key is `(source, external_id)`. Returns an
+ * {@link UpsertJobsResult}; the caller reports `collapsed = input.length - total - contentMissing - gone`.
  *
- * Returns `{ changed, total, contentMissing }`: `total` is the count of DISTINCT jobs
- * WRITTEN after de-duplication; `changed` is how many were inserted or updated (rows whose
- * content was unchanged are skipped by `setWhere` and not returned); `contentMissing` is how
- * many DISTINCT postings were NOT written because their content is missing (below). The caller
- * reports `unchanged = total - changed` and `collapsed = input.length - total - contentMissing`.
- *
- * CONTENT-MISSING GUARD — enforced HERE, the single persistence choke point, so EVERY caller is
- * protected rather than each filtering for itself. A job flagged `NormalizedJob.contentMissing` (its
- * hydrate failed or returned no content, so its description is mapItem's placeholder "") is never
- * written: a stored row keeps its title, description, content_signature and embedding (no column is
- * touched), and a posting not yet stored is not inserted until a run fetches its content. Writing it
- * would overwrite the description, NULL the embedding (a paid re-embed) and recompute the signature
- * from the title alone (an F1 de-dupe collapse) — then flip it all back on the next good hydrate.
- * Presence is NOT this writer's job: the caller still stamps every LISTED posting present
+ * CONTENT GUARD — enforced HERE, the single persistence choke point, so EVERY caller is protected
+ * rather than each filtering for itself:
+ *  - A `NormalizedJob.contentMissing` job (a TRANSIENT hydrate failure: its title/description are
+ *    list-level placeholders) never writes CONTENT. A stored row keeps its title, description,
+ *    content_signature and embedding; writing the placeholder would overwrite the description, NULL the
+ *    embedding (a paid re-embed) and recompute the signature from the title alone (an F1 de-dupe
+ *    collapse), then flip it all back on the next good hydrate. Its LIST-sourced fields are still
+ *    refreshed on the stored row ({@link refreshListFields}) — company_id above all: a posting that moved
+ *    boards must land on the board that lists it now, or markJobsPresent (company-scoped) misses it and
+ *    the OLD board's absence sweep closes a live job. A posting not yet stored is not inserted until a
+ *    run fetches its content.
+ *  - A `NormalizedJob.gone` job (the ATS said it no longer exists) is not written at all.
+ * Presence is NOT this writer's job: the caller stamps every listed, non-gone posting present
  * (markJobsPresent / sweepLifecycle), so a transient detail failure never ages or sweeps a live job.
  */
 export async function upsertJobs(
   db: Db,
   companyId: number,
   list: NormalizedJob[],
-): Promise<{ changed: number; total: number; contentMissing: number }> {
+): Promise<UpsertJobsResult> {
   // Collapse duplicate (source, external_id) BEFORE the batch: a single
   // INSERT ... ON CONFLICT cannot affect the same conflict key twice (Postgres
   // raises 21000), and a board can repeat a posting id (cross-listed roles) or a
-  // future source may reuse ids. Last occurrence wins — EXCEPT that a copy WITH content
-  // always beats a contentMissing copy, in either order, so a duplicated posting whose
-  // other copy hydrated is written from it (and not counted missing). Richer merging of
-  // duplicates (e.g. multi-location postings) is an adapter concern, not here.
+  // future source may reuse ids. Last occurrence wins — EXCEPT that the more complete copy
+  // always wins, in either order: content > contentMissing > gone (see `completeness`). So a
+  // duplicated posting whose other copy hydrated is written from it and counted once, never as
+  // missing or gone. Richer merging of duplicates (e.g. multi-location postings) is an adapter
+  // concern, not here.
   const deduped = new Map<string, NormalizedJob>();
   for (const job of list) {
     const key = JSON.stringify([job.source, job.externalId]);
     const kept = deduped.get(key);
-    if (job.contentMissing && kept && !kept.contentMissing) continue;
+    if (kept && completeness(job) < completeness(kept)) continue;
     deduped.set(key, job);
   }
-  // The content-missing guard (see the doc above): drop them AFTER the dedupe, so each is counted once.
-  const writable = [...deduped.values()].filter((job) => !job.contentMissing);
-  const contentMissing = deduped.size - writable.length;
+  // The content guard (see the doc above), applied AFTER the dedupe so each posting is counted once.
+  const distinct = [...deduped.values()];
+  const writable = distinct.filter((job) => completeness(job) === COMPLETE);
+  const missing = distinct.filter((job) => completeness(job) === CONTENT_MISSING);
+  const gone = distinct.length - writable.length - missing.length;
+  if (missing.length > 0) await refreshListFields(db, companyId, missing);
   // Guard the empty case: `INSERT ... VALUES` with no rows is invalid SQL.
-  if (writable.length === 0) return { changed: 0, total: 0, contentMissing };
+  if (writable.length === 0) return { changed: 0, total: 0, contentMissing: missing.length, gone };
 
   const values = writable.map((job) => {
     // Strip U+0000 from anything bound for text/jsonb (Postgres rejects it).
@@ -237,5 +253,59 @@ export async function upsertJobs(
     changed += updated.length;
   }
 
-  return { changed, total: writable.length, contentMissing };
+  return { changed, total: writable.length, contentMissing: missing.length, gone };
+}
+
+const GONE = 0;
+const CONTENT_MISSING = 1;
+const COMPLETE = 2;
+/** How complete a copy is — the dedupe keeps the higher one: content > contentMissing > gone. */
+function completeness(job: NormalizedJob): number {
+  return job.gone ? GONE : job.contentMissing ? CONTENT_MISSING : COMPLETE;
+}
+
+/**
+ * For STORED rows of `contentMissing` postings, write the LIST-sourced fields the board just fetched —
+ * company_id (the board listing it now), locations, remote and posted_at — and NEVER a content column
+ * (title / description_text / content_signature / embedding). One UPDATE, issued only when a board has
+ * such postings; a posting with no stored row matches nothing (it is not inserted without content).
+ * Gated like upsertJobs' setWhere: a row is rewritten (and updated_at advanced) only when company_id,
+ * locations or remote differ, so a repeat failure on an unchanged posting writes nothing; posted_at is
+ * written with them but not compared (the same churn reason as the upsert).
+ *
+ * apply_url is deliberately NOT refreshed: on the only hydrating source (SmartRecruiters) the un-hydrated
+ * apply URL is mapItem's RECONSTRUCTED placeholder, not a list field — writing it would swap the stored
+ * real link for the placeholder on every failed hydrate and back on the next good one (the same churn
+ * class this guard exists to stop). The set rides as ONE jsonb param (NUL stripped — jsonb rejects it).
+ */
+async function refreshListFields(
+  db: Db,
+  companyId: number,
+  list: NormalizedJob[],
+): Promise<void> {
+  const rows = JSON.stringify(
+    list.map((job) => ({
+      source: job.source,
+      external_id: job.externalId.replaceAll(NUL, ""),
+      locations: [...job.locations].map((loc) => loc.replaceAll(NUL, "")).sort(),
+      remote: job.remote,
+      posted_at: job.postedAt?.toISOString() ?? null,
+    })),
+  );
+  await db.execute(sql`
+    UPDATE ${jobs} SET
+      company_id = ${companyId},
+      locations = v.locations,
+      remote = v.remote,
+      posted_at = v.posted_at,
+      updated_at = now()
+    FROM jsonb_to_recordset(${rows}::jsonb)
+      AS v(source text, external_id text, locations jsonb, remote boolean, posted_at timestamptz)
+    WHERE jobs.source = v.source AND jobs.external_id = v.external_id
+      AND (
+        jobs.company_id IS DISTINCT FROM ${companyId}
+        OR jobs.locations IS DISTINCT FROM v.locations
+        OR jobs.remote IS DISTINCT FROM v.remote
+      )
+  `);
 }

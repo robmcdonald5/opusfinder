@@ -2,6 +2,7 @@ import { companySlug, isRecord, safeJobId } from "@opusfinder/shared";
 import type { NormalizedJob } from "@opusfinder/shared";
 
 import { joinParts } from "./fields";
+import { HttpStatusError, PostingGoneError } from "./run-adapter";
 import { htmlToText } from "./text";
 import type { Cursor, FetchJson, ProbeOutcome, SourceAdapter, SourceContext } from "./types";
 import { firstPathSegment, segmentAfter } from "./url-match";
@@ -27,9 +28,10 @@ const SECTION_ORDER = [
  * SmartRecruiters company adapter — BOTH offset-paginated AND requires an N+1 hydrate. The list
  * item carries neither a description nor a public apply URL, so `mapItem` emits a fully-valid job
  * (reconstructed apply URL, placeholder empty description) that `hydrate` then patches. A hydrate
- * that fails — or gets a detail with no content — THROWS, so runAdapter keeps the listed job (still
- * present) flagged `contentMissing`, and upsertJobs never writes its placeholder over the stored
- * posting. Company IDs are case-sensitive, so `normalizeSlug` preserves casing.
+ * that fails — or gets a detail with no content — THROWS, so runAdapter keeps the listed job flagged
+ * `contentMissing` (transient: still present) or `gone` (SR said it no longer exists: absent), and
+ * upsertJobs never writes its placeholder over the stored posting (see `hydratePosting`). Company IDs
+ * are case-sensitive, so `normalizeSlug` preserves casing.
  *
  * Pagination uses `body.totalFound`; `nextCursor` and `locate` both read the same envelope (one is
  * the array, the other the count) — an accepted seam. An unknown slug returns 200 + `totalFound:0`
@@ -142,19 +144,37 @@ function isRemoteLocation(loc: unknown): boolean {
  * `descriptionText` from the jobAd sections (HTML → plain text), the real `applyUrl`, and the
  * detail's `remote`. Nothing else from the detail is kept (it is not stored).
  *
- * A detail WITHOUT `jobAd.sections` THROWS rather than patching an empty description: that covers a
- * non-object body (JSON null/string from an edge or maintenance response) AND SmartRecruiters' `200` +
- * `{"message":"Posting not available"}` for a posting still in the list. Both carry no content, so the
- * throw makes runAdapter flag the job `contentMissing` — patching `""` would "succeed" and upsertJobs
- * would write it over the stored description (NULLing its embedding). A detail WITH sections is real
- * content even when every section is blank. The message is shape-only (a posting id, never body text).
+ * When there is no content it never patches an empty description (that would "succeed" and upsertJobs
+ * would write it over the stored one) — it THROWS, and WHICH error decides the posting's fate:
+ *  - GONE (PostingGoneError ⇒ runAdapter flags it `gone`: treated as ABSENT, so the absence streak /
+ *    staleness timer closes it): SR says EXPLICITLY the posting no longer exists — the detail answers
+ *    404/410, or `200` with an object that has a `message` and no `jobAd` (SR's unavailability shape, e.g.
+ *    `{"message":"Posting not available"}`). The list can lag the detail, so trust the detail.
+ *  - TRANSIENT (any other error ⇒ `contentMissing`: still present, stored content kept): a timeout, a
+ *    5xx/429 after retries, a network/read error, or a body that is not that shape — JSON null/string
+ *    (an edge/maintenance response) or a jobAd without sections.
+ * A detail WITH sections is real content even when every section is blank. Messages are shape-only (a
+ * posting id + status, never body text).
  */
 async function hydratePosting(
   job: NormalizedJob,
   ctx: SourceContext,
   fetchJson: FetchJson,
 ): Promise<Partial<NormalizedJob>> {
-  const detail = await fetchJson({ url: `${API}/${ctx.slug}/postings/${job.externalId}` });
+  let detail: unknown;
+  try {
+    detail = await fetchJson({ url: `${API}/${ctx.slug}/postings/${job.externalId}` });
+  } catch (err) {
+    if (err instanceof HttpStatusError && (err.status === 404 || err.status === 410)) {
+      throw new PostingGoneError(
+        `SmartRecruiters detail for "${job.externalId}" answered ${err.status}`,
+      );
+    }
+    throw err;
+  }
+  if (isRecord(detail) && !isRecord(detail.jobAd) && typeof detail.message === "string") {
+    throw new PostingGoneError(`SmartRecruiters detail for "${job.externalId}" says it is unavailable`);
+  }
   const sections =
     isRecord(detail) && isRecord(detail.jobAd) && isRecord(detail.jobAd.sections)
       ? detail.jobAd.sections

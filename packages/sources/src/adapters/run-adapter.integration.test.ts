@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { companySlug, jobId, type NormalizedJob, type SourceName } from "@opusfinder/shared";
 import { server } from "@test/msw/server";
 
-import { runAdapter } from "./run-adapter";
+import { HttpStatusError, PostingGoneError, runAdapter } from "./run-adapter";
 import type { SourceAdapter, SourceContext } from "./types";
 
 // The invariant ATS plumbing (run-adapter.ts) over MSW: the pagination loop, the resilient fetch
@@ -515,6 +515,58 @@ describe("runAdapter — invariant ATS plumbing over MSW", () => {
       expect(jobs.map((j) => j.descriptionText)).toEqual(["desc-1", "", "desc-3"]);
       expect(jobs.map((j) => j.contentMissing)).toEqual([undefined, true, undefined]);
       expect(warn).toHaveBeenCalledWith(expect.stringMatching(/1 un-hydrated/));
+    });
+
+    it("flags the job `gone` (not contentMissing) when its hydrate throws PostingGoneError", async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      server.use(http.get(LIST, () => HttpResponse.json({ jobs: [raw(1), raw(2), raw(3)] })));
+      const adapter = makeAdapter({
+        hydrate: (job) => {
+          if (job.externalId === jobId("1")) return Promise.reject(new PostingGoneError("gone"));
+          if (job.externalId === jobId("2")) return Promise.reject(new Error("detail 503"));
+          return Promise.resolve({ descriptionText: `desc-${job.externalId}` });
+        },
+      });
+
+      const jobs = await runAdapter(adapter, "acme");
+
+      // Still returned (so a capped board's length is unchanged) — the flag tells ingestion it is ABSENT.
+      expect(ids(jobs)).toEqual(["1", "2", "3"]);
+      expect(jobs.map((j) => [j.gone, j.contentMissing])).toEqual([
+        [true, undefined],
+        [undefined, true],
+        [undefined, undefined],
+      ]);
+      expect(warn).toHaveBeenCalledWith(expect.stringMatching(/1 un-hydrated .*, 1 gone/));
+    });
+
+    it("surfaces a final non-OK detail as HttpStatusError carrying the status (404 → gone is the adapter's call)", async () => {
+      vi.spyOn(console, "warn").mockImplementation(() => {});
+      server.use(
+        http.get(LIST, () => HttpResponse.json({ jobs: [raw(1)] })),
+        http.get(`${DETAIL}/:id`, () => new HttpResponse(null, { status: 404, statusText: "Not Found" })),
+      );
+      let caught: unknown;
+      const adapter = makeAdapter({
+        hydrate: async (job, _item, _ctx, fetchJson) => {
+          try {
+            return (await fetchJson({ url: `${DETAIL}/${job.externalId}` })) as Partial<NormalizedJob>;
+          } catch (err) {
+            caught = err;
+            throw err;
+          }
+        },
+      });
+
+      const jobs = await runAdapter(adapter, "acme");
+
+      expect(caught).toBeInstanceOf(HttpStatusError);
+      expect((caught as HttpStatusError).status).toBe(404);
+      expect((caught as HttpStatusError).message).toBe(`greenhouse "acme" fetch failed: 404 Not Found`);
+      // This generic adapter rethrew it as-is, so it is TRANSIENT here (contentMissing): only a
+      // PostingGoneError — the adapter's explicit verdict — marks a posting gone.
+      expect(jobs[0]?.contentMissing).toBe(true);
+      expect(jobs[0]?.gone).toBeUndefined();
     });
 
     it("hands each hydrate ITS OWN raw list item, and returns jobs that carry no raw", async () => {

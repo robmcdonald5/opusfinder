@@ -99,10 +99,12 @@ export const companies = pgTable(
  * re-ingesting the same board upserts in place rather than duplicating.
  *
  * Content columns (title, description_text, content_signature, embedding) are written ONLY from
- * fetched content: `upsertJobs` never writes a `NormalizedJob.contentMissing` posting (its detail
- * fetch failed, so its description is a placeholder ""), so a transient hydrate failure leaves the
- * stored row untouched instead of blanking its description and NULLing its embedding. Such a
- * posting still counts present (last_seen_at / the absence streak), since it was listed.
+ * fetched content: `upsertJobs` never writes a `NormalizedJob.contentMissing` posting's content (its
+ * detail fetch failed transiently, so its description is a placeholder ""), so the failure leaves the
+ * stored content untouched instead of blanking its description and NULLing its embedding — only its
+ * list-sourced fields (company_id, locations, remote, posted_at) refresh. Such a posting still counts
+ * present (last_seen_at / the absence streak), since it was listed. A `gone` posting (its detail said
+ * it no longer exists) is not written at all and counts ABSENT, so the lifecycle writers close it.
  *
  * `raw` (the untouched source payload) is DEPRECATED and NO LONGER WRITTEN — it was
  * write-only debug data that ballooned the DB, and `NormalizedJob` no longer carries it. The
@@ -126,7 +128,7 @@ export const jobs = pgTable(
     raw: jsonb("raw"),
     // Voyage vectors. NULL until embedded, and reset to NULL when content changes
     // (see upsertJobs) so the backfill re-embeds it. A failed hydrate is NOT a content
-    // change: a contentMissing posting is never written, so its vector survives.
+    // change: a contentMissing posting's content is never written, so its vector survives.
     embedding: vector("embedding", { dimensions: EMBEDDING_DIMENSIONS }),
     lifecycleState: text("lifecycle_state").$type<LifecycleState>().notNull().default("active"),
     // Consecutive trusted-fetch absences for this job — the streak hysteresis behind lifecycle closing

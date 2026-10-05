@@ -60,8 +60,9 @@ export interface SweepOptions {
  * reappeared — in ONE race-safe UPDATE, scoped to ONE company (NEVER a run-level seen-set, the cron
  * processes only a chunk of boards per tick). `presentExternalIds` is the de-duplicated external_id list
  * the board's fetch just LISTED — what upsertJobs persisted PLUS any `contentMissing` posting it left
- * as stored (or did not insert): a posting whose detail fetch failed this run was still listed, so it is
- * live and must never count as absent.
+ * as stored (or did not insert): a posting whose detail fetch failed TRANSIENTLY this run was still
+ * listed, so it is live and must never count as absent. A `gone` posting (its detail said it no longer
+ * exists) is LEFT OUT, so this sweep counts it absent and closes it at the threshold.
  *
  * Lives OUTSIDE upsertJobs because a reappearing closed job must revive even when its content is
  * byte-unchanged, which upsertJobs's content-gated setWhere cannot do.
@@ -239,7 +240,8 @@ export function closeJobsByIds(
 /**
  * The completeness-INDEPENDENT positive "I saw this job live" writer, called per board from runIngestion
  * for the de-duplicated external_ids a fetch LISTED — including a `contentMissing` posting upsertJobs did
- * not write (a failed detail fetch is not an absence). It (1) refreshes last_seen_at (the staleness clock
+ * not write (a transient detail failure is not an absence), excluding a `gone` one (its detail said it no
+ * longer exists, so it must age toward the timer). It (1) refreshes last_seen_at (the staleness clock
  * {@link sweepStaleJobs} keys on) and (2) REVIVES any reappearing closed job (lifecycle_state→'active',
  * closed_at→NULL, streak→0). Runs for EVERY board, capped or not — UNLIKE the set-difference sweep
  * (sweepLifecycle), which is skipped on a capped/partial fetch; this is the path that lets a capped

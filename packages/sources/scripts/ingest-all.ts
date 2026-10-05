@@ -54,8 +54,12 @@ async function main(): Promise<void> {
         console.warn(`  ${board.source}:${board.slug} FAILED: ${board.error}`);
         return;
       }
+      // The not-written postings are printed so a board whose every detail fetch failed doesn't read as
+      // an empty board ("0 job(s)").
       console.log(
         `  ${board.source}:${board.slug} -> ${board.jobs} job(s), changed ${board.changed}` +
+          (board.hydrateSkipped > 0 ? `, ${board.hydrateSkipped} not written (detail fetch failed)` : "") +
+          (board.hydrateGone > 0 ? `, ${board.hydrateGone} gone per their detail` : "") +
           (board.embedded > 0 ? `, embedded ${board.embedded} (${formatEmbedCost(board.embedTokens)})` : "") +
           (board.error ? ` [embed failed: ${board.error}]` : ""),
       );

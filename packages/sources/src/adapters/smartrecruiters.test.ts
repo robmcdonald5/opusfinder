@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 
 import { companySlug } from "@opusfinder/shared";
-import { rejectionOf } from "@test/rejection";
+import { rejectionOf, rejectionReasonOf } from "@test/rejection";
 
+import { HttpStatusError, PostingGoneError } from "./run-adapter";
 import { smartRecruitersAdapter } from "./smartrecruiters";
 import type { SourceContext } from "./types";
 
@@ -216,16 +217,42 @@ describe("smartRecruitersAdapter.hydrate — content, or a throw (never an empty
     expect(await run({ jobAd: { sections: {} } })).toEqual({ descriptionText: "" });
   });
 
-  // No jobAd.sections ⇒ no content: THROW, so runAdapter flags the listed job contentMissing and
-  // upsertJobs keeps the stored posting. Returning a patch (the old `{}` / `descriptionText: ""`) would
-  // "succeed" and write mapItem's placeholder "" over the stored description, NULLing its embedding.
+  // No content ⇒ THROW, never a patch (the old `{}` / `descriptionText: ""` would "succeed" and write
+  // mapItem's placeholder "" over the stored description, NULLing its embedding). WHICH error decides the
+  // posting's fate in runAdapter: PostingGoneError ⇒ `gone` (absent); anything else ⇒ `contentMissing`.
+
+  // TRANSIENT: a body that carries no content but is not SR's explicit unavailability shape.
   it.each([
-    ["SR's 200 'Posting not available' object", { message: "Posting not available" }],
     ["an object whose jobAd has no sections", { jobAd: { title: "x" }, applyUrl: "https://x/1" }],
     ["JSON null (an edge/maintenance body)", null],
     ["a JSON string", "maintenance"],
-  ])("throws on %s", async (_label, detail) => {
+    ["an object with neither jobAd nor message", { id: "743999874523456" }],
+  ])("throws a TRANSIENT (non-gone) error on %s", async (_label, detail) => {
     const err = await rejectionOf(run(detail));
+    expect(err).not.toBeInstanceOf(PostingGoneError);
     expect(err.message).toBe('SmartRecruiters detail for "743999874523456" has no jobAd.sections');
+  });
+
+  // GONE: SR said explicitly the posting no longer exists.
+  it("throws PostingGoneError on SR's 200 'Posting not available' object (a message, no jobAd)", async () => {
+    const err = await rejectionOf(run({ message: "Posting not available" }));
+    expect(err).toBeInstanceOf(PostingGoneError);
+    expect(err.message).toBe('SmartRecruiters detail for "743999874523456" says it is unavailable');
+  });
+
+  const failWith = (err: Error) => hydrate(job, RAW, CTX, () => Promise.reject(err));
+
+  it.each([404, 410])("throws PostingGoneError when the detail answers %i", async (status) => {
+    const err = await rejectionOf(failWith(new HttpStatusError(`x fetch failed: ${status}`, status)));
+    expect(err).toBeInstanceOf(PostingGoneError);
+    expect(err.message).toBe(`SmartRecruiters detail for "743999874523456" answered ${status}`);
+  });
+
+  it.each([
+    ["a 500 after retries", new HttpStatusError("x fetch failed: 500", 500)],
+    ["a 429 after retries", new HttpStatusError("x fetch failed: 429", 429)],
+    ["a network/timeout error", new Error("x fetch error: The operation was aborted due to timeout")],
+  ])("rethrows %s unchanged — TRANSIENT, never gone", async (_label, cause) => {
+    expect(await rejectionReasonOf(failWith(cause))).toBe(cause);
   });
 });

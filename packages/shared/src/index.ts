@@ -214,19 +214,30 @@ export interface NormalizedJob {
    */
   postedAt: Date | null;
   /**
-   * Set by runAdapter when this posting's CONTENT could not be fetched this run — its hydrate (the N+1
-   * detail fetch) failed or came back without content — so the job carries only list-level fields and a
-   * placeholder "" description that is NOT the posting's text. The posting WAS listed, so it is live:
-   * ingestion still counts it present. `upsertJobs` (the single persistence choke point) never writes it:
-   * a stored row keeps its title/description/signature/embedding, and a brand-new posting waits for a run
-   * that fetches its content. Writing it would overwrite the description, NULL the embedding (a paid
-   * re-embed) and flip content_signature — then flip it all back on the next good hydrate.
+   * Set by runAdapter when this posting's CONTENT could not be fetched this run because of a TRANSIENT
+   * failure — its hydrate (the N+1 detail fetch) timed out, exhausted its 5xx/429 retries, or came back
+   * without content — so the job carries only list-level fields and a placeholder "" description that is
+   * NOT the posting's text. The posting WAS listed, so it is live: ingestion still counts it present.
+   * `upsertJobs` (the single persistence choke point) never writes its content: a stored row keeps its
+   * title/description/signature/embedding (only its list-sourced fields — company, locations, remote,
+   * posted_at — are refreshed), and a brand-new posting waits for a run that fetches its content. Writing
+   * the placeholder would overwrite the description, NULL the embedding (a paid re-embed) and flip
+   * content_signature — then flip it all back on the next good hydrate. Contrast {@link gone}.
    *
    * (There is deliberately no `raw` source object on this type: `jobs.raw` is no longer stored, and
    * keeping it pinned every posting's full source JSON in memory for the whole board. An adapter whose
    * hydrate needs the list item receives it as hydrate's own `raw` argument.)
    */
   contentMissing?: true;
+  /**
+   * Set by runAdapter when the ATS said EXPLICITLY that this listed posting is gone: its detail fetch
+   * answered 404/410, or SmartRecruiters' `200 {"message":"Posting not available"}` (no jobAd). A list can
+   * lag the detail endpoint, so the posting is treated as ABSENT, not as a transient failure: never
+   * written (not even its list fields) and NOT counted present, so the absence streak (sweepLifecycle) or
+   * the staleness timer closes it like any delisted posting — a stale list entry must not keep a dead
+   * posting alive forever. If another copy of the same id in the batch is live, that copy wins.
+   */
+  gone?: true;
 }
 
 /** Narrow an `unknown` to a plain object (record). */

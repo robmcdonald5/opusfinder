@@ -48,6 +48,11 @@ export interface IngestBoardResult {
   ok: boolean;
   jobs: number;
   changed: number;
+  /** Listed postings whose detail fetch failed (content not written; still present) — so a board whose
+   *  every hydrate failed reads as such, not as an empty board. */
+  hydrateSkipped: number;
+  /** Listed postings the ATS says are gone (not written; treated as absent). */
+  hydrateGone: number;
   embedded: number;
   embedTokens: number;
   error?: string;
@@ -134,6 +139,7 @@ export interface IngestionCounts {
   jobs: number; // distinct postings persisted
   changed: number; // inserted-or-updated postings
   hydrateSkipped: number; // listed postings NOT written (detail fetch failed): stored row kept / new one deferred; still present
+  hydrateGone: number; // listed postings whose detail says they're gone (404/410/not-available): not written, treated as ABSENT
   embedded: number; // postings embedded inline (0 when `embed` omitted)
   embedTokens: number; // Voyage tokens used
   embedFailed: number; // boards whose embed step threw (jobs still persisted)
@@ -206,45 +212,48 @@ export async function runIngestion(db: Db, opts: IngestionOptions = {}): Promise
         // source_runs.counts. These boards aren't exempt overall: the post-loop staleness timer
         // (sweepStaleJobs) is their close path.
         if (capped) counts.cappedBoards += 1;
-        // The company id comes straight from listCompanies. (A per-board upsertCompany here was a no-op
-        // `ON CONFLICT DO UPDATE SET slug = excluded.slug` whose only output was this same id — a wasted
-        // neon-http round-trip plus a dead tuple per board per tick.)
-        const companyId = company.id;
-        // upsertJobs never writes a `contentMissing` posting (a failed hydrate — see its guard), so its
-        // stored row keeps its content and a new one waits for a later run. `contentMissing` counts those
-        // DISTINCT postings; tallied only once the write succeeded (a throw fails the board, counting none).
-        const { changed, total, contentMissing } = await upsertJobs(db, companyId, normalized);
+        // The company id comes straight from listCompanies (`company.id`) — no per-board upsertCompany,
+        // which was a no-op `ON CONFLICT DO UPDATE SET slug = excluded.slug` returning that same id (a
+        // wasted neon-http round-trip plus a dead tuple per board per tick).
+        // upsertJobs never writes a failed hydrate's content (see its guard): a `contentMissing` posting's
+        // stored row keeps its content (only its list fields refresh) and a new one waits for a later run;
+        // a `gone` posting is not written at all. Its counts are DISTINCT postings, tallied only once the
+        // write succeeded (a throw fails the board, counting none).
+        const upserted = await upsertJobs(db, company.id, normalized);
+        const { changed, total } = upserted;
         counts.jobs += total;
         counts.changed += changed;
-        counts.hydrateSkipped += contentMissing;
+        counts.hydrateSkipped += upserted.contentMissing;
+        counts.hydrateGone += upserted.gone;
         counts.ok += 1;
 
         // Liveness stamp (EVERY board, capped or not — see markJobsPresent): refresh last_seen_at for
         // the jobs this fetch returned + revive any reappearing closed ones, then certify a successful
         // non-empty fetch (markCompanyIngested) so the staleness timer's board-health guard knows this
-        // board is fetchable. GATED on a non-empty fetch: an empty/ambiguous fetch (e.g. SmartRecruiters
-        // 200+totalFound:0 → []) must NOT stamp presence OR certify health. `presentExternalIds` is every
-        // de-duplicated external_id the board LISTED — what upsertJobs persisted PLUS the contentMissing
-        // postings it did not write: a posting whose detail fetch failed this run is still live, so it must
-        // neither age toward the staleness timer nor count as absent in the sweep below. (So the gate is
-        // the listing, not `total` — a board whose every hydrate failed writes nothing but is still live.)
+        // board is fetchable. GATED on `listed` (the board listed ≥1 posting): an empty/ambiguous fetch
+        // (e.g. SmartRecruiters 200+totalFound:0 → []) must NOT stamp presence OR certify health. The gate
+        // is the LISTING, not `total` — a board whose every hydrate failed writes nothing but is live.
+        // `presentIds` is every de-duplicated external_id the board listed EXCEPT those the ATS says are
+        // gone (unless another copy of the id is live): a transient detail failure (`contentMissing`) is
+        // still live, so it must neither age toward the staleness timer nor count as absent in the sweep
+        // below, while a `gone` posting must do exactly that, so the absence streak / timer close it.
         // Isolated like the sweep/embed steps: a stamp fault leaves jobs persisted and self-heals next cycle.
         // ORDER IS LOAD-BEARING — markJobsPresent (stamp last_seen) BEFORE markCompanyIngested (certify
         // board health): if the company were certified first and the job-stamp then threw, the timer could
         // close jobs that were never re-stamped. This order fails SAFE (jobs stamped, board left
         // uncertified ⇒ guard spares it).
-        const listedIds = [...new Set(normalized.map((j) => j.externalId))];
-        const presentExternalIds = listedIds.length > 0 ? listedIds : undefined;
-        if (presentExternalIds !== undefined) {
+        const listed = normalized.length > 0;
+        const presentIds = [...new Set(normalized.filter((j) => !j.gone).map((j) => j.externalId))];
+        if (listed) {
           try {
-            const present = await markJobsPresent(db, companyId, presentExternalIds);
+            const present = await markJobsPresent(db, company.id, presentIds);
             counts.revived += present.revived; // closed→active revivals (works for capped boards too)
-            await markCompanyIngested(db, companyId);
+            await markCompanyIngested(db, company.id);
           } catch (err) {
             counts.markFailed += 1;
-            // Shape-only (no job text); companyId is a non-secret int.
+            // Shape-only (no job text); company.id is a non-secret int.
             console.warn(
-              `markJobsPresent/markCompanyIngested failed for company ${companyId}: ` +
+              `markJobsPresent/markCompanyIngested failed for company ${company.id}: ` +
                 `${err instanceof Error ? err.message : String(err)}`.slice(0, 200),
             );
           }
@@ -256,9 +265,11 @@ export async function runIngestion(db: Db, opts: IngestionOptions = {}): Promise
         // those boards rely on the staleness timer (sweepStaleJobs) instead. Enforcement rides
         // parseEnforceFlag(LIFECYCLE_CLOSE_ENFORCE). Isolated like the stamp/embed steps. Closed→active revivals are
         // owned by markJobsPresent above; sweepLifecycle.revived here counts only still-active streak resets.
-        if (presentExternalIds !== undefined && !capped) {
+        // (A board whose every listed posting is gone has an EMPTY present set: sweepLifecycle no-ops on it —
+        // its `<> ALL('{}')` guard — so those close on the staleness timer instead; the board is certified.)
+        if (listed && !capped) {
           try {
-            const sweep = await sweepLifecycle(db, companyId, presentExternalIds, {
+            const sweep = await sweepLifecycle(db, company.id, presentIds, {
               enforce: opts.enforceLifecycle ?? false,
             });
             counts.revived += sweep.revived;
@@ -267,9 +278,9 @@ export async function runIngestion(db: Db, opts: IngestionOptions = {}): Promise
             counts.wouldClose += sweep.wouldClose;
           } catch (err) {
             counts.sweepFailed += 1;
-            // Shape-only (no job text): the count feeds item-6 health; companyId is a non-secret int.
+            // Shape-only (no job text): the count feeds item-6 health; company.id is a non-secret int.
             console.warn(
-              `sweepLifecycle failed for company ${companyId}: ` +
+              `sweepLifecycle failed for company ${company.id}: ` +
                 `${err instanceof Error ? err.message : String(err)}`.slice(0, 200),
             );
           }
@@ -281,7 +292,7 @@ export async function runIngestion(db: Db, opts: IngestionOptions = {}): Promise
         if (opts.embed && total > 0) {
           try {
             const { embedded, tokens } = await backfillJobEmbeddings(db, opts.embed, {
-              companyId,
+              companyId: company.id,
               inputType: "document",
             });
             boardEmbedded = embedded;
@@ -302,6 +313,8 @@ export async function runIngestion(db: Db, opts: IngestionOptions = {}): Promise
           ok: true,
           jobs: total,
           changed,
+          hydrateSkipped: upserted.contentMissing,
+          hydrateGone: upserted.gone,
           embedded: boardEmbedded,
           embedTokens: boardTokens,
           error: embedWarning,
@@ -316,6 +329,8 @@ export async function runIngestion(db: Db, opts: IngestionOptions = {}): Promise
           ok: false,
           jobs: 0,
           changed: 0,
+          hydrateSkipped: 0,
+          hydrateGone: 0,
           embedded: 0,
           embedTokens: 0,
           error: message,
@@ -374,6 +389,7 @@ function emptyCounts(): IngestionCounts {
     jobs: 0,
     changed: 0,
     hydrateSkipped: 0,
+    hydrateGone: 0,
     embedded: 0,
     embedTokens: 0,
     embedFailed: 0,
@@ -409,6 +425,7 @@ function logSummary(counts: IngestionCounts, embedEnabled: boolean): void {
       (counts.hydrateSkipped > 0
         ? `; ${counts.hydrateSkipped} posting(s) not written (detail fetch failed; stored content kept)`
         : "") +
+      (counts.hydrateGone > 0 ? `; ${counts.hydrateGone} posting(s) gone per their detail (absent)` : "") +
       (counts.staleWouldClose > 0 || counts.staleClosed > 0 || counts.staleSweepFailed > 0
         ? `; stale: ${counts.staleWouldClose} would-close, ${counts.staleClosed} closed` +
           (counts.staleSweepFailed > 0 ? `, ${counts.staleSweepFailed} stale-sweep-failed` : "")
