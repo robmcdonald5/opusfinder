@@ -106,12 +106,19 @@ wrangler tail opusfinder-scrapers             # stream live cron invocations
 - **Workers Paid is required for the weekly discovery cron** (now **active** as of Phase F5) — the Free
   plan caps at 50 subrequests per invocation, which the seed fetch + a handful of probes exhaust.
   Ingestion's `INGEST_LIMIT` keeps a tick under budget either way.
+- **When the ingestion cadence changes, retune the external watchdog in the SAME deploy window.** The
+  heartbeat (`HEALTH_PING_URL`) pings once per successful ingestion tick, so the watchdog check's period
+  must equal the cron period. For the current `0 */2 * * *`, set the healthchecks.io check to **period
+  2 h, grace ~1 h** — the grace covers a tick's run time (≤ ~10 min) plus cron jitter yet stays under one
+  period, so a single missed tick alerts within ~3 h. Do it BEFORE `pnpm --filter @opusfinder/scrapers
+  deploy`: an hourly-period check would page on every healthy 2-hour gap. (If `HEALTH_INGEST_MAX_AGE_H` is
+  set anywhere — `packages/db/.env`, Vercel — make it 5 or unset it; the code default is 5.)
 
 ## Pause / resume the schedule
 
 As of Phase F6 the **ingestion** cron is **active** (every 2 h since 2026-10; hourly before); as of
-Phase F5 **discovery** is **active** weekly on Sunday (`0 3 * * SUN`, Workers Paid). Both live in `wrangler.toml` under `[triggers]`. An
-idle/paused Worker costs nothing and never touches Neon — it only does anything when a cron fires. A
+Phase F5 **discovery** is **active** weekly on Sunday (`0 3 * * SUN`, Workers Paid). Both live in
+`wrangler.toml` under `[triggers]`. An idle/paused Worker costs nothing and never touches Neon — it only does anything when a cron fires. A
 change to the toggle takes effect on the **next deploy**:
 
 - **Pause** (stop all scheduled runs): set `crons = []`, then
