@@ -4,6 +4,7 @@ import { render } from "@test/db/render";
 
 import type { Db } from "./client";
 import {
+  DEFAULT_HEALTH_THRESHOLDS,
   evaluateHealth,
   healthOptionsFromEnv,
   type HealthCheck,
@@ -105,6 +106,25 @@ describe("evaluateHealth — null ages (pipeline never ran) fire the age checks"
     const r = evaluateHealth({ ...HEALTHY, ingestionAgeH: null, discoveryAgeD: null });
     expect(checkOf(r, "ingestion_staleness").state).toBe("firing");
     expect(checkOf(r, "discovery_window").state).toBe("firing");
+  });
+});
+
+describe("evaluateHealth — ingestion_staleness default fits the 2-hourly cron", () => {
+  // Age = hours since the last ok run FINISHED. With a 2 h period a healthy age peaks just past 2 h; one
+  // missed tick pushes it to ~4.2 h (one period + the tick's run time) and must NOT fire, while two missed
+  // ticks (~6.2 h) must. (The old hourly default, 3, would fire on every healthy-but-late tick.)
+  it.each<[number, "ok" | "firing"]>([
+    [2.2, "ok"], // a normal gap
+    [4.2, "ok"], // one missed tick — tolerated, no flapping
+    [6.2, "firing"], // two missed ticks
+  ])("default threshold: age %sh → %s", (ingestionAgeH, state) => {
+    const check = checkOf(evaluateHealth({ ...HEALTHY, ingestionAgeH }), "ingestion_staleness");
+    expect(check.state).toBe(state);
+    expect(check.threshold).toBe(5);
+  });
+
+  it("is 5 h by default", () => {
+    expect(DEFAULT_HEALTH_THRESHOLDS.ingestMaxAgeH).toBe(5);
   });
 });
 

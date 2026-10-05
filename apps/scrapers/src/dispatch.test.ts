@@ -25,15 +25,18 @@ vi.mock("@opusfinder/shared", () => ({
   parseEnforceFlag: (value?: string) => value === "enforce",
 }));
 
+import wranglerToml from "../wrangler.toml?raw";
 import worker from "./index";
 
 // Mirrors the wrangler.toml / src/index.ts cron constants — must match character-for-character (esp.
-// the weekday "SUN", not "0"); a mismatch here is exactly the drift the default-case throw guards.
-const INGEST_CRON = "0 * * * *";
+// the weekday "SUN", not "0"); a mismatch here is exactly the drift the default-case throw guards. The
+// "wrangler.toml ↔ src/index.ts cron sync" suite below pins all three together: the toml's crons ARE
+// these strings, and each routes to its lane (so src/index.ts's constants equal them too).
+const INGEST_CRON = "0 */2 * * *";
 const DISCOVERY_CRON = "0 3 * * SUN";
 
 // Production constants the cursor/limit math is pinned against (src/index.ts).
-const DEFAULT_INGEST_LIMIT = 150;
+const DEFAULT_INGEST_LIMIT = 250;
 const MAX_INGEST_LIMIT = 500;
 const MAX_JOBS_PER_BOARD = 1500;
 const MAX_RUN_MS = 10 * 60_000;
@@ -165,7 +168,7 @@ describe("scheduled() dispatch", () => {
     ).rejects.toBe(error);
 
     expect(consoleSpy).toHaveBeenCalledWith(
-      expect.stringContaining("scheduled(0 * * * *) failed: Error: kv exploded"),
+      expect.stringContaining(`scheduled(${INGEST_CRON}) failed: Error: kv exploded`),
     );
     // HEALTH_PING_URL unset ⇒ neither the heartbeat nor the fail ping touches the network.
     expect(fetchSpy).not.toHaveBeenCalled();
@@ -204,7 +207,7 @@ describe("scheduled() dispatch", () => {
     expect(fetchSpy).toHaveBeenCalledWith("https://hc.example/abc");
   });
 
-  it("does NOT heartbeat on the weekly discovery lane (the watchdog is calibrated to the hourly ingest cadence)", async () => {
+  it("does NOT heartbeat on the weekly discovery lane (the watchdog is calibrated to the 2-hourly ingest cadence)", async () => {
     mocks.runDiscovery.mockResolvedValue(undefined);
     const fetchSpy = vi.fn().mockResolvedValue(undefined);
     vi.stubGlobal("fetch", fetchSpy);
@@ -322,5 +325,40 @@ describe("runIngestionTick — cursor wrap math (wrap to 0 only at end of table,
     const { kv } = await runIngestTick({ cursorRaw: "123", counts: { processed: 1, companies: 1, lastId: 200 } });
     expect(kv.get).toHaveBeenCalledWith("afterId");
     expect(kv.put.mock.calls[0]![0]).toBe("afterId");
+  });
+});
+
+describe("wrangler.toml ↔ src/index.ts cron sync (a drift silently skips a lane or throws Unhandled cron)", () => {
+  // wrangler.toml is read as TEXT (Vite's `?raw` import — no node:fs in this Worker-typed graph).
+  /** The quoted strings of the `crons = [...]` array, in order, with `#` comments stripped first. */
+  function tomlCrons(): string[] {
+    const block = /^crons = \[([\s\S]*?)^\]/m.exec(wranglerToml)?.[1];
+    if (block === undefined) throw new Error("wrangler.toml has no `crons = [...]` array");
+    return block
+      .split("\n")
+      .map((line) => line.replace(/#.*$/, ""))
+      .flatMap((line) => [...line.matchAll(/"([^"]*)"/g)].map((m) => m[1]!));
+  }
+
+  it("registers exactly the ingestion (every 2 h) and weekly discovery crons", () => {
+    expect(tomlCrons()).toEqual([INGEST_CRON, DISCOVERY_CRON]);
+  });
+
+  it("routes every registered cron to its lane — none hits the Unhandled-cron throw", async () => {
+    mocks.runDiscovery.mockResolvedValue(undefined);
+    mocks.runIngestion.mockResolvedValue({ processed: 0, companies: 0, lastId: 0 });
+    for (const cron of tomlCrons()) {
+      await scheduled(
+        { cron },
+        { DATABASE_URL: "postgres://stub", INGEST_CURSOR: makeKv(null) },
+        makeCtx(),
+      );
+    }
+    expect(mocks.runIngestion).toHaveBeenCalledTimes(1);
+    expect(mocks.runDiscovery).toHaveBeenCalledTimes(1);
+  });
+
+  it("ships INGEST_LIMIT equal to the code default (the fallback when the var is unset or invalid)", () => {
+    expect(/^INGEST_LIMIT = "(\d+)"$/m.exec(wranglerToml)?.[1]).toBe(String(DEFAULT_INGEST_LIMIT));
   });
 });

@@ -132,7 +132,8 @@ errors, bounce/suppression, discovery lane-errors) + a rerank-cache cost rollup 
 operator (a new `sendHealthAlert` in `@opusfinder/email` → a dedicated `ALERT_TO`) on an enforce-firing check. The
 scrapers Worker fires a content-free watchdog heartbeat (`HEALTH_PING_URL`) on each successful ingestion tick to
 catch the cron's own death, and **ingestion is resumed hourly** (`0 * * * *`, dialed back from `*/30`; deployed
-live 2026-06-15); F5 also **resumed the weekly discovery cron** (`0 3 * * SUN`). Merged to `main` (PR #22).
+live 2026-06-15; since 2026-10 it runs every 2 h × 250 boards, `0 */2 * * *`, to cut Neon awake time); F5
+also **resumed the weekly discovery cron** (`0 3 * * SUN`). Merged to `main` (PR #22).
 
 Phase F5 added **discovery scale-out** — a `SeedLane` registry (`SEED_LANES`) replaces the single
 `loadSeed()` call with a per-lane loop (`selectLanes` / `resolveLanes`; isolated non-`failLoud` lanes

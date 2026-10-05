@@ -39,9 +39,10 @@ export type HealthMode = "off" | "shadow" | "enforce";
 /** Env-tunable numeric thresholds. Defaults seed the watermark; real values are validated on live
  *  traffic in `shadow` before any check is flipped to `enforce`. */
 export interface HealthThresholds {
-  /** (a) hours since the last `status='ok'` ingestion run before staleness fires. Default 3 = ~3× the
-   *  hourly cron period — a single missed tick pushes the next success to ~2h, so 3h tolerates it
-   *  without flapping. */
+  /** (a) hours since the last `status='ok'` ingestion run (its finished_at) before staleness fires.
+   *  Default 5 = 2.5× the 2-hourly cron period: a healthy age peaks just past 2 h (one period plus the
+   *  next tick's run time), a single missed tick pushes it to ~4.2 h — tolerated without flapping — and
+   *  two missed ticks (~6.2 h) fire. */
   ingestMaxAgeH: number;
   /** (b) within-run `counts.failed / counts.companies` ratio that fires the board-failure check. */
   failRatio: number;
@@ -57,7 +58,7 @@ export interface HealthThresholds {
 }
 
 export const DEFAULT_HEALTH_THRESHOLDS: HealthThresholds = {
-  ingestMaxAgeH: 3,
+  ingestMaxAgeH: 5,
   failRatio: 0.5,
   discoveryMaxAgeD: 13,
   backlogMax: 2000,

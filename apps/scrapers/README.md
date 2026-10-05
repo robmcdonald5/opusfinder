@@ -10,11 +10,13 @@ dispatch shell; the real work lives in the already-Worker-forward libraries it c
 
 | Cron (UTC)    | Handler   | Calls                                              |
 | ------------- | --------- | -------------------------------------------------- |
-| `0 * * * *`   | ingestion | `runIngestion(db, …)` from `@opusfinder/sources`   |
+| `0 */2 * * *` | ingestion | `runIngestion(db, …)` from `@opusfinder/sources`   |
 | `0 3 * * SUN` | discovery | `runDiscovery(db, …)` from `@opusfinder/discovery` |
 
-> **Ingestion is RESUMED, hourly** as of Phase F6 — it is the liveness driver for the health checker +
-> watchdog heartbeat (dialed back from the original `*/30`). **Discovery is RESUMED, weekly**
+> **Ingestion runs every 2 hours** (`0 */2 * * *`, 250 boards per tick) — the liveness driver for the
+> health checker + watchdog heartbeat. It was `*/30`, then hourly × 150 boards (Phase F6); 2-hourly × 250
+> halves Neon's wake-ups (each costs the tick plus a 5-min autosuspend tail) while re-fetching each board
+> nearly as often — the sizing is in `wrangler.toml`. **Discovery is RESUMED, weekly**
 > (`0 3 * * SUN`) as of Phase F5 (Workers Paid is now active). The Worker calls
 > `runDiscovery({ workerOnly: true })`, so only `workerSafe` lanes (`outscal` + `hn`) run; a future
 > Node-only lane (F5-LANES-2) is filtered out. See "Pause / resume the schedule" below for the toggle.
@@ -35,6 +37,9 @@ and the library it calls owns its own `source_runs` row (`startRun`/`finishRun`)
 
 - **Ingestion is chunked** (Option-A chunked cron): each tick processes the next `INGEST_LIMIT` boards
   using an id-keyset cursor stored in the `INGEST_CURSOR` KV namespace; the corpus drains across ticks.
+  Boards run one at a time; the 500 ms politeness pause applies only between consecutive boards of the
+  same source (a different source is a different host). A posting whose detail fetch failed is kept
+  as stored, never overwritten — `hydrateSkipped` in `pnpm runs` counts them.
   Inline embedding is **not wired** — the Voyage free tier throttles to 3 RPM, and importing the
   embeddings package would pull a Node env-module into the Worker (and require `nodejs_compat`). Jobs
   are upserted regardless; the still-NULL vectors are filled by `pnpm embeddings:backfill`. See the
@@ -63,7 +68,7 @@ pnpm --filter @opusfinder/scrapers exec wrangler deploy --dry-run --outdir dist 
 # Run the scheduled handlers locally against real Neon (needs .dev.vars — see below):
 pnpm --filter @opusfinder/scrapers dev
 # In another terminal, trigger a cron via the canonical local endpoint (spaces -> + in the query):
-curl "http://localhost:8787/cdn-cgi/handler/scheduled?cron=0+*+*+*+*"   # ingestion (hourly)
+curl "http://localhost:8787/cdn-cgi/handler/scheduled?cron=0+*/2+*+*+*"  # ingestion (every 2 h)
 curl "http://localhost:8787/cdn-cgi/handler/scheduled?cron=0+3+*+*+SUN"    # discovery
 ```
 
@@ -97,8 +102,8 @@ wrangler tail opusfinder-scrapers             # stream live cron invocations
 
 ## Pause / resume the schedule
 
-As of Phase F6 the **ingestion** cron is **active** (hourly); as of Phase F5 **discovery** is **active**
-weekly on Sunday (`0 3 * * SUN`, Workers Paid). Both live in `wrangler.toml` under `[triggers]`. An
+As of Phase F6 the **ingestion** cron is **active** (every 2 h since 2026-10; hourly before); as of
+Phase F5 **discovery** is **active** weekly on Sunday (`0 3 * * SUN`, Workers Paid). Both live in `wrangler.toml` under `[triggers]`. An
 idle/paused Worker costs nothing and never touches Neon — it only does anything when a cron fires. A
 change to the toggle takes effect on the **next deploy**:
 
