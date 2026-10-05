@@ -37,8 +37,9 @@ and the library it calls owns its own `source_runs` row (`startRun`/`finishRun`)
 
 - **Ingestion is chunked** (Option-A chunked cron): each tick processes the next `INGEST_LIMIT` boards
   using an id-keyset cursor stored in the `INGEST_CURSOR` KV namespace; the corpus drains across ticks.
-  Boards run one at a time; politeness keeps board starts of one source (its adapter's `pacingKey`)
-  ≥ 500 ms apart, sleeping only the remainder, so alternating sources can't burst one host. A posting
+  Boards run one at a time; politeness starts a board ≥ 500 ms after the previous board of its source
+  (its adapter's `pacingKey`) finished, sleeping only the remainder, so alternating sources can't burst
+  one host. A posting
   whose detail fetch failed is kept as stored, never overwritten (`hydrateSkipped` in `pnpm runs`).
   Inline embedding is **not wired** — the Voyage free tier throttles to 3 RPM, and importing the
   embeddings package would pull a Node env-module into the Worker (and require `nodejs_compat`). Jobs

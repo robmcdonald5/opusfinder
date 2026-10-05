@@ -66,9 +66,9 @@ crons = [
 #     pace sleep (149 x 0.5 s = 75 s, ~24% of the tick) => ~1.58 s/board of ATS fetch + ~5 neon-http
 #     round trips + CPU.
 #   - the dropped per-board upsertCompany round trip   => ~ -0.1 s  (~1.48 s/board)
-#   - pace per source by TIME (a board waits only what's left of 0.5 s since its source's last board
-#     started) => at most 0.5 s x (share of same-source neighbours), and less whenever the previous
-#     same-source board itself took time; budgeted at a conservative 0.25 s/board
+#   - pace per source by TIME (a board waits only what's left of 0.5 s since its source's previous board
+#     finished) => at most 0.5 s x (share of same-source neighbours), less when other boards ran in
+#     between; budgeted at a conservative 0.25 s/board
 #   => ~1.7 s/board: 250 boards ~ 7.2 min (72% of the budget, so a tick ~40% slower than the median still
 #      completes); 300 would be ~8.7 min (87%), too close to the stop to call "normal".
 # 250 x 12 ticks = 3,000 board fetches/day vs 3,600 at hourly x 150, so a full sweep of the active boards

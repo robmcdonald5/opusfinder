@@ -20,8 +20,8 @@ export interface SourceAdapter {
   readonly source: SourceName;
 
   /**
-   * Ingestion's politeness group: runIngestion keeps board STARTS of one pacing key at least `paceMs`
-   * apart (see {@link pacingKeyOf}). OMIT ⇒ the source itself. Two adapters whose boards hit the SAME
+   * Ingestion's politeness group: runIngestion starts a board of one pacing key at least `paceMs` after
+   * that key's previous board finished (see {@link pacingKeyOf}). OMIT ⇒ the source itself. Two adapters whose boards hit the SAME
    * request host (or one vendor's rate limiter) MUST declare the same key. Audit (2026-10): no two share
    * one — boards-api.greenhouse.io, api.lever.co, api.ashbyhq.com, apply.workable.com,
    * api.smartrecruiters.com, api.gem.com, jsapi.recruiterbox.com (Trakstar), and the per-tenant

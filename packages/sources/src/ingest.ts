@@ -23,7 +23,7 @@ import {
 import type { SourceName } from "@opusfinder/shared";
 import { sleep } from "@opusfinder/shared/async";
 
-import { adapters, fetchJobs, pacingKeyOf } from "./adapters";
+import { adapters, fetchJobs, isSourceName, pacingKeyOf } from "./adapters";
 import type { RunAdapterOptions } from "./adapters/run-adapter";
 
 /**
@@ -80,11 +80,11 @@ export interface IngestionOptions {
   /** Inline embedder (injected). Omit ⇒ no inline embedding. */
   embed?: IngestEmbedFn;
   /**
-   * Minimum ms between the STARTS of two boards with the same pacing key (the adapter's `pacingKey`,
-   * default its source), so we don't hammer one ATS's infra (Workable 429s on rapid calls). Paced by
-   * TIME, not adjacency: before a board, sleep only what's left of `paceMs` since its key's last board
-   * started — so alternating sources can't burst one host, and a board that follows other work long
-   * enough waits for nothing.
+   * Minimum ms between a board FINISHING and the next board with the same pacing key (the adapter's
+   * `pacingKey`, default its source) starting, so we don't hammer one ATS's infra (Workable 429s on rapid
+   * calls) — the old "≥ paceMs after the previous board", kept per key. Paced by TIME, not adjacency:
+   * before a board, sleep only what's left of `paceMs` since its key's last board finished — so
+   * alternating sources can't burst one host, and a board after enough other work waits for nothing.
    */
   paceMs?: number;
   /** Clock (epoch ms) for the `maxRunMs` budget and the per-key pacing. Defaults to `Date.now`; a test
@@ -178,8 +178,8 @@ export async function runIngestion(db: Db, opts: IngestionOptions = {}): Promise
   const clock = opts.clock ?? Date.now;
   const counts = emptyCounts();
   const startMs = clock();
-  // Pacing key → when its most recent board started (see opts.paceMs).
-  const lastStart = new Map<string, number>();
+  // Pacing key → when its most recent board FINISHED (see opts.paceMs).
+  const lastFinish = new Map<string, number>();
   const runId = await startRun(db, "ingestion", { source: opts.source });
   let errorSample: string | undefined;
 
@@ -201,17 +201,19 @@ export async function runIngestion(db: Db, opts: IngestionOptions = {}): Promise
       // finishRun + summary below still run and the handler advances the cursor to the last processed id.
       if (i > 0 && opts.maxRunMs !== undefined && clock() - startMs >= opts.maxRunMs) break;
       // Politeness is per ATS HOST, i.e. per PACING KEY (the adapter's `pacingKey`, default its source —
-      // types.ts lists the host audit). Paced by TIME, not adjacency: keep this key's board starts ≥ paceMs
-      // apart by sleeping only the remainder since its last start. Adjacency alone let alternating sources
+      // types.ts lists the host audit). Paced by TIME, not adjacency: start a board only ≥ paceMs after its
+      // key's previous board FINISHED, sleeping just the remainder. Adjacency alone let alternating sources
       // (gh, lever, gh, lever…) hit one host back-to-back; time also skips the pause when other boards ran
-      // in between for long enough.
-      const pacingKey = pacingKeyOf(adapters[company.source]);
-      const keyLastStart = lastStart.get(pacingKey);
-      if (keyLastStart !== undefined) {
-        const wait = paceMs - (clock() - keyLastStart);
+      // in between for long enough. The key is resolved WITHOUT throwing: a row whose source has no
+      // adapter (a poison row) paces under its raw source and then fails only its own board, in the try.
+      const pacingKey = isSourceName(company.source)
+        ? pacingKeyOf(adapters[company.source])
+        : company.source;
+      const keyLastFinish = lastFinish.get(pacingKey);
+      if (keyLastFinish !== undefined) {
+        const wait = paceMs - (clock() - keyLastFinish);
         if (wait > 0) await sleep(wait);
       }
-      lastStart.set(pacingKey, clock());
       counts.lastId = company.id; // advance the chunk cursor even when this board fails
       try {
         const normalized = await fetchJobs(company.source, company.slug, opts.adapter);
@@ -348,6 +350,7 @@ export async function runIngestion(db: Db, opts: IngestionOptions = {}): Promise
           error: message,
         });
       }
+      lastFinish.set(pacingKey, clock()); // ok or failed — either way this key's host was just hit
       counts.processed += 1; // boards we got through (ok or failed) — the early-stop cursor signal
     }
 

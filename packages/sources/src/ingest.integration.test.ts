@@ -742,7 +742,7 @@ describe("runIngestion — orchestration over real PGlite (fetch stubbed)", () =
     });
   });
 
-  describe("politeness pacing — per pacing key, by TIME since that key's last board start", () => {
+  describe("politeness pacing — per pacing key, ≥ paceMs after that key's previous board FINISHED", () => {
     // Each board's fetch records `fetch:<slug>` and advances the injected fake clock by `tookMs` (the
     // board's duration); the stubbed sleep advances it by what it slept. DB work takes 0 fake ms.
     const record =
@@ -774,7 +774,7 @@ describe("runIngestion — orchestration over real PGlite (fetch stubbed)", () =
       const counts = await runIngestion(db, clocked);
 
       expect(counts).toMatchObject({ processed: 5, ok: 5, failed: 0 });
-      // pa→pb and pc→pd wait the whole 500; pe follows pb's start by the 500 slept for pd ⇒ no wait.
+      // pa→pb and pc→pd wait the whole 500; pe follows pb's finish by the 500 slept for pd ⇒ no wait.
       expect(paced.events).toEqual([
         "fetch:pa",
         "sleep:500",
@@ -786,9 +786,9 @@ describe("runIngestion — orchestration over real PGlite (fetch stubbed)", () =
       ]);
     });
 
-    it("ALTERNATING sources can't burst one host: each key waits only the remainder since its last start", async () => {
+    it("ALTERNATING sources can't burst one host: each key waits only the remainder since its last finish", async () => {
       // greenhouse, lever, greenhouse, lever, greenhouse — every board takes 100 ms. Adjacency-only pacing
-      // would never sleep here and greenhouse would see starts at t=0, 200, 400.
+      // would never sleep here and greenhouse would see a board start 100 ms after the last one finished.
       await seedCompany({ slug: "aa", active: true });
       await seedCompany({ slug: "ab", source: "lever", active: true });
       await seedCompany({ slug: "ac", active: true });
@@ -798,17 +798,49 @@ describe("runIngestion — orchestration over real PGlite (fetch stubbed)", () =
 
       await runIngestion(db, clocked);
 
-      // aa@0 (→100), ab@100 (→200), ac: 200 since aa ⇒ sleep 300 ⇒ @500 (→600), ad: 500 since ab ⇒ no
-      // wait ⇒ @600 (→700), ae: 200 since ac ⇒ sleep 300 ⇒ @1000.
+      // aa 0→100, ab 100→200, ac: 100 since aa finished ⇒ sleep 400 ⇒ 600→700, ad: 500 since ab finished
+      // ⇒ no wait ⇒ 700→800, ae: 100 since ac finished ⇒ sleep 400 ⇒ 1200.
       expect(paced.events).toEqual([
         "fetch:aa",
         "fetch:ab",
-        "sleep:300",
+        "sleep:400",
         "fetch:ac",
         "fetch:ad",
-        "sleep:300",
+        "sleep:400",
         "fetch:ae",
       ]);
+    });
+
+    it("a SLOW board is followed by the full gap after it FINISHES before the next same-key board", async () => {
+      // sa takes 800 ms. Measured from its START the next greenhouse board could go at once (800 ≥ 500);
+      // measured from its FINISH — the old "≥ paceMs after the previous board" — it must still wait 500.
+      await seedCompany({ slug: "fa", active: true });
+      await seedCompany({ slug: "fb", active: true });
+      installFetch([gh("fa", 800), gh("fb")]);
+
+      await runIngestion(db, clocked);
+
+      expect(paced.events).toEqual(["fetch:fa", "sleep:500", "fetch:fb"]);
+    });
+
+    it("a FAILED board counts as finished for its key too (the host was still hit)", async () => {
+      await seedCompany({ slug: "xa", active: true });
+      await seedCompany({ slug: "xb", active: true });
+      installFetch([
+        {
+          match: boardMatch("xa"),
+          respond: () => {
+            paced.events.push("fetch:xa");
+            return textResponse("err", 500);
+          },
+        },
+        gh("xb"),
+      ]);
+
+      const counts = await runIngestion(db, clocked);
+
+      expect(counts).toMatchObject({ processed: 2, ok: 1, failed: 1 });
+      expect(paced.events).toEqual(["fetch:xa", "sleep:500", "fetch:xb"]);
     });
 
     it("the same injected clock drives the maxRunMs budget (stop STARTING boards once it's spent)", async () => {
@@ -829,7 +861,7 @@ describe("runIngestion — orchestration over real PGlite (fetch stubbed)", () =
       await seedCompany({ slug: "sa", active: true });
       await seedCompany({ slug: "sb", source: "lever", active: true });
       await seedCompany({ slug: "sc", active: true });
-      installFetch([gh("sa"), lever("sb", 800), gh("sc")]); // 800 ms since sa started ≥ 500
+      installFetch([gh("sa"), lever("sb", 800), gh("sc")]); // 800 ms since sa finished ≥ 500
 
       await runIngestion(db, clocked);
 
@@ -852,6 +884,26 @@ describe("runIngestion — orchestration over real PGlite (fetch stubbed)", () =
       } finally {
         delete leverAdapter.pacingKey;
       }
+    });
+  });
+
+  describe("a poison row (a company whose source has no adapter)", () => {
+    it("fails only its own board — the others process and the cursor advances past it", async () => {
+      const p1 = await seedCompany({ slug: "p1", active: true });
+      const p2 = await seedCompany({ slug: "p2", source: "nonesuch" as SourceName, active: true });
+      const p3 = await seedCompany({ slug: "p3", active: true });
+      installFetch([boardRoute("p1", [ghJob(1)]), boardRoute("p3", [ghJob(3)])]);
+
+      // Default pacing (no paceMs override): the pacing-key lookup itself must not throw on p2.
+      const counts = await runIngestion(db, { adapter: NO_RETRY, clock: () => paced.now });
+
+      expect(counts).toMatchObject({ companies: 3, processed: 3, ok: 2, failed: 1, lastId: p3 });
+      expect((await jobsFor(p1)).length).toBe(1);
+      expect((await jobsFor(p3)).length).toBe(1);
+      expect(p2).toBeGreaterThan(p1);
+      const runs = await allSourceRuns();
+      expect(runs[0]!.status).toBe("ok"); // isolated, not an infrastructural failure
+      expect(runs[0]!.errorSample).toMatch(/^nonesuch:p2 /);
     });
   });
 
