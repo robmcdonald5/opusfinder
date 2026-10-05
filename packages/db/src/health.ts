@@ -48,10 +48,11 @@ export interface HealthThresholds {
   /** (b) within-run `counts.failed / counts.companies` ratio that fires the board-failure check. */
   failRatio: number;
   /** (i) latest ingestion run's `hydrateSkipped / hydrateListed` — the share of postings on HYDRATING boards
-   *  (today only SmartRecruiters) whose detail fetch failed transiently, so their content wasn't written.
-   *  Default 0.2: a healthy tick loses a handful; a fifth means the detail endpoint is degraded or
-   *  rate-limiting us, and those postings' descriptions are going stale. The denominator is hydrating
-   *  boards only, so non-hydrating sources can't dilute the signal. */
+   *  (today only SmartRecruiters) whose detail fetch failed or came back empty, so their content wasn't
+   *  written. Default 0.2: a healthy tick loses a handful; a fifth means the detail endpoint is degraded
+   *  or rate-limiting us — or postings stay listed while their detail is unavailable (they stay open until
+   *  delisted) — and those descriptions are going stale. The denominator is hydrating boards only, so
+   *  non-hydrating sources can't dilute the signal. */
   hydrateSkipRatio: number;
   /** (c) days since the last successful discovery run before the window fires. Default 13 ≈ ~2× the weekly
    *  Sunday cron period — tolerates a late/jittered run but still fires on a fully missed week (~14d). */
@@ -122,9 +123,9 @@ export interface HealthSignals {
   latestIngestFailed: number;
   latestIngestProcessed: number;
   latestIngestCompanies: number;
-  /** (i) the latest ingestion run's `counts.hydrateSkipped` (postings whose detail fetch failed
-   *  transiently) and `counts.hydrateListed` (non-gone postings listed by HYDRATING boards). 0 when absent
-   *  (an older run row without the keys). */
+  /** (i) the latest ingestion run's `counts.hydrateSkipped` (postings whose detail fetch failed) and
+   *  `counts.hydrateListed` (postings listed by HYDRATING boards). 0 when absent (an older run row without
+   *  the keys). */
   latestIngestHydrateSkipped: number;
   latestIngestHydrateListed: number;
   /** (c) days since the last `status='ok'` discovery run; `null` if none ever succeeded. Like (a),
