@@ -391,7 +391,7 @@ export const policies = {
   "health.ingestion_staleness": healthCheck("Ingestion staleness", "ingest", {
     label: "Max ingestion age",
     default: 5, // 2.5× the 2-hourly cron period: one missed tick is tolerated, two fire
-    min: 1,
+    min: 3, // one 2-hourly period plus a tick's run time and jitter; lower, and healthy gaps fire
     max: 24,
     riskier: "up",
     int: true,
