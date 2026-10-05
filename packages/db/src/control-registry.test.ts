@@ -63,15 +63,21 @@ describe("control registry ⇄ db/health", () => {
     }
   });
 
-  it("names, per threshold knob, the env var healthOptionsFromEnv reads for THAT check", () => {
+  it("names, per threshold knob, the env var healthOptionsFromEnv reads for THAT check and no other", () => {
+    const defaults = new Map(checksUnder().map((c) => [c.id, c.threshold]));
     for (const { id } of checksUnder()) {
       const knob = thresholdKnob(id);
       if (!knob) continue;
       if (!knob.legacyEnv) throw new Error(`health.${id}: threshold knob needs a legacyEnv`);
-      // knob.max: inside the knob's range and never its default, so a hit can only come from the env var.
-      expect(knob.max, id).not.toBe(knob.default);
-      const applied = checksUnder({ [knob.legacyEnv]: String(knob.max) }).find((c) => c.id === id);
-      expect(applied?.threshold, id).toBe(knob.max);
+      // knob.max: inside the knob's range and no check's default, so it can only come from the env var,
+      // whichever threshold it lands on.
+      expect([...defaults.values()], id).not.toContain(knob.max);
+      for (const c of checksUnder({ [knob.legacyEnv]: String(knob.max) })) {
+        // The probed check takes the value; every other check keeps its no-env default (no cross-wiring).
+        expect(c.threshold, `${knob.legacyEnv} → ${c.id}`).toBe(
+          c.id === id ? knob.max : defaults.get(c.id),
+        );
+      }
     }
   });
 });
