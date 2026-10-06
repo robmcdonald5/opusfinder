@@ -24,7 +24,7 @@ import type { SourceName } from "@opusfinder/shared";
 import { sleep } from "@opusfinder/shared/async";
 
 import { adapterFor, pacingKeyOf } from "./adapters";
-import { runAdapter, type RunAdapterOptions } from "./adapters/run-adapter";
+import { HttpStatusError, runAdapter, type RunAdapterOptions } from "./adapters/run-adapter";
 
 /**
  * The injected embedder — the structural MINIMUM that `backfillJobEmbeddings` accepts. The real
@@ -85,6 +85,7 @@ export interface IngestionOptions {
    * calls) — the old "≥ paceMs after the previous board", kept per key. Paced by TIME, not adjacency:
    * before a board, sleep only what's left of `paceMs` since its key's last board finished — so
    * alternating sources can't burst one host, and a board after enough other work waits for nothing.
+   * An adapter's own `paceMs` (Workable's 2000) replaces this for its boards.
    */
   paceMs?: number;
   /** Clock (epoch ms) for the `maxRunMs` budget and the per-key pacing. Defaults to `Date.now`; a test
@@ -140,7 +141,8 @@ export interface IngestionCounts {
   companies: number; // size of the activeOnly + afterId + limit SQL chunk (NOT necessarily all processed)
   processed: number; // boards actually processed (< companies ⇒ the maxRunMs budget stopped the loop early)
   ok: number; // boards fetched + upserted cleanly
-  failed: number; // boards that threw (isolated — does NOT fail the run)
+  failed: number; // boards that threw (isolated — does NOT fail the run), rateLimitSkipped included
+  rateLimitSkipped: number; // boards failed fast, unfetched, because their pacing key's rate-limit breaker tripped
   jobs: number; // distinct postings persisted
   changed: number; // inserted-or-updated postings
   hydrateSkipped: number; // listed postings whose detail fetch failed: content kept (only company_id refreshed) / new one deferred; still present
@@ -165,6 +167,9 @@ export interface IngestionCounts {
 }
 
 const DEFAULT_PACE_MS = 500;
+// Consecutive boards of one pacing key whose fetch ended on HTTP 429 (after its Retry-After retries, ~90 s
+// each) before that key is skipped for the rest of the tick: two in a row means the host is throttling us.
+const RATE_LIMIT_TRIP_AFTER = 2;
 
 /**
  * Run one ingestion pass. Per-board failures are ISOLATED — a dead slug / 5xx increments
@@ -180,6 +185,8 @@ export async function runIngestion(db: Db, opts: IngestionOptions = {}): Promise
   const startMs = clock();
   // Pacing key → when its most recent board FINISHED (see opts.paceMs).
   const lastFinish = new Map<string, number>();
+  // Pacing key → its current run of consecutive 429-failed boards (see RATE_LIMIT_TRIP_AFTER).
+  const rateLimitStreak = new Map<string, number>();
   const runId = await startRun(db, "ingestion", { source: opts.source });
   let errorSample: string | undefined;
 
@@ -203,20 +210,30 @@ export async function runIngestion(db: Db, opts: IngestionOptions = {}): Promise
       counts.lastId = company.id; // advance the chunk cursor even when this board fails
       // Recorded after the board (see the end of the loop body); the raw source until the adapter resolves.
       let pacingKey: string = company.source;
+      let skipped = false; // this key's breaker had tripped: failed fast, no request made
+      let rateLimited = false; // this board's fetch ended on HTTP 429 after its retries
       try {
         // The adapter is looked up ONCE, INSIDE the try: a row whose source has no adapter (a poison row)
         // throws `unknown source "<x>"` here and fails only its own board. Reused for pacing, the fetch and
         // the hydrate check below.
         const adapter = adapterFor(company.source);
-        // Politeness is per ATS HOST, i.e. per PACING KEY (the adapter's `pacingKey`, default its source —
-        // types.ts lists the host audit). Paced by TIME, not adjacency: start a board only ≥ paceMs after
-        // its key's previous board FINISHED, sleeping just the remainder. Adjacency alone let alternating
-        // sources (gh, lever, gh, lever…) hit one host back-to-back; time also skips the pause when other
-        // boards ran in between for long enough.
         pacingKey = pacingKeyOf(adapter);
+        // Rate-limit breaker, per pacing key, per tick: once the key's host has 429'd RATE_LIMIT_TRIP_AFTER
+        // boards in a row, fail its later boards at once (no request, no pause) rather than spend ~90 s of
+        // retries on each. They fail like any fetch failure — no presence stamp, no sweep, no certification —
+        // so the next sweep retries them.
+        if ((rateLimitStreak.get(pacingKey) ?? 0) >= RATE_LIMIT_TRIP_AFTER) {
+          skipped = true;
+          throw new Error(`rate-limited: ${pacingKey} skipped this tick`);
+        }
+        // Politeness is per ATS HOST, i.e. per PACING KEY (the adapter's `pacingKey`, default its source —
+        // types.ts lists the host audit). Paced by TIME, not adjacency: start a board only ≥ paceMs (or the
+        // adapter's own paceMs) after its key's previous board FINISHED, sleeping just the remainder.
+        // Adjacency alone let alternating sources (gh, lever, gh, lever…) hit one host back-to-back; time
+        // also skips the pause when other boards ran in between for long enough.
         const keyLastFinish = lastFinish.get(pacingKey);
         if (keyLastFinish !== undefined) {
-          const wait = paceMs - (clock() - keyLastFinish);
+          const wait = (adapter.paceMs ?? paceMs) - (clock() - keyLastFinish);
           if (wait > 0) await sleep(wait);
         }
         const normalized = await runAdapter(adapter, company.slug, opts.adapter);
@@ -341,6 +358,8 @@ export async function runIngestion(db: Db, opts: IngestionOptions = {}): Promise
         });
       } catch (err) {
         counts.failed += 1; // ISOLATE: one dead slug / 5xx never halts the run
+        if (skipped) counts.rateLimitSkipped += 1;
+        rateLimited = err instanceof HttpStatusError && err.status === 429;
         const message = err instanceof Error ? err.message : String(err);
         errorSample ??= sampleOf(company, message); // FIRST board error only, truncated + secret-free
         opts.onBoard?.({
@@ -355,7 +374,11 @@ export async function runIngestion(db: Db, opts: IngestionOptions = {}): Promise
           error: message,
         });
       }
-      lastFinish.set(pacingKey, clock()); // ok or failed — either way this key's host was just hit
+      if (!skipped) {
+        lastFinish.set(pacingKey, clock()); // ok or failed — either way this key's host was just hit
+        // Only CONSECUTIVE 429s trip the breaker: any other outcome (ok, or a non-429 failure) resets it.
+        rateLimitStreak.set(pacingKey, rateLimited ? (rateLimitStreak.get(pacingKey) ?? 0) + 1 : 0);
+      }
       counts.processed += 1; // boards we got through (ok or failed) — the early-stop cursor signal
     }
 
@@ -406,6 +429,7 @@ function emptyCounts(): IngestionCounts {
     processed: 0,
     ok: 0,
     failed: 0,
+    rateLimitSkipped: 0,
     jobs: 0,
     changed: 0,
     hydrateSkipped: 0,
@@ -432,6 +456,11 @@ function logSummary(counts: IngestionCounts, embedEnabled: boolean): void {
   console.log(
     `Ingestion: ${counts.companies} board(s) — ${counts.ok} ok` +
       (counts.failed > 0 ? `, ${counts.failed} failed` : "") +
+      (counts.rateLimitSkipped > 0 ? ` (${counts.rateLimitSkipped} rate-limit-skipped)` : "") +
+      // Only the maxRunMs budget ends the loop early, so processed < companies means it stopped the run.
+      (counts.processed < counts.companies
+        ? `; budget stop: processed ${counts.processed}/${counts.companies}`
+        : "") +
       `; ${counts.jobs} job(s), ${counts.changed} changed` +
       (embedEnabled
         ? `; embedded ${counts.embedded} (${counts.embedTokens} tok)` +

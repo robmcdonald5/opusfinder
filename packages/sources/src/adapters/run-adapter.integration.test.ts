@@ -3,8 +3,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { companySlug, jobId, type NormalizedJob, type SourceName } from "@opusfinder/shared";
 import { server } from "@test/msw/server";
+import { rejectionOf } from "@test/rejection";
 
-import { runAdapter } from "./run-adapter";
+import { HttpStatusError, runAdapter } from "./run-adapter";
 import type { SourceAdapter, SourceContext } from "./types";
 
 // The invariant ATS plumbing (run-adapter.ts) over MSW: the pagination loop, the resilient fetch
@@ -316,6 +317,24 @@ describe("runAdapter — invariant ATS plumbing over MSW", () => {
         /greenhouse "acme" fetch failed: 503/,
       );
       expect(calls).toBe(2); // 1 initial + 1 retry
+    });
+
+    it("a 429 that outlasts its retries rejects with a typed HttpStatusError carrying status 429", async () => {
+      // runIngestion's rate-limit breaker branches on this typed status, never on the message.
+      let calls = 0;
+      server.use(
+        http.get(LIST, () => {
+          calls += 1;
+          return new HttpResponse(null, { status: 429, headers: { "retry-after": "0" } });
+        }),
+      );
+
+      const err = await rejectionOf(runAdapter(makeAdapter(), "acme", { maxRetries: 1 }));
+
+      expect(err).toBeInstanceOf(HttpStatusError);
+      expect((err as HttpStatusError).status).toBe(429);
+      expect(err.message).toMatch(/^greenhouse "acme" fetch failed: 429/);
+      expect(calls).toBe(2); // the retry ran first: the error is the board's final outcome
     });
 
     it("does NOT retry a non-retryable 4xx — one request, then throws", async () => {

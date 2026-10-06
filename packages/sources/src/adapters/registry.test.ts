@@ -25,6 +25,14 @@ describe("pacingKeyOf — every adapter declares or defaults a pacing key", () =
   it("a declared pacingKey wins over the source", () => {
     expect(pacingKeyOf({ ...adapters.recruitee, pacingKey: "one-vendor" })).toBe("one-vendor");
   });
+
+  it("only Workable overrides the run's pace (2000 ms); every other adapter keeps the default", () => {
+    const overrides = SOURCE_NAMES.filter((s) => adapters[s].paceMs !== undefined).map((s) => [
+      s,
+      adapters[s].paceMs,
+    ]);
+    expect(overrides).toEqual([["workable", 2000]]);
+  });
 });
 
 // A `companies` row's source comes from the DB, so a stale or hand-written value can reach the lookup.

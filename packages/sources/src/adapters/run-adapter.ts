@@ -46,6 +46,20 @@ export interface RunAdapterOptions {
   maxItems?: number;
 }
 
+/**
+ * A fetch that ended on a non-OK HTTP status after its retries. Carries the `status` as a typed field
+ * so a caller can branch on it (runIngestion's rate-limit breaker keys on 429) without matching the
+ * message. Shape-only, like every board error: the tag, the status and its reason phrase.
+ */
+export class HttpStatusError extends Error {
+  readonly status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = "HttpStatusError";
+    this.status = status;
+  }
+}
+
 const DEFAULT_HYDRATE_CONCURRENCY = 5;
 const DEFAULT_MAX_RETRIES = 3;
 // Generous for a healthy ATS JSON endpoint, but well under the Worker wall limit so one hung
@@ -140,7 +154,7 @@ export async function runAdapter(
 /**
  * Fetch one request and parse JSON, retrying transient failures with exponential backoff +
  * jitter (honoring `Retry-After`). The single resilient fetch path in the package:
- * - `!res.ok` → drain the body, then retry on 429/5xx or throw a tagged error.
+ * - `!res.ok` → drain the body, then retry on 429/5xx or throw a tagged {@link HttpStatusError}.
  * - guard non-JSON bodies (e.g. Workable's HTML 429 / text 404) by catching the parse into
  *   the tagged error rather than surfacing a raw SyntaxError.
  */
@@ -194,7 +208,7 @@ async function fetchJsonResilient(
       await backoff(attempt++, retryAfter);
       continue;
     }
-    throw new Error(`${tag} fetch failed: ${res.status} ${res.statusText}`);
+    throw new HttpStatusError(`${tag} fetch failed: ${res.status} ${res.statusText}`, res.status);
   }
 }
 

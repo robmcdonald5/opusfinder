@@ -31,6 +31,13 @@ export interface SourceAdapter {
   readonly pacingKey?: string;
 
   /**
+   * This adapter's pacing gap (ms) in place of the run's `paceMs` (default 500): a board of this adapter
+   * starts at least this long after its pacing key's previous board finished. OMIT ⇒ the run's `paceMs`.
+   * Set only for a host that rate-limits the default pace (Workable).
+   */
+  readonly paceMs?: number;
+
+  /**
    * ATS-specific slug canonicalization, run ONCE before branding. Greenhouse/Workable
    * lowercase; Lever/Ashby/SmartRecruiters preserve case (their IDs are case-sensitive,
    * or apply URLs echo the casing). MUST end in `companySlug(...)` so the universal floor applies.

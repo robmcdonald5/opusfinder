@@ -25,7 +25,7 @@ import { resultRows } from "./repos/sql";
 /** The eight checks (stable ids — the panel + env modes key off these). */
 export type HealthCheckId =
   | "ingestion_staleness" // last successful ingestion age
-  | "board_fail_ratio" // within-run failed/companies — the status='ok' trap
+  | "board_fail_ratio" // within-run failed/processed — the status='ok' trap
   | "hydrate_skip_ratio" // latest ingestion run: detail fetches that failed / postings on hydrating boards
   | "discovery_window" // discovery last-run age
   | "embedding_backlog" // jobs WHERE embedding IS NULL
@@ -45,7 +45,8 @@ export interface HealthThresholds {
    *  next tick's run time), a single missed tick pushes it to ~4.2 h — tolerated without flapping — and
    *  two missed ticks (~6.2 h) fire. */
   ingestMaxAgeH: number;
-  /** (b) within-run `counts.failed / counts.companies` ratio that fires the board-failure check. */
+  /** (b) within-run `counts.failed / counts.processed` ratio (boards attempted, not the chunk size) that
+   *  fires the board-failure check. */
   failRatio: number;
   /** (i) latest ingestion run's `hydrateSkipped / hydrateListed` — the share of postings on HYDRATING boards
    *  (today only SmartRecruiters) whose detail fetch failed or came back empty, so their content wasn't

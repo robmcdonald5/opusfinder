@@ -25,7 +25,7 @@ import { jsonResponse, routedFetch, textResponse, type Route } from "@test/http/
 // the activeOnly/afterId/limit SQL chunk, the maxRunMs budget break (finishRun still reached), the capped-
 // board sweep SKIP with presence still stamped, the non-empty-fetch gate, closed-job revival, the injected
 // embedder (+ its failure isolation), the post-loop staleness sweep (shadow/enforce, INDEPENDENT of the per-board
-// enforce switch), same-source-only pacing, the company id taken from listCompanies (no upsertCompany), and a
+// enforce switch), same-source-only pacing (and Workable's own pace), the per-key rate-limit breaker, the company id taken from listCompanies (no upsertCompany), and a
 // failed hydrate end to end (stored content kept, still present, hydrateSkipped counted accurately).
 // NOT this file's job: upsertJobs batch/dedupe/setWhere semantics (jobs.integration.test.ts),
 // the run-row once-only terminalize (runs.integration.test.ts), the sweepLifecycle/sweepStaleJobs internal
@@ -82,6 +82,19 @@ const boardRoute = (slug: string, jobList: unknown[]): Route => ({
 const failRoute = (slug: string, status = 500): Route => ({
   match: boardMatch(slug),
   respond: () => textResponse("err", status),
+});
+
+// ── Workable board routing (apply.workable.com/api/v1/widget/accounts/{slug}?details=true, `{ jobs: [...] }`).
+// Records `fetch:<slug>` into paced.events; a non-200 answers an HTML body, as Workable's real 429 does. ──
+function wkJob(code: string): { shortcode: string; title: string; url: string } {
+  return { shortcode: code, title: `W ${code}`, url: `https://x/${code}` };
+}
+const workableBoard = (slug: string, status: number, jobList: unknown[] = []): Route => ({
+  match: (url) => url.includes(`/widget/accounts/${slug}?`),
+  respond: () => {
+    paced.events.push(`fetch:${slug}`);
+    return status === 200 ? jsonResponse({ jobs: jobList }) : textResponse("<html>slow down</html>", status);
+  },
 });
 
 // ── SmartRecruiters routing: the list `…/companies/{slug}/postings?…`, then one N+1 detail fetch per
@@ -345,6 +358,27 @@ describe("runIngestion — orchestration over real PGlite (fetch stubbed)", () =
       // Boards 2 and 3 were never started.
       expect(fx.calls.some((u) => boardMatch("c2")(u))).toBe(false);
       expect(fx.calls.some((u) => boardMatch("c3")(u))).toBe(false);
+    });
+
+    it("the summary line says the budget stopped the run (processed/companies), and only when it did", async () => {
+      await seedCompany({ slug: "c1", active: true });
+      await seedCompany({ slug: "c2", active: true });
+      await seedCompany({ slug: "c3", active: true });
+      installFetch([boardRoute("c1", []), boardRoute("c2", []), boardRoute("c3", [])]);
+      const log = vi.spyOn(console, "log").mockImplementation(() => {});
+      try {
+        await runIngestion(db, { maxRunMs: 0, paceMs: 0, adapter: NO_RETRY }); // stops after board 1
+        await runIngestion(db, { paceMs: 0, adapter: NO_RETRY }); // processes all 3
+
+        const summaries = log.mock.calls.map((c) => String(c[0])).filter((l) => l.startsWith("Ingestion:"));
+        expect(summaries).toHaveLength(2);
+        const [stopped, full] = summaries;
+        expect(stopped).toMatch(/^Ingestion: 3 board\(s\) — 1 ok; budget stop: processed 1\/3; /);
+        expect(full).toMatch(/^Ingestion: 3 board\(s\) — 3 ok; /);
+        expect(full).not.toContain("budget stop");
+      } finally {
+        log.mockRestore();
+      }
     });
   });
 
@@ -884,6 +918,171 @@ describe("runIngestion — orchestration over real PGlite (fetch stubbed)", () =
       } finally {
         delete leverAdapter.pacingKey;
       }
+    });
+
+    it("Workable paces by its own 2000 ms; every other adapter keeps the default 500", async () => {
+      // No paceMs passed: greenhouse gets the run's default, Workable its adapter override.
+      await seedCompany({ slug: "ga", active: true });
+      await seedCompany({ slug: "gb", active: true });
+      await seedCompany({ slug: "wa", source: "workable", active: true });
+      await seedCompany({ slug: "wb", source: "workable", active: true });
+      installFetch([gh("ga"), gh("gb"), workableBoard("wa", 200), workableBoard("wb", 200)]);
+
+      await runIngestion(db, { adapter: NO_RETRY, clock: () => paced.now });
+
+      expect(paced.events).toEqual([
+        "fetch:ga",
+        "sleep:500",
+        "fetch:gb",
+        "fetch:wa",
+        "sleep:2000",
+        "fetch:wb",
+      ]);
+    });
+  });
+
+  describe("rate-limit breaker — per pacing key, per tick", () => {
+    // Every board's fetch records `fetch:<slug>` (beside the stubbed `sleep:<ms>`), so the exact event list
+    // shows which boards made a request and which paused. Default pacing: greenhouse 500, Workable 2000.
+    const ghBoard = (slug: string, status: number): Route => ({
+      match: boardMatch(slug),
+      respond: () => {
+        paced.events.push(`fetch:${slug}`);
+        return status === 200 ? jsonResponse({ jobs: [] }) : textResponse("err", status);
+      },
+    });
+    const clocked = { adapter: NO_RETRY, clock: () => paced.now };
+    const SKIPPED = "rate-limited: workable skipped this tick";
+
+    it("trips after 2 consecutive 429-failed boards: the key's later boards fail fast (no request, no pause, no presence) while other sources run", async () => {
+      await seedCompany({ slug: "wa", source: "workable", active: true });
+      await seedCompany({ slug: "wb", source: "workable", active: true });
+      await seedCompany({ slug: "g1", active: true });
+      const wc = await seedCompany({ slug: "wc", source: "workable", active: true, lastIngestedAt: null });
+      await seedCompany({ slug: "g2", active: true });
+      const wd = await seedCompany({ slug: "wd", source: "workable", active: true });
+      // wc's stored job is on its listing: had wc been fetched, it would be stamped present and wc certified.
+      await seedJob(wc, {
+        externalId: "w1",
+        source: "workable",
+        consecutiveAbsences: 1,
+        lastSeenAt: daysAgo(2),
+      });
+      const fx = installFetch([
+        workableBoard("wa", 429),
+        workableBoard("wb", 429),
+        ghBoard("g1", 200),
+        workableBoard("wc", 200, [wkJob("w1")]),
+        ghBoard("g2", 200),
+        workableBoard("wd", 200),
+      ]);
+      const boards: IngestBoardResult[] = [];
+      const log = vi.spyOn(console, "log").mockImplementation(() => {});
+      let counts: IngestionCounts;
+      try {
+        counts = await runIngestion(db, { ...clocked, onBoard: (b) => boards.push(b) });
+        expect(log.mock.calls.map((c) => String(c[0])).join("\n")).toContain(
+          "4 failed (2 rate-limit-skipped)",
+        );
+      } finally {
+        log.mockRestore();
+      }
+
+      // wc and wd: no request and no pacing sleep. g1 → g2 still waits greenhouse's 500.
+      expect(fx.calls).toHaveLength(4);
+      expect(paced.events).toEqual([
+        "fetch:wa",
+        "sleep:2000",
+        "fetch:wb",
+        "fetch:g1",
+        "sleep:500",
+        "fetch:g2",
+      ]);
+      // Skipped boards are processed (as failed), so the cursor moves past them.
+      expect(counts).toMatchObject({
+        companies: 6,
+        processed: 6,
+        ok: 2,
+        failed: 4,
+        rateLimitSkipped: 2,
+        lastId: wd,
+      });
+      expect(boards.map((b) => [b.slug, b.ok, b.error])).toEqual([
+        ["wa", false, expect.stringMatching(/^workable "wa" fetch failed: 429/)],
+        ["wb", false, expect.stringMatching(/^workable "wb" fetch failed: 429/)],
+        ["g1", true, undefined],
+        ["wc", false, SKIPPED],
+        ["g2", true, undefined],
+        ["wd", false, SKIPPED],
+      ]);
+      // Failed like any fetch failure: no presence stamp, no sweep, no certification.
+      const w1 = (await jobByExt("w1"))!;
+      expect(w1.consecutiveAbsences).toBe(1);
+      expect(w1.lastSeenAt.getTime()).toBeLessThan(daysAgo(1).getTime());
+      expect((await companyById(wc)).lastIngestedAt).toBeNull();
+      // Persisted with the run row, which `pnpm runs` prints verbatim.
+      expect((await allSourceRuns())[0]!.counts).toMatchObject({ failed: 4, rateLimitSkipped: 2 });
+    });
+
+    it("a successful board resets its key's streak: only CONSECUTIVE 429s trip it", async () => {
+      // wb's success resets wa's streak, so the breaker trips only after wc AND wd 429: we alone is skipped.
+      for (const slug of ["wa", "wb", "wc", "wd", "we"]) {
+        await seedCompany({ slug, source: "workable", active: true });
+      }
+      installFetch([
+        workableBoard("wa", 429),
+        workableBoard("wb", 200),
+        workableBoard("wc", 429),
+        workableBoard("wd", 429),
+        workableBoard("we", 200),
+      ]);
+
+      const counts = await runIngestion(db, clocked);
+
+      expect(paced.events).toEqual([
+        "fetch:wa",
+        "sleep:2000",
+        "fetch:wb",
+        "sleep:2000",
+        "fetch:wc",
+        "sleep:2000",
+        "fetch:wd",
+      ]);
+      expect(counts).toMatchObject({ processed: 5, ok: 1, failed: 4, rateLimitSkipped: 1 });
+    });
+
+    it("only HTTP 429 counts: consecutive 5xx boards never trip the breaker", async () => {
+      for (const slug of ["wa", "wb", "wc"]) {
+        await seedCompany({ slug, source: "workable", active: true });
+      }
+      installFetch([workableBoard("wa", 503), workableBoard("wb", 503), workableBoard("wc", 200)]);
+
+      const counts = await runIngestion(db, clocked);
+
+      expect(paced.events).toEqual(["fetch:wa", "sleep:2000", "fetch:wb", "sleep:2000", "fetch:wc"]);
+      expect(counts).toMatchObject({ ok: 1, failed: 2, rateLimitSkipped: 0 });
+    });
+
+    it("streaks are per pacing key: another source's 429s neither trip nor reset this key's", async () => {
+      // wa 429, g1 429 (greenhouse's own streak), wb 429 → Workable trips; g2 (greenhouse at 1) still runs;
+      // g2's success doesn't reset Workable, so wc is skipped.
+      await seedCompany({ slug: "wa", source: "workable", active: true });
+      await seedCompany({ slug: "g1", active: true });
+      await seedCompany({ slug: "wb", source: "workable", active: true });
+      await seedCompany({ slug: "g2", active: true });
+      await seedCompany({ slug: "wc", source: "workable", active: true });
+      installFetch([
+        workableBoard("wa", 429),
+        ghBoard("g1", 429),
+        workableBoard("wb", 429),
+        ghBoard("g2", 200),
+        workableBoard("wc", 200),
+      ]);
+
+      const counts = await runIngestion(db, clocked);
+
+      expect(paced.events).toEqual(["fetch:wa", "fetch:g1", "sleep:2000", "fetch:wb", "fetch:g2"]);
+      expect(counts).toMatchObject({ ok: 1, failed: 4, rateLimitSkipped: 1 });
     });
   });
 
