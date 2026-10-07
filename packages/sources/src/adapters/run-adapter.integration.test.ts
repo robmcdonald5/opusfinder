@@ -853,6 +853,96 @@ describe("runAdapter — invariant ATS plumbing over MSW", () => {
       expect(rateLimited).toBeUndefined();
     });
 
+    describe("boardTimeLimitMs (the Worker's per-board limit)", () => {
+      // Ten postings whose detail is a 503 storm: each answers with a 4 s Retry-After, within the 5 s max.
+      let detailCalls = 0;
+      const storm = (): void => {
+        detailCalls = 0;
+        server.use(
+          http.get(LIST, () => HttpResponse.json({ jobs: Array.from({ length: 10 }, (_, i) => raw(i + 1)) })),
+        );
+        server.use(
+          http.get(`${DETAIL}/:id`, () => {
+            detailCalls += 1;
+            return new HttpResponse(null, { status: 503, headers: { "retry-after": "4" } });
+          }),
+        );
+      };
+      const hydrating = () =>
+        makeAdapter({
+          hydrate: async (job, _item, _ctx, fetchJson) => {
+            await fetchJson({ url: `${DETAIL}/${job.externalId}` });
+            return {};
+          },
+        });
+
+      it("bounds a detail 503 storm: once the limit is spent no new request starts, the rest are contentMissing", async () => {
+        vi.useFakeTimers();
+        try {
+          vi.spyOn(console, "warn").mockImplementation(() => {});
+          storm();
+          let jobs: NormalizedJob[] | undefined;
+          void runAdapter(hydrating(), "acme", {
+            hydrateConcurrency: 1,
+            maxRetries: 3,
+            maxRetryWaitMs: 5000,
+            boardTimeLimitMs: 10_000,
+          }).then((j) => (jobs = j));
+
+          // Unlimited, ten postings × (4 attempts, 3 × 4 s waits) would take ~2 min.
+          await vi.advanceTimersByTimeAsync(15_000);
+
+          expect(jobs).toBeDefined(); // done within the limit + one wait
+          expect(detailCalls).toBe(3); // attempts at ~0, ~4 and ~8 s; none after the 10 s limit
+          expect(jobs!.every((j) => j.contentMissing)).toBe(true);
+        } finally {
+          vi.useRealTimers();
+        }
+      });
+
+      it("a list fetch past the limit fails the board with a plain error (no rate limit)", async () => {
+        vi.useFakeTimers();
+        try {
+          let calls = 0;
+          server.use(
+            http.get(LIST, () => {
+              calls += 1;
+              return new HttpResponse(null, { status: 503, headers: { "retry-after": "4" } });
+            }),
+          );
+
+          const settled = rejectionOf(
+            runAdapter(makeAdapter(), "acme", { maxRetries: 10, maxRetryWaitMs: 5000, boardTimeLimitMs: 10_000 }),
+          );
+          await vi.advanceTimersByTimeAsync(15_000);
+          const err = await settled;
+
+          expect(calls).toBe(3);
+          expect(err).not.toBeInstanceOf(RateLimitedError);
+          expect(err.message).toBe('greenhouse "acme" board time limit reached');
+        } finally {
+          vi.useRealTimers();
+        }
+      });
+
+      it("unset (the CLI): no limit — every posting's detail keeps retrying", async () => {
+        vi.useFakeTimers();
+        try {
+          vi.spyOn(console, "warn").mockImplementation(() => {});
+          storm();
+          let jobs: NormalizedJob[] | undefined;
+          void runAdapter(hydrating(), "acme", { hydrateConcurrency: 1, maxRetries: 3 }).then((j) => (jobs = j));
+
+          await vi.advanceTimersByTimeAsync(200_000);
+
+          expect(jobs).toBeDefined();
+          expect(detailCalls).toBe(40); // 10 postings × 4 attempts
+        } finally {
+          vi.useRealTimers();
+        }
+      });
+    });
+
     describe("a rate-limited detail fetch", () => {
       // Four listed postings, each hydrated from DETAIL/{id}, which always 429s with a 120 s Retry-After.
       let detailCalls = 0;

@@ -53,6 +53,12 @@ export interface RunAdapterOptions {
    * patient behaviour: sleep every Retry-After (capped at 30 s) — the CLI.
    */
   maxRetryWaitMs?: number;
+  /**
+   * Per-board time limit (Worker-only): once a board has run this long, no new request starts for it — its
+   * list fetch fails the board; a detail fetch leaves its posting `contentMissing` (stored content kept).
+   * Requests already in flight finish under their own `fetchTimeoutMs`. Omit ⇒ unlimited (the CLI).
+   */
+  boardTimeLimitMs?: number;
 }
 
 /**
@@ -100,10 +106,11 @@ export async function fetchBoard(
   const fetchTimeoutMs = opts.fetchTimeoutMs ?? DEFAULT_FETCH_TIMEOUT_MS;
   const maxItems = opts.maxItems;
 
+  const deadline = opts.boardTimeLimitMs === undefined ? undefined : Date.now() + opts.boardTimeLimitMs;
   const ctx: SourceContext = { slug: adapter.normalizeSlug(rawSlug), rawSlug };
   const tag = `${adapter.source} "${ctx.slug}"`;
   const fetchJson: FetchJson = (req) =>
-    fetchJsonResilient(req, tag, maxRetries, fetchTimeoutMs, opts.maxRetryWaitMs);
+    fetchJsonResilient(req, tag, maxRetries, fetchTimeoutMs, opts.maxRetryWaitMs, deadline);
 
   // Pagination loop. Keep each raw list item beside its mapped job ONLY when there is a hydrate to
   // hand it to (the job itself carries no raw — it is not stored); otherwise drop the reference so a
@@ -196,6 +203,7 @@ async function fetchJsonResilient(
   maxRetries: number,
   timeoutMs: number,
   maxRetryWaitMs?: number,
+  deadline?: number,
 ): Promise<unknown> {
   let attempt = 0;
   // Fail-fast mode only: the Retry-After of this request's 429. Once set, the request's next failure ends it.
@@ -214,6 +222,8 @@ async function fetchJsonResilient(
       ? err
       : new RateLimitedError(tag, limitedRetryAfterMs, { cause: err });
   for (;;) {
+    // The board's time limit: no new attempt once it is spent (see RunAdapterOptions.boardTimeLimitMs).
+    if (deadline !== undefined && Date.now() >= deadline) throw new Error(`${tag} board time limit reached`);
     let res: Response;
     try {
       // Bound every attempt with a fresh timeout signal (the abort throws -> the catch below

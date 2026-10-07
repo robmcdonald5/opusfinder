@@ -99,7 +99,9 @@ excepted). `runIngestion` then SKIPS that pacing key's boards until the Retry-Af
 `failed`). A rate-limited detail fetch does the same, its board's remaining hydrates flagged
 `contentMissing` unfetched (counted in `hydrateSkipped`). After the main loop, a second pass retries —
 without waiting — the skipped and 429'd boards whose cooldown has passed, while the budget lasts.
-`ingest:all` omits the option and keeps the patient retries. Known limitations: a transient blip is now
+The Worker also passes `boardTimeLimitMs` (120 s): past it no new request starts for that board (its list
+fetch fails the board; remaining detail fetches leave postings `contentMissing`), so one board can't run the
+tick past Cloudflare's limit. `ingest:all` omits both options and keeps the patient, unlimited retries. Known limitations: a transient blip is now
 mostly recovered in the same tick, but under persistent throttling a skipped board waits a full sweep
 (~20 h) for its next try, and meanwhile the stale sweep spares its uncertified jobs (`rateLimitSkipped`
 makes it visible); a host's burst quota can leave the tail of a huge board unhydrated while it throttles
