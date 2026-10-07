@@ -45,32 +45,26 @@ export interface RunAdapterOptions {
    */
   maxItems?: number;
   /**
-   * Fail fast (Worker-only): no retry ever waits longer than this (+ jitter). A retry that would — its
-   * Retry-After or its backoff — is not made: a 429, or a 503 with a Retry-After, throws
-   * {@link RateLimitedError}; any other failure throws its own error. A request is 429'd at most once: any
-   * failure after its 429 (a timeout, a reset, a bad body, another 5xx or 429) ends it as a RateLimitedError
-   * at once — except a definitive 4xx (404, 410…), which keeps its own error. The hydrate pool stops at the
-   * first RateLimitedError. Omit ⇒ today's patient behaviour: sleep every Retry-After (capped at 30 s) —
-   * the CLI.
+   * Fail fast (Worker-only): no retry ever waits longer than this (+ jitter); a retry that would — its
+   * Retry-After or its backoff — is not made, and the request fails with its own error. Only a 429 throws
+   * {@link RateLimitedError}. A request is 429'd at most once: any failure after its 429 (a timeout, a reset,
+   * a bad body, a 5xx, a 403, another 429) ends it as a RateLimitedError at once — except a definitive
+   * 404/410, which keeps its own error. The hydrate pool stops at the first RateLimitedError. Omit ⇒ today's
+   * patient behaviour: sleep every Retry-After (capped at 30 s) — the CLI.
    */
   maxRetryWaitMs?: number;
-  /** Told about a hydrate (detail) fetch's RateLimitedError — the board itself still succeeds, so this is
-   *  how runIngestion learns to cool that host down. */
-  onRateLimited?: (err: RateLimitedError) => void;
 }
 
 /**
- * The host rate-limited a request (fail-fast mode only — see `maxRetryWaitMs`). `retryAfterMs` is its
+ * The host answered a request 429 (fail-fast mode only — see `maxRetryWaitMs`). `retryAfterMs` is its
  * Retry-After, uncapped, or {@link RATE_LIMIT_MIN_COOLDOWN_MS} when it sent none usable: how long the caller
- * should leave that host alone. Shape-only message: the tag, the status and the wait.
+ * should leave that host alone. Shape-only message: the tag and the wait.
  */
 export class RateLimitedError extends Error {
-  readonly status: number;
   readonly retryAfterMs: number;
-  constructor(tag: string, status: number, retryAfterMs: number, options?: ErrorOptions) {
-    super(`${tag} rate-limited: ${status}, retry after ${Math.ceil(retryAfterMs / 1000)}s`, options);
+  constructor(tag: string, retryAfterMs: number, options?: ErrorOptions) {
+    super(`${tag} rate-limited: 429, retry after ${Math.ceil(retryAfterMs / 1000)}s`, options);
     this.name = "RateLimitedError";
-    this.status = status;
     this.retryAfterMs = retryAfterMs;
   }
 }
@@ -89,6 +83,18 @@ export async function runAdapter(
   rawSlug: string,
   opts: RunAdapterOptions = {},
 ): Promise<NormalizedJob[]> {
+  return (await fetchBoard(adapter, rawSlug, opts)).jobs;
+}
+
+/**
+ * {@link runAdapter}, plus `rateLimited`: the RateLimitedError a hydrate (detail) fetch hit, if any. The
+ * board itself still succeeds, so this is how runIngestion learns to cool that host down. Package-internal.
+ */
+export async function fetchBoard(
+  adapter: SourceAdapter,
+  rawSlug: string,
+  opts: RunAdapterOptions = {},
+): Promise<{ jobs: NormalizedJob[]; rateLimited?: RateLimitedError }> {
   const hydrateConcurrency = opts.hydrateConcurrency ?? DEFAULT_HYDRATE_CONCURRENCY;
   const maxRetries = opts.maxRetries ?? DEFAULT_MAX_RETRIES;
   const fetchTimeoutMs = opts.fetchTimeoutMs ?? DEFAULT_FETCH_TIMEOUT_MS;
@@ -147,43 +153,33 @@ export async function runAdapter(
   // content_signature, then flip it all back on the next good hydrate.
   let jobs: NormalizedJob[];
   let unhydrated = 0;
-  let deferred = 0;
+  let rateLimited: RateLimitedError | undefined;
   if (hydrate) {
-    // After the first rate-limited detail fetch the rest skip theirs (no request) rather than each hitting a
-    // host that is throttling us. Those and the rate-limited ones are flagged `hydrateDeferred` too: their
-    // content is missing because of the host, not the posting.
-    let limited = false;
+    // After the first rate-limited detail fetch the rest skip theirs (contentMissing, no request) rather
+    // than each hitting a host that is throttling us.
     jobs = await mapWithConcurrency(mapped, hydrateConcurrency, async ({ raw, job }) => {
-      if (!limited) {
+      if (!rateLimited) {
         try {
           return { ...job, ...(await hydrate(job, raw, ctx, fetchJson)) };
         } catch (err) {
-          if (!(err instanceof RateLimitedError)) {
-            unhydrated++;
-            return { ...job, contentMissing: true as const };
-          }
-          if (!limited) {
-            limited = true;
-            opts.onRateLimited?.(err);
-          }
+          if (err instanceof RateLimitedError) rateLimited ??= err;
         }
       }
-      deferred++;
-      return { ...job, contentMissing: true as const, hydrateDeferred: true as const };
+      unhydrated++;
+      return { ...job, contentMissing: true as const };
     });
   } else {
     jobs = mapped.map((m) => m.job);
   }
 
-  if (skipped > 0 || unhydrated > 0 || deferred > 0) {
+  if (skipped > 0 || unhydrated > 0) {
     console.warn(
       `${tag}: ${jobs.length} job(s)` +
         (skipped > 0 ? `, skipped ${skipped} malformed` : "") +
-        (unhydrated > 0 ? `, ${unhydrated} un-hydrated (content missing, not written)` : "") +
-        (deferred > 0 ? `, ${deferred} deferred (rate-limited, not written)` : ""),
+        (unhydrated > 0 ? `, ${unhydrated} un-hydrated (content missing, not written)` : ""),
     );
   }
-  return jobs;
+  return { jobs, rateLimited };
 }
 
 /**
@@ -216,7 +212,7 @@ async function fetchJsonResilient(
   const fail = (err: Error): Error =>
     limitedRetryAfterMs === undefined
       ? err
-      : new RateLimitedError(tag, 429, limitedRetryAfterMs, { cause: err });
+      : new RateLimitedError(tag, limitedRetryAfterMs, { cause: err });
   for (;;) {
     let res: Response;
     try {
@@ -252,23 +248,16 @@ async function fetchJsonResilient(
     const retryAfter = res.headers.get("retry-after");
     await res.body?.cancel().catch(() => {});
     const error = new Error(`${tag} fetch failed: ${res.status} ${res.statusText}`);
-    // A definitive 4xx (404, 410…) is its own answer: never retried, never masked by an earlier 429.
-    if (res.status !== 429 && res.status < 500) throw error;
-    if (maxRetryWaitMs === undefined) {
-      if (await retry(retryAfter)) continue;
-      throw error;
+    // A definitive 404/410 is its own answer, even after a 429. Any other 4xx isn't retried either, but after
+    // a 429 it still reports the rate limit (a WAF's 403, say).
+    if (res.status === 404 || res.status === 410) throw error;
+    if (res.status !== 429 && res.status < 500) throw fail(error);
+    const wasLimited = limitedRetryAfterMs !== undefined;
+    if (res.status === 429 && maxRetryWaitMs !== undefined) {
+      limitedRetryAfterMs = parseRetryAfterMs(retryAfter) ?? RATE_LIMIT_MIN_COOLDOWN_MS;
     }
-    const after = parseRetryAfterMs(retryAfter);
-    if (limitedRetryAfterMs !== undefined) {
-      if (res.status === 429) limitedRetryAfterMs = after ?? RATE_LIMIT_MIN_COOLDOWN_MS;
-      throw fail(error); // a failure after a 429 ends the request
-    }
-    if (res.status === 429) limitedRetryAfterMs = after ?? RATE_LIMIT_MIN_COOLDOWN_MS;
-    if (await retry(retryAfter)) continue;
-    // Out of attempts or patience: only a 429, or a 503 that sent a Retry-After, is a rate limit.
-    if (res.status === 503 && after !== undefined) {
-      throw new RateLimitedError(tag, 503, after, { cause: error });
-    }
+    // A request already 429'd ends at this failure; otherwise retry (within maxRetryWaitMs, in fail-fast).
+    if (!wasLimited && (await retry(retryAfter))) continue;
     throw fail(error);
   }
 }

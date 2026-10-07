@@ -1074,8 +1074,11 @@ describe("runIngestion — orchestration over real PGlite (fetch stubbed)", () =
 
         const counts = await runIngestion(db, clocked);
 
+        // Once cooled, wa (429'd itself) is retried by the second pass too — and 429s again, still one failure.
         expect(paced.events).toEqual(
-          attempted ? ["fetch:wa", "fetch:g1", "fetch:wb"] : ["fetch:wa", "fetch:g1"],
+          attempted
+            ? ["fetch:wa", "fetch:g1", "fetch:wb", "sleep:1000", "fetch:wa"]
+            : ["fetch:wa", "fetch:g1"],
         );
         expect(counts).toMatchObject({ processed: 3, failed: 1, rateLimitSkipped: attempted ? 0 : 1 });
       },
@@ -1092,7 +1095,7 @@ describe("runIngestion — orchestration over real PGlite (fetch stubbed)", () =
       expect(counts).toMatchObject({ ok: 1, failed: 1, rateLimitSkipped: 0 });
     });
 
-    it("a rate-limited DETAIL fetch cools the key down too, and its unfetched postings count as deferred, not skipped", async () => {
+    it("a rate-limited DETAIL fetch cools the key down too; its unhydrated postings count in hydrateSkipped", async () => {
       await seedCompany({ slug: "sr1", source: "smartrecruiters", active: true });
       await seedCompany({ slug: "sr2", source: "smartrecruiters", active: true });
       // sr1: h-1's detail really fails (500); h-2's is rate-limited, so the pool stops before h-3.
@@ -1104,45 +1107,43 @@ describe("runIngestion — orchestration over real PGlite (fetch stubbed)", () =
         ),
         ...srBoard("sr2", ["h-4"], (id) => jsonResponse(srDetail(id))),
       ]);
-      const heard: string[] = [];
-      const log = vi.spyOn(console, "log").mockImplementation(() => {});
       const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
       let counts: IngestionCounts;
       try {
-        counts = await runIngestion(db, {
-          ...clocked,
-          // The caller's own hook is chained, not overridden.
-          adapter: { ...FAIL_FAST, hydrateConcurrency: 1, onRateLimited: (e) => heard.push(e.message) },
-        });
-        expect(log.mock.calls.map((c) => String(c[0])).join("\n")).toContain(
-          "; 2 posting(s) deferred (detail fetch rate-limited; stored content kept)",
-        );
+        counts = await runIngestion(db, { ...clocked, adapter: { ...FAIL_FAST, hydrateConcurrency: 1 } });
       } finally {
-        log.mockRestore();
         warn.mockRestore();
       }
 
       // sr1: its list + h-1 + h-2 (h-3 never fetched); sr2: nothing.
       expect(fx.calls).toHaveLength(3);
       expect(fx.calls.some((u) => u.includes("/companies/sr2/"))).toBe(false);
-      expect(heard).toEqual(['smartrecruiters "sr1" rate-limited: 429, retry after 120s']);
+      // All three unhydrated postings count, so hydrate_skip_ratio sees persistent detail throttling.
       expect(counts).toMatchObject({
         ok: 1,
         failed: 0,
         rateLimitSkipped: 1,
-        hydrateSkipped: 1, // h-1 only: hydrate_skip_ratio isn't inflated by the rate limit
-        hydrateDeferred: 2,
-        hydrateListed: 1,
+        hydrateSkipped: 3,
+        hydrateListed: 3,
       });
-      expect((await allSourceRuns())[0]!.counts).toMatchObject({ hydrateDeferred: 2 });
     });
 
-    it("second pass: a skipped board whose cooldown has passed by the loop's end is retried, without waiting", async () => {
+    it("second pass: a blip is recovered in-tick — the 429'd board and the skipped one are retried once cooled", async () => {
       await seedCompany({ slug: "wa", source: "workable", active: true });
       const wb = await seedCompany({ slug: "wb", source: "workable", active: true, lastIngestedAt: null });
       const g1 = await seedCompany({ slug: "g1", active: true });
+      let waCalls = 0;
       installFetch([
-        workableBoard("wa", 429, [], "60"),
+        {
+          // A blip: wa's first fetch is 429'd, its retry succeeds.
+          match: (url) => url.includes("/widget/accounts/wa?"),
+          respond: () => {
+            paced.events.push("fetch:wa");
+            return ++waCalls === 1
+              ? new Response(null, { status: 429, headers: { "retry-after": "60" } })
+              : jsonResponse({ jobs: [] });
+          },
+        },
         workableBoard("wb", 200, [wkJob("w1")]),
         ghBoard("g1", 61_000), // the main loop ends 61 s in: past wa's 60 s cooldown
       ]);
@@ -1150,20 +1151,21 @@ describe("runIngestion — orchestration over real PGlite (fetch stubbed)", () =
 
       const counts = await runIngestion(db, { ...clocked, onBoard: (b) => boards.push(b) });
 
-      // wb was skipped in order, then fetched after g1.
-      expect(paced.events).toEqual(["fetch:wa", "fetch:g1", "fetch:wb"]);
-      // Each board counted once; the cursor stays where the main loop left it.
+      // wa failed and wb was skipped, in order; both were fetched after g1 (paced by Workable's 1000).
+      expect(paced.events).toEqual(["fetch:wa", "fetch:g1", "fetch:wa", "sleep:1000", "fetch:wb"]);
+      // Each board counted once (wa's retry replaces its 429); the cursor stays where the main loop left it.
       expect(counts).toMatchObject({
         companies: 3,
         processed: 3,
-        ok: 2,
-        failed: 1,
+        ok: 3,
+        failed: 0,
         rateLimitSkipped: 0,
         lastId: g1,
       });
       expect(boards.map((b) => [b.slug, b.ok])).toEqual([
         ["wa", false],
         ["g1", true],
+        ["wa", true],
         ["wb", true],
       ]);
       // Its lifecycle ran as normal: stamped present and certified.

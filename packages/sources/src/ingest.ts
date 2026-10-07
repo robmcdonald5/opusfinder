@@ -27,7 +27,7 @@ import { adapterFor, paceMsOf, pacingKeyOf } from "./adapters";
 import {
   RATE_LIMIT_MIN_COOLDOWN_MS,
   RateLimitedError,
-  runAdapter,
+  fetchBoard,
   type RunAdapterOptions,
 } from "./adapters/run-adapter";
 
@@ -113,7 +113,8 @@ export interface IngestionOptions {
   /**
    * Optional per-board progress hook, fired once per board as it finishes (success or failure). A board a
    * rate-limit cooldown skipped is reported once, after the second pass: its outcome if retried there, else
-   * `skipped: "rate-limited"`. The library stays quiet by default (only the run summary is logged); the CLI
+   * `skipped: "rate-limited"`. A board whose own fetch was 429'd is reported failed, then again with its
+   * retry's outcome if the second pass retries it. The library stays quiet by default (only the run summary is logged); the CLI
    * supplies this to restore real-time per-board output, the Worker omits it. MUST NOT throw — a throwing
    * hook is the caller's bug, not a board failure.
    */
@@ -151,12 +152,11 @@ export interface IngestionCounts {
   companies: number; // size of the activeOnly + afterId + limit SQL chunk (NOT necessarily all processed)
   processed: number; // boards actually processed (< companies ⇒ the maxRunMs budget stopped the loop early)
   ok: number; // boards fetched + upserted cleanly
-  failed: number; // boards that threw (isolated — does NOT fail the run)
+  failed: number; // boards that threw (isolated — does NOT fail the run); a second-pass retry replaces its 429
   rateLimitSkipped: number; // boards left unfetched: their pacing key was cooling down from a rate limit (NOT in failed)
   jobs: number; // distinct postings persisted
   changed: number; // inserted-or-updated postings
   hydrateSkipped: number; // listed postings whose detail fetch failed: content kept (only company_id refreshed) / new one deferred; still present
-  hydrateDeferred: number; // listed postings whose detail fetch a rate limit stopped: content kept, not in hydrateSkipped
   hydrateListed: number; // postings listed by HYDRATING boards (written + hydrateSkipped) — the health ratio's denominator
   embedded: number; // postings embedded inline (0 when `embed` omitted)
   embedTokens: number; // Voyage tokens used
@@ -183,7 +183,7 @@ const DEFAULT_PACE_MS = 500;
 // Known limitations: a short blip is retried in the same tick (the second pass), but under PERSISTENT
 // throttling a skipped board waits a full sweep (~20 h) for its next try, and meanwhile the stale sweep
 // spares its uncertified jobs (`rateLimitSkipped` shows it). A host's burst quota can leave the tail of a
-// huge board unhydrated (`hydrateDeferred`; content kept). Discovery's prober
+// huge board unhydrated (in `hydrateSkipped`; content kept). Discovery's prober
 // (packages/discovery/src/probe.ts) still hits apply.workable.com at up to ~2.5 req/s (follow-up).
 const RATE_LIMIT_COOLDOWN_MAX_MS = 10 * 60_000;
 
@@ -216,15 +216,18 @@ export async function runIngestion(db: Db, opts: IngestionOptions = {}): Promise
     });
     counts.companies = list.length;
 
-    // Boards a rate-limit cooldown skipped in the main loop — retried by the second pass below.
-    const deferred: typeof list = [];
+    // Boards a rate limit cost in the main loop (skipped, or 429'd themselves) — retried by the second pass.
+    const deferred: { company: (typeof list)[number]; outcome: "skipped" | "rate-limited" }[] = [];
 
-    // One board — fetch, upsert, stamp, sweep, embed — with its failures ISOLATED. Returns false, having
-    // done nothing, when the board's pacing key is cooling down from a rate limit.
-    const runBoard = async (company: (typeof list)[number]): Promise<boolean> => {
+    // One board — fetch, upsert, stamp, sweep, embed — with its failures ISOLATED. "skipped": nothing done,
+    // its pacing key is cooling down from a rate limit; "rate-limited": it failed on a 429.
+    const runBoard = async (
+      company: (typeof list)[number],
+    ): Promise<"done" | "skipped" | "rate-limited"> => {
       // Recorded after the board (see the end of the loop body); the raw source until the adapter resolves.
       let pacingKey: string = company.source;
       let rateLimit: RateLimitedError | undefined; // the host rate-limited this board's list or a detail fetch
+      let outcome: "done" | "rate-limited" = "done";
       try {
         // The adapter is looked up ONCE, INSIDE the try: a row whose source has no adapter (a poison row)
         // throws `unknown source "<x>"` here and fails only its own board. Reused for pacing, the fetch and
@@ -234,7 +237,7 @@ export async function runIngestion(db: Db, opts: IngestionOptions = {}): Promise
         const key = keys.get(pacingKey);
         // Cooling down from a rate limit: SKIP — no request, no pause, no presence stamp, sweep or
         // certification. Not a failure: the caller counts it in rateLimitSkipped.
-        if (key?.notBefore !== undefined && clock() < key.notBefore) return false;
+        if (key?.notBefore !== undefined && clock() < key.notBefore) return "skipped";
         // Politeness is per ATS HOST, i.e. per PACING KEY (the adapter's `pacingKey`, default its source —
         // types.ts lists the host audit). Paced by TIME, not adjacency: start a board only ≥ the key's pace
         // (paceMs, or slower if the key's adapters declare it) after its previous board FINISHED, sleeping just
@@ -244,14 +247,9 @@ export async function runIngestion(db: Db, opts: IngestionOptions = {}): Promise
           const wait = Math.max(paceMs, paceMsOf(pacingKey)) - (clock() - key.lastFinish);
           if (wait > 0) await sleep(wait);
         }
-        const normalized = await runAdapter(adapter, company.slug, {
-          ...opts.adapter,
-          // A detail fetch's rate limit: the board still succeeds, but its key cools down below.
-          onRateLimited: (err) => {
-            rateLimit ??= err;
-            opts.adapter?.onRateLimited?.(err);
-          },
-        });
+        const board = await fetchBoard(adapter, company.slug, opts.adapter);
+        const normalized = board.jobs;
+        rateLimit = board.rateLimited; // a detail fetch's: the board still succeeds, but its key cools down below
         // A capped board (adapter.maxItems truncated the fetch) is PARTIAL — its present-set is
         // incomplete, so the F2 feed-absence sweep below MUST be skipped or it would false-close the
         // un-fetched tail. runAdapter trims to EXACTLY maxItems, so length >= cap ⇔ capped.
@@ -271,20 +269,12 @@ export async function runIngestion(db: Db, opts: IngestionOptions = {}): Promise
         // the board, counting none).
         const upserted = await upsertJobs(db, company.id, normalized);
         const { changed, total } = upserted;
-        // Of the postings not written, those a rate limit kept from their detail fetch are counted apart, so
-        // hydrate_skip_ratio tracks real detail failures. Distinct postings, as upsertJobs counts them.
-        const written = new Set(normalized.filter((j) => !j.contentMissing).map((j) => j.externalId));
-        const hydrateDeferred = new Set(
-          normalized.filter((j) => j.hydrateDeferred && !written.has(j.externalId)).map((j) => j.externalId),
-        ).size;
-        const hydrateSkipped = upserted.contentMissing - hydrateDeferred;
         counts.jobs += total;
         counts.changed += changed;
-        counts.hydrateSkipped += hydrateSkipped;
-        counts.hydrateDeferred += hydrateDeferred;
+        counts.hydrateSkipped += upserted.contentMissing;
         // The hydrate_skip_ratio health check's denominator: only boards whose adapter hydrates, so the
         // many non-hydrating postings can't dilute a failing detail endpoint.
-        if (adapter.hydrate) counts.hydrateListed += total + hydrateSkipped;
+        if (adapter.hydrate) counts.hydrateListed += total + upserted.contentMissing;
         counts.ok += 1;
 
         // Liveness stamp (EVERY board, capped or not — see markJobsPresent): refresh last_seen_at for
@@ -374,14 +364,17 @@ export async function runIngestion(db: Db, opts: IngestionOptions = {}): Promise
           ok: true,
           jobs: total,
           changed,
-          hydrateSkipped,
+          hydrateSkipped: upserted.contentMissing,
           embedded: boardEmbedded,
           embedTokens: boardTokens,
           error: embedWarning,
         });
       } catch (err) {
         counts.failed += 1; // ISOLATE: one dead slug / 5xx never halts the run
-        if (err instanceof RateLimitedError) rateLimit = err;
+        if (err instanceof RateLimitedError) {
+          rateLimit = err;
+          outcome = "rate-limited";
+        }
         const message = err instanceof Error ? err.message : String(err);
         errorSample ??= sampleOf(company, message); // FIRST board error only, truncated + secret-free
         opts.onBoard?.({
@@ -404,7 +397,7 @@ export async function runIngestion(db: Db, opts: IngestionOptions = {}): Promise
         keyState.notBefore = finishedAt + Math.min(cooldown, RATE_LIMIT_COOLDOWN_MAX_MS);
       }
       keys.set(pacingKey, keyState);
-      return true;
+      return outcome;
     };
 
     for (const [i, company] of list.entries()) {
@@ -414,24 +407,24 @@ export async function runIngestion(db: Db, opts: IngestionOptions = {}): Promise
       // finishRun + summary below still run and the handler advances the cursor to the last processed id.
       if (i > 0 && opts.maxRunMs !== undefined && clock() - startMs >= opts.maxRunMs) break;
       counts.lastId = company.id; // advance the chunk cursor even when this board fails or is skipped
-      if (!(await runBoard(company))) {
-        counts.rateLimitSkipped += 1;
-        deferred.push(company);
-      }
+      const outcome = await runBoard(company);
+      if (outcome === "skipped") counts.rateLimitSkipped += 1;
+      if (outcome !== "done") deferred.push({ company, outcome });
       counts.processed += 1; // boards we got through (ok, failed or skipped) — the early-stop cursor signal
     }
 
-    // Second pass: retry — WITHOUT waiting — the skipped boards whose key has cooled off since, while the
-    // budget lasts, so a short blip costs no coverage. A retried board moves from rateLimitSkipped to ok or
-    // failed (each board counted once); it is already in processed and the cursor stays where the loop left
-    // it. A board still cooling stays skipped, and is reported so here.
-    for (const company of deferred) {
+    // Second pass: retry — WITHOUT waiting — the boards a rate limit cost whose key has cooled off since, while
+    // the budget lasts, so a short blip costs no coverage. Each board is counted once: the retry's ok/failed
+    // replaces its skip or its 429 failure; it is already in processed and the cursor stays where the loop
+    // left it. A board still cooling keeps its first outcome (a skip is reported here).
+    for (const { company, outcome } of deferred) {
       const budgetLeft = opts.maxRunMs === undefined || clock() - startMs < opts.maxRunMs;
-      if (budgetLeft && (await runBoard(company))) {
-        counts.rateLimitSkipped -= 1;
+      if (budgetLeft && (await runBoard(company)) !== "skipped") {
+        if (outcome === "skipped") counts.rateLimitSkipped -= 1;
+        else counts.failed -= 1;
         continue;
       }
-      opts.onBoard?.({
+      if (outcome === "skipped") opts.onBoard?.({
         source: company.source,
         slug: company.slug,
         ok: false,
@@ -495,7 +488,6 @@ function emptyCounts(): IngestionCounts {
     jobs: 0,
     changed: 0,
     hydrateSkipped: 0,
-    hydrateDeferred: 0,
     hydrateListed: 0,
     embedded: 0,
     embedTokens: 0,
@@ -536,9 +528,6 @@ function logSummary(counts: IngestionCounts, embedEnabled: boolean): void {
       (counts.cappedBoards > 0 ? `; ${counts.cappedBoards} capped board(s)` : "") +
       (counts.hydrateSkipped > 0
         ? `; ${counts.hydrateSkipped} posting(s) not written (detail fetch failed; stored content kept)`
-        : "") +
-      (counts.hydrateDeferred > 0
-        ? `; ${counts.hydrateDeferred} posting(s) deferred (detail fetch rate-limited; stored content kept)`
         : "") +
       (counts.staleWouldClose > 0 || counts.staleClosed > 0 || counts.staleSweepFailed > 0
         ? `; stale: ${counts.staleWouldClose} would-close, ${counts.staleClosed} closed` +
