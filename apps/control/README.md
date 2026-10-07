@@ -132,13 +132,16 @@ if `pnpm exec wrangler whoami` says otherwise). Nothing here needs to be run by 
 
 **1. Create the database and apply the migrations**
 
+Done on 2026-10-07: `opusfinder-control` exists (region WNAM) and its `database_id` is in
+`apps/control/wrangler.toml`. To recreate it from scratch:
+
 ```bash
 cd ~/projects/opusfinder/apps/control
 pnpm exec wrangler d1 create opusfinder-control
 ```
 
-Copy the printed `database_id` over the all-zero placeholder in `apps/control/wrangler.toml` (if
-wrangler offers to edit the config for you, decline — the binding must stay `DB`). Then:
+Copy the printed `database_id` into `apps/control/wrangler.toml` (if wrangler offers to edit the config
+for you, decline — the binding must stay `DB`). Then:
 
 ```bash
 pnpm exec wrangler d1 migrations apply opusfinder-control --remote
