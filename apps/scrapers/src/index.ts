@@ -78,6 +78,17 @@ const MAX_JOBS_PER_BOARD = 1500;
 // runIngestion stops starting new boards past this and finishes cleanly, so even a chunk of many medium
 // boards can't be killed mid-run. Belt-and-suspenders behind the per-board cap.
 const MAX_RUN_MS = 10 * 60_000;
+// Fail fast on rate limits: a retry the host wants us to wait longer than this for throws instead of
+// sleeping, and runIngestion skips that ATS's boards until its Retry-After passes. Patient retries spent
+// ~90 s per Workable board (3 × the 30 s Retry-After cap) and stalled whole ticks on 2026-10-06.
+const MAX_RETRY_WAIT_MS = 5_000;
+// Per-board time limit: past it no new request starts for that board (a 503 storm on one board's detail
+// fetches could otherwise run it past Cloudflare's 15-min limit, killing the tick before finishRun and
+// freezing the cursor). Worst-case tick: MAX_RUN_MS is checked before each board starts, so the last board
+// starts before 10 min, then runs ≤ 120 s, plus one pending backoff (≤ MAX_RETRY_WAIT_MS + jitter), one
+// in-flight fetch timeout (10 s) and its pacing pause (≤ 1 s): ≈ 600 + 120 + 5 + 10 + 1 ≈ 736 s ≈ 12.3 min,
+// leaving ~2.7 min for that board's DB writes, the stale sweep and finishRun.
+const BOARD_TIME_LIMIT_MS = 120_000;
 // limit + reprobeLimit sized to the subrequest budget (REQUIRES Workers Paid).
 const DISCOVERY_LIMIT = 400;
 const DISCOVERY_REPROBE_LIMIT = 500;
@@ -215,7 +226,11 @@ async function runIngestionTick(db: Db, env: Env): Promise<void> {
     afterId,
     limit,
     maxRunMs: MAX_RUN_MS,
-    adapter: { maxItems: MAX_JOBS_PER_BOARD },
+    adapter: {
+      maxItems: MAX_JOBS_PER_BOARD,
+      maxRetryWaitMs: MAX_RETRY_WAIT_MS,
+      boardTimeLimitMs: BOARD_TIME_LIMIT_MS,
+    },
     enforceLifecycle: parseEnforceFlag(env.LIFECYCLE_CLOSE_ENFORCE),
     // Tier-1 universal staleness sweep — runs EVERY tick (driven by the deployed feature, not gated on the
     // switch) so the would-close population is observed in shadow; `enforce` rides its OWN STALE_SWEEP flag,

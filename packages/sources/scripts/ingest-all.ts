@@ -50,6 +50,10 @@ async function main(): Promise<void> {
     // Real-time per-board output — the Worker omits this hook and stays quiet (its audit trail is
     // source_runs).
     onBoard: (board) => {
+      if (board.skipped) {
+        console.log(`  ${board.source}:${board.slug} skipped (${board.skipped})`);
+        return;
+      }
       if (!board.ok) {
         console.warn(`  ${board.source}:${board.slug} FAILED: ${board.error}`);
         return;

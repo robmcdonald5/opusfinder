@@ -23,8 +23,13 @@ import {
 import type { SourceName } from "@opusfinder/shared";
 import { sleep } from "@opusfinder/shared/async";
 
-import { adapterFor, pacingKeyOf } from "./adapters";
-import { runAdapter, type RunAdapterOptions } from "./adapters/run-adapter";
+import { adapterFor, paceMsOf, pacingKeyOf } from "./adapters";
+import {
+  RATE_LIMIT_MIN_COOLDOWN_MS,
+  RateLimitedError,
+  fetchBoard,
+  type RunAdapterOptions,
+} from "./adapters/run-adapter";
 
 /**
  * The injected embedder — the structural MINIMUM that `backfillJobEmbeddings` accepts. The real
@@ -55,6 +60,9 @@ export interface IngestBoardResult {
   embedded: number;
   embedTokens: number;
   error?: string;
+  /** Set when the board was NOT fetched: its pacing key was still cooling down from a rate limit at the
+   *  end of the run (`ok` false, no `error` — not a failure). */
+  skipped?: "rate-limited";
 }
 
 export interface IngestionOptions {
@@ -85,12 +93,14 @@ export interface IngestionOptions {
    * calls) — the old "≥ paceMs after the previous board", kept per key. Paced by TIME, not adjacency:
    * before a board, sleep only what's left of `paceMs` since its key's last board finished — so
    * alternating sources can't burst one host, and a board after enough other work waits for nothing.
+   * A FLOOR: a key whose adapters declare a slower `paceMs` (Workable's 1000) uses that instead.
    */
   paceMs?: number;
   /** Clock (epoch ms) for the `maxRunMs` budget and the per-key pacing. Defaults to `Date.now`; a test
    *  injects one to drive both deterministically. */
   clock?: () => number;
-  /** Forwarded to `fetchJobs`/`runAdapter` — a Worker may LOWER `hydrateConcurrency` for subrequests. */
+  /** Forwarded to `fetchJobs`/`runAdapter` — a Worker may LOWER `hydrateConcurrency` for subrequests, and
+   *  passes `maxRetryWaitMs` to fail fast on rate limits (see the cooldown in the board loop). */
   adapter?: RunAdapterOptions;
   /**
    * Wall-clock budget (ms) for the whole run (Worker-only). Once exceeded, the board loop STOPS
@@ -101,10 +111,10 @@ export interface IngestionOptions {
    */
   maxRunMs?: number;
   /**
-   * Optional per-board progress hook, fired once per board as it finishes (success or failure).
-   * The library stays quiet by default (only the run summary is logged); the CLI supplies this to
-   * restore real-time per-board output, the Worker omits it. MUST NOT throw — a throwing hook is
-   * the caller's bug, not a board failure.
+   * Optional per-board progress hook, fired ONCE per board with its final outcome (success, failure or a
+   * rate-limit skip): at once, or — for a board a rate limit sent to the second pass — after that pass. The library stays quiet by default (only the run summary is logged); the CLI
+   * supplies this to restore real-time per-board output, the Worker omits it. MUST NOT throw — a throwing
+   * hook is the caller's bug, not a board failure.
    */
   onBoard?: (result: IngestBoardResult) => void;
   /**
@@ -140,7 +150,8 @@ export interface IngestionCounts {
   companies: number; // size of the activeOnly + afterId + limit SQL chunk (NOT necessarily all processed)
   processed: number; // boards actually processed (< companies ⇒ the maxRunMs budget stopped the loop early)
   ok: number; // boards fetched + upserted cleanly
-  failed: number; // boards that threw (isolated — does NOT fail the run)
+  failed: number; // boards whose FINAL outcome is a throw (isolated — does NOT fail the run)
+  rateLimitSkipped: number; // boards left unfetched: their pacing key was cooling down from a rate limit (NOT in failed)
   jobs: number; // distinct postings persisted
   changed: number; // inserted-or-updated postings
   hydrateSkipped: number; // listed postings whose detail fetch failed: content kept (only company_id refreshed) / new one deferred; still present
@@ -165,6 +176,16 @@ export interface IngestionCounts {
 }
 
 const DEFAULT_PACE_MS = 500;
+// A rate-limited pacing key's cooldown: the host's Retry-After, at least RATE_LIMIT_MIN_COOLDOWN_MS and at
+// most 10 min (the Worker's whole budget).
+// Known limitations: a short blip is retried in the same tick (the second pass), but under PERSISTENT
+// throttling a skipped board waits a full sweep (~20 h) for its next try, and meanwhile the stale sweep
+// spares its uncertified jobs (`rateLimitSkipped` shows it). A host's burst quota can leave the tail of a
+// huge board unhydrated (in `hydrateSkipped`; content kept) unless its second-pass re-run gets through. A
+// re-run board's FINAL attempt is what's counted, so work done by its first attempt (e.g. `changed`,
+// `revived`) isn't. Discovery's prober
+// (packages/discovery/src/probe.ts) still hits apply.workable.com at up to ~2.5 req/s (follow-up).
+const RATE_LIMIT_COOLDOWN_MAX_MS = 10 * 60_000;
 
 /**
  * Run one ingestion pass. Per-board failures are ISOLATED — a dead slug / 5xx increments
@@ -178,8 +199,9 @@ export async function runIngestion(db: Db, opts: IngestionOptions = {}): Promise
   const clock = opts.clock ?? Date.now;
   const counts = emptyCounts();
   const startMs = clock();
-  // Pacing key → when its most recent board FINISHED (see opts.paceMs).
-  const lastFinish = new Map<string, number>();
+  // Pacing key → when its most recent board FINISHED (see opts.paceMs), and, after a rate limit, the time
+  // before which its boards are skipped (see RATE_LIMIT_COOLDOWN_MAX_MS).
+  const keys = new Map<string, { lastFinish?: number; notBefore?: number }>();
   const runId = await startRun(db, "ingestion", { source: opts.source });
   let errorSample: string | undefined;
 
@@ -194,32 +216,59 @@ export async function runIngestion(db: Db, opts: IngestionOptions = {}): Promise
     });
     counts.companies = list.length;
 
-    for (const [i, company] of list.entries()) {
-      // Wall-clock budget (Worker-only — see opts.maxRunMs): stop STARTING new boards once the budget is
-      // spent, so `finishRun` is always reached within the Worker's 15-min limit. `i > 0` guarantees at
-      // least one board runs (its own cost is bounded by adapter.maxItems); BREAK (not return) so the
-      // finishRun + summary below still run and the handler advances the cursor to the last processed id.
-      if (i > 0 && opts.maxRunMs !== undefined && clock() - startMs >= opts.maxRunMs) break;
-      counts.lastId = company.id; // advance the chunk cursor even when this board fails
+    // Each processed board's FINAL outcome: its own counts and its onBoard result. A second-pass retry
+    // overwrites the entry; the run's counts and errorSample are tallied from these once, after both passes,
+    // so every board is counted exactly once.
+    type Board = { counts: IngestionCounts; result: IngestBoardResult; retry: boolean };
+    const boards = new Map<number, Board>();
+    // Boards a rate limit cost in the main loop — retried by the second pass (see Board.retry).
+    const deferred: (typeof list)[number][] = [];
+
+    // One board — fetch, upsert, stamp, sweep, embed — with its failures ISOLATED. `retry`: a rate limit cost
+    // it (skipped while its key cools, its list fetch 429'd, or its detail fetches stopped at one).
+    const runBoard = async (company: (typeof list)[number]): Promise<Board> => {
+      // THIS board's counts, shadowing the run's: summed into them from each board's final outcome.
+      const counts = emptyCounts();
       // Recorded after the board (see the end of the loop body); the raw source until the adapter resolves.
       let pacingKey: string = company.source;
+      let rateLimit: RateLimitedError | undefined; // the host rate-limited this board's list or a detail fetch
+      let result: IngestBoardResult;
       try {
         // The adapter is looked up ONCE, INSIDE the try: a row whose source has no adapter (a poison row)
         // throws `unknown source "<x>"` here and fails only its own board. Reused for pacing, the fetch and
         // the hydrate check below.
         const adapter = adapterFor(company.source);
-        // Politeness is per ATS HOST, i.e. per PACING KEY (the adapter's `pacingKey`, default its source —
-        // types.ts lists the host audit). Paced by TIME, not adjacency: start a board only ≥ paceMs after
-        // its key's previous board FINISHED, sleeping just the remainder. Adjacency alone let alternating
-        // sources (gh, lever, gh, lever…) hit one host back-to-back; time also skips the pause when other
-        // boards ran in between for long enough.
         pacingKey = pacingKeyOf(adapter);
-        const keyLastFinish = lastFinish.get(pacingKey);
-        if (keyLastFinish !== undefined) {
-          const wait = paceMs - (clock() - keyLastFinish);
+        const key = keys.get(pacingKey);
+        // Cooling down from a rate limit: SKIP — no request, no pause, no presence stamp, sweep or
+        // certification. Not a failure: counted in rateLimitSkipped.
+        if (key?.notBefore !== undefined && clock() < key.notBefore) {
+          counts.rateLimitSkipped = 1;
+          result = {
+            source: company.source,
+            slug: company.slug,
+            ok: false,
+            skipped: "rate-limited",
+            jobs: 0,
+            changed: 0,
+            hydrateSkipped: 0,
+            embedded: 0,
+            embedTokens: 0,
+          };
+          return { counts, result, retry: true };
+        }
+        // Politeness is per ATS HOST, i.e. per PACING KEY (the adapter's `pacingKey`, default its source —
+        // types.ts lists the host audit). Paced by TIME, not adjacency: start a board only ≥ the key's pace
+        // (paceMs, or slower if the key's adapters declare it) after its previous board FINISHED, sleeping just
+        // the remainder. Adjacency alone let alternating sources (gh, lever, gh, lever…) hit one host
+        // back-to-back; time also skips the pause when other boards ran in between for long enough.
+        if (key?.lastFinish !== undefined) {
+          const wait = Math.max(paceMs, paceMsOf(pacingKey)) - (clock() - key.lastFinish);
           if (wait > 0) await sleep(wait);
         }
-        const normalized = await runAdapter(adapter, company.slug, opts.adapter);
+        const board = await fetchBoard(adapter, company.slug, opts.adapter);
+        const normalized = board.jobs;
+        rateLimit = board.rateLimited; // a detail fetch's: the board still succeeds, but its key cools down below
         // A capped board (adapter.maxItems truncated the fetch) is PARTIAL — its present-set is
         // incomplete, so the F2 feed-absence sweep below MUST be skipped or it would false-close the
         // un-fetched tail. runAdapter trims to EXACTLY maxItems, so length >= cap ⇔ capped.
@@ -288,7 +337,10 @@ export async function runIngestion(db: Db, opts: IngestionOptions = {}): Promise
         // those boards rely on the staleness timer (sweepStaleJobs) instead. Enforcement rides
         // parseEnforceFlag(LIFECYCLE_CLOSE_ENFORCE). Isolated like the stamp/embed steps. Closed→active revivals are
         // owned by markJobsPresent above; sweepLifecycle.revived here counts only still-active streak resets.
-        if (listed && !capped) {
+        // Also SKIPPED when a rate limit stopped its detail fetches: the second pass re-runs the board and sweeps
+        // it then (or, if it can't this tick, next tick — sparing its jobs). Two sweeps in one tick would count
+        // its absent postings twice.
+        if (listed && !capped && !rateLimit) {
           try {
             const sweep = await sweepLifecycle(db, company.id, listedIds, {
               enforce: opts.enforceLifecycle ?? false,
@@ -328,7 +380,7 @@ export async function runIngestion(db: Db, opts: IngestionOptions = {}): Promise
             embedWarning = err instanceof Error ? err.message : String(err);
           }
         }
-        opts.onBoard?.({
+        result = {
           source: company.source,
           slug: company.slug,
           ok: true,
@@ -338,12 +390,11 @@ export async function runIngestion(db: Db, opts: IngestionOptions = {}): Promise
           embedded: boardEmbedded,
           embedTokens: boardTokens,
           error: embedWarning,
-        });
+        };
       } catch (err) {
         counts.failed += 1; // ISOLATE: one dead slug / 5xx never halts the run
-        const message = err instanceof Error ? err.message : String(err);
-        errorSample ??= sampleOf(company, message); // FIRST board error only, truncated + secret-free
-        opts.onBoard?.({
+        if (err instanceof RateLimitedError) rateLimit = err;
+        result = {
           source: company.source,
           slug: company.slug,
           ok: false,
@@ -352,11 +403,54 @@ export async function runIngestion(db: Db, opts: IngestionOptions = {}): Promise
           hydrateSkipped: 0,
           embedded: 0,
           embedTokens: 0,
-          error: message,
-        });
+          error: err instanceof Error ? err.message : String(err),
+        };
       }
-      lastFinish.set(pacingKey, clock()); // ok or failed — either way this key's host was just hit
-      counts.processed += 1; // boards we got through (ok or failed) — the early-stop cursor signal
+      const finishedAt = clock(); // ok or failed — either way this key's host was just hit
+      const keyState = keys.get(pacingKey) ?? {};
+      keyState.lastFinish = finishedAt;
+      if (rateLimit) {
+        const cooldown = Math.max(rateLimit.retryAfterMs, RATE_LIMIT_MIN_COOLDOWN_MS);
+        keyState.notBefore = finishedAt + Math.min(cooldown, RATE_LIMIT_COOLDOWN_MAX_MS);
+      }
+      keys.set(pacingKey, keyState);
+      return { counts, result, retry: rateLimit !== undefined };
+    };
+
+    for (const [i, company] of list.entries()) {
+      // Wall-clock budget (Worker-only — see opts.maxRunMs): stop STARTING new boards once the budget is
+      // spent, so `finishRun` is always reached within the Worker's 15-min limit. `i > 0` guarantees at
+      // least one board runs (its own cost is bounded by adapter.maxItems); BREAK (not return) so the
+      // finishRun + summary below still run and the handler advances the cursor to the last processed id.
+      if (i > 0 && opts.maxRunMs !== undefined && clock() - startMs >= opts.maxRunMs) break;
+      counts.lastId = company.id; // advance the chunk cursor even when this board fails or is skipped
+      const board = await runBoard(company);
+      boards.set(company.id, board);
+      if (board.retry) deferred.push(company);
+      else opts.onBoard?.(board.result); // final: report it now
+      counts.processed += 1; // boards we got through (ok, failed or skipped) — the early-stop cursor signal
+    }
+
+    // Second pass: re-run — WITHOUT waiting — the boards a rate limit cost whose key has cooled off since,
+    // while the budget lasts, so a short blip costs no coverage. The re-run's outcome REPLACES the board's first
+    // (it is already in processed and the cursor stays where the loop left it); one still cooling keeps its first.
+    for (const company of deferred) {
+      if (opts.maxRunMs === undefined || clock() - startMs < opts.maxRunMs) {
+        const retried = await runBoard(company);
+        if (!retried.result.skipped) boards.set(company.id, retried);
+      }
+      opts.onBoard?.(boards.get(company.id)!.result);
+    }
+
+    // Tally each processed board's FINAL outcome once, in id order — errorSample is the first board whose final
+    // outcome failed (truncated + secret-free).
+    for (const company of list) {
+      const board = boards.get(company.id);
+      if (!board) continue; // never started: the budget stopped the loop first
+      for (const key of Object.keys(board.counts)) counts[key] = (counts[key] ?? 0) + (board.counts[key] ?? 0);
+      if (!board.result.ok && board.result.error !== undefined) {
+        errorSample ??= sampleOf(company, board.result.error);
+      }
     }
 
     // Universal staleness sweep (opt-in — Worker only; the CLI omits staleSweep). AFTER the board loop
@@ -406,6 +500,7 @@ function emptyCounts(): IngestionCounts {
     processed: 0,
     ok: 0,
     failed: 0,
+    rateLimitSkipped: 0,
     jobs: 0,
     changed: 0,
     hydrateSkipped: 0,
@@ -432,6 +527,11 @@ function logSummary(counts: IngestionCounts, embedEnabled: boolean): void {
   console.log(
     `Ingestion: ${counts.companies} board(s) — ${counts.ok} ok` +
       (counts.failed > 0 ? `, ${counts.failed} failed` : "") +
+      (counts.rateLimitSkipped > 0 ? `, ${counts.rateLimitSkipped} rate-limit-skipped` : "") +
+      // Only the maxRunMs budget ends the loop early, so processed < companies means it stopped the run.
+      (counts.processed < counts.companies
+        ? `; budget stop: processed ${counts.processed}/${counts.companies}`
+        : "") +
       `; ${counts.jobs} job(s), ${counts.changed} changed` +
       (embedEnabled
         ? `; embedded ${counts.embedded} (${counts.embedTokens} tok)` +

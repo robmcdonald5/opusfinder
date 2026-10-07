@@ -18,7 +18,7 @@ describe("formatMetric", () => {
   it.each([
     ["ingestion_staleness", 4.2, "4.2h since last ok"],
     ["discovery_window", 4.2, "4.2d since last ok"],
-    ["board_fail_ratio", 0.25, "25% boards failed"],
+    ["board_fail_ratio", 0.25, "25% boards failed or rate-limit-skipped"],
     ["hydrate_skip_ratio", 0.35, "35% of hydrated postings' detail fetches failed"],
     ["embedding_backlog", 128, "128 rows"],
     ["digest_health", 3, "3 errored run(s)"],

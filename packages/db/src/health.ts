@@ -25,7 +25,7 @@ import { resultRows } from "./repos/sql";
 /** The eight checks (stable ids — the panel + env modes key off these). */
 export type HealthCheckId =
   | "ingestion_staleness" // last successful ingestion age
-  | "board_fail_ratio" // within-run failed/companies — the status='ok' trap
+  | "board_fail_ratio" // within-run coverage loss: (failed + rateLimitSkipped)/processed — the status='ok' trap
   | "hydrate_skip_ratio" // latest ingestion run: detail fetches that failed / postings on hydrating boards
   | "discovery_window" // discovery last-run age
   | "embedding_backlog" // jobs WHERE embedding IS NULL
@@ -45,7 +45,9 @@ export interface HealthThresholds {
    *  next tick's run time), a single missed tick pushes it to ~4.2 h — tolerated without flapping — and
    *  two missed ticks (~6.2 h) fire. */
   ingestMaxAgeH: number;
-  /** (b) within-run `counts.failed / counts.companies` ratio that fires the board-failure check. */
+  /** (b) within-run coverage-loss ratio `(counts.failed + counts.rateLimitSkipped) / counts.processed` (the
+   *  boards the loop got through, not the chunk size) that fires the board-failure check — once at least
+   *  {@link BOARD_FAIL_MIN_COUNT} boards went un-ingested. */
   failRatio: number;
   /** (i) latest ingestion run's `hydrateSkipped / hydrateListed` — the share of postings on HYDRATING boards
    *  (today only SmartRecruiters) whose detail fetch failed or came back empty, so their content wasn't
@@ -114,13 +116,15 @@ export interface HealthCost {
 export interface HealthSignals {
   /** (a) hours since the last `status='ok'` ingestion run; `null` if none ever succeeded. */
   ingestionAgeH: number | null;
-  /** (b) the latest FINISHED ingestion run's status + `counts.failed` over the boards actually ATTEMPTED
-   *  (`counts.processed`), falling back to `counts.companies` (the chunk size) when `processed` is
-   *  absent/0. Divide by processed — not companies — to keep the ratio exact on a budget-truncated tick
-   *  (`processed < companies`), where `failed/companies` dilutes the real failure rate. `status` also lets
-   *  the check fire on an errored run that attempted 0 boards (a 0/0 ratio would read as healthy). */
+  /** (b) the latest FINISHED ingestion run's status + its boards NOT ingested — `counts.failed` plus
+   *  `counts.rateLimitSkipped` (left unfetched by a rate-limit cooldown) — over `counts.processed` (the boards
+   *  the loop got through: ok, failed or skipped), falling back to `counts.companies` (the chunk size) when
+   *  `processed` is absent/0. Divide by processed — not companies — to keep the ratio exact on a
+   *  budget-truncated tick (`processed < companies`), where dividing by companies dilutes it. `status` also
+   *  lets the check fire on an errored run that got through 0 boards (a 0/0 ratio would read as healthy). */
   latestIngestStatus: string | null;
   latestIngestFailed: number;
+  latestIngestRateLimitSkipped: number;
   latestIngestProcessed: number;
   latestIngestCompanies: number;
   /** (i) the latest ingestion run's `counts.hydrateSkipped` (postings whose detail fetch failed) and
@@ -170,6 +174,11 @@ const CHECK_LABELS: Record<HealthCheckId, string> = {
   discovery_lane_errors: "Discovery lane errors",
 };
 
+/** board_fail_ratio fires only once at least this many boards went un-ingested (failed + rate-limit-skipped):
+ *  a dead board or two in a tiny run reads as a big ratio (2 of 3 = 67%) but isn't an outage, while a
+ *  budget-cut run where all 17 boards failed (the 2026-10-06 shape) must still fire. */
+export const BOARD_FAIL_MIN_COUNT = 5;
+
 const num = (v: unknown): number => {
   const n = Number(v);
   return Number.isFinite(n) ? n : 0;
@@ -215,6 +224,7 @@ export async function gatherHealthSignals(
       db.execute(sql`
         SELECT status,
                coalesce((counts->>'failed')::numeric, 0)          AS failed,
+               coalesce((counts->>'rateLimitSkipped')::numeric, 0) AS rate_limit_skipped,
                coalesce((counts->>'processed')::numeric, 0)       AS processed,
                coalesce((counts->>'companies')::numeric, 0)       AS companies,
                coalesce((counts->>'hydrateSkipped')::numeric, 0)  AS hydrate_skipped,
@@ -261,6 +271,7 @@ export async function gatherHealthSignals(
     | {
         status: unknown;
         failed: unknown;
+        rate_limit_skipped: unknown;
         processed: unknown;
         companies: unknown;
         hydrate_skipped: unknown;
@@ -294,6 +305,7 @@ export async function gatherHealthSignals(
     ingestionAgeH: ingestAge?.age_h == null ? null : num(ingestAge.age_h),
     latestIngestStatus: (latestIngest?.status as string | null | undefined) ?? null,
     latestIngestFailed: num(latestIngest?.failed),
+    latestIngestRateLimitSkipped: num(latestIngest?.rate_limit_skipped),
     latestIngestProcessed: num(latestIngest?.processed),
     latestIngestCompanies: num(latestIngest?.companies),
     latestIngestHydrateSkipped: num(latestIngest?.hydrate_skipped),
@@ -331,7 +343,8 @@ export function evaluateHealth(signals: HealthSignals, opts?: HealthOptions): He
   // Divide by boards attempted (processed), falling back to companies when processed is 0/absent so the
   // check never goes dark (see latestIngestStatus for the budget-truncated-tick rationale).
   const failDenom = signals.latestIngestProcessed > 0 ? signals.latestIngestProcessed : signals.latestIngestCompanies;
-  const failRatio = failDenom > 0 ? signals.latestIngestFailed / failDenom : 0;
+  const notIngested = signals.latestIngestFailed + signals.latestIngestRateLimitSkipped;
+  const failRatio = failDenom > 0 ? notIngested / failDenom : 0;
   const hydrateListed = signals.latestIngestHydrateListed;
   const hydrateSkipRatio = hydrateListed > 0 ? signals.latestIngestHydrateSkipped / hydrateListed : 0;
   const bounceTotal = signals.hardBounces + signals.suppressed;
@@ -344,13 +357,14 @@ export function evaluateHealth(signals: HealthSignals, opts?: HealthOptions): He
       thresholds.ingestMaxAgeH,
       signals.ingestionAgeH === null || signals.ingestionAgeH > thresholds.ingestMaxAgeH,
     ),
-    // (b) fire if the latest run errored outright, OR (when it attempted boards) the fail-ratio breaches.
+    // (b) fire if the latest run errored outright, OR enough boards went un-ingested AND the ratio breaches.
     //     The status arm catches a full-run abort (processed=0 → a 0/0 ratio that would read healthy).
     make(
       "board_fail_ratio",
       failRatio,
       thresholds.failRatio,
-      signals.latestIngestStatus === "error" || (failDenom > 0 && failRatio > thresholds.failRatio),
+      signals.latestIngestStatus === "error" ||
+        (notIngested >= BOARD_FAIL_MIN_COUNT && failRatio > thresholds.failRatio),
     ),
     // (i) fire when the hydrating boards' failed-detail share breaches the threshold. No hydrating posting
     //     listed (0 denominator — e.g. the tick's chunk had no SmartRecruiters board) reads ok, metric 0.

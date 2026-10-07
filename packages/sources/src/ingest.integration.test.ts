@@ -25,7 +25,7 @@ import { jsonResponse, routedFetch, textResponse, type Route } from "@test/http/
 // the activeOnly/afterId/limit SQL chunk, the maxRunMs budget break (finishRun still reached), the capped-
 // board sweep SKIP with presence still stamped, the non-empty-fetch gate, closed-job revival, the injected
 // embedder (+ its failure isolation), the post-loop staleness sweep (shadow/enforce, INDEPENDENT of the per-board
-// enforce switch), same-source-only pacing, the company id taken from listCompanies (no upsertCompany), and a
+// enforce switch), same-source-only pacing (per key, Workable's slower, the caller's floor), the per-key rate-limit cooldown, the company id taken from listCompanies (no upsertCompany), and a
 // failed hydrate end to end (stored content kept, still present, hydrateSkipped counted accurately).
 // NOT this file's job: upsertJobs batch/dedupe/setWhere semantics (jobs.integration.test.ts),
 // the run-row once-only terminalize (runs.integration.test.ts), the sweepLifecycle/sweepStaleJobs internal
@@ -82,6 +82,24 @@ const boardRoute = (slug: string, jobList: unknown[]): Route => ({
 const failRoute = (slug: string, status = 500): Route => ({
   match: boardMatch(slug),
   respond: () => textResponse("err", status),
+});
+
+// ── Workable board routing (apply.workable.com/api/v1/widget/accounts/{slug}?details=true, `{ jobs: [...] }`).
+// Records `fetch:<slug>` into paced.events; a non-200 answers an HTML body (plus an optional Retry-After), as
+// Workable's real 429 does. ──
+function wkJob(code: string): { shortcode: string; title: string; url: string } {
+  return { shortcode: code, title: `W ${code}`, url: `https://x/${code}` };
+}
+const workableBoard = (slug: string, status: number, jobList: unknown[] = [], retryAfter?: string): Route => ({
+  match: (url) => url.includes(`/widget/accounts/${slug}?`),
+  respond: () => {
+    paced.events.push(`fetch:${slug}`);
+    if (status === 200) return jsonResponse({ jobs: jobList });
+    return new Response("<html>slow down</html>", {
+      status,
+      headers: retryAfter === undefined ? {} : { "retry-after": retryAfter },
+    });
+  },
 });
 
 // ── SmartRecruiters routing: the list `…/companies/{slug}/postings?…`, then one N+1 detail fetch per
@@ -346,6 +364,27 @@ describe("runIngestion — orchestration over real PGlite (fetch stubbed)", () =
       expect(fx.calls.some((u) => boardMatch("c2")(u))).toBe(false);
       expect(fx.calls.some((u) => boardMatch("c3")(u))).toBe(false);
     });
+
+    it("the summary line says the budget stopped the run (processed/companies), and only when it did", async () => {
+      await seedCompany({ slug: "c1", active: true });
+      await seedCompany({ slug: "c2", active: true });
+      await seedCompany({ slug: "c3", active: true });
+      installFetch([boardRoute("c1", []), boardRoute("c2", []), boardRoute("c3", [])]);
+      const log = vi.spyOn(console, "log").mockImplementation(() => {});
+      try {
+        await runIngestion(db, { maxRunMs: 0, paceMs: 0, adapter: NO_RETRY }); // stops after board 1
+        await runIngestion(db, { paceMs: 0, adapter: NO_RETRY }); // processes all 3
+
+        const summaries = log.mock.calls.map((c) => String(c[0])).filter((l) => l.startsWith("Ingestion:"));
+        expect(summaries).toHaveLength(2);
+        const [stopped, full] = summaries;
+        expect(stopped).toMatch(/^Ingestion: 3 board\(s\) — 1 ok; budget stop: processed 1\/3; /);
+        expect(full).toMatch(/^Ingestion: 3 board\(s\) — 3 ok; /);
+        expect(full).not.toContain("budget stop");
+      } finally {
+        log.mockRestore();
+      }
+    });
   });
 
   describe("capped board (partial fetch)", () => {
@@ -455,6 +494,7 @@ describe("runIngestion — orchestration over real PGlite (fetch stubbed)", () =
 
       expect(counts).toMatchObject({ embedded: 0, embedFailed: 1, jobs: 1, ok: 1, failed: 0 });
       expect((await allSourceRuns())[0]!.status).toBe("ok"); // an embed hiccup never fails the run
+      expect((await allSourceRuns())[0]!.errorSample).toBeNull(); // a warning, not a board error
       const job = await jobByExt("1");
       expect(job).toBeDefined();
       expect(job!.embedding).toBeNull(); // persisted, just un-embedded → the next backfill fills it
@@ -884,6 +924,341 @@ describe("runIngestion — orchestration over real PGlite (fetch stubbed)", () =
       } finally {
         delete leverAdapter.pacingKey;
       }
+    });
+
+    it("Workable paces at 1000 ms; every other adapter keeps the default 500", async () => {
+      // No paceMs passed: greenhouse gets the run's default, Workable its key's slower pace.
+      await seedCompany({ slug: "ga", active: true });
+      await seedCompany({ slug: "gb", active: true });
+      await seedCompany({ slug: "wa", source: "workable", active: true });
+      await seedCompany({ slug: "wb", source: "workable", active: true });
+      installFetch([gh("ga"), gh("gb"), workableBoard("wa", 200), workableBoard("wb", 200)]);
+
+      await runIngestion(db, { adapter: NO_RETRY, clock: () => paced.now });
+
+      expect(paced.events).toEqual([
+        "fetch:ga",
+        "sleep:500",
+        "fetch:gb",
+        "fetch:wa",
+        "sleep:1000",
+        "fetch:wb",
+      ]);
+    });
+
+    it("resolves the pace per KEY: an adapter sharing Workable's key paces at Workable's 1000", async () => {
+      const leverAdapter = adapters.lever as { pacingKey?: string };
+      leverAdapter.pacingKey = "workable"; // lever declares no paceMs of its own
+      try {
+        await seedCompany({ slug: "la", source: "lever", active: true });
+        await seedCompany({ slug: "lb", source: "lever", active: true });
+        installFetch([lever("la"), lever("lb")]);
+
+        await runIngestion(db, { adapter: NO_RETRY, clock: () => paced.now });
+
+        expect(paced.events).toEqual(["fetch:la", "sleep:1000", "fetch:lb"]);
+      } finally {
+        delete leverAdapter.pacingKey;
+      }
+    });
+
+    it("the caller's paceMs is a floor: a slower run pace applies to every key, Workable's included", async () => {
+      await seedCompany({ slug: "ga", active: true });
+      await seedCompany({ slug: "gb", active: true });
+      await seedCompany({ slug: "wa", source: "workable", active: true });
+      await seedCompany({ slug: "wb", source: "workable", active: true });
+      installFetch([gh("ga"), gh("gb"), workableBoard("wa", 200), workableBoard("wb", 200)]);
+
+      await runIngestion(db, { paceMs: 1500, adapter: NO_RETRY, clock: () => paced.now });
+
+      expect(paced.events).toEqual([
+        "fetch:ga",
+        "sleep:1500",
+        "fetch:gb",
+        "fetch:wa",
+        "sleep:1500",
+        "fetch:wb",
+      ]);
+    });
+  });
+
+  describe("rate-limit cooldown — per pacing key, Worker fail-fast mode", () => {
+    // Every board's fetch records `fetch:<slug>` (beside the stubbed `sleep:<ms>`) and advances the fake
+    // clock by `tookMs`, so the exact event list shows which boards made a request and which paused.
+    const ghBoard = (slug: string, tookMs = 0): Route => ({
+      match: boardMatch(slug),
+      respond: () => {
+        paced.events.push(`fetch:${slug}`);
+        paced.now += tookMs;
+        return jsonResponse({ jobs: [] });
+      },
+    });
+    // The Worker's mode: fail fast on any wait over 5 s (no retries keeps the tests instant).
+    const FAIL_FAST = { maxRetries: 0, maxRetryWaitMs: 5000 };
+    const clocked = { adapter: FAIL_FAST, clock: () => paced.now };
+
+    it("skips the key's boards inside the window: no request, no pause, no presence, not failed — other keys run", async () => {
+      await seedCompany({ slug: "wa", source: "workable", active: true });
+      await seedCompany({ slug: "g1", active: true });
+      const wb = await seedCompany({ slug: "wb", source: "workable", active: true, lastIngestedAt: null });
+      await seedCompany({ slug: "g2", active: true });
+      const wc = await seedCompany({ slug: "wc", source: "workable", active: true });
+      // wb's stored job is on its listing: had wb been fetched, it would be stamped present and wb certified.
+      await seedJob(wb, {
+        externalId: "w1",
+        source: "workable",
+        consecutiveAbsences: 1,
+        lastSeenAt: daysAgo(2),
+      });
+      const fx = installFetch([
+        workableBoard("wa", 429, [], "120"),
+        ghBoard("g1"),
+        workableBoard("wb", 200, [wkJob("w1")]),
+        ghBoard("g2"),
+        workableBoard("wc", 200),
+      ]);
+      const boards: IngestBoardResult[] = [];
+      const log = vi.spyOn(console, "log").mockImplementation(() => {});
+      let counts: IngestionCounts;
+      try {
+        counts = await runIngestion(db, { ...clocked, onBoard: (b) => boards.push(b) });
+        expect(log.mock.calls.map((c) => String(c[0])).join("\n")).toContain(
+          "2 ok, 1 failed, 2 rate-limit-skipped",
+        );
+      } finally {
+        log.mockRestore();
+      }
+
+      // wb and wc: no request and no pacing sleep. g1 → g2 still waits greenhouse's 500.
+      expect(fx.calls).toHaveLength(3);
+      expect(paced.events).toEqual(["fetch:wa", "fetch:g1", "sleep:500", "fetch:g2"]);
+      // Skipped boards are processed, so the cursor moves past them; only the 429'd board failed.
+      expect(counts).toMatchObject({
+        companies: 5,
+        processed: 5,
+        ok: 2,
+        failed: 1,
+        rateLimitSkipped: 2,
+        lastId: wc,
+      });
+      // Each board reported once, with its final outcome: the ones a rate limit cost after the second pass.
+      expect(boards.map((b) => [b.slug, b.ok, b.skipped])).toEqual([
+        ["g1", true, undefined],
+        ["g2", true, undefined],
+        ["wa", false, undefined],
+        ["wb", false, "rate-limited"],
+        ["wc", false, "rate-limited"],
+      ]);
+      expect(boards[2]!.error).toBe('workable "wa" rate-limited: 429, retry after 120s');
+      expect(boards[3]!.error).toBeUndefined();
+      // No presence stamp, no sweep, no certification.
+      const w1 = (await jobByExt("w1"))!;
+      expect(w1.consecutiveAbsences).toBe(1);
+      expect(w1.lastSeenAt.getTime()).toBeLessThan(daysAgo(1).getTime());
+      expect((await companyById(wb)).lastIngestedAt).toBeNull();
+      // Persisted with the run row, which `pnpm runs` prints verbatim.
+      expect((await allSourceRuns())[0]!.counts).toMatchObject({ failed: 1, rateLimitSkipped: 2 });
+    });
+
+    it.each([
+      ["inside the Retry-After", "120", 119_000, false],
+      ["past the Retry-After", "120", 121_000, true],
+      ["inside the 60 s floor", "1", 59_000, false],
+      ["past the 10 min cap", "3600", 601_000, true],
+    ])(
+      "cools down for the Retry-After clamped to [60 s, 10 min]: next board %s (Retry-After %s) → attempted %s",
+      async (_when, retryAfter, gapMs, attempted) => {
+        await seedCompany({ slug: "wa", source: "workable", active: true });
+        await seedCompany({ slug: "g1", active: true });
+        await seedCompany({ slug: "wb", source: "workable", active: true });
+        installFetch([workableBoard("wa", 429, [], retryAfter), ghBoard("g1", gapMs), workableBoard("wb", 200)]);
+
+        const counts = await runIngestion(db, clocked);
+
+        // Once cooled, wa (429'd itself) is retried by the second pass too — and 429s again, still one failure.
+        expect(paced.events).toEqual(
+          attempted
+            ? ["fetch:wa", "fetch:g1", "fetch:wb", "sleep:1000", "fetch:wa"]
+            : ["fetch:wa", "fetch:g1"],
+        );
+        expect(counts).toMatchObject({ processed: 3, failed: 1, rateLimitSkipped: attempted ? 0 : 1 });
+      },
+    );
+
+    it("the CLI path (no maxRetryWaitMs) never skips: a 429 is an ordinary failed board", async () => {
+      await seedCompany({ slug: "wa", source: "workable", active: true });
+      await seedCompany({ slug: "wb", source: "workable", active: true });
+      installFetch([workableBoard("wa", 429, [], "120"), workableBoard("wb", 200)]);
+
+      const counts = await runIngestion(db, { adapter: NO_RETRY, clock: () => paced.now });
+
+      expect(paced.events).toEqual(["fetch:wa", "sleep:1000", "fetch:wb"]);
+      expect(counts).toMatchObject({ ok: 1, failed: 1, rateLimitSkipped: 0 });
+    });
+
+    it("a rate-limited DETAIL fetch cools the key down too; its unhydrated postings count in hydrateSkipped", async () => {
+      await seedCompany({ slug: "sr1", source: "smartrecruiters", active: true });
+      await seedCompany({ slug: "sr2", source: "smartrecruiters", active: true });
+      // sr1: h-1's detail really fails (500); h-2's is rate-limited, so the pool stops before h-3.
+      const fx = installFetch([
+        ...srBoard("sr1", ["h-1", "h-2", "h-3"], (id) =>
+          id === "h-1"
+            ? textResponse("err", 500)
+            : new Response(null, { status: 429, headers: { "retry-after": "120" } }),
+        ),
+        ...srBoard("sr2", ["h-4"], (id) => jsonResponse(srDetail(id))),
+      ]);
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      let counts: IngestionCounts;
+      try {
+        counts = await runIngestion(db, { ...clocked, adapter: { ...FAIL_FAST, hydrateConcurrency: 1 } });
+      } finally {
+        warn.mockRestore();
+      }
+
+      // sr1: its list + h-1 + h-2 (h-3 never fetched); sr2: nothing.
+      expect(fx.calls).toHaveLength(3);
+      expect(fx.calls.some((u) => u.includes("/companies/sr2/"))).toBe(false);
+      // All three unhydrated postings count, so hydrate_skip_ratio sees persistent detail throttling.
+      expect(counts).toMatchObject({
+        ok: 1,
+        failed: 0,
+        rateLimitSkipped: 1,
+        hydrateSkipped: 3,
+        hydrateListed: 3,
+      });
+    });
+
+    it("second pass: a blip is recovered in-tick — the 429'd board and the skipped one are retried once cooled", async () => {
+      await seedCompany({ slug: "wa", source: "workable", active: true });
+      const wb = await seedCompany({ slug: "wb", source: "workable", active: true, lastIngestedAt: null });
+      await seedCompany({ slug: "g1", active: true });
+      const g2 = await seedCompany({ slug: "g2", active: true });
+      let waCalls = 0;
+      installFetch([
+        {
+          // A blip: wa's first fetch is 429'd, its retry succeeds.
+          match: (url) => url.includes("/widget/accounts/wa?"),
+          respond: () => {
+            paced.events.push("fetch:wa");
+            return ++waCalls === 1
+              ? new Response(null, { status: 429, headers: { "retry-after": "60" } })
+              : jsonResponse({ jobs: [] });
+          },
+        },
+        workableBoard("wb", 200, [wkJob("w1")]),
+        ghBoard("g1", 61_000), // the main loop ends 61 s in: past wa's 60 s cooldown
+        failRoute("g2", 500), // a real failure, later in id order than wa's recovered 429
+      ]);
+      const boards: IngestBoardResult[] = [];
+
+      const counts = await runIngestion(db, { ...clocked, onBoard: (b) => boards.push(b) });
+
+      // wa failed and wb was skipped, in order; both were fetched after g1 and g2 (paced by Workable's 1000).
+      expect(paced.events).toEqual([
+        "fetch:wa",
+        "fetch:g1",
+        "sleep:500", // g2 (its 500 isn't recorded)
+        "fetch:wa",
+        "sleep:1000",
+        "fetch:wb",
+      ]);
+      // Each board counted once, by its FINAL outcome; the cursor stays where the main loop left it.
+      expect(counts).toMatchObject({
+        companies: 4,
+        processed: 4,
+        ok: 3,
+        failed: 1,
+        rateLimitSkipped: 0,
+        lastId: g2,
+      });
+      // Reported once each, with that final outcome.
+      expect(boards.map((b) => [b.slug, b.ok])).toEqual([
+        ["g1", true],
+        ["g2", false],
+        ["wa", true],
+        ["wb", true],
+      ]);
+      // The recovered 429 leaves no errorSample: the real later failure's message is it.
+      expect((await allSourceRuns())[0]!.errorSample).toMatch(/^greenhouse:g2 .*500/);
+      // Its lifecycle ran as normal: stamped present and certified.
+      expect((await companyById(wb)).lastIngestedAt).toBeInstanceOf(Date);
+    });
+
+    it("a recovered 429 alone leaves no errorSample", async () => {
+      await seedCompany({ slug: "wa", source: "workable", active: true });
+      await seedCompany({ slug: "g1", active: true });
+      let waCalls = 0;
+      installFetch([
+        {
+          match: (url) => url.includes("/widget/accounts/wa?"),
+          respond: () =>
+            ++waCalls === 1
+              ? new Response(null, { status: 429, headers: { "retry-after": "60" } })
+              : jsonResponse({ jobs: [] }),
+        },
+        ghBoard("g1", 61_000),
+      ]);
+
+      const counts = await runIngestion(db, clocked);
+
+      expect(counts).toMatchObject({ ok: 2, failed: 0 });
+      expect((await allSourceRuns())[0]!.errorSample).toBeNull();
+    });
+
+    it("second pass: a board whose detail fetches a 429 stopped is re-run once cooled — and swept only once", async () => {
+      const sr = await seedCompany({ slug: "sr1", source: "smartrecruiters", active: true });
+      await seedCompany({ slug: "g1", active: true });
+      // A stored posting sr1 no longer lists: each sweep adds one to its absence streak.
+      await seedJob(sr, { externalId: "gone-1", source: "smartrecruiters", consecutiveAbsences: 0 });
+      let h1Calls = 0;
+      const fx = installFetch([
+        ...srBoard("sr1", ["h-1", "h-2"], (id) =>
+          id === "h-1" && ++h1Calls === 1
+            ? new Response(null, { status: 429, headers: { "retry-after": "60" } })
+            : jsonResponse(srDetail(id)),
+        ),
+        ghBoard("g1", 61_000), // past sr1's 60 s cooldown
+      ]);
+      const boards: IngestBoardResult[] = [];
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      let counts: IngestionCounts;
+      try {
+        counts = await runIngestion(db, {
+          ...clocked,
+          adapter: { ...FAIL_FAST, hydrateConcurrency: 1 },
+          onBoard: (b) => boards.push(b),
+        });
+      } finally {
+        warn.mockRestore();
+      }
+
+      // sr1: list + h-1 (429, the pool stops); g1; then sr1 again: list + h-1 + h-2.
+      expect(fx.calls.filter((u) => u.includes("/companies/sr1/"))).toHaveLength(5);
+      // Its final outcome is the re-run's: fully hydrated.
+      expect(counts).toMatchObject({ ok: 2, failed: 0, jobs: 2, hydrateSkipped: 0, hydrateListed: 2 });
+      expect(boards.map((b) => [b.slug, b.hydrateSkipped])).toEqual([
+        ["g1", 0],
+        ["sr1", 0],
+      ]);
+      // Swept once this tick, not twice.
+      expect((await jobByExt("gone-1"))!.consecutiveAbsences).toBe(1);
+    });
+
+    it("second pass: stops once the budget is spent — the rest stay skipped", async () => {
+      await seedCompany({ slug: "wa", source: "workable", active: true });
+      await seedCompany({ slug: "wb", source: "workable", active: true });
+      await seedCompany({ slug: "g1", active: true });
+      installFetch([
+        workableBoard("wa", 429, [], "60"),
+        workableBoard("wb", 200),
+        ghBoard("g1", 61_000),
+      ]);
+
+      const counts = await runIngestion(db, { ...clocked, maxRunMs: 30_000 });
+
+      expect(paced.events).toEqual(["fetch:wa", "fetch:g1"]);
+      expect(counts).toMatchObject({ processed: 3, ok: 1, failed: 1, rateLimitSkipped: 1 });
     });
   });
 

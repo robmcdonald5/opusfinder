@@ -1,5 +1,5 @@
 import type { NormalizedJob } from "@opusfinder/shared";
-import { backoff } from "@opusfinder/shared/async";
+import { backoff, backoffDelayMs, parseRetryAfterMs } from "@opusfinder/shared/async";
 
 import type { Cursor, FetchJson, JobsRequest, SourceAdapter, SourceContext } from "./types";
 
@@ -44,6 +44,35 @@ export interface RunAdapterOptions {
    * sweep (an incomplete present-set would false-close the un-fetched tail).
    */
   maxItems?: number;
+  /**
+   * Fail fast (Worker-only): no retry ever waits longer than this (+ jitter); a retry that would — its
+   * Retry-After or its backoff — is not made, and the request fails with its own error. Only a 429 throws
+   * {@link RateLimitedError}. A request is 429'd at most once: any failure after its 429 (a timeout, a reset,
+   * a bad body, a 5xx, a 403, another 429) ends it as a RateLimitedError at once — except a definitive
+   * 404/410, which keeps its own error. The hydrate pool stops at the first RateLimitedError. Omit ⇒ today's
+   * patient behaviour: sleep every Retry-After (capped at 30 s) — the CLI.
+   */
+  maxRetryWaitMs?: number;
+  /**
+   * Per-board time limit (Worker-only): once a board has run this long, no new request starts for it — its
+   * list fetch fails the board; a detail fetch leaves its posting `contentMissing` (stored content kept).
+   * Requests already in flight finish under their own `fetchTimeoutMs`. Omit ⇒ unlimited (the CLI).
+   */
+  boardTimeLimitMs?: number;
+}
+
+/**
+ * The host answered a request 429 (fail-fast mode only — see `maxRetryWaitMs`). `retryAfterMs` is its
+ * Retry-After, uncapped, or {@link RATE_LIMIT_MIN_COOLDOWN_MS} when it sent none usable: how long the caller
+ * should leave that host alone. Shape-only message: the tag and the wait.
+ */
+export class RateLimitedError extends Error {
+  readonly retryAfterMs: number;
+  constructor(tag: string, retryAfterMs: number, options?: ErrorOptions) {
+    super(`${tag} rate-limited: 429, retry after ${Math.ceil(retryAfterMs / 1000)}s`, options);
+    this.name = "RateLimitedError";
+    this.retryAfterMs = retryAfterMs;
+  }
 }
 
 const DEFAULT_HYDRATE_CONCURRENCY = 5;
@@ -51,20 +80,37 @@ const DEFAULT_MAX_RETRIES = 3;
 // Generous for a healthy ATS JSON endpoint, but well under the Worker wall limit so one hung
 // board (worst case ~maxRetries attempts + backoff) can't eat the whole tick's budget.
 const DEFAULT_FETCH_TIMEOUT_MS = 10_000;
+/** The least a rate limit sidelines its host: the wait assumed when a 429 carries no usable Retry-After,
+ *  and runIngestion's cooldown floor (a 429 that outlasted a short retry means the host still throttles). */
+export const RATE_LIMIT_MIN_COOLDOWN_MS = 60_000;
 
 export async function runAdapter(
   adapter: SourceAdapter,
   rawSlug: string,
   opts: RunAdapterOptions = {},
 ): Promise<NormalizedJob[]> {
+  return (await fetchBoard(adapter, rawSlug, opts)).jobs;
+}
+
+/**
+ * {@link runAdapter}, plus `rateLimited`: the RateLimitedError a hydrate (detail) fetch hit, if any. The
+ * board itself still succeeds, so this is how runIngestion learns to cool that host down. Package-internal.
+ */
+export async function fetchBoard(
+  adapter: SourceAdapter,
+  rawSlug: string,
+  opts: RunAdapterOptions = {},
+): Promise<{ jobs: NormalizedJob[]; rateLimited?: RateLimitedError }> {
   const hydrateConcurrency = opts.hydrateConcurrency ?? DEFAULT_HYDRATE_CONCURRENCY;
   const maxRetries = opts.maxRetries ?? DEFAULT_MAX_RETRIES;
   const fetchTimeoutMs = opts.fetchTimeoutMs ?? DEFAULT_FETCH_TIMEOUT_MS;
   const maxItems = opts.maxItems;
 
+  const deadline = opts.boardTimeLimitMs === undefined ? undefined : Date.now() + opts.boardTimeLimitMs;
   const ctx: SourceContext = { slug: adapter.normalizeSlug(rawSlug), rawSlug };
   const tag = `${adapter.source} "${ctx.slug}"`;
-  const fetchJson: FetchJson = (req) => fetchJsonResilient(req, tag, maxRetries, fetchTimeoutMs);
+  const fetchJson: FetchJson = (req) =>
+    fetchJsonResilient(req, tag, maxRetries, fetchTimeoutMs, opts.maxRetryWaitMs, deadline);
 
   // Pagination loop. Keep each raw list item beside its mapped job ONLY when there is a hydrate to
   // hand it to (the job itself carries no raw — it is not stored); otherwise drop the reference so a
@@ -114,14 +160,20 @@ export async function runAdapter(
   // content_signature, then flip it all back on the next good hydrate.
   let jobs: NormalizedJob[];
   let unhydrated = 0;
+  let rateLimited: RateLimitedError | undefined;
   if (hydrate) {
+    // After the first rate-limited detail fetch the rest skip theirs (contentMissing, no request) rather
+    // than each hitting a host that is throttling us.
     jobs = await mapWithConcurrency(mapped, hydrateConcurrency, async ({ raw, job }) => {
-      try {
-        return { ...job, ...(await hydrate(job, raw, ctx, fetchJson)) };
-      } catch {
-        unhydrated++;
-        return { ...job, contentMissing: true as const };
+      if (!rateLimited) {
+        try {
+          return { ...job, ...(await hydrate(job, raw, ctx, fetchJson)) };
+        } catch (err) {
+          if (err instanceof RateLimitedError) rateLimited ??= err;
+        }
       }
+      unhydrated++;
+      return { ...job, contentMissing: true as const };
     });
   } else {
     jobs = mapped.map((m) => m.job);
@@ -134,13 +186,14 @@ export async function runAdapter(
         (unhydrated > 0 ? `, ${unhydrated} un-hydrated (content missing, not written)` : ""),
     );
   }
-  return jobs;
+  return { jobs, rateLimited };
 }
 
 /**
  * Fetch one request and parse JSON, retrying transient failures with exponential backoff +
  * jitter (honoring `Retry-After`). The single resilient fetch path in the package:
  * - `!res.ok` → drain the body, then retry on 429/5xx or throw a tagged error.
+ * - fail-fast mode (`maxRetryWaitMs` set): see {@link RunAdapterOptions.maxRetryWaitMs}.
  * - guard non-JSON bodies (e.g. Workable's HTML 429 / text 404) by catching the parse into
  *   the tagged error rather than surfacing a raw SyntaxError.
  */
@@ -149,9 +202,28 @@ async function fetchJsonResilient(
   tag: string,
   maxRetries: number,
   timeoutMs: number,
+  maxRetryWaitMs?: number,
+  deadline?: number,
 ): Promise<unknown> {
   let attempt = 0;
+  // Fail-fast mode only: the Retry-After of this request's 429. Once set, the request's next failure ends it.
+  let limitedRetryAfterMs: number | undefined;
+  // Back off and retry — unless out of attempts or (fail-fast) the wait would exceed maxRetryWaitMs.
+  const retry = async (retryAfter?: string | null): Promise<boolean> => {
+    if (attempt >= maxRetries) return false;
+    const wait = parseRetryAfterMs(retryAfter) ?? backoffDelayMs(attempt);
+    if (maxRetryWaitMs !== undefined && wait > maxRetryWaitMs) return false;
+    await backoff(attempt++, retryAfter);
+    return true;
+  };
+  // The error a failed request ends with: a RateLimitedError once it has been 429'd, else its own.
+  const fail = (err: Error): Error =>
+    limitedRetryAfterMs === undefined
+      ? err
+      : new RateLimitedError(tag, limitedRetryAfterMs, { cause: err });
   for (;;) {
+    // The board's time limit: no new attempt once it is spent (see RunAdapterOptions.boardTimeLimitMs).
+    if (deadline !== undefined && Date.now() >= deadline) throw new Error(`${tag} board time limit reached`);
     let res: Response;
     try {
       // Bound every attempt with a fresh timeout signal (the abort throws -> the catch below
@@ -161,13 +233,12 @@ async function fetchJsonResilient(
       const signal = req.init?.signal ? AbortSignal.any([req.init.signal, timeout]) : timeout;
       res = await fetch(req.url, { ...req.init, signal });
     } catch (err) {
-      if (attempt < maxRetries) {
-        await backoff(attempt++);
-        continue;
-      }
-      throw new Error(`${tag} fetch error: ${err instanceof Error ? err.message : String(err)}`, {
-        cause: err,
-      });
+      if (limitedRetryAfterMs === undefined && (await retry())) continue;
+      throw fail(
+        new Error(`${tag} fetch error: ${err instanceof Error ? err.message : String(err)}`, {
+          cause: err,
+        }),
+      );
     }
 
     if (res.ok) {
@@ -178,23 +249,26 @@ async function fetchJsonResilient(
         // A truncated/empty body on a 2xx is usually transient (a proxy cutting a large
         // response mid-stream, an edge hiccup) — retry like a 5xx rather than hard-failing
         // the whole board on the first bad read.
-        if (attempt < maxRetries) {
-          await backoff(attempt++);
-          continue;
-        }
-        throw new Error(`${tag} returned a non-JSON body (status ${res.status})`);
+        if (limitedRetryAfterMs === undefined && (await retry())) continue;
+        throw fail(new Error(`${tag} returned a non-JSON body (status ${res.status})`));
       }
     }
 
     // Non-OK: release the (possibly HTML/text) body so no socket lingers, then retry or fail.
     const retryAfter = res.headers.get("retry-after");
     await res.body?.cancel().catch(() => {});
-    const retryable = res.status === 429 || res.status >= 500;
-    if (retryable && attempt < maxRetries) {
-      await backoff(attempt++, retryAfter);
-      continue;
+    const error = new Error(`${tag} fetch failed: ${res.status} ${res.statusText}`);
+    // A definitive 404/410 is its own answer, even after a 429. Any other 4xx isn't retried either, but after
+    // a 429 it still reports the rate limit (a WAF's 403, say).
+    if (res.status === 404 || res.status === 410) throw error;
+    if (res.status !== 429 && res.status < 500) throw fail(error);
+    const wasLimited = limitedRetryAfterMs !== undefined;
+    if (res.status === 429 && maxRetryWaitMs !== undefined) {
+      limitedRetryAfterMs = parseRetryAfterMs(retryAfter) ?? RATE_LIMIT_MIN_COOLDOWN_MS;
     }
-    throw new Error(`${tag} fetch failed: ${res.status} ${res.statusText}`);
+    // A request already 429'd ends at this failure; otherwise retry (within maxRetryWaitMs, in fail-fast).
+    if (!wasLimited && (await retry(retryAfter))) continue;
+    throw fail(error);
   }
 }
 
