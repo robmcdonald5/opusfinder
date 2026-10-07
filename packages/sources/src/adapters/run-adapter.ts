@@ -147,33 +147,40 @@ export async function runAdapter(
   // content_signature, then flip it all back on the next good hydrate.
   let jobs: NormalizedJob[];
   let unhydrated = 0;
+  let deferred = 0;
   if (hydrate) {
-    // After the first rate-limited detail fetch, the rest skip theirs (contentMissing, no request) rather
-    // than each hitting a host that is throttling us.
+    // After the first rate-limited detail fetch the rest skip theirs (no request) rather than each hitting a
+    // host that is throttling us. Those and the rate-limited ones are flagged `hydrateDeferred` too: their
+    // content is missing because of the host, not the posting.
     let limited = false;
     jobs = await mapWithConcurrency(mapped, hydrateConcurrency, async ({ raw, job }) => {
       if (!limited) {
         try {
           return { ...job, ...(await hydrate(job, raw, ctx, fetchJson)) };
         } catch (err) {
-          if (err instanceof RateLimitedError && !limited) {
+          if (!(err instanceof RateLimitedError)) {
+            unhydrated++;
+            return { ...job, contentMissing: true as const };
+          }
+          if (!limited) {
             limited = true;
             opts.onRateLimited?.(err);
           }
         }
       }
-      unhydrated++;
-      return { ...job, contentMissing: true as const };
+      deferred++;
+      return { ...job, contentMissing: true as const, hydrateDeferred: true as const };
     });
   } else {
     jobs = mapped.map((m) => m.job);
   }
 
-  if (skipped > 0 || unhydrated > 0) {
+  if (skipped > 0 || unhydrated > 0 || deferred > 0) {
     console.warn(
       `${tag}: ${jobs.length} job(s)` +
         (skipped > 0 ? `, skipped ${skipped} malformed` : "") +
-        (unhydrated > 0 ? `, ${unhydrated} un-hydrated (content missing, not written)` : ""),
+        (unhydrated > 0 ? `, ${unhydrated} un-hydrated (content missing, not written)` : "") +
+        (deferred > 0 ? `, ${deferred} deferred (rate-limited, not written)` : ""),
     );
   }
   return jobs;

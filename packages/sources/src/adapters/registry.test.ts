@@ -3,7 +3,15 @@ import { describe, expect, it } from "vitest";
 import type { SourceName } from "@opusfinder/shared";
 import { rejectionOf } from "@test/rejection";
 
-import { SOURCE_NAMES, adapterFor, adapters, fetchJobs, paceMsOf, pacingKeyOf } from "./index";
+import {
+  SOURCE_NAMES,
+  adapterFor,
+  adapters,
+  fetchJobs,
+  paceMsOf,
+  pacesByKey,
+  pacingKeyOf,
+} from "./index";
 
 // Leaf pure-unit for the source registry's lookups (no network: an unknown source fails before any fetch).
 
@@ -35,6 +43,19 @@ describe("pacingKeyOf — every adapter declares or defaults a pacing key", () =
     expect(SOURCE_NAMES.map((s) => [s, paceMsOf(s)])).toEqual(
       SOURCE_NAMES.map((s) => [s, s === "workable" ? 1000 : 0]),
     );
+  });
+
+  it("pacesByKey: a shared key takes the LARGEST pace its adapters declare", () => {
+    const paces = pacesByKey([
+      { ...adapters.greenhouse, pacingKey: "shared", paceMs: 300 },
+      { ...adapters.lever, pacingKey: "shared", paceMs: 700 },
+      { ...adapters.ashby, pacingKey: "shared" },
+      adapters.recruitee,
+    ]);
+    expect([...paces.entries()]).toEqual([
+      ["shared", 700],
+      ["recruitee", 0],
+    ]);
   });
 });
 

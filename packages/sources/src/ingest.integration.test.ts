@@ -1040,12 +1040,16 @@ describe("runIngestion — orchestration over real PGlite (fetch stubbed)", () =
         rateLimitSkipped: 2,
         lastId: wc,
       });
-      expect(boards.map((b) => [b.slug, b.ok])).toEqual([
-        ["wa", false],
-        ["g1", true],
-        ["g2", true],
+      // Each board reported once: the still-skipped ones after the second pass, as skipped.
+      expect(boards.map((b) => [b.slug, b.ok, b.skipped])).toEqual([
+        ["wa", false, undefined],
+        ["g1", true, undefined],
+        ["g2", true, undefined],
+        ["wb", false, "rate-limited"],
+        ["wc", false, "rate-limited"],
       ]);
       expect(boards[0]!.error).toBe('workable "wa" rate-limited: 429, retry after 120s');
+      expect(boards[3]!.error).toBeUndefined();
       // No presence stamp, no sweep, no certification.
       const w1 = (await jobByExt("w1"))!;
       expect(w1.consecutiveAbsences).toBe(1);
@@ -1088,25 +1092,98 @@ describe("runIngestion — orchestration over real PGlite (fetch stubbed)", () =
       expect(counts).toMatchObject({ ok: 1, failed: 1, rateLimitSkipped: 0 });
     });
 
-    it("a rate-limited DETAIL fetch cools the key down too: its board succeeds, the key's next board is skipped", async () => {
+    it("a rate-limited DETAIL fetch cools the key down too, and its unfetched postings count as deferred, not skipped", async () => {
       await seedCompany({ slug: "sr1", source: "smartrecruiters", active: true });
       await seedCompany({ slug: "sr2", source: "smartrecruiters", active: true });
-      const limited = () =>
-        new Response(null, { status: 429, headers: { "retry-after": "120" } });
+      // sr1: h-1's detail really fails (500); h-2's is rate-limited, so the pool stops before h-3.
       const fx = installFetch([
-        ...srBoard("sr1", ["h-1", "h-2"], limited),
-        ...srBoard("sr2", ["h-3"], (id) => jsonResponse(srDetail(id))),
+        ...srBoard("sr1", ["h-1", "h-2", "h-3"], (id) =>
+          id === "h-1"
+            ? textResponse("err", 500)
+            : new Response(null, { status: 429, headers: { "retry-after": "120" } }),
+        ),
+        ...srBoard("sr2", ["h-4"], (id) => jsonResponse(srDetail(id))),
+      ]);
+      const heard: string[] = [];
+      const log = vi.spyOn(console, "log").mockImplementation(() => {});
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      let counts: IngestionCounts;
+      try {
+        counts = await runIngestion(db, {
+          ...clocked,
+          // The caller's own hook is chained, not overridden.
+          adapter: { ...FAIL_FAST, hydrateConcurrency: 1, onRateLimited: (e) => heard.push(e.message) },
+        });
+        expect(log.mock.calls.map((c) => String(c[0])).join("\n")).toContain(
+          "; 2 posting(s) deferred (detail fetch rate-limited; stored content kept)",
+        );
+      } finally {
+        log.mockRestore();
+        warn.mockRestore();
+      }
+
+      // sr1: its list + h-1 + h-2 (h-3 never fetched); sr2: nothing.
+      expect(fx.calls).toHaveLength(3);
+      expect(fx.calls.some((u) => u.includes("/companies/sr2/"))).toBe(false);
+      expect(heard).toEqual(['smartrecruiters "sr1" rate-limited: 429, retry after 120s']);
+      expect(counts).toMatchObject({
+        ok: 1,
+        failed: 0,
+        rateLimitSkipped: 1,
+        hydrateSkipped: 1, // h-1 only: hydrate_skip_ratio isn't inflated by the rate limit
+        hydrateDeferred: 2,
+        hydrateListed: 1,
+      });
+      expect((await allSourceRuns())[0]!.counts).toMatchObject({ hydrateDeferred: 2 });
+    });
+
+    it("second pass: a skipped board whose cooldown has passed by the loop's end is retried, without waiting", async () => {
+      await seedCompany({ slug: "wa", source: "workable", active: true });
+      const wb = await seedCompany({ slug: "wb", source: "workable", active: true, lastIngestedAt: null });
+      const g1 = await seedCompany({ slug: "g1", active: true });
+      installFetch([
+        workableBoard("wa", 429, [], "60"),
+        workableBoard("wb", 200, [wkJob("w1")]),
+        ghBoard("g1", 61_000), // the main loop ends 61 s in: past wa's 60 s cooldown
+      ]);
+      const boards: IngestBoardResult[] = [];
+
+      const counts = await runIngestion(db, { ...clocked, onBoard: (b) => boards.push(b) });
+
+      // wb was skipped in order, then fetched after g1.
+      expect(paced.events).toEqual(["fetch:wa", "fetch:g1", "fetch:wb"]);
+      // Each board counted once; the cursor stays where the main loop left it.
+      expect(counts).toMatchObject({
+        companies: 3,
+        processed: 3,
+        ok: 2,
+        failed: 1,
+        rateLimitSkipped: 0,
+        lastId: g1,
+      });
+      expect(boards.map((b) => [b.slug, b.ok])).toEqual([
+        ["wa", false],
+        ["g1", true],
+        ["wb", true],
+      ]);
+      // Its lifecycle ran as normal: stamped present and certified.
+      expect((await companyById(wb)).lastIngestedAt).toBeInstanceOf(Date);
+    });
+
+    it("second pass: stops once the budget is spent — the rest stay skipped", async () => {
+      await seedCompany({ slug: "wa", source: "workable", active: true });
+      await seedCompany({ slug: "wb", source: "workable", active: true });
+      await seedCompany({ slug: "g1", active: true });
+      installFetch([
+        workableBoard("wa", 429, [], "60"),
+        workableBoard("wb", 200),
+        ghBoard("g1", 61_000),
       ]);
 
-      const counts = await runIngestion(db, {
-        ...clocked,
-        adapter: { ...FAIL_FAST, hydrateConcurrency: 1 },
-      });
+      const counts = await runIngestion(db, { ...clocked, maxRunMs: 30_000 });
 
-      // sr1: its list + ONE detail (the pool stops at the rate limit); sr2: nothing.
-      expect(fx.calls).toHaveLength(2);
-      expect(fx.calls.some((u) => u.includes("/companies/sr2/"))).toBe(false);
-      expect(counts).toMatchObject({ ok: 1, failed: 0, rateLimitSkipped: 1, hydrateSkipped: 2 });
+      expect(paced.events).toEqual(["fetch:wa", "fetch:g1"]);
+      expect(counts).toMatchObject({ processed: 3, ok: 1, failed: 1, rateLimitSkipped: 1 });
     });
   });
 

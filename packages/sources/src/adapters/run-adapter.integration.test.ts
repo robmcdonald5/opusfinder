@@ -848,6 +848,7 @@ describe("runAdapter — invariant ATS plumbing over MSW", () => {
         ["3", 1],
       ]);
       expect(jobs.map((j) => j.contentMissing ?? false)).toEqual([true, false, false]);
+      expect(jobs[0]?.hydrateDeferred).toBeUndefined(); // a real failure, not a deferral
       expect(heard).toEqual([]);
     });
 
@@ -884,6 +885,8 @@ describe("runAdapter — invariant ATS plumbing over MSW", () => {
 
         expect(detailCalls).toBe(1);
         expect(jobs.map((j) => j.contentMissing)).toEqual([true, true, true, true]);
+        // All four are missing because of the host (counted hydrateDeferred, not hydrateSkipped).
+        expect(jobs.map((j) => j.hydrateDeferred)).toEqual([true, true, true, true]);
         expect(heard).toHaveLength(1);
         expect(heard[0]).toMatchObject({ status: 429, retryAfterMs: 120_000 });
       });
@@ -899,6 +902,7 @@ describe("runAdapter — invariant ATS plumbing over MSW", () => {
 
         expect(detailCalls).toBe(4);
         expect(jobs.every((j) => j.contentMissing)).toBe(true);
+        expect(jobs.some((j) => j.hydrateDeferred)).toBe(false);
         expect(heard).toEqual([]);
       });
     });

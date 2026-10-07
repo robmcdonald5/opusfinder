@@ -38,14 +38,22 @@ export function pacingKeyOf(adapter: SourceAdapter): string {
   return adapter.pacingKey ?? adapter.source;
 }
 
-/** A pacing key's own pace: the largest `paceMs` any adapter on that key declares (0 if none does). */
+/** Pacing key → its pace: the largest `paceMs` its adapters declare (0 if none does). */
+export function pacesByKey(list: readonly SourceAdapter[]): Map<string, number> {
+  const paces = new Map<string, number>();
+  for (const adapter of list) {
+    const key = pacingKeyOf(adapter);
+    paces.set(key, Math.max(paces.get(key) ?? 0, adapter.paceMs ?? 0));
+  }
+  return paces;
+}
+
+// Built once: the registry is fixed at import.
+const PACE_BY_KEY = pacesByKey(Object.values(adapters));
+
+/** A pacing key's own pace (see {@link pacesByKey}). */
 export function paceMsOf(pacingKey: string): number {
-  return Math.max(
-    0,
-    ...Object.values(adapters)
-      .filter((a) => pacingKeyOf(a) === pacingKey)
-      .map((a) => a.paceMs ?? 0),
-  );
+  return PACE_BY_KEY.get(pacingKey) ?? 0;
 }
 
 /** Narrow an arbitrary string to a known SourceName. */

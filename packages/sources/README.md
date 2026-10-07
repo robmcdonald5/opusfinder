@@ -96,11 +96,15 @@ or a 503 that sent a Retry-After, needing a longer wait throws `RateLimitedError
 its own error); a request already 429'd ends as one at its next failure (a definitive 404/410 excepted).
 `runIngestion` then SKIPS that pacing key's boards until the Retry-After passes (clamped to 1–10 min) —
 no request, no presence stamp/sweep/certification, counted in `rateLimitSkipped` (not `failed`). A
-rate-limited detail fetch does the same, its board's remaining hydrates flagged `contentMissing` unfetched.
-`ingest:all` omits the option and keeps the patient retries. Known limitations: under persistent
-throttling a skipped board waits a full sweep (~20 h) for its next try, and meanwhile the stale sweep
-spares its uncertified jobs (`rateLimitSkipped` makes it visible); discovery's prober (`probe.ts`) still
-hits `apply.workable.com` at up to ~2.5 req/s (a follow-up).
+rate-limited detail fetch does the same, its board's remaining hydrates flagged `contentMissing` unfetched
+(counted in `hydrateDeferred`).
+After the main loop, a second pass retries — without waiting — the skipped boards whose cooldown has
+passed, while the budget lasts. `ingest:all` omits the option and keeps the patient retries. Known
+limitations: a transient blip is now mostly recovered in the same tick, but under persistent throttling a
+skipped board waits a full sweep (~20 h) for its next try, and meanwhile the stale sweep spares its
+uncertified jobs (`rateLimitSkipped` makes it visible); a host's burst quota can leave the tail of a huge
+board unhydrated while it throttles (`hydrateDeferred`, content kept, not counted in `hydrateSkipped`);
+discovery's prober (`probe.ts`) still hits `apply.workable.com` at up to ~2.5 req/s (a follow-up).
 
 **A failed hydrate never overwrites stored content** (`upsertJobs`, the single persistence choke point,
 enforces it for every caller):

@@ -229,6 +229,12 @@ export interface NormalizedJob {
    * hydrate needs the list item receives it as hydrate's own `raw` argument.)
    */
   contentMissing?: true;
+  /**
+   * Set with `contentMissing` when a RATE LIMIT, not the posting, kept the detail fetch from succeeding
+   * (the hydrate pool stops at the first one). Counted as `hydrateDeferred`, not `hydrateSkipped`, so the
+   * hydrate_skip_ratio health check tracks real detail failures.
+   */
+  hydrateDeferred?: true;
 }
 
 /** Narrow an `unknown` to a plain object (record). */
