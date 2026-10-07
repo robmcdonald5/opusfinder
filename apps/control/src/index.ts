@@ -48,7 +48,10 @@ const SECURITY_HEADERS: Record<string, string> = {
   "content-security-policy":
     "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
   "x-content-type-options": "nosniff",
-  "referrer-policy": "no-referrer",
+  // NOT "no-referrer": under that policy the Fetch spec makes a browser send `Origin: null` on the page's
+  // own form POSTs, which assertNotCrossSite/formBody then refuse as cross-site (403 on every button).
+  // "same-origin" sends the real Origin to ourselves and nothing at all to other sites.
+  "referrer-policy": "same-origin",
   "cache-control": "no-store",
 };
 
