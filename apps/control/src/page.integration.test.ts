@@ -53,6 +53,14 @@ describe("GET /", () => {
     expect(res.headers.get("cache-control")).toBe("no-store");
   });
 
+  it("uses a referrer policy that keeps the page's own form POSTs same-origin", async () => {
+    // Regression (2026-10-07, first live use): with "no-referrer" a real browser sends `Origin: null` on
+    // the page's form POSTs (Fetch spec), so the CSRF guard refused the owner's own Approve/Reject with
+    // 403 cross_origin. The tests build requests with an explicit Origin, so only the header pins this.
+    const res = await h.request("/", { as: "owner" });
+    expect(res.headers.get("referrer-policy")).toBe("same-origin");
+  });
+
   it("is read-only for an agent: no forms, no approve buttons", async () => {
     await h.request("/v1/proposals", {
       as: "agent",
