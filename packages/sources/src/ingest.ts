@@ -24,7 +24,12 @@ import type { SourceName } from "@opusfinder/shared";
 import { sleep } from "@opusfinder/shared/async";
 
 import { adapterFor, paceMsOf, pacingKeyOf } from "./adapters";
-import { RateLimitedError, runAdapter, type RunAdapterOptions } from "./adapters/run-adapter";
+import {
+  RATE_LIMIT_MIN_COOLDOWN_MS,
+  RateLimitedError,
+  runAdapter,
+  type RunAdapterOptions,
+} from "./adapters/run-adapter";
 
 /**
  * The injected embedder — the structural MINIMUM that `backfillJobEmbeddings` accepts. The real
@@ -168,12 +173,11 @@ export interface IngestionCounts {
 }
 
 const DEFAULT_PACE_MS = 500;
-// A rate-limited pacing key's cooldown: the host's Retry-After, but at least a minute (a 429 that outlasted
-// every short retry means the host is still throttling) and at most 10 min (the Worker's whole budget).
+// A rate-limited pacing key's cooldown: the host's Retry-After, at least RATE_LIMIT_MIN_COOLDOWN_MS and at
+// most 10 min (the Worker's whole budget).
 // Known limitations: under PERSISTENT throttling a skipped board waits a full sweep (~20 h) for its next
 // try, and meanwhile the stale sweep spares its uncertified jobs (`rateLimitSkipped` shows it). Discovery's
 // prober (packages/discovery/src/probe.ts) still hits apply.workable.com at up to ~2.5 req/s (follow-up).
-const RATE_LIMIT_COOLDOWN_MIN_MS = 60_000;
 const RATE_LIMIT_COOLDOWN_MAX_MS = 10 * 60_000;
 
 /**
@@ -189,7 +193,7 @@ export async function runIngestion(db: Db, opts: IngestionOptions = {}): Promise
   const counts = emptyCounts();
   const startMs = clock();
   // Pacing key → when its most recent board FINISHED (see opts.paceMs), and, after a rate limit, the time
-  // before which its boards are skipped (see RATE_LIMIT_COOLDOWN_*).
+  // before which its boards are skipped (see RATE_LIMIT_COOLDOWN_MAX_MS).
   const keys = new Map<string, { lastFinish?: number; notBefore?: number }>();
   const runId = await startRun(db, "ingestion", { source: opts.source });
   let errorSample: string | undefined;
@@ -386,7 +390,7 @@ export async function runIngestion(db: Db, opts: IngestionOptions = {}): Promise
       const keyState = keys.get(pacingKey) ?? {};
       keyState.lastFinish = finishedAt;
       if (rateLimit) {
-        const cooldown = Math.max(rateLimit.retryAfterMs, RATE_LIMIT_COOLDOWN_MIN_MS);
+        const cooldown = Math.max(rateLimit.retryAfterMs, RATE_LIMIT_MIN_COOLDOWN_MS);
         keyState.notBefore = finishedAt + Math.min(cooldown, RATE_LIMIT_COOLDOWN_MAX_MS);
       }
       keys.set(pacingKey, keyState);

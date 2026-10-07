@@ -45,11 +45,13 @@ export interface RunAdapterOptions {
    */
   maxItems?: number;
   /**
-   * Fail fast on rate limiting (Worker-only). A retryable response that asks for a longer wait than this
-   * (a Retry-After, on a 429 or 503, or a 429's own growing backoff) throws {@link RateLimitedError}
-   * instead of sleeping; shorter waits still retry. A request 429'd earlier also ends in a RateLimitedError
-   * however its last attempt fails, and the hydrate pool stops at the first one. Omit ⇒ today's patient
-   * behaviour: sleep every Retry-After (capped at 30 s) — the CLI.
+   * Fail fast (Worker-only): no retry ever waits longer than this (+ jitter). A retry that would — its
+   * Retry-After or its backoff — is not made: a 429, or a 503 with a Retry-After, throws
+   * {@link RateLimitedError}; any other failure throws its own error. A request is 429'd at most once: any
+   * failure after its 429 (a timeout, a reset, a bad body, another 5xx or 429) ends it as a RateLimitedError
+   * at once — except a definitive 4xx (404, 410…), which keeps its own error. The hydrate pool stops at the
+   * first RateLimitedError. Omit ⇒ today's patient behaviour: sleep every Retry-After (capped at 30 s) —
+   * the CLI.
    */
   maxRetryWaitMs?: number;
   /** Told about a hydrate (detail) fetch's RateLimitedError — the board itself still succeeds, so this is
@@ -59,7 +61,7 @@ export interface RunAdapterOptions {
 
 /**
  * The host rate-limited a request (fail-fast mode only — see `maxRetryWaitMs`). `retryAfterMs` is its
- * Retry-After, uncapped, or {@link DEFAULT_RETRY_AFTER_MS} when it sent none usable: how long the caller
+ * Retry-After, uncapped, or {@link RATE_LIMIT_MIN_COOLDOWN_MS} when it sent none usable: how long the caller
  * should leave that host alone. Shape-only message: the tag, the status and the wait.
  */
 export class RateLimitedError extends Error {
@@ -78,8 +80,9 @@ const DEFAULT_MAX_RETRIES = 3;
 // Generous for a healthy ATS JSON endpoint, but well under the Worker wall limit so one hung
 // board (worst case ~maxRetries attempts + backoff) can't eat the whole tick's budget.
 const DEFAULT_FETCH_TIMEOUT_MS = 10_000;
-// A rate-limit answer with no usable Retry-After: assume a minute.
-const DEFAULT_RETRY_AFTER_MS = 60_000;
+/** The least a rate limit sidelines its host: the wait assumed when a 429 carries no usable Retry-After,
+ *  and runIngestion's cooldown floor (a 429 that outlasted a short retry means the host still throttles). */
+export const RATE_LIMIT_MIN_COOLDOWN_MS = 60_000;
 
 export async function runAdapter(
   adapter: SourceAdapter,
@@ -192,11 +195,21 @@ async function fetchJsonResilient(
   maxRetryWaitMs?: number,
 ): Promise<unknown> {
   let attempt = 0;
-  // Fail-fast mode only: this request's last 429, so its final failure — even a later timeout or reset —
-  // still reports the rate limit.
-  let limited: { status: number; retryAfterMs: number } | undefined;
-  const giveUp = (err: Error): Error =>
-    limited ? new RateLimitedError(tag, limited.status, limited.retryAfterMs, { cause: err }) : err;
+  // Fail-fast mode only: the Retry-After of this request's 429. Once set, the request's next failure ends it.
+  let limitedRetryAfterMs: number | undefined;
+  // Back off and retry — unless out of attempts or (fail-fast) the wait would exceed maxRetryWaitMs.
+  const retry = async (retryAfter?: string | null): Promise<boolean> => {
+    if (attempt >= maxRetries) return false;
+    const wait = parseRetryAfterMs(retryAfter) ?? backoffDelayMs(attempt);
+    if (maxRetryWaitMs !== undefined && wait > maxRetryWaitMs) return false;
+    await backoff(attempt++, retryAfter);
+    return true;
+  };
+  // The error a failed request ends with: a RateLimitedError once it has been 429'd, else its own.
+  const fail = (err: Error): Error =>
+    limitedRetryAfterMs === undefined
+      ? err
+      : new RateLimitedError(tag, 429, limitedRetryAfterMs, { cause: err });
   for (;;) {
     let res: Response;
     try {
@@ -207,11 +220,8 @@ async function fetchJsonResilient(
       const signal = req.init?.signal ? AbortSignal.any([req.init.signal, timeout]) : timeout;
       res = await fetch(req.url, { ...req.init, signal });
     } catch (err) {
-      if (attempt < maxRetries) {
-        await backoff(attempt++);
-        continue;
-      }
-      throw giveUp(
+      if (limitedRetryAfterMs === undefined && (await retry())) continue;
+      throw fail(
         new Error(`${tag} fetch error: ${err instanceof Error ? err.message : String(err)}`, {
           cause: err,
         }),
@@ -226,32 +236,33 @@ async function fetchJsonResilient(
         // A truncated/empty body on a 2xx is usually transient (a proxy cutting a large
         // response mid-stream, an edge hiccup) — retry like a 5xx rather than hard-failing
         // the whole board on the first bad read.
-        if (attempt < maxRetries) {
-          await backoff(attempt++);
-          continue;
-        }
-        throw giveUp(new Error(`${tag} returned a non-JSON body (status ${res.status})`));
+        if (limitedRetryAfterMs === undefined && (await retry())) continue;
+        throw fail(new Error(`${tag} returned a non-JSON body (status ${res.status})`));
       }
     }
 
     // Non-OK: release the (possibly HTML/text) body so no socket lingers, then retry or fail.
     const retryAfter = res.headers.get("retry-after");
     await res.body?.cancel().catch(() => {});
-    const retryable = res.status === 429 || res.status >= 500;
-    if (retryable && maxRetryWaitMs !== undefined) {
-      const after = parseRetryAfterMs(retryAfter);
-      if (res.status === 429) limited = { status: 429, retryAfterMs: after ?? DEFAULT_RETRY_AFTER_MS };
-      // Don't sleep past the caller's patience: a long Retry-After, or a 429's grown backoff.
-      const wait = after ?? (res.status === 429 ? backoffDelayMs(attempt) : 0);
-      if (wait > maxRetryWaitMs) {
-        throw new RateLimitedError(tag, res.status, after ?? DEFAULT_RETRY_AFTER_MS);
-      }
+    const error = new Error(`${tag} fetch failed: ${res.status} ${res.statusText}`);
+    // A definitive 4xx (404, 410…) is its own answer: never retried, never masked by an earlier 429.
+    if (res.status !== 429 && res.status < 500) throw error;
+    if (maxRetryWaitMs === undefined) {
+      if (await retry(retryAfter)) continue;
+      throw error;
     }
-    if (retryable && attempt < maxRetries) {
-      await backoff(attempt++, retryAfter);
-      continue;
+    const after = parseRetryAfterMs(retryAfter);
+    if (limitedRetryAfterMs !== undefined) {
+      if (res.status === 429) limitedRetryAfterMs = after ?? RATE_LIMIT_MIN_COOLDOWN_MS;
+      throw fail(error); // a failure after a 429 ends the request
     }
-    throw giveUp(new Error(`${tag} fetch failed: ${res.status} ${res.statusText}`));
+    if (res.status === 429) limitedRetryAfterMs = after ?? RATE_LIMIT_MIN_COOLDOWN_MS;
+    if (await retry(retryAfter)) continue;
+    // Out of attempts or patience: only a 429, or a 503 that sent a Retry-After, is a rate limit.
+    if (res.status === 503 && after !== undefined) {
+      throw new RateLimitedError(tag, 503, after, { cause: error });
+    }
+    throw fail(error);
   }
 }
 

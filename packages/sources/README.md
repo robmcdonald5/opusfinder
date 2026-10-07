@@ -91,8 +91,9 @@ key's previous board FINISHED, sleeping only the remainder, so alternating sourc
 and a board after enough other work waits for nothing. A key whose adapters declare a slower `paceMs`
 uses the largest of them (Workable: 1000 ms); the run's `paceMs` is a floor.
 
-**Rate limits (Worker only).** The Worker passes `maxRetryWaitMs` (5 s): a retry the host wants a longer
-wait for (its Retry-After, or a 429's grown backoff) throws `RateLimitedError` instead of sleeping, and
+**Rate limits (Worker only).** The Worker passes `maxRetryWaitMs` (5 s), and no retry waits longer. A 429,
+or a 503 that sent a Retry-After, needing a longer wait throws `RateLimitedError` (any other failure keeps
+its own error); a request already 429'd ends as one at its next failure (a definitive 404/410 excepted).
 `runIngestion` then SKIPS that pacing key's boards until the Retry-After passes (clamped to 1–10 min) —
 no request, no presence stamp/sweep/certification, counted in `rateLimitSkipped` (not `failed`). A
 rate-limited detail fetch does the same, its board's remaining hydrates flagged `contentMissing` unfetched.
