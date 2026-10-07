@@ -14,13 +14,12 @@ enabled = true
 
 # The control store: desired state, change log, proposal queue, run ledger. Strongly consistent, no idle
 # charge, and NOT Neon — reading or flipping a switch never wakes the database (C4).
-#   OWNER step (README): `wrangler d1 create opusfinder-control`, then paste the printed database_id
-#   over the all-zero placeholder. Local dev and the tests key their SQLite by binding, so they don't
-#   need it; a deploy with the placeholder fails loudly instead of binding the wrong database.
+#   Created 2026-10-07 (`wrangler d1 create opusfinder-control`, region WNAM). Local dev and the tests
+#   key their SQLite by binding, so they never touch this remote database.
 [[d1_databases]]
 binding = "DB"
 database_name = "opusfinder-control"
-database_id = "00000000-0000-0000-0000-000000000000"
+database_id = "56897414-e7aa-4ca2-9864-b616bc5077d2"
 migrations_dir = "migrations"
 
 # Secrets (never [vars] — they identify the account and the owner), set with `wrangler secret put`:
