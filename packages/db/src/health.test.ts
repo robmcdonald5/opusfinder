@@ -29,6 +29,7 @@ const HEALTHY: HealthSignals = {
   ingestionAgeH: 0.5,
   latestIngestStatus: "ok",
   latestIngestFailed: 0,
+  latestIngestRateLimitSkipped: 0,
   latestIngestProcessed: 11,
   latestIngestCompanies: 11,
   latestIngestHydrateSkipped: 2,
@@ -160,6 +161,31 @@ describe("evaluateHealth — hydrate_skip_ratio (failed detail fetches on hydrat
 });
 
 describe("evaluateHealth — board_fail_ratio edges", () => {
+  it("counts rate-limit-skipped boards as lost coverage: a blip stays under 0.5, a throttled dominant source crosses it", () => {
+    // One blip: 3 failed + 10 skipped of 250 → 0.052.
+    const blip = evaluateHealth({
+      ...HEALTHY,
+      latestIngestFailed: 3,
+      latestIngestRateLimitSkipped: 10,
+      latestIngestProcessed: 250,
+      latestIngestCompanies: 250,
+    });
+    expect(checkOf(blip, "board_fail_ratio").state).toBe("ok");
+    expect(checkOf(blip, "board_fail_ratio").metric).toBeCloseTo(13 / 250, 9);
+
+    // A source that is most of the chunk stays throttled: 5 failed + 130 skipped of 250 → 0.54. Failures
+    // alone (0.02) would read healthy.
+    const throttled = evaluateHealth({
+      ...HEALTHY,
+      latestIngestFailed: 5,
+      latestIngestRateLimitSkipped: 130,
+      latestIngestProcessed: 250,
+      latestIngestCompanies: 250,
+    });
+    expect(checkOf(throttled, "board_fail_ratio").state).toBe("firing");
+    expect(checkOf(throttled, "board_fail_ratio").metric).toBeCloseTo(135 / 250, 9);
+  });
+
   it("a 0-processed / 0-companies tick stays ok with metric 0 (no divide-by-zero NaN)", () => {
     const r = evaluateHealth({
       ...HEALTHY,

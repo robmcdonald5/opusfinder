@@ -54,7 +54,14 @@ describe("gatherHealthSignals — hydrate_skip_ratio inputs (integration: real P
         pipeline: "ingestion",
         status: "ok",
         startedAt: new Date("2026-10-01T10:00:00Z"),
-        counts: { failed: 3, processed: 4, companies: 4, hydrateSkipped: 30, hydrateListed: 60 },
+        counts: {
+          failed: 3,
+          rateLimitSkipped: 1,
+          processed: 4,
+          companies: 4,
+          hydrateSkipped: 30,
+          hydrateListed: 60,
+        },
       },
       { pipeline: "ingestion", status: "running", startedAt: new Date("2026-10-01T12:00:00Z") },
     ]);
@@ -63,6 +70,7 @@ describe("gatherHealthSignals — hydrate_skip_ratio inputs (integration: real P
 
     expect(signals.latestIngestStatus).toBe("ok");
     expect(signals.latestIngestFailed).toBe(3);
+    expect(signals.latestIngestRateLimitSkipped).toBe(1);
     expect(signals.latestIngestHydrateSkipped).toBe(30);
     expect(signals.latestIngestHydrateListed).toBe(60);
   });
@@ -74,5 +82,6 @@ describe("gatherHealthSignals — hydrate_skip_ratio inputs (integration: real P
 
     expect(signals.latestIngestHydrateSkipped).toBe(0);
     expect(signals.latestIngestHydrateListed).toBe(0);
+    expect(signals.latestIngestRateLimitSkipped).toBe(0);
   });
 });
