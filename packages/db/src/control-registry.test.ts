@@ -30,6 +30,7 @@ const QUIET: HealthSignals = {
   latestIngestCompanies: 10,
   latestIngestHydrateSkipped: 0,
   latestIngestHydrateListed: 0,
+  latestIngestRateLimitSkipped: 0,
   discoveryAgeD: 0,
   discoveryLaneErrors: 0,
   embeddingBacklog: 0,
