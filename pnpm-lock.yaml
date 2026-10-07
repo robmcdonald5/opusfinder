@@ -17,6 +17,12 @@ importers:
       '@eslint/js':
         specifier: ^10
         version: 10.0.1(eslint@10.4.0)
+      '@opusfinder/control':
+        specifier: workspace:*
+        version: link:packages/control
+      '@opusfinder/ctl':
+        specifier: workspace:*
+        version: link:packages/ctl
       '@opusfinder/db':
         specifier: workspace:*
         version: link:packages/db
@@ -38,6 +44,9 @@ importers:
       eslint:
         specifier: ^10
         version: 10.4.0
+      miniflare:
+        specifier: 4.20260616.0
+        version: 4.20260616.0
       msw:
         specifier: ^2.14.6
         version: 2.14.6(@types/node@24.12.4)(typescript@6.0.3)
@@ -56,6 +65,19 @@ importers:
       vitest:
         specifier: ^4.1.9
         version: 4.1.9(@opentelemetry/api@1.9.0)(@types/node@24.12.4)(@vitest/coverage-v8@4.1.9)(msw@2.14.6(@types/node@24.12.4)(typescript@6.0.3))(vite@8.0.16(@types/node@24.12.4)(esbuild@0.28.1)(tsx@4.22.3)(yaml@2.9.0))
+
+  apps/control:
+    dependencies:
+      '@opusfinder/control':
+        specifier: workspace:*
+        version: link:../../packages/control
+    devDependencies:
+      '@cloudflare/workers-types':
+        specifier: ^4
+        version: 4.20260617.1
+      wrangler:
+        specifier: ^4
+        version: 4.101.0(@cloudflare/workers-types@4.20260617.1)
 
   apps/scrapers:
     dependencies:
@@ -130,6 +152,18 @@ importers:
       drizzle-orm:
         specifier: ^0.45.2
         version: 0.45.2(@cloudflare/workers-types@4.20260617.1)(@electric-sql/pglite@0.5.3)(@neondatabase/serverless@1.1.0)(@opentelemetry/api@1.9.0)(@types/pg@8.15.6)(kysely@0.29.2)
+    devDependencies:
+      tsx:
+        specifier: ^4
+        version: 4.22.3
+
+  packages/control: {}
+
+  packages/ctl:
+    dependencies:
+      '@opusfinder/control':
+        specifier: workspace:*
+        version: link:../control
     devDependencies:
       tsx:
         specifier: ^4

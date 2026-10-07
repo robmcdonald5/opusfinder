@@ -599,7 +599,8 @@ function makeCadenceOrchestrator() {
   );
 }
 
-/** The Inngest functions for the digest pipeline, wired to `deps`. Registered with the serve handler. */
+/** The Inngest functions for the digest pipeline, wired to `deps`. Served via `createAllFunctions`
+ *  (./functions). */
 export function createDigestFunctions(deps: DigestDeps) {
   return [makeOrchestrator(deps), makePerUser(deps), makeCadenceOrchestrator()];
 }

@@ -123,8 +123,9 @@ function makeEmbedDrain(deps: BackfillDeps) {
   );
 }
 
-/** The backfill functions, built with injected deps — concatenated alongside the digest functions in the
- *  serve route. Mirrors `createDigestFunctions`. */
+/** The backfill functions, built with injected deps — concatenated alongside the digest functions by
+ *  `createAllFunctions` (./functions), the list the serve routes register. Mirrors
+ *  `createDigestFunctions`. */
 export function createBackfillFunctions(deps: BackfillDeps) {
   return [makeEmbedDrain(deps)];
 }

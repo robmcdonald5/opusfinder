@@ -1,0 +1,7 @@
+# Copy to `.dev.vars` (gitignored) for `wrangler dev`. Every value is a `wrangler secret` in production.
+# There is NO local identity bypass: requests still need a real Access token in the
+# `Cf-Access-Jwt-Assertion` header, verified against your team's live signing keys (README "Local dev").
+ACCESS_TEAM_DOMAIN="https://<your-team>.cloudflareaccess.com"
+ACCESS_AUD="<the Access application's AUD tag>"
+OWNER_EMAILS="<your login email>"
+SERVICE_TOKENS='{"<agent-client-id>.access": {"role": "agent", "name": "agent"}}'

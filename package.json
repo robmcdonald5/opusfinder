@@ -15,7 +15,7 @@
     "format:check": "prettier --check .",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "typecheck:scrapers": "pnpm --filter @opusfinder/scrapers typecheck",
-    "typecheck:test": "tsc --noEmit -p tsconfig.test.json && pnpm --filter @opusfinder/scrapers typecheck:test && pnpm --filter @opusfinder/web check",
+    "typecheck:test": "tsc --noEmit -p tsconfig.test.json && pnpm --filter @opusfinder/scrapers typecheck:test && pnpm --filter @opusfinder/control-plane typecheck && pnpm --filter @opusfinder/web check",
     "test": "vitest run --project unit --project integration",
     "test:watch": "vitest --project unit --project integration",
     "test:unit": "vitest run --project unit",
@@ -50,12 +50,15 @@
     "digest": "pnpm --filter @opusfinder/inngest digest",
     "email:preview": "pnpm --filter @opusfinder/email preview",
     "inngest:serve": "pnpm --filter @opusfinder/inngest inngest:serve",
-    "inngest:dev": "npx --yes inngest-cli@latest dev -u http://localhost:3000/api/inngest --no-discovery"
+    "inngest:dev": "npx --yes inngest-cli@latest dev -u http://localhost:3000/api/inngest --no-discovery",
+    "ctl": "node --import tsx packages/ctl/src/bin.ts"
   },
   "devDependencies": {
     "@electric-sql/pglite": "0.5.3",
     "@electric-sql/pglite-pgvector": "0.0.4",
     "@eslint/js": "^10",
+    "@opusfinder/control": "workspace:*",
+    "@opusfinder/ctl": "workspace:*",
     "@opusfinder/db": "workspace:*",
     "@opusfinder/shared": "workspace:*",
     "@types/node": "^24",
@@ -63,6 +66,7 @@
     "drizzle-orm": "^0.45.2",
     "esbuild": "0.28.1",
     "eslint": "^10",
+    "miniflare": "4.20260616.0",
     "msw": "^2.14.6",
     "prettier": "^3",
     "tsx": "^4",

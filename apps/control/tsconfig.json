@@ -1,0 +1,19 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // Workers runtime types ONLY — no @types/node. This is the authoritative Worker-safety type check for
+    // this Worker AND for @opusfinder/control, which it compiles through its import graph: a `process`,
+    // `Buffer` or node:* reference anywhere in that graph fails here (the H1-landmine class a bundle scan
+    // can't see, because type-only imports are erased). Uses the @cloudflare/workers-types package (which
+    // also declares the `cloudflare:workers` module) rather than a committed `wrangler types` output.
+    "types": ["@cloudflare/workers-types"],
+    "lib": ["ES2022"],
+    "noEmit": true
+  },
+  // Shippable Worker surface. The *.integration.test.ts suites beside it are NODE-side harnesses
+  // (Miniflare, esbuild, node:fs) — type-checked by the root tsconfig.test.json under node types instead.
+  // The only src they import is runtime-neutral (limits.ts: no Workers or Node globals), so no file that
+  // needs one ambient environment is ever compiled under the other.
+  "include": ["src/**/*.ts"],
+  "exclude": ["node_modules", ".wrangler", "dist", "src/**/*.test.ts"]
+}
