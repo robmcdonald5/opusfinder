@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { SourceName } from "@opusfinder/shared";
 import { rejectionOf } from "@test/rejection";
 
-import { SOURCE_NAMES, adapterFor, adapters, fetchJobs, pacingKeyOf } from "./index";
+import { SOURCE_NAMES, adapterFor, adapters, fetchJobs, paceMsOf, pacingKeyOf } from "./index";
 
 // Leaf pure-unit for the source registry's lookups (no network: an unknown source fails before any fetch).
 
@@ -26,12 +26,15 @@ describe("pacingKeyOf — every adapter declares or defaults a pacing key", () =
     expect(pacingKeyOf({ ...adapters.recruitee, pacingKey: "one-vendor" })).toBe("one-vendor");
   });
 
-  it("only Workable overrides the run's pace (2000 ms); every other adapter keeps the default", () => {
-    const overrides = SOURCE_NAMES.filter((s) => adapters[s].paceMs !== undefined).map((s) => [
+  it("only Workable declares a slower pace (1000 ms); paceMsOf resolves it per key, 0 elsewhere", () => {
+    const declared = SOURCE_NAMES.filter((s) => adapters[s].paceMs !== undefined).map((s) => [
       s,
       adapters[s].paceMs,
     ]);
-    expect(overrides).toEqual([["workable", 2000]]);
+    expect(declared).toEqual([["workable", 1000]]);
+    expect(SOURCE_NAMES.map((s) => [s, paceMsOf(s)])).toEqual(
+      SOURCE_NAMES.map((s) => [s, s === "workable" ? 1000 : 0]),
+    );
   });
 });
 

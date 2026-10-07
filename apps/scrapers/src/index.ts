@@ -78,6 +78,10 @@ const MAX_JOBS_PER_BOARD = 1500;
 // runIngestion stops starting new boards past this and finishes cleanly, so even a chunk of many medium
 // boards can't be killed mid-run. Belt-and-suspenders behind the per-board cap.
 const MAX_RUN_MS = 10 * 60_000;
+// Fail fast on rate limits: a retry the host wants us to wait longer than this for throws instead of
+// sleeping, and runIngestion skips that ATS's boards until its Retry-After passes. Patient retries spent
+// ~90 s per Workable board (3 × the 30 s Retry-After cap) and stalled whole ticks on 2026-10-06.
+const MAX_RETRY_WAIT_MS = 5_000;
 // limit + reprobeLimit sized to the subrequest budget (REQUIRES Workers Paid).
 const DISCOVERY_LIMIT = 400;
 const DISCOVERY_REPROBE_LIMIT = 500;
@@ -215,7 +219,7 @@ async function runIngestionTick(db: Db, env: Env): Promise<void> {
     afterId,
     limit,
     maxRunMs: MAX_RUN_MS,
-    adapter: { maxItems: MAX_JOBS_PER_BOARD },
+    adapter: { maxItems: MAX_JOBS_PER_BOARD, maxRetryWaitMs: MAX_RETRY_WAIT_MS },
     enforceLifecycle: parseEnforceFlag(env.LIFECYCLE_CLOSE_ENFORCE),
     // Tier-1 universal staleness sweep — runs EVERY tick (driven by the deployed feature, not gated on the
     // switch) so the would-close population is observed in shadow; `enforce` rides its OWN STALE_SWEEP flag,

@@ -1,5 +1,5 @@
 import type { NormalizedJob } from "@opusfinder/shared";
-import { backoff } from "@opusfinder/shared/async";
+import { backoff, backoffDelayMs, parseRetryAfterMs } from "@opusfinder/shared/async";
 
 import type { Cursor, FetchJson, JobsRequest, SourceAdapter, SourceContext } from "./types";
 
@@ -44,19 +44,32 @@ export interface RunAdapterOptions {
    * sweep (an incomplete present-set would false-close the un-fetched tail).
    */
   maxItems?: number;
+  /**
+   * Fail fast on rate limiting (Worker-only). A retryable response that asks for a longer wait than this
+   * (a Retry-After, on a 429 or 503, or a 429's own growing backoff) throws {@link RateLimitedError}
+   * instead of sleeping; shorter waits still retry. A request 429'd earlier also ends in a RateLimitedError
+   * however its last attempt fails, and the hydrate pool stops at the first one. Omit ⇒ today's patient
+   * behaviour: sleep every Retry-After (capped at 30 s) — the CLI.
+   */
+  maxRetryWaitMs?: number;
+  /** Told about a hydrate (detail) fetch's RateLimitedError — the board itself still succeeds, so this is
+   *  how runIngestion learns to cool that host down. */
+  onRateLimited?: (err: RateLimitedError) => void;
 }
 
 /**
- * A fetch that ended on a non-OK HTTP status after its retries. Carries the `status` as a typed field
- * so a caller can branch on it (runIngestion's rate-limit breaker keys on 429) without matching the
- * message. Shape-only, like every board error: the tag, the status and its reason phrase.
+ * The host rate-limited a request (fail-fast mode only — see `maxRetryWaitMs`). `retryAfterMs` is its
+ * Retry-After, uncapped, or {@link DEFAULT_RETRY_AFTER_MS} when it sent none usable: how long the caller
+ * should leave that host alone. Shape-only message: the tag, the status and the wait.
  */
-export class HttpStatusError extends Error {
+export class RateLimitedError extends Error {
   readonly status: number;
-  constructor(message: string, status: number) {
-    super(message);
-    this.name = "HttpStatusError";
+  readonly retryAfterMs: number;
+  constructor(tag: string, status: number, retryAfterMs: number, options?: ErrorOptions) {
+    super(`${tag} rate-limited: ${status}, retry after ${Math.ceil(retryAfterMs / 1000)}s`, options);
+    this.name = "RateLimitedError";
     this.status = status;
+    this.retryAfterMs = retryAfterMs;
   }
 }
 
@@ -65,6 +78,8 @@ const DEFAULT_MAX_RETRIES = 3;
 // Generous for a healthy ATS JSON endpoint, but well under the Worker wall limit so one hung
 // board (worst case ~maxRetries attempts + backoff) can't eat the whole tick's budget.
 const DEFAULT_FETCH_TIMEOUT_MS = 10_000;
+// A rate-limit answer with no usable Retry-After: assume a minute.
+const DEFAULT_RETRY_AFTER_MS = 60_000;
 
 export async function runAdapter(
   adapter: SourceAdapter,
@@ -78,7 +93,8 @@ export async function runAdapter(
 
   const ctx: SourceContext = { slug: adapter.normalizeSlug(rawSlug), rawSlug };
   const tag = `${adapter.source} "${ctx.slug}"`;
-  const fetchJson: FetchJson = (req) => fetchJsonResilient(req, tag, maxRetries, fetchTimeoutMs);
+  const fetchJson: FetchJson = (req) =>
+    fetchJsonResilient(req, tag, maxRetries, fetchTimeoutMs, opts.maxRetryWaitMs);
 
   // Pagination loop. Keep each raw list item beside its mapped job ONLY when there is a hydrate to
   // hand it to (the job itself carries no raw — it is not stored); otherwise drop the reference so a
@@ -129,13 +145,22 @@ export async function runAdapter(
   let jobs: NormalizedJob[];
   let unhydrated = 0;
   if (hydrate) {
+    // After the first rate-limited detail fetch, the rest skip theirs (contentMissing, no request) rather
+    // than each hitting a host that is throttling us.
+    let limited = false;
     jobs = await mapWithConcurrency(mapped, hydrateConcurrency, async ({ raw, job }) => {
-      try {
-        return { ...job, ...(await hydrate(job, raw, ctx, fetchJson)) };
-      } catch {
-        unhydrated++;
-        return { ...job, contentMissing: true as const };
+      if (!limited) {
+        try {
+          return { ...job, ...(await hydrate(job, raw, ctx, fetchJson)) };
+        } catch (err) {
+          if (err instanceof RateLimitedError && !limited) {
+            limited = true;
+            opts.onRateLimited?.(err);
+          }
+        }
       }
+      unhydrated++;
+      return { ...job, contentMissing: true as const };
     });
   } else {
     jobs = mapped.map((m) => m.job);
@@ -154,7 +179,8 @@ export async function runAdapter(
 /**
  * Fetch one request and parse JSON, retrying transient failures with exponential backoff +
  * jitter (honoring `Retry-After`). The single resilient fetch path in the package:
- * - `!res.ok` → drain the body, then retry on 429/5xx or throw a tagged {@link HttpStatusError}.
+ * - `!res.ok` → drain the body, then retry on 429/5xx or throw a tagged error.
+ * - fail-fast mode (`maxRetryWaitMs` set): see {@link RunAdapterOptions.maxRetryWaitMs}.
  * - guard non-JSON bodies (e.g. Workable's HTML 429 / text 404) by catching the parse into
  *   the tagged error rather than surfacing a raw SyntaxError.
  */
@@ -163,8 +189,14 @@ async function fetchJsonResilient(
   tag: string,
   maxRetries: number,
   timeoutMs: number,
+  maxRetryWaitMs?: number,
 ): Promise<unknown> {
   let attempt = 0;
+  // Fail-fast mode only: this request's last 429, so its final failure — even a later timeout or reset —
+  // still reports the rate limit.
+  let limited: { status: number; retryAfterMs: number } | undefined;
+  const giveUp = (err: Error): Error =>
+    limited ? new RateLimitedError(tag, limited.status, limited.retryAfterMs, { cause: err }) : err;
   for (;;) {
     let res: Response;
     try {
@@ -179,9 +211,11 @@ async function fetchJsonResilient(
         await backoff(attempt++);
         continue;
       }
-      throw new Error(`${tag} fetch error: ${err instanceof Error ? err.message : String(err)}`, {
-        cause: err,
-      });
+      throw giveUp(
+        new Error(`${tag} fetch error: ${err instanceof Error ? err.message : String(err)}`, {
+          cause: err,
+        }),
+      );
     }
 
     if (res.ok) {
@@ -196,7 +230,7 @@ async function fetchJsonResilient(
           await backoff(attempt++);
           continue;
         }
-        throw new Error(`${tag} returned a non-JSON body (status ${res.status})`);
+        throw giveUp(new Error(`${tag} returned a non-JSON body (status ${res.status})`));
       }
     }
 
@@ -204,11 +238,20 @@ async function fetchJsonResilient(
     const retryAfter = res.headers.get("retry-after");
     await res.body?.cancel().catch(() => {});
     const retryable = res.status === 429 || res.status >= 500;
+    if (retryable && maxRetryWaitMs !== undefined) {
+      const after = parseRetryAfterMs(retryAfter);
+      if (res.status === 429) limited = { status: 429, retryAfterMs: after ?? DEFAULT_RETRY_AFTER_MS };
+      // Don't sleep past the caller's patience: a long Retry-After, or a 429's grown backoff.
+      const wait = after ?? (res.status === 429 ? backoffDelayMs(attempt) : 0);
+      if (wait > maxRetryWaitMs) {
+        throw new RateLimitedError(tag, res.status, after ?? DEFAULT_RETRY_AFTER_MS);
+      }
+    }
     if (retryable && attempt < maxRetries) {
       await backoff(attempt++, retryAfter);
       continue;
     }
-    throw new HttpStatusError(`${tag} fetch failed: ${res.status} ${res.statusText}`, res.status);
+    throw giveUp(new Error(`${tag} fetch failed: ${res.status} ${res.statusText}`));
   }
 }
 

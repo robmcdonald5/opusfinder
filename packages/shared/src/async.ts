@@ -16,25 +16,31 @@ const MAX_RETRY_AFTER_MS = 30_000;
  * (RFC 7231 allows both), each capped at {@link MAX_RETRY_AFTER_MS}. `attempt` is 0-based.
  */
 export function backoff(attempt: number, retryAfter?: string | null): Promise<void> {
-  let ms = Math.min(2000 * 2 ** attempt, MAX_BACKOFF_MS);
-  if (retryAfter) {
-    // Retry-After is either delta-seconds (a number) or an HTTP-date (RFC 7231 allows both).
-    // `>= 0` so a `Retry-After: 0` ("retry immediately") is honored as ~0 ms; with `> 0` it would
-    // fall through to Date.parse("0") (which V8 reads as the year 2000) and be silently dropped,
-    // leaving the full exponential backoff. An empty header is already screened by `if (retryAfter)`.
-    const seconds = Number(retryAfter);
-    if (Number.isFinite(seconds) && seconds >= 0) {
-      ms = Math.min(seconds * 1000, MAX_RETRY_AFTER_MS);
-    } else {
-      const until = Date.parse(retryAfter);
-      if (!Number.isNaN(until)) {
-        const delta = until - Date.now();
-        if (delta > 0) ms = Math.min(delta, MAX_RETRY_AFTER_MS);
-      }
-    }
-  }
-  ms += Math.random() * 250;
+  const ms = backoffDelayMs(attempt, retryAfter) + Math.random() * 250;
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** The wait {@link backoff} sleeps, before jitter: the capped Retry-After, else the capped exponential. */
+export function backoffDelayMs(attempt: number, retryAfter?: string | null): number {
+  const after = parseRetryAfterMs(retryAfter);
+  return after !== undefined
+    ? Math.min(after, MAX_RETRY_AFTER_MS)
+    : Math.min(2000 * 2 ** attempt, MAX_BACKOFF_MS);
+}
+
+/**
+ * A `Retry-After` header value in ms, UNCAPPED: delta-seconds (a number) or an HTTP-date (RFC 7231 allows
+ * both). `undefined` when absent, unparseable, or a date already past.
+ */
+export function parseRetryAfterMs(retryAfter?: string | null): number | undefined {
+  if (!retryAfter) return undefined; // an empty header is screened here
+  // `>= 0` so a `Retry-After: 0` ("retry immediately") is honored as 0 ms; with `> 0` it would fall
+  // through to Date.parse("0") (which V8 reads as the year 2000) and be silently dropped, leaving the
+  // full exponential backoff.
+  const seconds = Number(retryAfter);
+  if (Number.isFinite(seconds) && seconds >= 0) return seconds * 1000;
+  const delta = Date.parse(retryAfter) - Date.now();
+  return delta > 0 ? delta : undefined; // NaN (unparseable) fails `> 0` too
 }
 
 /**

@@ -1,11 +1,11 @@
 import { http, HttpResponse } from "msw";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { companySlug, jobId, type NormalizedJob, type SourceName } from "@opusfinder/shared";
 import { server } from "@test/msw/server";
 import { rejectionOf } from "@test/rejection";
 
-import { HttpStatusError, runAdapter } from "./run-adapter";
+import { RateLimitedError, runAdapter } from "./run-adapter";
 import type { SourceAdapter, SourceContext } from "./types";
 
 // The invariant ATS plumbing (run-adapter.ts) over MSW: the pagination loop, the resilient fetch
@@ -319,24 +319,6 @@ describe("runAdapter — invariant ATS plumbing over MSW", () => {
       expect(calls).toBe(2); // 1 initial + 1 retry
     });
 
-    it("a 429 that outlasts its retries rejects with a typed HttpStatusError carrying status 429", async () => {
-      // runIngestion's rate-limit breaker branches on this typed status, never on the message.
-      let calls = 0;
-      server.use(
-        http.get(LIST, () => {
-          calls += 1;
-          return new HttpResponse(null, { status: 429, headers: { "retry-after": "0" } });
-        }),
-      );
-
-      const err = await rejectionOf(runAdapter(makeAdapter(), "acme", { maxRetries: 1 }));
-
-      expect(err).toBeInstanceOf(HttpStatusError);
-      expect((err as HttpStatusError).status).toBe(429);
-      expect(err.message).toMatch(/^greenhouse "acme" fetch failed: 429/);
-      expect(calls).toBe(2); // the retry ran first: the error is the board's final outcome
-    });
-
     it("does NOT retry a non-retryable 4xx — one request, then throws", async () => {
       let calls = 0;
       server.use(
@@ -436,6 +418,149 @@ describe("runAdapter — invariant ATS plumbing over MSW", () => {
       } finally {
         vi.useRealTimers();
       }
+    });
+  });
+
+  describe("fail-fast on rate limits (maxRetryWaitMs — the Worker's mode)", () => {
+    const limited = (status: number, headers: Record<string, string> = {}) =>
+      new HttpResponse(null, { status, headers });
+
+    it.each([429, 503])(
+      "a %i whose Retry-After exceeds the max throws RateLimitedError at once — no sleep, Retry-After uncapped",
+      async (status) => {
+        let calls = 0;
+        server.use(
+          http.get(LIST, () => {
+            calls += 1;
+            return limited(status, { "retry-after": "120" });
+          }),
+        );
+
+        const err = await rejectionOf(
+          runAdapter(makeAdapter(), "acme", { maxRetries: 3, maxRetryWaitMs: 5000 }),
+        );
+
+        expect(err).toBeInstanceOf(RateLimitedError);
+        expect(err).toMatchObject({ status, retryAfterMs: 120_000 });
+        expect(err.message).toBe(`greenhouse "acme" rate-limited: ${status}, retry after 120s`);
+        expect(calls).toBe(1); // a sleep would have been 30 s: the test would time out
+      },
+    );
+
+    it("a Retry-After AT the max still retries (and recovers)", async () => {
+      let calls = 0;
+      server.use(
+        http.get(LIST, () => {
+          calls += 1;
+          return calls === 1 ? limited(429, { "retry-after": "1" }) : HttpResponse.json({ jobs: [raw(1)] });
+        }),
+      );
+
+      const jobs = await runAdapter(makeAdapter(), "acme", { maxRetries: 1, maxRetryWaitMs: 1000 });
+
+      expect(calls).toBe(2);
+      expect(ids(jobs)).toEqual(["1"]);
+    });
+
+    it.each([
+      ["no", {}],
+      ["an unparseable", { "retry-after": "soon" }],
+    ])(
+      "a 429 with %s Retry-After fails fast once its own backoff passes the max, reporting the 60 s default",
+      async (_label, headers) => {
+        let calls = 0;
+        server.use(
+          http.get(LIST, () => {
+            calls += 1;
+            return limited(429, headers);
+          }),
+        );
+
+        // The attempt-0 backoff is 2 s > the 1 s max.
+        const err = await rejectionOf(
+          runAdapter(makeAdapter(), "acme", { maxRetries: 3, maxRetryWaitMs: 1000 }),
+        );
+
+        expect(err).toBeInstanceOf(RateLimitedError);
+        expect(err).toMatchObject({ status: 429, retryAfterMs: 60_000 });
+        expect(calls).toBe(1);
+      },
+    );
+
+    it("a 503 with no Retry-After is not a rate limit: it retries on the usual backoff", async () => {
+      vi.useFakeTimers();
+      try {
+        let calls = 0;
+        server.use(
+          http.get(LIST, () => {
+            calls += 1;
+            return calls === 1 ? limited(503) : HttpResponse.json({ jobs: [raw(1)] });
+          }),
+        );
+
+        const promise = runAdapter(makeAdapter(), "acme", { maxRetries: 1, maxRetryWaitMs: 1000 });
+        await vi.advanceTimersByTimeAsync(2500); // the 2 s base backoff (+ jitter), over the 1 s max
+
+        await expect(promise).resolves.toHaveLength(1);
+        expect(calls).toBe(2);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("a 429 is not forgotten when a later attempt times out: the final error is a RateLimitedError", async () => {
+      vi.useFakeTimers();
+      try {
+        let calls = 0;
+        server.use(
+          http.get(LIST, () => {
+            calls += 1;
+            return calls === 1 ? limited(429, { "retry-after": "1" }) : new Promise<never>(() => {});
+          }),
+        );
+
+        const promise = runAdapter(makeAdapter(), "acme", {
+          maxRetries: 1,
+          maxRetryWaitMs: 5000,
+          fetchTimeoutMs: 50,
+        });
+        const settled = rejectionOf(promise);
+        await vi.advanceTimersByTimeAsync(1500); // the 1 s Retry-After (+ jitter), then the 50 ms timeout
+        const err = await settled;
+
+        expect(calls).toBe(2);
+        expect(err).toBeInstanceOf(RateLimitedError);
+        expect(err).toMatchObject({ status: 429, retryAfterMs: 1000 });
+        expect((err.cause as Error).message).toMatch(/^greenhouse "acme" fetch error:/);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("option unset (the CLI) keeps today's behaviour: sleeps a long Retry-After, and a final 429 is a plain error", async () => {
+      vi.useFakeTimers();
+      try {
+        let calls = 0;
+        server.use(
+          http.get(LIST, () => {
+            calls += 1;
+            return calls === 1 ? limited(429, { "retry-after": "120" }) : HttpResponse.json({ jobs: [raw(1)] });
+          }),
+        );
+
+        const promise = runAdapter(makeAdapter(), "acme", { maxRetries: 1 });
+        await vi.advanceTimersByTimeAsync(30_500); // 120 s capped at 30 s (+ jitter)
+
+        await expect(promise).resolves.toHaveLength(1);
+        expect(calls).toBe(2);
+      } finally {
+        vi.useRealTimers();
+      }
+
+      server.use(http.get(LIST, () => limited(429, { "retry-after": "120" })));
+      const err = await rejectionOf(runAdapter(makeAdapter(), "acme", { maxRetries: 0 }));
+      expect(err).not.toBeInstanceOf(RateLimitedError);
+      expect(err.message).toMatch(/^greenhouse "acme" fetch failed: 429/);
     });
   });
 
@@ -606,6 +731,58 @@ describe("runAdapter — invariant ATS plumbing over MSW", () => {
 
       expect(detailCalls).toBe(2); // the resilient fetchJson retried the 503
       expect(jobs[0]?.title).toBe("hydrated title");
+    });
+
+    describe("a rate-limited detail fetch", () => {
+      // Four listed postings, each hydrated from DETAIL/{id}, which always 429s with a 120 s Retry-After.
+      let detailCalls = 0;
+      beforeEach(() => {
+        detailCalls = 0;
+        server.use(http.get(LIST, () => HttpResponse.json({ jobs: [raw(1), raw(2), raw(3), raw(4)] })));
+        server.use(
+          http.get(`${DETAIL}/:id`, () => {
+            detailCalls += 1;
+            return new HttpResponse(null, { status: 429, headers: { "retry-after": "120" } });
+          }),
+        );
+        vi.spyOn(console, "warn").mockImplementation(() => {});
+      });
+      const adapter = () =>
+        makeAdapter({
+          hydrate: async (job, _item, _ctx, fetchJson) => {
+            await fetchJson({ url: `${DETAIL}/${job.externalId}` });
+            return {};
+          },
+        });
+
+      it("fail-fast: stops the pool — the rest are contentMissing unfetched — and tells onRateLimited once", async () => {
+        const heard: RateLimitedError[] = [];
+
+        const jobs = await runAdapter(adapter(), "acme", {
+          hydrateConcurrency: 1,
+          maxRetryWaitMs: 5000,
+          onRateLimited: (err) => heard.push(err),
+        });
+
+        expect(detailCalls).toBe(1);
+        expect(jobs.map((j) => j.contentMissing)).toEqual([true, true, true, true]);
+        expect(heard).toHaveLength(1);
+        expect(heard[0]).toMatchObject({ status: 429, retryAfterMs: 120_000 });
+      });
+
+      it("option unset: each posting's detail is still tried, and onRateLimited is never called", async () => {
+        const heard: RateLimitedError[] = [];
+
+        const jobs = await runAdapter(adapter(), "acme", {
+          hydrateConcurrency: 1,
+          maxRetries: 0,
+          onRateLimited: (err) => heard.push(err),
+        });
+
+        expect(detailCalls).toBe(4);
+        expect(jobs.every((j) => j.contentMissing)).toBe(true);
+        expect(heard).toEqual([]);
+      });
     });
   });
 });

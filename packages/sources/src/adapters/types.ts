@@ -31,8 +31,8 @@ export interface SourceAdapter {
   readonly pacingKey?: string;
 
   /**
-   * This adapter's pacing gap (ms) in place of the run's `paceMs` (default 500): a board of this adapter
-   * starts at least this long after its pacing key's previous board finished. OMIT ⇒ the run's `paceMs`.
+   * A slower pacing gap (ms) for this adapter's host. Resolved per pacing KEY (the largest over the
+   * adapters sharing it) and never below the run's `paceMs` (default 500). OMIT ⇒ the run's `paceMs`.
    * Set only for a host that rate-limits the default pace (Workable).
    */
   readonly paceMs?: number;

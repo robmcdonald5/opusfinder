@@ -88,7 +88,18 @@ each board in a try/catch — one dead slug doesn't halt the run.
 one at a time. Politeness (`paceMs`, 500 ms) is per pacing key — an adapter's `pacingKey`, default its
 source, since no two adapters share a request host — and by TIME: a board starts ≥ 500 ms after its
 key's previous board FINISHED, sleeping only the remainder, so alternating sources can't burst one host
-and a board after enough other work waits for nothing.
+and a board after enough other work waits for nothing. A key whose adapters declare a slower `paceMs`
+uses the largest of them (Workable: 1000 ms); the run's `paceMs` is a floor.
+
+**Rate limits (Worker only).** The Worker passes `maxRetryWaitMs` (5 s): a retry the host wants a longer
+wait for (its Retry-After, or a 429's grown backoff) throws `RateLimitedError` instead of sleeping, and
+`runIngestion` then SKIPS that pacing key's boards until the Retry-After passes (clamped to 1–10 min) —
+no request, no presence stamp/sweep/certification, counted in `rateLimitSkipped` (not `failed`). A
+rate-limited detail fetch does the same, its board's remaining hydrates flagged `contentMissing` unfetched.
+`ingest:all` omits the option and keeps the patient retries. Known limitations: under persistent
+throttling a skipped board waits a full sweep (~20 h) for its next try, and meanwhile the stale sweep
+spares its uncertified jobs (`rateLimitSkipped` makes it visible); discovery's prober (`probe.ts`) still
+hits `apply.workable.com` at up to ~2.5 req/s (a follow-up).
 
 **A failed hydrate never overwrites stored content** (`upsertJobs`, the single persistence choke point,
 enforces it for every caller):
@@ -148,8 +159,8 @@ casing — seed one canonical casing per board). `isRemote` is a TRAP (true on H
 (returns the whole board in one response). Hydration is INLINE via `?details=true` (not an N+1;
 the per-job widget path 404s). Slugs lowercase. `id` is `shortcode`; `remote` from
 `telecommuting` ‖ text; `published_on`/`created_at` are `YYYY-MM-DD`. The host RATE-LIMITS rapid
-calls (429 with an HTML body) — runAdapter's backoff + non-JSON guard handle it; `ingest:all`
-paces between consecutive Workable boards.
+calls (429 with an HTML body) — runAdapter's backoff + non-JSON guard handle it; boards are paced
+1000 ms apart, and the Worker cools the host down on a 429 (see Rate limits above).
 
 **SmartRecruiters** — `api.smartrecruiters.com/v1/companies/{slug}/postings`. OFFSET-paginated
 (`{ content, totalFound }`). Slugs CASE-SENSITIVE. The list item has neither a description nor a

@@ -38,6 +38,16 @@ export function pacingKeyOf(adapter: SourceAdapter): string {
   return adapter.pacingKey ?? adapter.source;
 }
 
+/** A pacing key's own pace: the largest `paceMs` any adapter on that key declares (0 if none does). */
+export function paceMsOf(pacingKey: string): number {
+  return Math.max(
+    0,
+    ...Object.values(adapters)
+      .filter((a) => pacingKeyOf(a) === pacingKey)
+      .map((a) => a.paceMs ?? 0),
+  );
+}
+
 /** Narrow an arbitrary string to a known SourceName. */
 export function isSourceName(value: string): value is SourceName {
   return Object.prototype.hasOwnProperty.call(adapters, value);

@@ -28,10 +28,11 @@ const RESERVED_FIRST_SEGMENTS = new Set(["api", "v1", "v2", "v3", "accounts", "j
 export const workableAdapter: SourceAdapter = {
   source: "workable",
 
-  // 2 s between Workable boards, not the default 500 ms: at 500 ms the widget host 429'd whole runs of
+  // 1 s between Workable boards, not the default 500 ms: at 500 ms the widget host 429'd whole runs of
   // boards (2026-10-06). Workable documents no limit for this public endpoint (its 10 req/10 s is for the
-  // authenticated API's account tokens); each board is ONE request, so this keeps us at ≤ 0.5 req/s.
-  paceMs: 2000,
+  // authenticated API's account tokens); each board is ONE request, so this keeps us at ≤ 1 req/s. Not
+  // slower: the gap runs from a board's FINISH, so a Workable-heavy stretch would overrun the tick budget.
+  paceMs: 1000,
 
   // Lowercase: canonical board slugs are lowercase and the host 404s other casings.
   normalizeSlug: (rawSlug) => companySlug(rawSlug.toLowerCase()),
