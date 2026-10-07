@@ -98,7 +98,9 @@ excepted). `runIngestion` then SKIPS that pacing key's boards until the Retry-Af
 1–10 min) — no request, no presence stamp/sweep/certification, counted in `rateLimitSkipped` (not
 `failed`). A rate-limited detail fetch does the same, its board's remaining hydrates flagged
 `contentMissing` unfetched (counted in `hydrateSkipped`). After the main loop, a second pass retries —
-without waiting — the skipped and 429'd boards whose cooldown has passed, while the budget lasts.
+without waiting — the skipped and 429'd boards (and those whose detail fetches a 429 stopped) whose cooldown
+has passed, while the budget lasts; a re-run's outcome replaces the board's first, so each board is counted
+once (and reported once to `onBoard`), and `errorSample` names the first board whose FINAL outcome failed.
 The Worker also passes `boardTimeLimitMs` (120 s): past it no new request starts for that board (its list
 fetch fails the board; remaining detail fetches leave postings `contentMissing`), so one board can't run the
 tick past Cloudflare's limit. `ingest:all` omits both options and keeps the patient, unlimited retries. Known limitations: a transient blip is now

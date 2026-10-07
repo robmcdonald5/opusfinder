@@ -494,6 +494,7 @@ describe("runIngestion — orchestration over real PGlite (fetch stubbed)", () =
 
       expect(counts).toMatchObject({ embedded: 0, embedFailed: 1, jobs: 1, ok: 1, failed: 0 });
       expect((await allSourceRuns())[0]!.status).toBe("ok"); // an embed hiccup never fails the run
+      expect((await allSourceRuns())[0]!.errorSample).toBeNull(); // a warning, not a board error
       const job = await jobByExt("1");
       expect(job).toBeDefined();
       expect(job!.embedding).toBeNull(); // persisted, just un-embedded → the next backfill fills it
@@ -1040,15 +1041,15 @@ describe("runIngestion — orchestration over real PGlite (fetch stubbed)", () =
         rateLimitSkipped: 2,
         lastId: wc,
       });
-      // Each board reported once: the still-skipped ones after the second pass, as skipped.
+      // Each board reported once, with its final outcome: the ones a rate limit cost after the second pass.
       expect(boards.map((b) => [b.slug, b.ok, b.skipped])).toEqual([
-        ["wa", false, undefined],
         ["g1", true, undefined],
         ["g2", true, undefined],
+        ["wa", false, undefined],
         ["wb", false, "rate-limited"],
         ["wc", false, "rate-limited"],
       ]);
-      expect(boards[0]!.error).toBe('workable "wa" rate-limited: 429, retry after 120s');
+      expect(boards[2]!.error).toBe('workable "wa" rate-limited: 429, retry after 120s');
       expect(boards[3]!.error).toBeUndefined();
       // No presence stamp, no sweep, no certification.
       const w1 = (await jobByExt("w1"))!;
@@ -1131,7 +1132,8 @@ describe("runIngestion — orchestration over real PGlite (fetch stubbed)", () =
     it("second pass: a blip is recovered in-tick — the 429'd board and the skipped one are retried once cooled", async () => {
       await seedCompany({ slug: "wa", source: "workable", active: true });
       const wb = await seedCompany({ slug: "wb", source: "workable", active: true, lastIngestedAt: null });
-      const g1 = await seedCompany({ slug: "g1", active: true });
+      await seedCompany({ slug: "g1", active: true });
+      const g2 = await seedCompany({ slug: "g2", active: true });
       let waCalls = 0;
       installFetch([
         {
@@ -1146,30 +1148,101 @@ describe("runIngestion — orchestration over real PGlite (fetch stubbed)", () =
         },
         workableBoard("wb", 200, [wkJob("w1")]),
         ghBoard("g1", 61_000), // the main loop ends 61 s in: past wa's 60 s cooldown
+        failRoute("g2", 500), // a real failure, later in id order than wa's recovered 429
       ]);
       const boards: IngestBoardResult[] = [];
 
       const counts = await runIngestion(db, { ...clocked, onBoard: (b) => boards.push(b) });
 
-      // wa failed and wb was skipped, in order; both were fetched after g1 (paced by Workable's 1000).
-      expect(paced.events).toEqual(["fetch:wa", "fetch:g1", "fetch:wa", "sleep:1000", "fetch:wb"]);
-      // Each board counted once (wa's retry replaces its 429); the cursor stays where the main loop left it.
+      // wa failed and wb was skipped, in order; both were fetched after g1 and g2 (paced by Workable's 1000).
+      expect(paced.events).toEqual([
+        "fetch:wa",
+        "fetch:g1",
+        "sleep:500", // g2 (its 500 isn't recorded)
+        "fetch:wa",
+        "sleep:1000",
+        "fetch:wb",
+      ]);
+      // Each board counted once, by its FINAL outcome; the cursor stays where the main loop left it.
       expect(counts).toMatchObject({
-        companies: 3,
-        processed: 3,
+        companies: 4,
+        processed: 4,
         ok: 3,
-        failed: 0,
+        failed: 1,
         rateLimitSkipped: 0,
-        lastId: g1,
+        lastId: g2,
       });
+      // Reported once each, with that final outcome.
       expect(boards.map((b) => [b.slug, b.ok])).toEqual([
-        ["wa", false],
         ["g1", true],
+        ["g2", false],
         ["wa", true],
         ["wb", true],
       ]);
+      // The recovered 429 leaves no errorSample: the real later failure's message is it.
+      expect((await allSourceRuns())[0]!.errorSample).toMatch(/^greenhouse:g2 .*500/);
       // Its lifecycle ran as normal: stamped present and certified.
       expect((await companyById(wb)).lastIngestedAt).toBeInstanceOf(Date);
+    });
+
+    it("a recovered 429 alone leaves no errorSample", async () => {
+      await seedCompany({ slug: "wa", source: "workable", active: true });
+      await seedCompany({ slug: "g1", active: true });
+      let waCalls = 0;
+      installFetch([
+        {
+          match: (url) => url.includes("/widget/accounts/wa?"),
+          respond: () =>
+            ++waCalls === 1
+              ? new Response(null, { status: 429, headers: { "retry-after": "60" } })
+              : jsonResponse({ jobs: [] }),
+        },
+        ghBoard("g1", 61_000),
+      ]);
+
+      const counts = await runIngestion(db, clocked);
+
+      expect(counts).toMatchObject({ ok: 2, failed: 0 });
+      expect((await allSourceRuns())[0]!.errorSample).toBeNull();
+    });
+
+    it("second pass: a board whose detail fetches a 429 stopped is re-run once cooled — and swept only once", async () => {
+      const sr = await seedCompany({ slug: "sr1", source: "smartrecruiters", active: true });
+      await seedCompany({ slug: "g1", active: true });
+      // A stored posting sr1 no longer lists: each sweep adds one to its absence streak.
+      await seedJob(sr, { externalId: "gone-1", source: "smartrecruiters", consecutiveAbsences: 0 });
+      let h1Calls = 0;
+      const fx = installFetch([
+        ...srBoard("sr1", ["h-1", "h-2"], (id) =>
+          id === "h-1" && ++h1Calls === 1
+            ? new Response(null, { status: 429, headers: { "retry-after": "60" } })
+            : jsonResponse(srDetail(id)),
+        ),
+        ghBoard("g1", 61_000), // past sr1's 60 s cooldown
+      ]);
+      const boards: IngestBoardResult[] = [];
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      let counts: IngestionCounts;
+      try {
+        counts = await runIngestion(db, {
+          ...clocked,
+          adapter: { ...FAIL_FAST, hydrateConcurrency: 1 },
+          onBoard: (b) => boards.push(b),
+        });
+      } finally {
+        warn.mockRestore();
+      }
+
+      // sr1: list + h-1 (429, the pool stops); g1; then sr1 again: list + h-1 + h-2.
+      expect(fx.calls.filter((u) => u.includes("/companies/sr1/"))).toHaveLength(5);
+      // Its final outcome is the re-run's: fully hydrated.
+      expect(counts).toMatchObject({ ok: 2, failed: 0, jobs: 2, hydrateSkipped: 0, hydrateListed: 2 });
+      expect(boards.map((b) => [b.slug, b.hydrateSkipped])).toEqual([
+        ["g1", 0],
+        ["sr1", 0],
+      ]);
+      // Swept once this tick, not twice.
+      expect((await jobByExt("gone-1"))!.consecutiveAbsences).toBe(1);
     });
 
     it("second pass: stops once the budget is spent — the rest stay skipped", async () => {
