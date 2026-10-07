@@ -46,8 +46,8 @@ export interface HealthThresholds {
    *  two missed ticks (~6.2 h) fire. */
   ingestMaxAgeH: number;
   /** (b) within-run coverage-loss ratio `(counts.failed + counts.rateLimitSkipped) / counts.processed` (the
-   *  boards the loop got through, not the chunk size) that fires the board-failure check — judged only once
-   *  {@link BOARD_FAIL_MIN_PROCESSED} boards were processed. */
+   *  boards the loop got through, not the chunk size) that fires the board-failure check — once at least
+   *  {@link BOARD_FAIL_MIN_COUNT} boards went un-ingested. */
   failRatio: number;
   /** (i) latest ingestion run's `hydrateSkipped / hydrateListed` — the share of postings on HYDRATING boards
    *  (today only SmartRecruiters) whose detail fetch failed or came back empty, so their content wasn't
@@ -174,9 +174,10 @@ const CHECK_LABELS: Record<HealthCheckId, string> = {
   discovery_lane_errors: "Discovery lane errors",
 };
 
-/** board_fail_ratio judges a run only once it processed this many boards: below it a dead board or two
- *  reads as a big ratio (2 of 3 = 67%), so a tiny or budget-cut run reads ok, as a 0-board one does. */
-export const BOARD_FAIL_MIN_PROCESSED = 20;
+/** board_fail_ratio fires only once at least this many boards went un-ingested (failed + rate-limit-skipped):
+ *  a dead board or two in a tiny run reads as a big ratio (2 of 3 = 67%) but isn't an outage, while a
+ *  budget-cut run where all 17 boards failed (the 2026-10-06 shape) must still fire. */
+export const BOARD_FAIL_MIN_COUNT = 5;
 
 const num = (v: unknown): number => {
   const n = Number(v);
@@ -356,14 +357,14 @@ export function evaluateHealth(signals: HealthSignals, opts?: HealthOptions): He
       thresholds.ingestMaxAgeH,
       signals.ingestionAgeH === null || signals.ingestionAgeH > thresholds.ingestMaxAgeH,
     ),
-    // (b) fire if the latest run errored outright, OR (once it processed enough boards to judge) the ratio
-    //     breaches. The status arm catches a full-run abort (processed=0 → a 0/0 ratio that would read healthy).
+    // (b) fire if the latest run errored outright, OR enough boards went un-ingested AND the ratio breaches.
+    //     The status arm catches a full-run abort (processed=0 → a 0/0 ratio that would read healthy).
     make(
       "board_fail_ratio",
       failRatio,
       thresholds.failRatio,
       signals.latestIngestStatus === "error" ||
-        (failDenom >= BOARD_FAIL_MIN_PROCESSED && failRatio > thresholds.failRatio),
+        (notIngested >= BOARD_FAIL_MIN_COUNT && failRatio > thresholds.failRatio),
     ),
     // (i) fire when the hydrating boards' failed-detail share breaches the threshold. No hydrating posting
     //     listed (0 denominator — e.g. the tick's chunk had no SmartRecruiters board) reads ok, metric 0.

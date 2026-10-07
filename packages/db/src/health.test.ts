@@ -4,7 +4,7 @@ import { render } from "@test/db/render";
 
 import type { Db } from "./client";
 import {
-  BOARD_FAIL_MIN_PROCESSED,
+  BOARD_FAIL_MIN_COUNT,
   DEFAULT_HEALTH_THRESHOLDS,
   evaluateHealth,
   healthOptionsFromEnv,
@@ -219,12 +219,23 @@ describe("evaluateHealth — board_fail_ratio edges", () => {
     expect(checkOf(over, "board_fail_ratio").metric).toBeCloseTo(11 / 21, 9);
   });
 
-  it(`judges only from ${BOARD_FAIL_MIN_PROCESSED} processed boards: 19 of 19 failed reads ok, 20 of 20 fires`, () => {
-    const all = (n: number) =>
-      evaluateHealth({ ...HEALTHY, latestIngestFailed: n, latestIngestProcessed: n, latestIngestCompanies: n });
-    expect(checkOf(all(19), "board_fail_ratio").state).toBe("ok");
-    expect(checkOf(all(19), "board_fail_ratio").metric).toBe(1); // still reported, just not judged
-    expect(checkOf(all(20), "board_fail_ratio").state).toBe("firing");
+  it(`fires only once ${BOARD_FAIL_MIN_COUNT} boards went un-ingested: 2 of 3 is noise, 17 of 17 the outage`, () => {
+    const failed = (n: number, of: number) =>
+      evaluateHealth({ ...HEALTHY, latestIngestFailed: n, latestIngestProcessed: of, latestIngestCompanies: 250 });
+    expect(checkOf(failed(2, 3), "board_fail_ratio").state).toBe("ok");
+    expect(checkOf(failed(2, 3), "board_fail_ratio").metric).toBeCloseTo(2 / 3, 9); // reported, not fired
+    expect(checkOf(failed(17, 17), "board_fail_ratio").state).toBe("firing"); // the budget-cut outage
+    // The boundary: 4 of 4 is under the count, 5 of 5 is at it.
+    expect(checkOf(failed(4, 4), "board_fail_ratio").state).toBe("ok");
+    expect(checkOf(failed(5, 5), "board_fail_ratio").state).toBe("firing");
+    // Skipped boards count toward it too.
+    const skipped = evaluateHealth({
+      ...HEALTHY,
+      latestIngestFailed: 1,
+      latestIngestRateLimitSkipped: 4,
+      latestIngestProcessed: 5,
+    });
+    expect(checkOf(skipped, "board_fail_ratio").state).toBe("firing");
   });
 
   it("a budget-truncated tick divides by processed, NOT companies", () => {
