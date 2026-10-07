@@ -4,6 +4,7 @@ import { render } from "@test/db/render";
 
 import type { Db } from "./client";
 import {
+  BOARD_FAIL_MIN_PROCESSED,
   DEFAULT_HEALTH_THRESHOLDS,
   evaluateHealth,
   healthOptionsFromEnv,
@@ -52,7 +53,7 @@ const BREACHES: Array<{ id: HealthCheckId; signalOverride: Partial<HealthSignals
   { id: "ingestion_staleness", signalOverride: { ingestionAgeH: 10 } },
   {
     id: "board_fail_ratio",
-    signalOverride: { latestIngestFailed: 11, latestIngestProcessed: 11, latestIngestCompanies: 11 },
+    signalOverride: { latestIngestFailed: 20, latestIngestProcessed: 20, latestIngestCompanies: 20 },
   },
   { id: "hydrate_skip_ratio", signalOverride: { latestIngestHydrateSkipped: 40 } },
   { id: "discovery_window", signalOverride: { discoveryAgeD: 30 } },
@@ -208,13 +209,22 @@ describe("evaluateHealth — board_fail_ratio edges", () => {
     expect(checkOf(r, "board_fail_ratio").state).toBe("firing");
   });
 
-  it("holds the 0.5 boundary: 5/11 (~0.45) ok, 6/11 (~0.55) fires with the real ratio as metric", () => {
-    const under = evaluateHealth({ ...HEALTHY, latestIngestFailed: 5, latestIngestCompanies: 11 });
+  it("holds the 0.5 boundary: 10/21 (~0.48) ok, 11/21 (~0.52) fires with the real ratio as metric", () => {
+    const of21 = { latestIngestProcessed: 21, latestIngestCompanies: 21 };
+    const under = evaluateHealth({ ...HEALTHY, ...of21, latestIngestFailed: 10 });
     expect(checkOf(under, "board_fail_ratio").state).toBe("ok");
 
-    const over = evaluateHealth({ ...HEALTHY, latestIngestFailed: 6, latestIngestCompanies: 11 });
+    const over = evaluateHealth({ ...HEALTHY, ...of21, latestIngestFailed: 11 });
     expect(checkOf(over, "board_fail_ratio").state).toBe("firing");
-    expect(checkOf(over, "board_fail_ratio").metric).toBeCloseTo(6 / 11, 9);
+    expect(checkOf(over, "board_fail_ratio").metric).toBeCloseTo(11 / 21, 9);
+  });
+
+  it(`judges only from ${BOARD_FAIL_MIN_PROCESSED} processed boards: 19 of 19 failed reads ok, 20 of 20 fires`, () => {
+    const all = (n: number) =>
+      evaluateHealth({ ...HEALTHY, latestIngestFailed: n, latestIngestProcessed: n, latestIngestCompanies: n });
+    expect(checkOf(all(19), "board_fail_ratio").state).toBe("ok");
+    expect(checkOf(all(19), "board_fail_ratio").metric).toBe(1); // still reported, just not judged
+    expect(checkOf(all(20), "board_fail_ratio").state).toBe("firing");
   });
 
   it("a budget-truncated tick divides by processed, NOT companies", () => {
