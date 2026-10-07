@@ -3,7 +3,15 @@ import { describe, expect, it } from "vitest";
 import type { SourceName } from "@opusfinder/shared";
 import { rejectionOf } from "@test/rejection";
 
-import { SOURCE_NAMES, adapterFor, adapters, fetchJobs, pacingKeyOf } from "./index";
+import {
+  SOURCE_NAMES,
+  adapterFor,
+  adapters,
+  fetchJobs,
+  paceMsOf,
+  pacesByKey,
+  pacingKeyOf,
+} from "./index";
 
 // Leaf pure-unit for the source registry's lookups (no network: an unknown source fails before any fetch).
 
@@ -24,6 +32,30 @@ describe("pacingKeyOf — every adapter declares or defaults a pacing key", () =
 
   it("a declared pacingKey wins over the source", () => {
     expect(pacingKeyOf({ ...adapters.recruitee, pacingKey: "one-vendor" })).toBe("one-vendor");
+  });
+
+  it("only Workable declares a slower pace (1000 ms); paceMsOf resolves it per key, 0 elsewhere", () => {
+    const declared = SOURCE_NAMES.filter((s) => adapters[s].paceMs !== undefined).map((s) => [
+      s,
+      adapters[s].paceMs,
+    ]);
+    expect(declared).toEqual([["workable", 1000]]);
+    expect(SOURCE_NAMES.map((s) => [s, paceMsOf(s)])).toEqual(
+      SOURCE_NAMES.map((s) => [s, s === "workable" ? 1000 : 0]),
+    );
+  });
+
+  it("pacesByKey: a shared key takes the LARGEST pace its adapters declare", () => {
+    const paces = pacesByKey([
+      { ...adapters.greenhouse, pacingKey: "shared", paceMs: 300 },
+      { ...adapters.lever, pacingKey: "shared", paceMs: 700 },
+      { ...adapters.ashby, pacingKey: "shared" },
+      adapters.recruitee,
+    ]);
+    expect([...paces.entries()]).toEqual([
+      ["shared", 700],
+      ["recruitee", 0],
+    ]);
   });
 });
 

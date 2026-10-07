@@ -19,7 +19,7 @@ export function formatMetric(check: HealthCheck): string {
     case "discovery_window":
       return `${check.metric.toFixed(1)}d since last ok`;
     case "board_fail_ratio":
-      return `${(check.metric * 100).toFixed(0)}% boards failed`;
+      return `${(check.metric * 100).toFixed(0)}% boards failed or rate-limit-skipped`;
     case "hydrate_skip_ratio":
       return `${(check.metric * 100).toFixed(0)}% of hydrated postings' detail fetches failed`;
     case "embedding_backlog":

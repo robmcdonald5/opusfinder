@@ -40,6 +40,8 @@ const DEFAULT_INGEST_LIMIT = 250;
 const MAX_INGEST_LIMIT = 500;
 const MAX_JOBS_PER_BOARD = 1500;
 const MAX_RUN_MS = 10 * 60_000;
+const MAX_RETRY_WAIT_MS = 5_000;
+const BOARD_TIME_LIMIT_MS = 120_000;
 
 // Sentinel returned by createDb — asserts the SAME client instance is threaded into the pipeline.
 const DB = { __db: "sentinel" } as const;
@@ -230,7 +232,11 @@ describe("runIngestionTick — fixed pipeline budget", () => {
     expect(ingestArgs).toMatchObject({
       activeOnly: true,
       maxRunMs: MAX_RUN_MS,
-      adapter: { maxItems: MAX_JOBS_PER_BOARD },
+      adapter: {
+        maxItems: MAX_JOBS_PER_BOARD,
+        maxRetryWaitMs: MAX_RETRY_WAIT_MS,
+        boardTimeLimitMs: BOARD_TIME_LIMIT_MS,
+      },
     });
   });
 
