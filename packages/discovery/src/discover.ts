@@ -1,4 +1,5 @@
 import type { Db } from "@opusfinder/db";
+import { describeDbError } from "@opusfinder/db/errors";
 import {
   closeJobsForCompanies,
   deactivateStale,
@@ -159,8 +160,9 @@ export async function runDiscovery(db: Db, opts: DiscoveryOptions = {}): Promise
     logSummary(counts, dryRun);
     return counts;
   } catch (err) {
-    // Truncated, secret-free sample (these are public seed/probe URLs + drizzle messages, never creds).
-    const errorSample = (err instanceof Error ? err.message : String(err)).slice(0, 500);
+    // Truncated, secret-free sample: public seed/probe URLs, or a failed query as describeDbError text (its
+    // Postgres reason first, never drizzle's params line or creds).
+    const errorSample = describeDbError(err).slice(0, 500);
     if (runId !== null) await finishRun(db, runId, { status: "error", counts, errorSample });
     throw err;
   }
@@ -302,7 +304,7 @@ export async function resolveLanes(
       if (lane.failLoud) throw err;
       console.error(
         `[discovery] lane "${lane.name}" fetch failed (isolated): ` +
-          (err instanceof Error ? err.message : String(err)).slice(0, 200),
+          describeDbError(err).slice(0, 200),
       );
       continue;
     }

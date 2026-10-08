@@ -1,7 +1,8 @@
-import { eq } from "drizzle-orm";
+import { DrizzleQueryError, eq } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Db } from "@opusfinder/db";
+import { listCompanyStates } from "@opusfinder/db/repos";
 import { companies, jobs, sourceRuns } from "@opusfinder/db/schema";
 import { runDiscovery } from "@opusfinder/discovery";
 import { companySlug, jobId, type SourceName } from "@opusfinder/shared";
@@ -25,6 +26,12 @@ import { jsonResponse, routedFetch, textResponse, type Route } from "@test/http/
 // attempt, so no `backoff` setTimeout fires) and no host spacing (hostMinIntervalMs 0 → HostThrottle
 // acquires immediately). The retry/backoff/throttle behavior is owned by the probe unit suites under fake
 // timers; here they would only add wall-clock.
+// A pass-through spy on one repo read, so a test can make it fail once like a real query (a failed DB call).
+vi.mock("@opusfinder/db/repos", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@opusfinder/db/repos")>();
+  return { ...actual, listCompanyStates: vi.fn(actual.listCompanyStates) };
+});
+
 const PROBE_OPTS = {
   maxRetries: 0,
   hostMinIntervalMs: 0,
@@ -99,6 +106,8 @@ describe("runDiscovery — orchestration over real PGlite (fetch stubbed)", () =
   afterEach(() => {
     // Restore the MSW-patched global fetch each test installed over (config has no unstubGlobals:true).
     vi.unstubAllGlobals();
+    // mockReset (not mockClear) also drops an unconsumed mockRejectedValueOnce, restoring the pass-through.
+    vi.mocked(listCompanyStates).mockReset();
   });
   afterAll(async () => {
     await close?.();
@@ -565,6 +574,26 @@ describe("runDiscovery — orchestration over real PGlite (fetch stubbed)", () =
       // Exactly 500: the message is 523 chars pre-slice, so dropping `.slice(0, 500)` in discover.ts makes
       // this !== 500 — the truncation (secret-free shape sample) is now genuinely protected.
       expect(run.errorSample!.length).toBe(500);
+    });
+
+    it("a failed query terminalizes the run 'error' with its Postgres reason first and no params line", async () => {
+      installFetch([seedRoute(["acme"])]);
+      const cause = Object.assign(new Error("canceling statement due to statement timeout"), {
+        code: "57014",
+      });
+      const query = 'select "source", "slug", "active" from "companies"';
+      vi.mocked(listCompanyStates).mockRejectedValueOnce(
+        new DrizzleQueryError(query, ["secret-param"], cause),
+      );
+
+      const running = runDiscovery(db, { lanes: ["outscal"], probe: PROBE_OPTS });
+      await expect(running).rejects.toBeInstanceOf(DrizzleQueryError);
+
+      const run = (await allSourceRuns())[0]!;
+      expect(run.status).toBe("error");
+      expect(run.errorSample).toBe(
+        `[code=57014] canceling statement due to statement timeout | Failed query: ${query}`,
+      );
     });
   });
 });

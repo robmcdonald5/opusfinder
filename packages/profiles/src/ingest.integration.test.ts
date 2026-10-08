@@ -1,7 +1,8 @@
-import { and, eq, inArray } from "drizzle-orm";
+import { and, DrizzleQueryError, eq, inArray } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Db } from "@opusfinder/db";
+import { patchCvFileExtracted } from "@opusfinder/db/repos";
 import { user, userCvFiles, userProfiles } from "@opusfinder/db/schema";
 import { MIN_TRANSCRIPT_CHARS, type StructuredProfile, type UserId } from "@opusfinder/shared";
 import type { PutObjectInput, StorageClient } from "@opusfinder/storage";
@@ -14,6 +15,13 @@ import { rejectionOf, rejectionReasonOf } from "@test/rejection";
 
 import { ingestCv, type IngestCvOptions } from "./ingest";
 import type { ProfileEmbedFn, StructureFn, TranscribeFn } from "./types";
+
+// A pass-through spy on the one write whose failure still records an error_sample (it runs before the row
+// flips to 'extracted'), so a test can make it fail once like a real query.
+vi.mock("@opusfinder/db/repos", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@opusfinder/db/repos")>();
+  return { ...actual, patchCvFileExtracted: vi.fn(actual.patchCvFileExtracted) };
+});
 
 // What this file proves: the FULL ingestCv pipeline — provisional-insert-first ordering, the R2 key
 // discipline (one uploadId across both keys, persisted not re-derived), the trimmed-length transcript
@@ -143,6 +151,8 @@ describe("ingestCv — CV → profile pipeline (stub seams, real PGlite persiste
     ({ db, close } = await createTestDb());
   });
   beforeEach(async () => {
+    // mockReset (not mockClear) also drops an unconsumed mockRejectedValueOnce, restoring the pass-through.
+    vi.mocked(patchCvFileExtracted).mockReset();
     await truncate(db, userProfiles, userCvFiles, user);
     // The user_cv_files/user_profiles → user.id FK needs real rows; unique emails (user_email_uq).
     await db.insert(user).values([
@@ -535,6 +545,25 @@ describe("ingestCv — CV → profile pipeline (stub seams, real PGlite persiste
     expect(await readProfiles(A)).toHaveLength(0);
 
     await expectBystandersUnchanged(byst);
+  });
+
+  it("a failed query before extraction stores its Postgres reason, never drizzle's params line", async () => {
+    const cause = Object.assign(new Error("canceling statement due to statement timeout"), {
+      code: "57014",
+    });
+    const query = 'update "user_cv_files" set "status" = $1, "r2_text_key" = $2';
+    const failed = new DrizzleQueryError(query, ["extracted", "secret-user-key"], cause);
+    vi.mocked(patchCvFileExtracted).mockRejectedValueOnce(failed);
+    const { client } = spyStorage();
+
+    expect(await rejectionReasonOf(ingestCv(db, ingestOpts(client)))).toBe(failed);
+
+    const rows = await cvRowsFor(A);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.status).toBe("failed");
+    expect(rows[0]!.errorSample).toBe(
+      `[code=57014] canceling statement due to statement timeout | Failed query: ${query}`,
+    );
   });
 
   it("pre-extraction failure (transcribe rejects) re-throws the ORIGINAL error and stores a 500-char truncated error_sample", async () => {

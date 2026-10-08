@@ -84,6 +84,27 @@ describe("describeDbError", () => {
     expect(describeDbError(err)).toBe("Failed query: select $1");
   });
 
+  it("reads a drizzle error that lost its class by its message (an Inngest StepError)", () => {
+    // What survives serialization: drizzle's message and the cause's message — no `query`, no fields.
+    const drizzle = new DrizzleQueryError("\n  select *\n  from jobs\n", ["secret-job-text"]);
+    const stepError = new Error(drizzle.message, {
+      cause: new Error("connection reset\nat frame"),
+    });
+    expect(describeDbError(stepError)).toBe("connection reset | Failed query: select * from jobs");
+  });
+
+  it("fails closed on a drizzle-shaped message with no params marker", () => {
+    // Something rewrote the newlines: the params may now sit inline, so nothing past the first line is kept,
+    // and nothing past the prefix when there is no newline at all.
+    const cause = new Error("boom");
+    const oneLine = new Error('Failed query: select "id" from "user" params: secret-user-data', {
+      cause,
+    });
+    expect(describeDbError(oneLine)).toBe("boom | Failed query: ");
+    const twoLines = new Error("Failed query: select 1\nparams=secret-user-data", { cause });
+    expect(describeDbError(twoLines)).toBe("boom | Failed query: select 1");
+  });
+
   it("returns any other error's message unchanged — a cause included (an adapter's rate limit)", () => {
     const plain = new Error("HTTP 404 for https://boards-api.greenhouse.io/v1/boards/acme/jobs");
     expect(describeDbError(plain)).toBe(plain.message);
