@@ -628,6 +628,14 @@ describe("runtime: ledger + trip", () => {
   const run = (json: Json) => h.request("/v1/runs", { as: "runtime", json });
 
   it("records a run and surfaces it as the stage's last run", async () => {
+    // The shape the scrapers Worker sends at the end of an ingest tick.
+    const units = {
+      "cf.wall_ms": 312000,
+      "ingest.boards": 250,
+      "ingest.boards_failed": 3,
+      "ingest.boards_rate_limited": 12,
+      "ingest.jobs_changed": 1969,
+    };
     const res = await run({
       stage: "ingest",
       outcome: "ok",
@@ -635,8 +643,8 @@ describe("runtime: ledger + trip", () => {
       finishedAt: "2026-10-04T10:05:12Z",
       durationMs: 312000,
       gateMode: "on",
-      units: { "cf.wall_ms": 312000, "cf.subrequests": 1800 },
-      detail: "boards=150 failed=2\nsecond line must not be stored",
+      units,
+      detail: "250/250 boards · 3 failed\nsecond line must not be stored",
     });
     expect(res.status).toBe(201);
     const s = await body(await h.request("/v1/status", { as: "agent" }));
@@ -644,8 +652,8 @@ describe("runtime: ledger + trip", () => {
     expect(ingest.lastRun).toMatchObject({
       outcome: "ok",
       started_at: "2026-10-04T10:00:00.000Z",
-      units: { "cf.wall_ms": 312000, "cf.subrequests": 1800 },
-      detail: "boards=150 failed=2",
+      units,
+      detail: "250/250 boards · 3 failed",
       recorded_by: "runtime:runtime-inngest",
     });
   });
@@ -660,6 +668,15 @@ describe("runtime: ledger + trip", () => {
         outcome: "ok",
         startedAt: "2026-10-04T10:00:00Z",
         units: { "voyage.tokens": 5 },
+      },
+    ],
+    [
+      "another stage's work count",
+      {
+        stage: "discover",
+        outcome: "ok",
+        startedAt: "2026-10-04T10:00:00Z",
+        units: { "ingest.boards": 5 },
       },
     ],
     [

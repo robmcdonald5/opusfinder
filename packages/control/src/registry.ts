@@ -29,7 +29,11 @@ export type Runtime =
   | "gh:live-integration.yml" // GitHub Actions workflow
   | "cli"; // run by hand (pnpm …)
 
-/** Units a run may record in the ledger (B1). Exact quantities; dollars are a later slice (prices.ts). */
+/**
+ * Units a run may record in the ledger (B1). Exact quantities; dollars are a later slice (prices.ts).
+ * `<vendor>.<metric>` is what a vendor bills or meters; `<stage>.<metric>` is a stage's own work count
+ * (never priced), kept so a run's cost can be read against how much it did.
+ */
 export const UNIT_IDS = [
   "voyage.tokens",
   "anthropic.haiku.in",
@@ -44,6 +48,10 @@ export const UNIT_IDS = [
   "neon.awake_s",
   "gh.minutes",
   "r2.bytes",
+  "ingest.boards", // boards processed (a budget stop leaves the rest of the chunk for the next tick)
+  "ingest.boards_failed", // boards whose final outcome was an error
+  "ingest.boards_rate_limited", // boards skipped while their ATS was cooling down from a 429
+  "ingest.jobs_changed", // postings inserted or updated
 ] as const;
 export type UnitId = (typeof UNIT_IDS)[number];
 
@@ -182,7 +190,15 @@ export const stages = {
     modes: ["off", "on"],
     initial: "on",
     onUnreadable: "skip",
-    units: ["cf.wall_ms", "cf.subrequests", "neon.awake_s"],
+    units: [
+      "cf.wall_ms",
+      "cf.subrequests",
+      "neon.awake_s",
+      "ingest.boards",
+      "ingest.boards_failed",
+      "ingest.boards_rate_limited",
+      "ingest.jobs_changed",
+    ],
     dims: ["source"],
     knobs: {
       // default = the Worker's fallback and wrangler.toml's INGEST_LIMIT; max = its MAX_INGEST_LIMIT clamp.
