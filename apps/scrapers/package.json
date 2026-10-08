@@ -11,6 +11,7 @@
     "typecheck:test": "tsc --noEmit -p tsconfig.test.json"
   },
   "dependencies": {
+    "@opusfinder/control": "workspace:*",
     "@opusfinder/db": "workspace:*",
     "@opusfinder/discovery": "workspace:*",
     "@opusfinder/embeddings": "workspace:*",

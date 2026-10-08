@@ -55,6 +55,12 @@ and the library it calls owns its own `source_runs` row (`startRun`/`finishRun`)
 > nothing). The rich in-DB signals (staleness, backlogs, digest/bounce health, cost) are computed
 > separately by `pnpm health` (the `@opusfinder/db` checker). See `research/specs/PHASE_F6_PLAN.md`.
 
+> **Control plane, in shadow.** Each tick reads its stage's gate from the `opusfinder-control` Worker
+> over the `CONTROL` service binding, logs what it says (`control gate ingest: on (shadow: not enforced)`
+> or `… would skip: …`), runs exactly as before, and writes one ledger row at the end (`src/control.ts`;
+> `apps/control/README.md` "Runtimes wired"). A control-plane failure is logged, never fatal. When the
+> registry gains a unit this Worker sends, deploy the control Worker first.
+
 > **Cron weekday footgun:** Cloudflare numbers weekdays `1=Sun…7=Sat` (Quartz-style), so Sunday is
 > `SUN` (or `1`), **never `0`**. The cron strings in `wrangler.toml` and the `case` literals in
 > `src/index.ts` must match character-for-character or the branch silently never fires.

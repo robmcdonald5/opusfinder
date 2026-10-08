@@ -1,5 +1,5 @@
 import { DrizzleQueryError } from "drizzle-orm";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Phase-1 leaf pure-unit for the scrapers Worker dispatch + cursor state machine (scheduled() →
 // runIngestionTick). The load-bearing behavior: (1) `controller.cron` routes to exactly one lane and
@@ -7,9 +7,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // chunk cursor parse/clamp/wrap math never stalls the cron — a corrupt cursor restarts at 0, a
 // misconfigured limit clamps into [1, MAX], and the cursor only WRAPS to 0 on a fully-processed
 // under-filled chunk (else it advances, never skipping a budget-truncated chunk), and (3) a tick
-// failure is logged + re-thrown so Cloudflare records the invocation as errored. createDb/runIngestion/
-// runDiscovery are stubbed so NO DB or network is touched — we assert routing + cursor math purely via
-// the args handed to those fakes and the value written back to KV.
+// failure is logged + re-thrown so Cloudflare records the invocation as errored, and (4) the control plane
+// is read in SHADOW: whatever the CONTROL binding answers, throws or withholds, the tick runs unchanged and
+// its ledger row can't fail it. createDb/runIngestion/runDiscovery are stubbed so NO DB or network is
+// touched — we assert routing + cursor math purely via the args handed to those fakes and the value
+// written back to KV.
 
 const mocks = vi.hoisted(() => ({
   createDb: vi.fn(),
@@ -27,6 +29,7 @@ vi.mock("@opusfinder/shared", () => ({
 }));
 
 import wranglerToml from "../wrangler.toml?raw";
+import { GATE_TIMEOUT_MS } from "./control";
 import worker from "./index";
 
 // Mirrors the wrangler.toml / src/index.ts cron constants — must match character-for-character (esp.
@@ -54,7 +57,7 @@ const scheduled = worker.scheduled as unknown as (
 ) => Promise<void>;
 
 function makeCtx() {
-  return { waitUntil: vi.fn() };
+  return { waitUntil: vi.fn((_promise: Promise<unknown>) => undefined) };
 }
 
 function makeKv(cursorRaw: string | null) {
@@ -92,6 +95,13 @@ beforeEach(() => {
   vi.clearAllMocks();
   vi.unstubAllGlobals();
   mocks.createDb.mockReturnValue(DB);
+  // Every tick logs its control gate (unreadable when the env has no CONTROL binding); keep the output quiet.
+  vi.spyOn(console, "log").mockImplementation(() => undefined);
+  vi.spyOn(console, "warn").mockImplementation(() => undefined);
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
 });
 
 describe("scheduled() dispatch", () => {
@@ -361,6 +371,293 @@ describe("runIngestionTick — cursor wrap math (wrap to 0 only at end of table,
     const { kv } = await runIngestTick({ cursorRaw: "123", counts: { processed: 1, companies: 1, lastId: 200 } });
     expect(kv.get).toHaveBeenCalledWith("afterId");
     expect(kv.put.mock.calls[0]![0]).toBe("afterId");
+  });
+});
+
+const GATE_ON = {
+  mode: "on",
+  cappedBy: null,
+  knobs: { boardsPerTick: DEFAULT_INGEST_LIMIT },
+  by: "owner:owner",
+  because: "seed",
+};
+
+/** A fake CONTROL binding (the control Worker's ControlRpc): `gate` answers as given, `recordRun` succeeds. */
+function makeControl(gate: () => Promise<unknown> = async () => GATE_ON) {
+  return {
+    gate: vi.fn((_stage: string) => gate()),
+    recordRun: vi.fn(async (_run: Record<string, unknown>): Promise<unknown> => ({ id: 1 })),
+  };
+}
+
+/** Settle everything the tick handed to ctx.waitUntil (the ledger write runs there). */
+async function settle(ctx: ReturnType<typeof makeCtx>): Promise<void> {
+  await Promise.all(ctx.waitUntil.mock.calls.map(([promise]) => promise));
+}
+
+const recorded = (control: ReturnType<typeof makeControl>) =>
+  control.recordRun.mock.calls.map(([run]) => run);
+
+const FULL_CHUNK: Counts & Record<string, number> = {
+  companies: 250,
+  processed: 250,
+  lastId: 900,
+  failed: 3,
+  rateLimitSkipped: 12,
+  changed: 1969,
+};
+
+const DISCOVERY_COUNTS = {
+  candidates: 1234,
+  probed: 40,
+  upserted: 6,
+  reprobed: 500,
+  deactivated: 2,
+};
+
+describe("control plane, in shadow — the gate is logged, never obeyed", () => {
+  it("reads the ingest gate before the tick, logs it, and runs the tick", async () => {
+    const control = makeControl();
+    const { ctx } = await runIngestTick({ env: { CONTROL: control }, counts: FULL_CHUNK });
+    await settle(ctx);
+    expect(control.gate).toHaveBeenCalledWith("ingest");
+    expect(control.gate.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.runIngestion.mock.invocationCallOrder[0]!,
+    );
+    expect(console.log).toHaveBeenCalledWith("control gate ingest: on (shadow: not enforced)");
+    expect(console.warn).not.toHaveBeenCalled(); // no would-skip, no knob drift, the row recorded
+  });
+
+  it.each<[string, Record<string, unknown>, string]>([
+    [
+      "off by a change",
+      { cappedBy: null, by: "agent:agent", because: "token spike" },
+      "off (by agent:agent: token spike)",
+    ],
+    ["off by the master switch", { cappedBy: "global" }, "off (master switch off)"],
+  ])("gate %s: logs would-skip and still runs the tick unchanged", async (_label, answer, why) => {
+    const control = makeControl(async () => ({ ...GATE_ON, mode: "off", ...answer }));
+    const { ingestArgs, cursorWritten, ctx } = await runIngestTick({
+      env: { CONTROL: control },
+      counts: FULL_CHUNK,
+    });
+    expect(console.warn).toHaveBeenCalledWith(`control gate ingest: would skip: ${why}`);
+    expect(ingestArgs?.limit).toBe(DEFAULT_INGEST_LIMIT);
+    expect(cursorWritten).toBe("900");
+    await settle(ctx);
+    expect(recorded(control)[0]).toMatchObject({ outcome: "ok", gateMode: "off" });
+  });
+
+  it.each<[string, Record<string, unknown>, string]>([
+    [
+      "throws",
+      {
+        CONTROL: makeControl(async () => Promise.reject(new Error("D1_ERROR: gone\nsecond line"))),
+      },
+      "Error: D1_ERROR: gone",
+    ],
+    [
+      "answers something unreadable",
+      { CONTROL: makeControl(async () => ({})) },
+      "Error: malformed gate answer",
+    ],
+    ["isn't bound", {}, "Error: no CONTROL binding"],
+  ])("a control plane that %s: the tick runs and logs would-skip", async (_label, env, reason) => {
+    const { ingestArgs, ctx } = await runIngestTick({ env, counts: FULL_CHUNK });
+    expect(mocks.runIngestion).toHaveBeenCalledTimes(1);
+    expect(ingestArgs?.limit).toBe(DEFAULT_INGEST_LIMIT);
+    expect(console.warn).toHaveBeenCalledWith(
+      `control gate ingest: would skip: control plane unreadable (${reason})`,
+    );
+    await settle(ctx);
+    const control = env.CONTROL as ReturnType<typeof makeControl> | undefined;
+    if (control) expect(recorded(control)[0]).toMatchObject({ outcome: "ok", gateMode: null });
+  });
+
+  it(`stops waiting for the gate after ${GATE_TIMEOUT_MS} ms and runs the tick`, async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const control = makeControl(() => new Promise<never>(() => undefined));
+      mocks.runIngestion.mockResolvedValue(FULL_CHUNK);
+      const ctx = makeCtx();
+      const tick = scheduled(
+        { cron: INGEST_CRON },
+        { DATABASE_URL: "postgres://stub", INGEST_CURSOR: makeKv(null), CONTROL: control },
+        ctx,
+      );
+      await vi.advanceTimersByTimeAsync(GATE_TIMEOUT_MS);
+      await tick;
+      expect(mocks.runIngestion).toHaveBeenCalledTimes(1);
+      expect(console.warn).toHaveBeenCalledWith(
+        `control gate ingest: would skip: control plane unreadable (Error: no answer in ${GATE_TIMEOUT_MS} ms)`,
+      );
+      await settle(ctx);
+      expect(recorded(control)[0]).toMatchObject({ gateMode: null });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("logs knob drift against the limits the tick actually uses (and still uses them)", async () => {
+    const control = makeControl(async () => ({ ...GATE_ON, knobs: { boardsPerTick: 200 } }));
+    const { ingestArgs } = await runIngestTick({ env: { CONTROL: control } });
+    expect(console.warn).toHaveBeenCalledWith(
+      "control gate ingest: knobs differ, not enforced: boardsPerTick 200 (gate) vs 250 (in use)",
+    );
+    expect(ingestArgs?.limit).toBe(DEFAULT_INGEST_LIMIT);
+
+    mocks.runDiscovery.mockResolvedValue(DISCOVERY_COUNTS);
+    const discover = makeControl(async () => ({
+      ...GATE_ON,
+      knobs: { limit: 300, reprobeLimit: 500 },
+    }));
+    await scheduled(
+      { cron: DISCOVERY_CRON },
+      { DATABASE_URL: "postgres://stub", INGEST_CURSOR: makeKv(null), CONTROL: discover },
+      makeCtx(),
+    );
+    expect(discover.gate).toHaveBeenCalledWith("discover");
+    expect(console.warn).toHaveBeenCalledWith(
+      "control gate discover: knobs differ, not enforced: limit 300 (gate) vs 400 (in use)",
+    );
+    expect(mocks.runDiscovery.mock.calls[0]![1]).toMatchObject({ limit: 400, reprobeLimit: 500 });
+  });
+});
+
+describe("control plane — one ledger row per tick, which can never fail it", () => {
+  it("records an ok ingest run: its work counts, wall time and a one-line summary", async () => {
+    const control = makeControl();
+    const { ctx } = await runIngestTick({ env: { CONTROL: control }, counts: FULL_CHUNK });
+    await settle(ctx);
+    expect(control.recordRun).toHaveBeenCalledTimes(1);
+    const run = recorded(control)[0]!;
+    expect(run).toMatchObject({
+      stage: "ingest",
+      outcome: "ok",
+      gateMode: "on",
+      detail: "250/250 boards · 3 failed · 12 rate-limited · 1,969 changed",
+    });
+    expect(run.units).toEqual({
+      "cf.wall_ms": run.durationMs,
+      "ingest.boards": 250,
+      "ingest.boards_failed": 3,
+      "ingest.boards_rate_limited": 12,
+      "ingest.jobs_changed": 1969,
+    });
+    expect(Date.parse(run.finishedAt as string) - Date.parse(run.startedAt as string)).toBe(
+      run.durationMs,
+    );
+  });
+
+  it("records a budget-stopped ingest run as partial", async () => {
+    const control = makeControl();
+    const { ctx } = await runIngestTick({
+      env: { CONTROL: control },
+      counts: { ...FULL_CHUNK, processed: 190 },
+    });
+    await settle(ctx);
+    expect(recorded(control)[0]).toMatchObject({
+      outcome: "partial",
+      detail: "190/250 boards · 3 failed · 12 rate-limited · 1,969 changed · budget stop",
+    });
+  });
+
+  it("records a discovery run with its wall time and a one-line summary", async () => {
+    mocks.runDiscovery.mockResolvedValue(DISCOVERY_COUNTS);
+    const control = makeControl();
+    const ctx = makeCtx();
+    await scheduled(
+      { cron: DISCOVERY_CRON },
+      { DATABASE_URL: "postgres://stub", INGEST_CURSOR: makeKv(null), CONTROL: control },
+      ctx,
+    );
+    await settle(ctx);
+    const run = recorded(control)[0]!;
+    expect(run).toMatchObject({
+      stage: "discover",
+      outcome: "ok",
+      gateMode: "on",
+      detail: "1,234 candidates · 40 probed · 6 upserted · 500 re-probed · 2 deactivated",
+    });
+    expect(run.units).toEqual({ "cf.wall_ms": run.durationMs });
+  });
+
+  it("records a thrown tick as error (first line only) before re-throwing it", async () => {
+    const error = new Error("Failed query: insert into jobs\nparams: 1,2,3");
+    mocks.runIngestion.mockRejectedValueOnce(error);
+    const fetchSpy = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("fetch", fetchSpy);
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const control = makeControl();
+    const ctx = makeCtx();
+    await expect(
+      scheduled(
+        { cron: INGEST_CRON },
+        {
+          DATABASE_URL: "postgres://stub",
+          INGEST_CURSOR: makeKv(null),
+          HEALTH_PING_URL: "https://hc.example/abc",
+          CONTROL: control,
+        },
+        ctx,
+      ),
+    ).rejects.toBe(error);
+    await settle(ctx);
+    const run = recorded(control)[0]!;
+    expect(run).toMatchObject({
+      stage: "ingest",
+      outcome: "error",
+      gateMode: "on",
+      detail: "Error: Failed query: insert into jobs",
+    });
+    expect(run.units).toEqual({ "cf.wall_ms": run.durationMs });
+    expect(fetchSpy).toHaveBeenCalledWith("https://hc.example/abc/fail", expect.anything());
+  });
+
+  it.each<[string, () => Promise<unknown>]>([
+    [
+      "rejects the row",
+      async () => Promise.reject(new Error("invalid_run: ingest doesn't record x")),
+    ],
+    [
+      "throws on the call",
+      () => {
+        throw new Error("binding gone");
+      },
+    ],
+  ])(
+    "a control plane that %s: the tick still succeeds and pings its heartbeat",
+    async (_label, impl) => {
+      const fetchSpy = vi.fn().mockResolvedValue(undefined);
+      vi.stubGlobal("fetch", fetchSpy);
+      const control = makeControl();
+      control.recordRun.mockImplementation(impl);
+      const { cursorWritten, ctx } = await runIngestTick({
+        env: { CONTROL: control, HEALTH_PING_URL: "https://hc.example/abc" },
+        counts: FULL_CHUNK,
+      });
+      expect(cursorWritten).toBe("900");
+      expect(fetchSpy).toHaveBeenCalledWith("https://hc.example/abc");
+      await settle(ctx); // the ledger promise itself settles: its failure is caught
+      expect(console.warn).toHaveBeenCalledWith(
+        expect.stringMatching(/^control ledger: run not recorded \(Error: /),
+      );
+    },
+  );
+
+  it("an unhandled cron reads no gate and records no run", async () => {
+    const control = makeControl();
+    const ctx = makeCtx();
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    await expect(
+      scheduled(
+        { cron: "0 0 * * *" },
+        { DATABASE_URL: "postgres://stub", INGEST_CURSOR: makeKv(null), CONTROL: control },
+        ctx,
+      ),
+    ).rejects.toThrow(/Unhandled cron/);
+    expect(control.gate).not.toHaveBeenCalled();
+    expect(ctx.waitUntil).not.toHaveBeenCalled();
   });
 });
 

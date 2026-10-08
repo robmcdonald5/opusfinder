@@ -2,7 +2,18 @@ import { createDb, type Db } from "@opusfinder/db";
 import { describeDbError } from "@opusfinder/db/errors";
 import { runDiscovery } from "@opusfinder/discovery";
 import { parseEnforceFlag } from "@opusfinder/shared";
-import { runIngestion } from "@opusfinder/sources";
+import { runIngestion, type IngestionCounts } from "@opusfinder/sources";
+
+import {
+  discoverRun,
+  errorRun,
+  ingestRun,
+  recordRun,
+  shadowGate,
+  type ControlBinding,
+  type ScrapersStage,
+  type TickStart,
+} from "./control";
 
 /**
  * The opusfinder scrapers Worker: two scheduled (cron) handlers — ingestion (every 2 h) and discovery
@@ -22,10 +33,19 @@ import { runIngestion } from "@opusfinder/sources";
  * so Cloudflare records the invocation as errored. The `ctx.waitUntil` exceptions are the watchdog pings:
  * the liveness heartbeat ({@link pingWatchdog}, a content-free ping on a SUCCESSFUL tick) and the failure
  * ping ({@link pingWatchdogFail}, a shape-safe cause on a caught exception) — both non-blocking so a
- * watchdog hiccup can never fail the tick. GUARD: `pnpm guard:worker` substring-scans this file (comments
- * included, case-sensitive) for the forbidden server-only package imports. The guard does NOT detect a
- * provider/watchdog HOST literal, so by author discipline never write one (or any forbidden package name)
- * anywhere in this file — the ping target lives ONLY in `env.HEALTH_PING_URL` (a secret).
+ * watchdog hiccup can never fail the tick — and the control-plane ledger row (below).
+ *
+ * CONTROL PLANE, IN SHADOW (./control.ts): each tick first reads its stage's gate over the CONTROL service
+ * binding (bounded at ~2 s) and logs it — `on`, or `would skip: off …` / `would skip: control plane
+ * unreadable …` — plus a line when the gate's knobs differ from the INGEST_LIMIT / discovery limits in use.
+ * The tick then runs exactly as before whatever the gate said: the env vars and constants still rule. At
+ * the end (success, budget stop or throw) it records one ledger row in `ctx.waitUntil`; a control-plane
+ * failure is logged and never fails the tick or skips a watchdog ping.
+ *
+ * GUARD: `pnpm guard:worker` substring-scans this file (comments included, case-sensitive) for the
+ * forbidden server-only package imports. The guard does NOT detect a provider/watchdog HOST literal, so by
+ * author discipline never write one (or any forbidden package name) anywhere in this file — the ping
+ * target lives ONLY in `env.HEALTH_PING_URL` (a secret).
  */
 interface Env {
   /** Neon connection string (a `wrangler secret`). */
@@ -53,6 +73,10 @@ interface Env {
   /** Staleness-close TTL in days (the {@link sweepStaleJobs} horizon). Default 21 (see DEFAULT_STALE_TTL_DAYS)
    *  — must exceed the worst-case full-sweep latency or a still-live, not-recently-fetched job false-closes. */
   STALE_SWEEP_TTL_DAYS?: string;
+  /** The control plane: a service binding to the `opusfinder-control` Worker's `ControlRpc` entrypoint
+   *  (wrangler.toml [[services]]). Read in SHADOW — see ./control.ts. OPTIONAL: unbound (e.g. `wrangler dev`
+   *  without it) ⇒ every gate logs as unreadable and no run is recorded; the ticks run regardless. */
+  CONTROL?: ControlBinding;
 }
 
 // Must equal the wrangler.toml cron strings exactly (esp. the weekday — "SUN", not "0"); dispatch.test.ts
@@ -104,25 +128,40 @@ export default {
       );
     }
     const db = createDb(env.DATABASE_URL);
+    // The control plane's view of this tick (./control.ts): SHADOW only, nothing below obeys it.
+    const tick: TickStart = { startedMs: Date.now(), gateMode: null };
+    let stage: ScrapersStage | undefined;
 
     try {
       switch (controller.cron) {
-        case INGEST_CRON:
-          await runIngestionTick(db, env);
+        case INGEST_CRON: {
+          stage = "ingest";
+          const limit = ingestLimit(env);
+          tick.gateMode = await shadowGate(env.CONTROL, stage, { boardsPerTick: limit });
+          const counts = await runIngestionTick(db, env, limit);
           // Heartbeat AFTER a successful tick (a thrown tick skips this and is recorded as errored,
           // which the watchdog also surfaces as a missing ping). Non-blocking — see pingWatchdog.
           pingWatchdog(env, ctx);
+          recordRun(env.CONTROL, ctx, (end) => ingestRun(tick, end, counts));
           break;
-        case DISCOVERY_CRON:
+        }
+        case DISCOVERY_CRON: {
+          stage = "discover";
+          tick.gateMode = await shadowGate(env.CONTROL, stage, {
+            limit: DISCOVERY_LIMIT,
+            reprobeLimit: DISCOVERY_REPROBE_LIMIT,
+          });
           // workerOnly: run only workerSafe (fetch-only, bundle-safe) lanes so a future Node-only lane
           // can never execute inside the isolate.
-          await runDiscovery(db, {
+          const counts = await runDiscovery(db, {
             limit: DISCOVERY_LIMIT,
             reprobeLimit: DISCOVERY_REPROBE_LIMIT,
             workerOnly: true,
             enforceLifecycle: parseEnforceFlag(env.LIFECYCLE_CLOSE_ENFORCE),
           });
+          recordRun(env.CONTROL, ctx, (end) => discoverRun(tick, end, counts));
           break;
+        }
         default:
           // A cron fired that no case matches — wrangler.toml [triggers].crons and the INGEST_CRON/
           // DISCOVERY_CRON constants above have drifted (most likely on resume). THROW so it surfaces
@@ -148,6 +187,9 @@ export default {
       // IMMEDIATELY (no grace wait). It fires solely when this catch runs, so a dead cron / cold-start kill
       // (no invocation reaching our code) stays detected by ping ABSENCE via {@link pingWatchdog}.
       pingWatchdogFail(env, ctx, message);
+      // An unhandled cron has no stage to record against.
+      const failed = stage;
+      if (failed) recordRun(env.CONTROL, ctx, (end) => errorRun(failed, tick, end, detail));
       throw err;
     }
   },
@@ -198,26 +240,29 @@ export function pingWatchdogFail(env: Env, ctx: ExecutionContext, message: strin
 }
 
 /**
- * One ingestion tick: read the chunk cursor from KV, process up to `INGEST_LIMIT` boards via
- * `runIngestion` (bounded per board by MAX_JOBS_PER_BOARD and per tick by MAX_RUN_MS so a heavy chunk
- * can't be killed before finishRun), then advance or wrap the cursor. Wrap to the start only when the
- * whole chunk ran AND under-filled (`processed >= companies && companies < limit` ⇒ end of table);
- * otherwise advance past the last processed id (continuing a budget-truncated chunk next tick).
+ * Boards per ingestion tick, from INGEST_LIMIT. A non-numeric / non-positive value falls back to the
+ * default rather than stalling the cron on LIMIT 0 (zero boards every tick) or erroring on LIMIT NaN.
  */
-async function runIngestionTick(db: Db, env: Env): Promise<void> {
+function ingestLimit(env: Env): number {
+  const limitRaw = env.INGEST_LIMIT ? Number(env.INGEST_LIMIT) : DEFAULT_INGEST_LIMIT;
+  return Number.isFinite(limitRaw) && limitRaw > 0
+    ? Math.min(Math.trunc(limitRaw), MAX_INGEST_LIMIT)
+    : DEFAULT_INGEST_LIMIT;
+}
+
+/**
+ * One ingestion tick: read the chunk cursor from KV, process up to `limit` boards via `runIngestion`
+ * (bounded per board by MAX_JOBS_PER_BOARD and per tick by MAX_RUN_MS so a heavy chunk can't be killed
+ * before finishRun), then advance or wrap the cursor. Wrap to the start only when the whole chunk ran AND
+ * under-filled (`processed >= companies && companies < limit` ⇒ end of table); otherwise advance past the
+ * last processed id (continuing a budget-truncated chunk next tick).
+ */
+async function runIngestionTick(db: Db, env: Env, limit: number): Promise<IngestionCounts> {
   // A corrupt / non-numeric cursor restarts the sweep from the beginning (afterId 0) rather than
   // stalling on NaN — `WHERE id > NaN` matches nothing, which would loop on empty 0-board ticks.
   const cursorRaw = await env.INGEST_CURSOR.get("afterId");
   const cursorNum = cursorRaw !== null ? Number(cursorRaw) : 0;
   const afterId = Number.isFinite(cursorNum) && cursorNum >= 0 ? Math.trunc(cursorNum) : 0;
-
-  // A non-numeric / non-positive INGEST_LIMIT falls back to the default rather than stalling the cron
-  // on LIMIT 0 (zero boards every tick) or erroring on LIMIT NaN.
-  const limitRaw = env.INGEST_LIMIT ? Number(env.INGEST_LIMIT) : DEFAULT_INGEST_LIMIT;
-  const limit =
-    Number.isFinite(limitRaw) && limitRaw > 0
-      ? Math.min(Math.trunc(limitRaw), MAX_INGEST_LIMIT)
-      : DEFAULT_INGEST_LIMIT;
 
   // Tier-1 staleness sweep TTL: a non-numeric / non-positive STALE_SWEEP_TTL_DAYS falls back to the
   // sweepStaleJobs default (DEFAULT_STALE_TTL_DAYS) rather than closing on a NaN/0 horizon.
@@ -249,4 +294,5 @@ async function runIngestionTick(db: Db, env: Env): Promise<void> {
   const reachedEnd = counts.processed >= counts.companies && counts.companies < limit;
   const next = reachedEnd ? 0 : counts.lastId;
   await env.INGEST_CURSOR.put("afterId", String(next));
+  return counts;
 }

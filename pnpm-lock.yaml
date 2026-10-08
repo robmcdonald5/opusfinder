@@ -81,6 +81,9 @@ importers:
 
   apps/scrapers:
     dependencies:
+      '@opusfinder/control':
+        specifier: workspace:*
+        version: link:../../packages/control
       '@opusfinder/db':
         specifier: workspace:*
         version: link:../../packages/db

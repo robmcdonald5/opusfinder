@@ -1,12 +1,13 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { STAGE_IDS, stageDef, stages } from "@opusfinder/control";
+import { STAGE_IDS, stageDef, stages, type StageId } from "@opusfinder/control";
 
 // The control registry's scrapers stages copy this Worker's crons and ingest/discover sizing, but the pure
 // registry can't import the Worker. The Worker can't export those constants for an import either: workerd
 // rejects any named export of the main module that isn't a handler or class, so `export const INGEST_CRON`
 // would fail the deploy. So this sync reads them through the Worker's REAL code path: the registry's cron
-// must dispatch to its lane, and the ingest knob's env var must be honoured exactly inside its range.
+// must dispatch to its lane, the ingest knob's env var must be honoured exactly inside its range, and the
+// ledger rows the lanes write must carry the units their stages declare (the control Worker refuses others).
 // dispatch.test.ts separately pins wrangler.toml's crons to the same `case` labels.
 // Pipelines are stubbed; no DB or network is touched.
 
@@ -25,13 +26,16 @@ const scheduled = worker.scheduled as unknown as (
   ctx: { waitUntil: (p: Promise<unknown>) => void },
 ) => Promise<void>;
 
-async function tick(cron: string, env: Record<string, string> = {}): Promise<void> {
+/** One tick of `cron`, settling what it hands to ctx.waitUntil (the ledger write runs there). */
+async function tick(cron: string, env: Record<string, unknown> = {}): Promise<void> {
   const kv = { get: async () => null, put: async () => undefined };
+  const pending: Promise<unknown>[] = [];
   await scheduled(
     { cron },
     { DATABASE_URL: "postgres://stub", INGEST_CURSOR: kv, ...env },
-    { waitUntil: () => {} },
+    { waitUntil: (promise) => void pending.push(promise) },
   );
+  await Promise.all(pending);
 }
 
 const argsOf = (fn: typeof mocks.runIngestion) =>
@@ -54,6 +58,13 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.runIngestion.mockResolvedValue({ processed: 0, companies: 0, lastId: 0 });
   mocks.runDiscovery.mockResolvedValue(undefined);
+  // Every tick logs its control gate; keep the output quiet.
+  vi.spyOn(console, "log").mockImplementation(() => undefined);
+  vi.spyOn(console, "warn").mockImplementation(() => undefined);
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
 });
 
 describe("control registry ⇄ scrapers Worker", () => {
@@ -94,5 +105,43 @@ describe("control registry ⇄ scrapers Worker", () => {
     expect(await ingestLimit(String(knob.max + 1))).toBe(knob.max); // clamped to MAX_INGEST_LIMIT
     expect(await ingestLimit(String(knob.min))).toBe(knob.min);
     expect(await ingestLimit(String(knob.min - 1))).not.toBe(knob.min - 1); // rejected, falls back
+  });
+
+  it("each lane records exactly its stage's units, less the two this Worker can't measure", async () => {
+    // cf.subrequests: there is no subrequest counter (the [limits] cap replaced it); neon.awake_s: an
+    // estimate, left to the cost slice. Every other unit a scrapers stage declares must be sent.
+    const notMeasuredHere = ["cf.subrequests", "neon.awake_s"];
+    const recordRun = vi.fn(
+      async (_run: { stage: StageId; units: Record<string, number> }): Promise<unknown> => ({
+        id: 1,
+      }),
+    );
+    const gate = async () => ({ mode: "on", cappedBy: null, knobs: {}, by: null, because: null });
+    mocks.runIngestion.mockResolvedValue({
+      processed: 1,
+      companies: 1,
+      lastId: 1,
+      failed: 0,
+      rateLimitSkipped: 0,
+      changed: 0,
+    });
+    mocks.runDiscovery.mockResolvedValue({
+      candidates: 0,
+      probed: 0,
+      upserted: 0,
+      reprobed: 0,
+      deactivated: 0,
+    });
+    await tick(stages.ingest.trigger.cron, { CONTROL: { gate, recordRun } });
+    await tick(stages.discover.trigger.cron, { CONTROL: { gate, recordRun } });
+
+    const runs = recordRun.mock.calls.map(([run]) => run);
+    expect(runs.map((run) => run.stage)).toEqual(["ingest", "discover"]);
+    for (const run of runs) {
+      const declared: readonly string[] = stageDef(run.stage).units;
+      expect(Object.keys(run.units).sort()).toEqual(
+        declared.filter((unit) => !notMeasuredHere.includes(unit)).sort(),
+      );
+    }
   });
 });
