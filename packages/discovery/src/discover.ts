@@ -9,8 +9,10 @@ import {
   markProbed,
   startRun,
   upsertCompany,
+  type CompanyState,
 } from "@opusfinder/db/repos";
 import type { SourceName } from "@opusfinder/shared";
+import { CASE_INSENSITIVE_SLUG_SOURCES } from "@opusfinder/sources";
 
 import { probeCandidates, type ProbeOptions } from "./probe";
 import { resolveSeed, type ResolveCounts } from "./resolve";
@@ -120,11 +122,21 @@ export async function runDiscovery(db: Db, opts: DiscoveryOptions = {}): Promise
 
     // 3. PARTITION: NEW or KNOWN-INACTIVE → probe path (a live probe reactivates); KNOWN-ACTIVE → the
     // reprobe pass. Reading `active` (not plain listCompanies) is what closes the reactivation lock-out.
+    // keyOf folds the case variants of a case-insensitive source onto one key: an ACTIVE variant wins (so
+    // an inactive alias of a live board is never revived), and a KNOWN-INACTIVE candidate is probed under
+    // its STORED slug so upsertCompany hits that row instead of inserting a case variant.
     const states = await listCompanyStates(db, { source: opts.source });
-    const activeByKey = new Map(states.map((s) => [keyOf(s.source, s.slug), s.active]));
-    const worklist = resolved.candidates.filter(
-      (c) => activeByKey.get(keyOf(c.source, c.slug)) !== true,
-    );
+    const known = new Map<string, CompanyState>();
+    for (const s of states) {
+      const k = keyOf(s.source, s.slug);
+      if (!known.get(k)?.active) known.set(k, s);
+    }
+    const worklist: Candidate[] = [];
+    for (const c of resolved.candidates) {
+      const row = known.get(keyOf(c.source, c.slug));
+      if (row?.active) continue;
+      worklist.push(row ? { ...c, slug: row.slug } : c);
+    }
     counts.alreadyActive = resolved.candidates.length - worklist.length;
     const scoped = opts.limit !== undefined ? worklist.slice(0, opts.limit) : worklist;
     counts.probeWorklist = scoped.length;
@@ -337,8 +349,14 @@ function accumulateCounts(counts: DiscoveryCounts, r: ResolveCounts): void {
   counts.invalidSlug += r.invalidSlug;
 }
 
+/**
+ * The (source, slug) identity discovery dedupes and partitions on: lowercased for a source whose API
+ * ignores slug case (CASE_INSENSITIVE_SLUG_SOURCES), so two casings of one board are one candidate and
+ * match one row; the exact canonical slug for every other source.
+ */
 function keyOf(source: SourceName, slug: string): string {
-  return JSON.stringify([source, slug]);
+  const k = CASE_INSENSITIVE_SLUG_SOURCES.has(source) ? slug.toLowerCase() : slug;
+  return JSON.stringify([source, k]);
 }
 
 export function emptyCounts(): DiscoveryCounts {

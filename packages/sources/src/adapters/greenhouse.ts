@@ -25,7 +25,7 @@ export const greenhouseAdapter: SourceAdapter = {
   source: "greenhouse",
 
   // Board tokens are lowercase; companySlug() only enforces the universal floor and must
-  // not change casing (case-sensitive platforms like SmartRecruiters rely on that), so the
+  // not change casing (case-sensitive platforms like Gem rely on that), so the
   // per-source lowercasing lives here.
   normalizeSlug: (rawSlug) => companySlug(rawSlug.toLowerCase()),
 

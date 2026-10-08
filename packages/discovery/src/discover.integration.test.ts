@@ -14,7 +14,7 @@ import { jsonResponse, routedFetch, textResponse, type Route } from "@test/http/
 // probe→upsert→reprobe→deactivate→board-close pipeline, driven end-to-end with the global `fetch` stubbed
 // (there is no injectable fetch seam; the stub shadows the integration MSW rig — see @test/http/fetch-router).
 // Focus is the DB-observable wiring NO other suite owns: the partition (already-active excluded,
-// KNOWN-INACTIVE re-probed → reactivated), the worklist `limit` slice, which probe outcomes WRITE (live/
+// KNOWN-INACTIVE re-probed → reactivated, case-folded for case-insensitive sources), the worklist `limit` slice, which probe outcomes WRITE (live/
 // live-empty upsert; absent/indeterminate/transient never), the dryRun write-suppression, the reprobe pass
 // (refresh/mark-failed/inconclusive + the exclude-just-upserted skip), the board-death close (shadow vs
 // enforce), the olderThanDays≤0 coercion, and the source_runs row (ok + error). NOT this file's job: the
@@ -74,6 +74,29 @@ const transientRoute = (slug: string): Route => ({
     throw new Error("ECONNRESET");
   },
 });
+
+// ── case-variant routing (SmartRecruiters / Ashby fold slug case; Lever is the case-sensitive control) ──
+// A seed of raw board URLs, one per record. The live routes answer EVERY casing, like the real
+// case-insensitive APIs; the probe matchers are case-sensitive substrings, so the call log shows WHICH
+// casing was probed.
+const seedLinksRoute = (links: string[]): Route => ({
+  match: (url) => url.includes("companies_v2.json"),
+  respond: () => jsonResponse(links.map((l) => ({ ats_links: [l] }))),
+});
+const srProbe = (slug: string) => (url: string) => url.includes(`/v1/companies/${slug}/postings`);
+const srLive: Route = {
+  match: (url) => url.includes("api.smartrecruiters.com/v1/companies/"),
+  respond: () => jsonResponse({ totalFound: 1, content: [{ id: "1" }] }),
+};
+const ashbyProbe = (slug: string) => (url: string) => url.includes(`/job-board/${slug}?`);
+const ashbyLive: Route = {
+  match: (url) => url.includes("api.ashbyhq.com/posting-api/job-board/"),
+  respond: () => jsonResponse({ jobs: [{ id: "1", title: "Engineer" }] }),
+};
+const leverLive: Route = {
+  match: (url) => url.includes("api.lever.co/v0/postings/"),
+  respond: () => jsonResponse([{ id: "1", text: "Engineer" }]),
+};
 
 interface CompanySeed {
   slug: string;
@@ -141,6 +164,9 @@ describe("runDiscovery — orchestration over real PGlite (fetch stubbed)", () =
   async function companyBySlug(slug: string) {
     const rows = await db.select().from(companies).where(eq(companies.slug, companySlug(slug)));
     return rows[0];
+  }
+  async function companiesOf(source: SourceName) {
+    return db.select().from(companies).where(eq(companies.source, source));
   }
   async function jobsFor(companyId: number) {
     return db.select().from(jobs).where(eq(jobs.companyId, companyId));
@@ -330,6 +356,94 @@ describe("runDiscovery — orchestration over real PGlite (fetch stubbed)", () =
       expect(zombie!.consecutiveProbeFailures).toBe(2);
       expect(zombie!.lastLiveAt).toEqual(SENTINEL_2020);
       expect(zombie!.lastProbedAt).toEqual(SENTINEL_2020);
+    });
+  });
+
+  describe("partition — case-insensitive sources match case-folded; other sources stay exact", () => {
+    // Both seed orders, so the ACTIVE variant must win however listCompanyStates happens to order the rows
+    // (a last-row-wins map would pass one order by luck).
+    it.each([
+      ["active row first", true],
+      ["inactive alias first", false],
+    ])(
+      "an ACTIVE case variant claims the candidate: no insert, and the INACTIVE alias is never probed or revived (%s)",
+      async (_label, activeFirst) => {
+        // The SmartRecruiters Bosch shape after the data fix: canonical BoschGroup active, alias deactivated.
+        const seedActive = () =>
+          seedCompany({ slug: "BoschGroup", source: "smartrecruiters", active: true });
+        const seedAlias = () =>
+          seedCompany({
+            slug: "boschgroup",
+            source: "smartrecruiters",
+            active: false,
+            lastLiveAt: SENTINEL_2020,
+            lastProbedAt: SENTINEL_2020,
+            updatedAt: SENTINEL_2020,
+          });
+        if (activeFirst) {
+          await seedActive();
+          await seedAlias();
+        } else {
+          await seedAlias();
+          await seedActive();
+        }
+        const fx = installFetch([
+          seedLinksRoute(["https://jobs.smartrecruiters.com/boschgroup"]),
+          srLive,
+        ]);
+
+        const counts = await runDiscovery(db, { lanes: ["outscal"], probe: PROBE_OPTS });
+
+        expect(counts).toMatchObject({
+          candidates: 1,
+          alreadyActive: 1,
+          probeWorklist: 0,
+          upserted: 0,
+          reprobed: 1, // the ACTIVE row's normal reprobe
+        });
+        expect(await companiesOf("smartrecruiters")).toHaveLength(2); // no third row
+        const alias = await companyBySlug("boschgroup");
+        expect(alias!.active).toBe(false);
+        expect(alias!.lastLiveAt).toEqual(SENTINEL_2020);
+        expect(alias!.lastProbedAt).toEqual(SENTINEL_2020);
+        expect(fx.calls.filter((u) => srProbe("BoschGroup")(u))).toHaveLength(1);
+        expect(fx.calls.some((u) => srProbe("boschgroup")(u))).toBe(false);
+      },
+    );
+
+    it("only INACTIVE variants: probes under the STORED slug and reactivates that row in place (no new row)", async () => {
+      await seedCompany({
+        slug: "Mapbox",
+        source: "ashby",
+        active: false,
+        consecutiveProbeFailures: 2,
+        lastLiveAt: SENTINEL_2020,
+        lastProbedAt: SENTINEL_2020,
+      });
+      const fx = installFetch([seedLinksRoute(["https://jobs.ashbyhq.com/mapbox"]), ashbyLive]);
+
+      const counts = await runDiscovery(db, { lanes: ["outscal"], probe: PROBE_OPTS });
+
+      expect(counts).toMatchObject({ alreadyActive: 0, probeWorklist: 1, live: 1, upserted: 1 });
+      const rows = await companiesOf("ashby");
+      expect(rows).toHaveLength(1);
+      expect(rows[0]!.slug).toBe("Mapbox");
+      expect(rows[0]!.active).toBe(true);
+      expect(rows[0]!.consecutiveProbeFailures).toBe(0);
+      expect(rows[0]!.lastLiveAt!.getTime()).toBeGreaterThan(SENTINEL_2020.getTime());
+      expect(fx.calls.filter((u) => ashbyProbe("Mapbox")(u))).toHaveLength(1);
+      expect(fx.calls.some((u) => ashbyProbe("mapbox")(u))).toBe(false);
+    });
+
+    it("a case-SENSITIVE source (Lever) keeps exact matching: another casing of an active board is a NEW board", async () => {
+      await seedCompany({ slug: "Acme", source: "lever", active: true });
+      installFetch([seedLinksRoute(["https://jobs.lever.co/acme"]), leverLive]);
+
+      const counts = await runDiscovery(db, { lanes: ["outscal"], probe: PROBE_OPTS });
+
+      expect(counts).toMatchObject({ alreadyActive: 0, probeWorklist: 1, upserted: 1 });
+      const slugs = (await companiesOf("lever")).map((r) => r.slug).sort();
+      expect(slugs).toEqual(["Acme", "acme"]);
     });
   });
 

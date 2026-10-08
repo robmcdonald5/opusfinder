@@ -30,7 +30,11 @@ isolate (`runDiscovery` is argv-free for that).
    unsupported ATS or a vanity careers page), `invalidSlug` (fails the universal floor).
 3. **Partition** — each candidate is NEW, KNOWN-ACTIVE, or KNOWN-INACTIVE (via `listCompanyStates`,
    which returns `active`). **NEW + KNOWN-INACTIVE go to the probe path** (so a re-discovered
-   dead-then-revived slug can reactivate); KNOWN-ACTIVE rows are left to the reprobe pass.
+   dead-then-revived slug can reactivate); KNOWN-ACTIVE rows are left to the reprobe pass. For a source
+   whose API ignores slug case (`CASE_INSENSITIVE_SLUG_SOURCES`: Ashby, SmartRecruiters) dedupe and the
+   partition compare slugs case-folded: a candidate with an ACTIVE case variant is KNOWN-ACTIVE (an
+   inactive alias is never revived), and one with only INACTIVE variants is probed under the stored slug,
+   so no second row is ever inserted for one board.
 4. **Probe + classify** (`probe.ts`) — `probeCandidates` reuses `adapters[source].jobsRequest(ctx,
 null)` through a NON-throwing, per-host-throttled fetcher (a 404/400/200-empty is the signal, not an
    error). Each response is classified by `adapters[source].classifyProbe?` or the status-first

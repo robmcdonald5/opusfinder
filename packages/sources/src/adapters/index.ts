@@ -33,6 +33,17 @@ export const adapters: Record<SourceName, SourceAdapter> = {
 /** The known source names (registry keys), for CLI validation + iteration. */
 export const SOURCE_NAMES = Object.keys(adapters) as SourceName[];
 
+/**
+ * Sources whose API matches board ids case-INSENSITIVELY while `normalizeSlug` preserves casing (verified
+ * live 2026-10-08: `boschgroup`/`BoschGroup` and `mapbox`/`Mapbox` list the same postings). The `companies`
+ * unique index is case-sensitive, so discovery folds these slugs' case when matching, to keep one row per
+ * board. A source whose `normalizeSlug` already lowercases doesn't need listing.
+ */
+export const CASE_INSENSITIVE_SLUG_SOURCES: ReadonlySet<SourceName> = new Set([
+  "ashby",
+  "smartrecruiters",
+]);
+
 /** An adapter's politeness group for ingestion pacing — its declared `pacingKey`, else its source. */
 export function pacingKeyOf(adapter: SourceAdapter): string {
   return adapter.pacingKey ?? adapter.source;

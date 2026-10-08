@@ -227,6 +227,40 @@ describe("resolveLanes — dedupe within a run", () => {
     expect(counts.candidates).toBe(1);
     expect(counts.lane_dup_candidates).toBe(1);
   });
+
+  // resolveSeed keeps both casings (its key is exact), so this collapse is resolveLanes' case-folded key.
+  it("folds slug case for case-insensitive sources (SmartRecruiters, Ashby) only — Lever casings stay distinct", async () => {
+    const laneCase: SeedLane = {
+      name: "case",
+      workerSafe: true,
+      fetch: async (): Promise<CompanyRecord[]> => [
+        {
+          ats_links: [
+            "https://jobs.smartrecruiters.com/BoschGroup",
+            "https://jobs.ashbyhq.com/Mapbox",
+            "https://jobs.lever.co/Foo",
+          ],
+        },
+        {
+          ats_links: [
+            "https://jobs.smartrecruiters.com/boschgroup",
+            "https://jobs.ashbyhq.com/mapbox",
+            "https://jobs.lever.co/foo",
+          ],
+        },
+      ],
+    };
+    const counts = emptyCounts();
+    const candidates = await resolveLanes([laneCase], counts, {});
+    // The FIRST casing seen wins for the folded sources; Lever is case-sensitive, so both are boards.
+    expect(keys(candidates)).toEqual([
+      "smartrecruiters:BoschGroup",
+      "ashby:Mapbox",
+      "lever:Foo",
+      "lever:foo",
+    ]);
+    expect(counts.candidates).toBe(4);
+  });
 });
 
 describe("resolveLanes — empty lanes", () => {
