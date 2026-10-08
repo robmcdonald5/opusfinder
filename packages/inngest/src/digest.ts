@@ -1,4 +1,5 @@
 import type { Db } from "@opusfinder/db";
+import { describeDbError } from "@opusfinder/db/errors";
 import {
   alreadyShownJobIds,
   alreadyShownSignatures,
@@ -240,12 +241,13 @@ export async function runOrchestrator(
   } catch (err) {
     // A step above exhausted its retries (or threw NonRetriable). Terminalize the run row — this
     // is the write that makes `digest_runs.error_sample` real — then rethrow so Inngest still
-    // records the failed run. Secret-free sample, same discipline as the discovery lane.
+    // records the failed run. Secret-free sample, same discipline as the discovery lane: a failed query (here
+    // usually an Inngest StepError carrying drizzle's message) is its Postgres reason, never its params line.
     await step.run("fail-run", () =>
       finishDigestRun(deps.db, runId, {
         status: "error",
         counts: {},
-        errorSample: (err instanceof Error ? err.message : String(err)).slice(0, 500),
+        errorSample: describeDbError(err).slice(0, 500),
       }),
     );
     throw err;

@@ -84,6 +84,15 @@ describe("describeDbError", () => {
     expect(describeDbError(err)).toBe("Failed query: select $1");
   });
 
+  it("reads a drizzle error that lost its class by its message (an Inngest StepError)", () => {
+    // What survives serialization: drizzle's message and the cause's message — no `query`, no fields.
+    const drizzle = new DrizzleQueryError("\n  select *\n  from jobs\n", ["secret-job-text"]);
+    const stepError = new Error(drizzle.message, {
+      cause: new Error("connection reset\nat frame"),
+    });
+    expect(describeDbError(stepError)).toBe("connection reset | Failed query: select * from jobs");
+  });
+
   it("returns any other error's message unchanged — a cause included (an adapter's rate limit)", () => {
     const plain = new Error("HTTP 404 for https://boards-api.greenhouse.io/v1/boards/acme/jobs");
     expect(describeDbError(plain)).toBe(plain.message);

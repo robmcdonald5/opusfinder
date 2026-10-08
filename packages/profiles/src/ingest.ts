@@ -1,4 +1,5 @@
 import type { Db } from "@opusfinder/db";
+import { describeDbError } from "@opusfinder/db/errors";
 import {
   insertCvFile,
   markCvFileFailed,
@@ -117,11 +118,12 @@ export async function ingestCv(db: Db, opts: IngestCvOptions): Promise<IngestCvR
     });
     return { fileId, profileId, status: "extracted", embedTokens: usage.totalTokens, warnings };
   } catch (err) {
-    // Record a secret-free error sample (markCvFileFailed truncates + strips NUL) and leave the row
-    // `failed` — unless it already flipped to `extracted`. Best-effort: a failing mark must NEVER mask
-    // the real cause, so swallow its error and always re-throw `err`.
+    // Record a secret-free error sample (markCvFileFailed truncates + strips NUL; a failed query is its Postgres
+    // reason, never drizzle's params line) and leave the row `failed` — unless it already flipped to
+    // `extracted`. Best-effort: a failing mark must NEVER mask the real cause, so swallow its error and
+    // always re-throw `err`.
     try {
-      await markCvFileFailed(db, fileId, userId, err instanceof Error ? err.message : String(err));
+      await markCvFileFailed(db, fileId, userId, describeDbError(err));
     } catch {
       // ignore — the original error (re-thrown below) is what matters.
     }

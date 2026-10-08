@@ -5,6 +5,8 @@
  * (`probeDigestLiveness`, `deliverDigestEmail`) are mocked to isolate ORCHESTRATION — which steps fire, the
  * skip-reason matrix, fan-out, and the invariant throws — from their internals (covered in probe/delivery).
  */
+import { DrizzleQueryError } from "drizzle-orm";
+import { serializeError, StepError } from "inngest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { DigestTrigger } from "@opusfinder/shared";
@@ -237,6 +239,24 @@ describe("runOrchestrator", () => {
     expect(failCall[2]).toMatchObject({ status: "error" });
     expect((failCall[2] as { errorSample: string }).errorSample).toHaveLength(500);
     expect(runs).toContain("fail-run");
+  });
+
+  it("records a failed query's Postgres reason, never its params line, when it arrives as a StepError", async () => {
+    // As production sees it: the step's DrizzleQueryError, serialized by Inngest once its retries ran out and
+    // re-thrown as a StepError — drizzle's message and the cause's message survive, the class does not.
+    const cause = new Error("canceling statement due to statement timeout");
+    const query = 'select "user_id" from "user_preferences"';
+    const failed = new DrizzleQueryError(query, ["secret-user-data"], cause);
+    const stepError = new StepError("fetch-recipients", serializeError(failed));
+    repos.listDigestRecipients.mockRejectedValue(stepError);
+    const { tools } = recordingStep();
+
+    await expect(runOrchestrator(makeDeps(), event({ trigger: "cron" }), tools)).rejects.toThrow();
+
+    const failCall = repos.finishDigestRun.mock.calls.at(-1)!;
+    expect((failCall[2] as { errorSample: string }).errorSample).toBe(
+      `canceling statement due to statement timeout | Failed query: ${query}`,
+    );
   });
 });
 
