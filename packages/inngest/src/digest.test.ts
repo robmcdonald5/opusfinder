@@ -243,8 +243,11 @@ describe("runOrchestrator", () => {
 
   it("records a failed query's Postgres reason, never its params line, when it arrives as a StepError", async () => {
     // As production sees it: the step's DrizzleQueryError, serialized by Inngest once its retries ran out and
-    // re-thrown as a StepError — drizzle's message and the cause's message survive, the class does not.
-    const cause = new Error("canceling statement due to statement timeout");
+    // re-thrown as a StepError — drizzle's message and the cause's message survive; the class, `query` and the
+    // cause's fields (this `code`) do not, so the sample carries no `[code=…]`.
+    const cause = Object.assign(new Error("canceling statement due to statement timeout"), {
+      code: "57014",
+    });
     const query = 'select "user_id" from "user_preferences"';
     const failed = new DrizzleQueryError(query, ["secret-user-data"], cause);
     const stepError = new StepError("fetch-recipients", serializeError(failed));

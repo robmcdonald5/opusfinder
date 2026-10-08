@@ -51,9 +51,14 @@ export function describeDbError(err: unknown): string {
 /** A drizzle error's SQL, or undefined when `err` isn't one (see the message-shape case above). */
 function queryOf(err: Error): string | undefined {
   if (err instanceof DrizzleQueryError) return err.query;
-  if (!err.message.startsWith(QUERY_PREFIX)) return undefined;
-  const end = err.message.indexOf(PARAMS_MARKER);
-  return err.message.slice(QUERY_PREFIX.length, end === -1 ? undefined : end);
+  const message = err.message;
+  if (!message.startsWith(QUERY_PREFIX)) return undefined;
+  const end = message.indexOf(PARAMS_MARKER);
+  if (end !== -1) return message.slice(QUERY_PREFIX.length, end);
+  // No params marker (something rewrote the newlines): fail CLOSED, since the params may now sit inline —
+  // keep only the first line, and nothing past the prefix when there is no newline at all.
+  const newline = message.indexOf("\n");
+  return newline === -1 ? "" : message.slice(QUERY_PREFIX.length, newline);
 }
 
 function fieldsOf(cause: unknown): string {

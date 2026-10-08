@@ -241,8 +241,10 @@ export async function runOrchestrator(
   } catch (err) {
     // A step above exhausted its retries (or threw NonRetriable). Terminalize the run row — this
     // is the write that makes `digest_runs.error_sample` real — then rethrow so Inngest still
-    // records the failed run. Secret-free sample, same discipline as the discovery lane: a failed query (here
-    // usually an Inngest StepError carrying drizzle's message) is its Postgres reason, never its params line.
+    // records the failed run. The STORED sample is secret-free, same discipline as the discovery lane: a
+    // failed query (here usually an Inngest StepError carrying drizzle's message) is stored as its Postgres
+    // reason, never its params line. The rethrown error is unchanged, so Inngest's own run record still holds
+    // the raw message (params included) — stripping params where the error is created is a separate follow-up.
     await step.run("fail-run", () =>
       finishDigestRun(deps.db, runId, {
         status: "error",
