@@ -53,6 +53,32 @@ describe("describeDbError", () => {
     );
   });
 
+  it("redacts a libpq keyword-form password, bare or quoted", () => {
+    const cause = pgError(
+      "connection failed: host=ep-x.neon.tech user=neondb_owner password=s3cret dbname=neondb " +
+        "PASSWORD = 'two words'",
+    );
+    expect(describeDbError(new DrizzleQueryError("select 1", [], cause))).toBe(
+      "connection failed: host=ep-x.neon.tech user=neondb_owner password=[redacted] dbname=neondb " +
+        "PASSWORD=[redacted] | Failed query: select 1",
+    );
+  });
+
+  it("keeps the SQL of a multi-line `sql` template that starts with a newline, whitespace collapsed", () => {
+    // As drizzle renders lifecycle.ts's `db.execute(sql\`\n    UPDATE …\`)`: the first line is empty.
+    const query =
+      "\n    UPDATE jobs SET lifecycle_state = 'closed'\n    WHERE id = ANY($1::int[])\n  ";
+    const err = new DrizzleQueryError(
+      query,
+      ["{1,2,3}"],
+      pgError("canceling statement", { code: "57014" }),
+    );
+    expect(describeDbError(err)).toBe(
+      "[code=57014] canceling statement | " +
+        "Failed query: UPDATE jobs SET lifecycle_state = 'closed' WHERE id = ANY($1::int[])",
+    );
+  });
+
   it("drops the params line even without a cause", () => {
     const err = new DrizzleQueryError("select $1", ["secret-job-text"]);
     expect(describeDbError(err)).toBe("Failed query: select $1");
