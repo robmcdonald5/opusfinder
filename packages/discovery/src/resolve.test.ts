@@ -96,6 +96,30 @@ describe("resolveSeed — dedup + drop tally over synthetic records", () => {
     expect(counts.candidates).toBe(1);
     expect(candidates.map((c) => `${c.source}:${c.slug}`)).toEqual(["greenhouse:keeper"]);
   });
+
+  it("folds slug case for case-insensitive sources (SmartRecruiters, Ashby) only — Lever casings stay distinct", () => {
+    const { candidates, counts } = resolveSeed([
+      {
+        name: "Case",
+        ats_links: [
+          "https://jobs.smartrecruiters.com/BoschGroup",
+          "https://jobs.smartrecruiters.com/boschgroup",
+          "https://jobs.ashbyhq.com/Mapbox",
+          "https://jobs.ashbyhq.com/mapbox",
+          "https://jobs.lever.co/Foo",
+          "https://jobs.lever.co/foo",
+        ],
+      },
+    ]);
+    // The FIRST casing seen wins for the folded sources; Lever is case-sensitive, so both are boards.
+    expect(candidates.map((c) => `${c.source}:${c.slug}`)).toEqual([
+      "smartrecruiters:BoschGroup",
+      "ashby:Mapbox",
+      "lever:Foo",
+      "lever:foo",
+    ]);
+    expect(counts.candidates).toBe(4);
+  });
 });
 
 // The universal floor is SLUG_RE=/^[A-Za-z0-9._-]+$/ (in @opusfinder/shared): non-empty,

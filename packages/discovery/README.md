@@ -21,7 +21,7 @@ isolate (`runDiscovery` is argv-free for that).
    `SEED_URL`/`SEED_SHA`, for deterministic runs); `hn` = `fetchHnAlgoliaLane` (`lanes/hn.ts`). A
    `failLoud` lane (outscal) re-throws on fetch failure (run-fatal); an isolated lane (hn) tallies
    `lane_<name>_error` and continues. Counts accumulate field-wise; candidates are cross-lane-deduped
-   by `(source, slug)`; the per-lane `lane_<name>_candidates` / `lane_<name>_error` ride
+   by `(source, slug)` (`keyOf`, case-folded for case-insensitive sources); the per-lane `lane_<name>_candidates` / `lane_<name>_error` ride
    `source_runs.counts`. (`loadSeed` / `SEED_URL` / `SEED_SHA` are unchanged — the outscal upstream has
    been static since 2026-04-22 with no bump, so "SHA-pinned" stays accurate for the outscal lane.)
 2. **Resolve** (`resolve.ts`) — `resolveSeed()` turns each record's `ats_links[]` into deduped
@@ -34,7 +34,9 @@ isolate (`runDiscovery` is argv-free for that).
    whose API ignores slug case (`CASE_INSENSITIVE_SLUG_SOURCES`: Ashby, SmartRecruiters) dedupe and the
    partition compare slugs case-folded: a candidate with an ACTIVE case variant is KNOWN-ACTIVE (an
    inactive alias is never revived), and one with only INACTIVE variants is probed under the stored slug,
-   so no second row is ever inserted for one board.
+   so discovery never inserts a second row for one board. (Other writers, such as the `pnpm ingest` CLI,
+   still match exactly; a case-insensitive unique index for these sources is planned as a migration once
+   the existing duplicates have been merged.)
 4. **Probe + classify** (`probe.ts`) — `probeCandidates` reuses `adapters[source].jobsRequest(ctx,
 null)` through a NON-throwing, per-host-throttled fetcher (a 404/400/200-empty is the signal, not an
    error). Each response is classified by `adapters[source].classifyProbe?` or the status-first

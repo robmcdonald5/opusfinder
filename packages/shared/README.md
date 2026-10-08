@@ -31,7 +31,7 @@ slug can be dropped into a request path without injection).
 
 It deliberately does **not** canonicalize. In particular **mixed case is
 allowed** and `_`/`.` are permitted, because slug shape differs across platforms:
-Greenhouse / Lever / Workable tokens are lowercase, but Gem board slugs are
+Greenhouse / Workable tokens are lowercase, but Lever / Gem slugs are
 **case-sensitive** — lowercasing them breaks the lookup. So per-ATS
 canonicalization (casing, etc.) is **deferred to the per-source adapters**
 (`SourceAdapter.normalizeSlug`, Phase 6), which produce the platform-canonical

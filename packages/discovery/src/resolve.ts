@@ -1,5 +1,5 @@
 import type { CompanySlug, SourceName } from "@opusfinder/shared";
-import { adapters, SOURCE_NAMES } from "@opusfinder/sources";
+import { adapters, CASE_INSENSITIVE_SLUG_SOURCES, SOURCE_NAMES } from "@opusfinder/sources";
 
 import type { CompanyRecord } from "./seed";
 import type { Candidate } from "./types";
@@ -16,6 +16,17 @@ export function resolveUrl(url: URL): { source: SourceName; rawSlug: string } | 
     if (rawSlug !== null) return { source, rawSlug };
   }
   return null;
+}
+
+/**
+ * The (source, slug) identity discovery dedupes and partitions on: lowercased for a source whose API
+ * ignores slug case (CASE_INSENSITIVE_SLUG_SOURCES), so two casings of one board are one candidate and
+ * match one row; the exact canonical slug for every other source. `JSON.stringify` keeps it
+ * collision-proof (the same key idiom as upsertJobs).
+ */
+export function keyOf(source: SourceName, slug: string): string {
+  const k = CASE_INSENSITIVE_SLUG_SOURCES.has(source) ? slug.toLowerCase() : slug;
+  return JSON.stringify([source, k]);
 }
 
 /** Brand a raw slug through the source's `normalizeSlug`, or null if it fails the universal floor. */
@@ -48,8 +59,8 @@ export interface ResolveCounts {
  * adapter (none → `deferredNoAdapter`), branded via `normalizeSlug` (floor violation → `invalidSlug`),
  * and deduped by canonical (source, slug). `opts.source` scopes to one source (other-source links are
  * skipped, NOT counted as deferred). Nothing throws on bad data — the run continues and reports the
- * tally. Dedup uses `JSON.stringify([source, slug])` (the same collision-proof key idiom as
- * upsertJobs), so two casings of a case-insensitive slug collapse to one candidate.
+ * tally. Dedup uses {@link keyOf}, so two casings of one board collapse to one candidate (the first
+ * seen) whether the source's `normalizeSlug` lowercases or its API ignores case.
  */
 export function resolveSeed(
   records: CompanyRecord[],
@@ -93,7 +104,7 @@ export function resolveSeed(
         continue;
       }
 
-      const key = JSON.stringify([hit.source, slug]);
+      const key = keyOf(hit.source, slug);
       if (seen.has(key)) continue;
       seen.add(key);
       candidates.push({ source: hit.source, slug, rawSlug: hit.rawSlug, sourceUrl: link });

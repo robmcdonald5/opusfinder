@@ -11,7 +11,7 @@ import type { SourceContext } from "./types";
 // FULLY-VALID job — reconstructed applyUrl + descriptionText:"" — which is exactly what lets a later
 // hydrate failure stay non-fatal. The traps locked here: `remote` is STRICT (only structured
 // location.remote===true; "hybrid" is a distinct signal → false), company/id casing is PRESERVED
-// (SmartRecruiters IDs are case-sensitive), the id is trimmed for BOTH externalId and the URL, and an
+// (stored slugs keep their mixed case), the id is trimmed for BOTH externalId and the URL, and an
 // unparseable/absent releasedDate falls back to postedAt:null rather than an Invalid Date.
 
 const mapItem = smartRecruitersAdapter.mapItem;

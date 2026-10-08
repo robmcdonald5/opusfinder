@@ -228,30 +228,30 @@ describe("resolveLanes — dedupe within a run", () => {
     expect(counts.lane_dup_candidates).toBe(1);
   });
 
-  // resolveSeed keeps both casings (its key is exact), so this collapse is resolveLanes' case-folded key.
-  it("folds slug case for case-insensitive sources (SmartRecruiters, Ashby) only — Lever casings stay distinct", async () => {
-    const laneCase: SeedLane = {
-      name: "case",
+  // Intra-lane case folding is resolveSeed's (resolve.test.ts); this is the CROSS-lane guard sharing keyOf.
+  it("folds slug case ACROSS lanes for case-insensitive sources (SmartRecruiters, Ashby) only — Lever casings stay distinct", async () => {
+    const lane = (name: string, links: string[]): SeedLane => ({
+      name,
       workerSafe: true,
-      fetch: async (): Promise<CompanyRecord[]> => [
-        {
-          ats_links: [
-            "https://jobs.smartrecruiters.com/BoschGroup",
-            "https://jobs.ashbyhq.com/Mapbox",
-            "https://jobs.lever.co/Foo",
-          ],
-        },
-        {
-          ats_links: [
-            "https://jobs.smartrecruiters.com/boschgroup",
-            "https://jobs.ashbyhq.com/mapbox",
-            "https://jobs.lever.co/foo",
-          ],
-        },
-      ],
-    };
+      fetch: async (): Promise<CompanyRecord[]> => [{ ats_links: links }],
+    });
     const counts = emptyCounts();
-    const candidates = await resolveLanes([laneCase], counts, {});
+    const candidates = await resolveLanes(
+      [
+        lane("upper", [
+          "https://jobs.smartrecruiters.com/BoschGroup",
+          "https://jobs.ashbyhq.com/Mapbox",
+          "https://jobs.lever.co/Foo",
+        ]),
+        lane("lower", [
+          "https://jobs.smartrecruiters.com/boschgroup",
+          "https://jobs.ashbyhq.com/mapbox",
+          "https://jobs.lever.co/foo",
+        ]),
+      ],
+      counts,
+      {},
+    );
     // The FIRST casing seen wins for the folded sources; Lever is case-sensitive, so both are boards.
     expect(keys(candidates)).toEqual([
       "smartrecruiters:BoschGroup",
@@ -260,6 +260,7 @@ describe("resolveLanes — dedupe within a run", () => {
       "lever:foo",
     ]);
     expect(counts.candidates).toBe(4);
+    expect(counts.lane_lower_candidates).toBe(1); // only lever:foo is new in the second lane
   });
 });
 

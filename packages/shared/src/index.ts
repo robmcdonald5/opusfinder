@@ -10,8 +10,8 @@ export type JobId = Brand<string, "JobId">;
 /**
  * UNIVERSAL slug floor — invariants true for every ATS: non-empty, no whitespace, URL-path-safe
  * (so a slug can be dropped into a request path without injection). Deliberately permits mixed case
- * and `_`/`.` because slug shape differs across platforms (Greenhouse/Lever/Workable are lowercase,
- * but Gem board slugs are case-sensitive — lowercasing them breaks the lookup).
+ * and `_`/`.` because slug shape differs across platforms (Greenhouse/Workable are lowercase,
+ * but Lever/Gem slugs are case-sensitive — lowercasing them breaks the lookup).
  * ATS-SPECIFIC canonicalization (casing, etc.) is NOT done here; it belongs on the per-source
  * adapter (`SourceAdapter.normalizeSlug`), which calls `companySlug()` once it has produced the
  * platform-canonical form.

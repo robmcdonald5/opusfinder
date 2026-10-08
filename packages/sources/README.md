@@ -172,7 +172,8 @@ calls (429 with an HTML body) — runAdapter's backoff + non-JSON guard handle i
 1000 ms apart, and the Worker cools the host down on a 429 (see Rate limits above).
 
 **SmartRecruiters** — `api.smartrecruiters.com/v1/companies/{slug}/postings`. OFFSET-paginated
-(`{ content, totalFound }`). Slugs CASE-SENSITIVE. The list item has neither a description nor a
+(`{ content, totalFound }`). Slugs case-PRESERVED (the API is case-insensitive; discovery folds case via
+`CASE_INSENSITIVE_SLUG_SOURCES`, like Ashby). The list item has neither a description nor a
 public apply URL, so `mapItem` reconstructs `applyUrl` + sets `descriptionText: ""` and
 `hydrate` (the N+1 `GET .../postings/{id}`) patches them. Any failed or empty detail (a `404`, `200`
 `{"message":"Posting not available"}`, no `jobAd.sections`) flags the listed job `contentMissing`

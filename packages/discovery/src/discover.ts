@@ -12,10 +12,9 @@ import {
   type CompanyState,
 } from "@opusfinder/db/repos";
 import type { SourceName } from "@opusfinder/shared";
-import { CASE_INSENSITIVE_SLUG_SOURCES } from "@opusfinder/sources";
 
 import { probeCandidates, type ProbeOptions } from "./probe";
-import { resolveSeed, type ResolveCounts } from "./resolve";
+import { keyOf, resolveSeed, type ResolveCounts } from "./resolve";
 import { SEED_LANES, type CompanyRecord, type SeedLane } from "./seed";
 import type { Candidate, ProbeResult } from "./types";
 
@@ -135,7 +134,7 @@ export async function runDiscovery(db: Db, opts: DiscoveryOptions = {}): Promise
     for (const c of resolved.candidates) {
       const row = known.get(keyOf(c.source, c.slug));
       if (row?.active) continue;
-      worklist.push(row ? { ...c, slug: row.slug } : c);
+      worklist.push(row ? { ...c, slug: row.slug, rawSlug: row.slug } : c);
     }
     counts.alreadyActive = resolved.candidates.length - worklist.length;
     const scoped = opts.limit !== undefined ? worklist.slice(0, opts.limit) : worklist;
@@ -288,8 +287,8 @@ export function selectLanes(
  * Step 1+2 for N lanes: fetch each lane (a `failLoud` lane — the core seed — re-throws to FAIL THE RUN;
  * others isolate the failure as a `lane_<name>_error` tally so one flaky external lane can't zero a run),
  * resolve its records to candidates, accumulate the drop-reason counts field-wise (NOT Object.assign —
- * that clobbers across lanes), and cross-lane-dedupe by (source, slug) — resolveSeed's own `seen` is
- * per-call and the partition only drops already-ACTIVE rows, so two lanes emitting the same pair would
+ * that clobbers across lanes), and cross-lane-dedupe by `keyOf` (source, slug) — resolveSeed's own
+ * `seen` is per-call and the partition only drops already-ACTIVE rows, so two lanes emitting the same pair would
  * otherwise both enter the worklist and double-probe. Mutates `counts` (drop tallies +
  * lane_<name>_candidates/_error + candidates); returns the merged, deduped candidates. Pure of db/probe
  * → unit-testable with stub lanes.
@@ -347,16 +346,6 @@ function accumulateCounts(counts: DiscoveryCounts, r: ResolveCounts): void {
   counts.badUrl += r.badUrl;
   counts.deferredNoAdapter += r.deferredNoAdapter;
   counts.invalidSlug += r.invalidSlug;
-}
-
-/**
- * The (source, slug) identity discovery dedupes and partitions on: lowercased for a source whose API
- * ignores slug case (CASE_INSENSITIVE_SLUG_SOURCES), so two casings of one board are one candidate and
- * match one row; the exact canonical slug for every other source.
- */
-function keyOf(source: SourceName, slug: string): string {
-  const k = CASE_INSENSITIVE_SLUG_SOURCES.has(source) ? slug.toLowerCase() : slug;
-  return JSON.stringify([source, k]);
 }
 
 export function emptyCounts(): DiscoveryCounts {
