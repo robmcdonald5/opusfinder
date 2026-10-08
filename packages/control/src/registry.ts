@@ -1,12 +1,13 @@
 // The stage registry — the ONE place every switch is declared (control-surface architecture §5, §13).
-// The control Worker's API + page, `pnpm ctl`, the classify() policy and (later slices) the runtime gates
-// and guard:schedules all DERIVE their lists from this file; nothing else keeps its own copy.
+// The control Worker's API + page, `pnpm ctl`, the classify() policy, the runtime gates (the scrapers Worker,
+// in shadow) and (a later slice) guard:schedules all DERIVE their lists from this file; nothing else keeps
+// its own copy.
 //
-// WORKER-SAFE, PURE DATA + TYPES. This package is compiled into the control Worker (and, in a later slice,
-// the scrapers Worker), so: no `process`, no Buffer, no node:* imports, and NO workspace dependency at all —
-// never @opusfinder/db (and so never @opusfinder/db/health, the H1 landmine). `pnpm guard:worker` enforces
-// it (source scan + a browser-platform bundle with an inputs allow-list) and the control Worker's
-// node-types-free tsconfig fails on any Node global reached through this graph.
+// WORKER-SAFE, PURE DATA + TYPES. This package is compiled into the control Worker and the scrapers Worker
+// (which checks its gate's mode against `stages`), so: no `process`, no Buffer, no node:* imports, and NO
+// workspace dependency at all — never @opusfinder/db (and so never @opusfinder/db/health, the H1 landmine).
+// `pnpm guard:worker` enforces it (source scan + a browser-platform bundle with an inputs allow-list) and
+// the control Worker's node-types-free tsconfig fails on any Node global reached through this graph.
 
 /** A stage's run mode. `shadow` = run, compute and log what it WOULD do, spend/change nothing irreversible. */
 export type StageMode = "off" | "shadow" | "on";
@@ -29,7 +30,11 @@ export type Runtime =
   | "gh:live-integration.yml" // GitHub Actions workflow
   | "cli"; // run by hand (pnpm …)
 
-/** Units a run may record in the ledger (B1). Exact quantities; dollars are a later slice (prices.ts). */
+/**
+ * Units a run may record in the ledger (B1). Exact quantities; dollars are a later slice (prices.ts).
+ * `<vendor>.<metric>` is what a vendor bills or meters; `<stage>.<metric>` is a stage's own work count
+ * (never priced), kept so a run's cost can be read against how much it did.
+ */
 export const UNIT_IDS = [
   "voyage.tokens",
   "anthropic.haiku.in",
@@ -44,6 +49,10 @@ export const UNIT_IDS = [
   "neon.awake_s",
   "gh.minutes",
   "r2.bytes",
+  "ingest.boards", // boards the tick got through: ok, failed or rate-limit-skipped (not the budget-stopped rest)
+  "ingest.boards_failed", // boards whose final outcome was an error
+  "ingest.boards_rate_limited", // boards skipped while their ATS was cooling down from a 429
+  "ingest.jobs_changed", // postings inserted or updated
 ] as const;
 export type UnitId = (typeof UNIT_IDS)[number];
 
@@ -182,7 +191,15 @@ export const stages = {
     modes: ["off", "on"],
     initial: "on",
     onUnreadable: "skip",
-    units: ["cf.wall_ms", "cf.subrequests", "neon.awake_s"],
+    units: [
+      "cf.wall_ms",
+      "cf.subrequests",
+      "neon.awake_s",
+      "ingest.boards",
+      "ingest.boards_failed",
+      "ingest.boards_rate_limited",
+      "ingest.jobs_changed",
+    ],
     dims: ["source"],
     knobs: {
       // default = the Worker's fallback and wrangler.toml's INGEST_LIMIT; max = its MAX_INGEST_LIMIT clamp.

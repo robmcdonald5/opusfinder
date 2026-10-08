@@ -222,6 +222,14 @@ export interface GateView {
   onUnreadable: "skip";
 }
 
+/** What the control Worker answers (`GET /v1/gate`, `ControlRpc.gate()`): the view plus its provenance. */
+export interface GateAnswer extends GateView {
+  /** S4: why the stage's own mode is what it is (the latest change to it). */
+  since: string | null;
+  by: string | null;
+  because: string | null;
+}
+
 export function gateView(
   state: StateMap,
   stage: StageId,

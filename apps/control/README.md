@@ -9,9 +9,9 @@ It never holds a Neon credential and bundles nothing that could reach Neon (`pnp
 allow-lists its bundle to `apps/control/src` + `packages/control/src`), so reading or flipping a
 switch can't wake the database (C4).
 
-**Not in slice 1** (by design): no runtime is wired to the gate yet (the scrapers Worker and Inngest
-keep obeying their env vars until a later slice adds the gate in shadow), no drift probes, no prices
-or reconciliation, no notifications, no observer agent.
+**Not built yet** (by design): no runtime OBEYS the gate — the scrapers Worker reads it in shadow (see
+"Runtimes wired" below) and Inngest doesn't read it at all, so both keep obeying their env vars — no
+drift probes, no prices or reconciliation, no notifications, no observer agent.
 
 ## Pieces
 
@@ -250,11 +250,42 @@ Applications → Add → Self-hosted), with the same two policies; use that app'
 pnpm exec wrangler d1 execute opusfinder-control --remote --command "UPDATE state SET value = 'off', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'), updated_by = 'break-glass:owner' WHERE key = 'embed'; INSERT INTO change_log (at, actor_role, actor_name, target, from_value, to_value, reason, channel) VALUES (strftime('%Y-%m-%dT%H:%M:%fZ','now'), 'break-glass', 'owner', 'embed', 'on', 'off', 'break-glass: Access lockout', 'break-glass')"
 ```
 
+## Runtimes wired
+
+**The scrapers Worker (`opusfinder-scrapers`), in SHADOW.** Its `CONTROL` service binding
+(`apps/scrapers/wrangler.toml`; props `name` is the registry's runtime id, so its rows read
+`runtime:cf:opusfinder-scrapers`) reaches `ControlRpc`. Every `ingest` and `discover` tick reads its gate
+at the start (waiting at most ~2 s), runs exactly as before whatever the gate said, and writes one ledger
+row at the end, in `ctx.waitUntil`:
+
+- **Log:** one line per tick — `control gate ingest: on (shadow: not enforced)`,
+  `control gate ingest: would skip: off (by <who>: <reason>)` or
+  `control gate ingest: would skip: control plane unreadable (<reason>)` (also for a mode the stage
+  doesn't have). While the stage is on, `control gate ingest: would skip source=workable (overrides)`
+  names the slices its overrides turn off. And
+  `control gate ingest: settings differ, not enforced: <key> <gate> (gate) vs <value> (in use), …` when
+  the gate's knobs or policies differ from what the tick runs with: `boardsPerTick` vs the resolved
+  `INGEST_LIMIT`; `limit` / `reprobeLimit` vs the Worker's constants; `close` / `stale_sweep` vs
+  `LIFECYCLE_CLOSE_ENFORCE` / `STALE_SWEEP`; `stale_sweep.ttlDays` vs `STALE_SWEEP_TTL_DAYS`.
+- **Ledger row:** `ok`, `partial` (the run budget stopped ingest early) or `error` (the tick threw;
+  recorded before the re-throw); the gate mode it read (null when unreadable); the Worker's own
+  start/finish clock; `cf.wall_ms`; a one-line `detail` (for an error, the watchdog's `describeDbError`
+  text: a failed query's Postgres reason first, never its params); and for ingest the work counts
+  `ingest.boards` (rate-limit-skipped boards included), `ingest.boards_failed`,
+  `ingest.boards_rate_limited` and `ingest.jobs_changed`.
+
+A control-plane failure (slow, unbound, refusing the row) is logged and never fails a tick, changes its
+outcome or skips a watchdog ping. `cf.subrequests` and `neon.awake_s` stay declared but unsent: the
+Worker has no subrequest counter, and Neon awake time is an estimate for the cost slice.
+
+**Deploy order:** when the registry gains a unit a runtime sends, deploy THIS Worker first; until then
+`recordRun` refuses those rows (400 `invalid_run`, logged by the runtime, nothing breaks).
+
 ## Known gaps (slice 1)
 
-- No runtime reads the gate yet; until the shadow slice, flipping a switch here changes the record,
-  not behaviour. The deployed env vars (`INGEST_LIMIT`, `LIFECYCLE_CLOSE_ENFORCE`, `STALE_SWEEP*`, …)
-  still rule.
+- No runtime obeys the gate yet: flipping a switch here changes the record (and the scrapers Worker's
+  shadow log line), not behaviour. The deployed env vars (`INGEST_LIMIT`, `LIFECYCLE_CLOSE_ENFORCE`,
+  `STALE_SWEEP*`, …) still rule. Inngest doesn't read the gate or write ledger rows.
 - `HealthCheckId` still lives in `packages/db/src/health.ts`; a sync test in `@opusfinder/db` pins the
   registry to it until it moves here.
 - The registry copies its runtimes' crons, platform ids and knob values (`packages/control` can't
@@ -276,6 +307,10 @@ pnpm exec wrangler d1 execute opusfinder-control --remote --command "UPDATE stat
 
 ### Follow-ups
 
+- Enforce the scrapers gate once its shadow lines have read right on real ticks for a few days: `off`
+  or an unreadable store skips the tick (a `skipped` ledger row), and the gate's knobs replace
+  `INGEST_LIMIT` and the discovery constants. Its own owner-approved step, like every shadow → enforce.
+- Wire the Inngest stages (`embed`, `alerts`, `digest`) the same way, in shadow first.
 - Pin each value listed as **not pinned** above.
 - Move the scrapers Worker's schedule and limit constants into a sibling module (e.g.
   `apps/scrapers/src/schedule.ts`; workerd rejects only the main module's `export const`), so

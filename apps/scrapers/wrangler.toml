@@ -117,6 +117,20 @@ LIFECYCLE_CLOSE_ENFORCE = "enforce"
 # switch (one runtime), so no partial-flip footgun. To enable: add STALE_SWEEP = "enforce".
 STALE_SWEEP_TTL_DAYS = "21"
 
+# The control plane (apps/control, Worker `opusfinder-control`), read in SHADOW: each tick logs its stage's
+# gate and records one ledger row; behaviour still follows the vars above (src/control.ts). RPC to the
+# `ControlRpc` entrypoint over a service binding never touches the public hostname, so no Access token is
+# involved: the control Worker treats a binding caller as the runtime role (read gates, write ledger rows,
+# trip a stage off). `props.name` is the audit label its ledger rows carry: the registry's runtime id for
+# this Worker, so rows read "runtime:cf:opusfinder-scrapers" (control-registry.test.ts pins it).
+# Deploy order: when the registry gains a unit this Worker sends, deploy the CONTROL Worker FIRST — until
+# then it refuses the row (logged here, nothing breaks, but no ledger row lands).
+[[services]]
+binding = "CONTROL"
+service = "opusfinder-control"
+entrypoint = "ControlRpc"
+props = { name = "cf:opusfinder-scrapers" }
+
 # Chunk-cursor store for the Option-A chunked-cron ingestion lane. The binding is DECLARED so
 # `wrangler dev` simulates a local KV for it (no id needed) and the ingestion tick can read/write the
 # cursor locally. A real `wrangler deploy` needs the id — USER step (PHASE_8_PLAN.md §9):
