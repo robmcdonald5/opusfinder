@@ -1,6 +1,6 @@
-# The secret-free regression gate for the repo. A single windows-latest lane runs the two structural guards
-# (test-isolation + Worker-isolation), both typecheck graphs (shippable + test), and the unit+integration
-# suite on every PR and every push to main. Deliberately SECRET-FREE: PGlite is in-process,
+# The secret-free regression gate for the repo. A single windows-latest lane runs the three structural guards
+# (test-isolation + Worker-isolation + data-fix files), both typecheck graphs (shippable + test), and the
+# unit+integration suite on every PR and every push to main. Deliberately SECRET-FREE: PGlite is in-process,
 # all HTTP boundaries are MSW-mocked, and every real-network gate is a `*.live.test.ts` in the `live` project
 # that `pnpm test` excludes and every `skipIf` flag leaves off. The gated live lane (Neon/Voyage/R2 on a
 # schedule) is a separate future workflow.
@@ -51,6 +51,13 @@ jobs:
       # Structural gate: no server-only subsystem (auth / neon-serverless / inngest / email / anthropic)
       # can reach the scrapers Cloudflare Worker bundle — esbuild resolves the real edge-runtime module graph.
       - run: pnpm guard:worker
+
+      # Data-fix files (packages/db/fixes): naming + numbering, no transaction control / DDL / privilege /
+      # dynamic SQL, and no edit to a fix already on main. The checkout of a PR or dispatch has no main ref, so
+      # fetch it for that comparison; on a push to main, checkout's origin/main is the pushed commit itself.
+      - if: github.ref != 'refs/heads/main'
+        run: git fetch --no-tags --depth=1 origin "+refs/heads/main:refs/remotes/origin/main"
+      - run: pnpm guard:fixes
 
       # Type-check the shippable packages/* library graph (root tsconfig.json) — production source with NO
       # other CI type gate (typecheck:test globs only *.test.ts under packages; deployed apps are checked below).
