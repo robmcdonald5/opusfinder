@@ -723,3 +723,20 @@ export const healthAlerts = pgTable(
   },
   (t) => [index("health_alerts_created_at_idx").on(t.createdAt)],
 );
+
+/**
+ * One row per APPLIED production data fix (`packages/db/fixes/NNNN-<slug>.sql`; see fixes/README.md). The
+ * fix runner (src/fixes.ts) inserts the row in the SAME transaction as the fix's SQL, so "applied" and
+ * "recorded" can't disagree, and a fix with a row here is never applied again. `id` is the file's NNNN
+ * number, not its name, so renaming a fix's slug can't make it look new. `sha256` is the file content
+ * (CRLF-normalized) that ran: the runner refuses to continue if an applied file has since changed.
+ * `git_sha` is the main commit the GitHub Action applied it from (NULL for a run outside Actions).
+ * Written only by the `data_fixer` role, which has SELECT + INSERT here and nothing else.
+ */
+export const dataFixes = pgTable("data_fixes", {
+  id: integer("id").primaryKey(),
+  name: text("name").notNull(),
+  sha256: text("sha256").notNull(),
+  gitSha: text("git_sha"),
+  appliedAt: timestamp("applied_at", { withTimezone: true }).notNull().defaultNow(),
+});

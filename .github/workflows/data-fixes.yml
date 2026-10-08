@@ -1,0 +1,53 @@
+# Applies production DATA fixes (packages/db/fixes/NNNN-*.sql, see its README) once each, in order, as the
+# limited `data_fixer` Postgres role. The owner approves a fix by merging its PR; this workflow is how a merged
+# fix reaches the database. The runner (packages/db/scripts/apply-fixes.ts) applies each pending fix in one
+# transaction with its `data_fixes` record and writes the applied fixes + their NOTICE lines to the job summary.
+#
+# NEVER `pull_request`: the secret must not reach code that hasn't been merged. It runs on pushes to main that
+# touch a fix file, plus manual `workflow_dispatch` (e.g. to retry after the owner's one-time setup). The
+# `data-fixes` Environment holds DATA_FIX_DATABASE_URL and allows deployments from `main` only, so a dispatch
+# from any other branch is refused before the secret is read.
+#
+# ── OWNER PROVISIONING: one command, see packages/db/fixes/README.md "One-time setup" ──
+#   pnpm db:migrate && pnpm --filter @opusfinder/db run data-fixer:setup
+# It creates the Environment (main-only rule), the data_fixer role (plain SQL, NOT the Neon Console: Console
+# roles join neon_superuser) and sets the Environment secret. Third-party actions are pinned to full commit SHAs
+# (same as live-integration.yml): a compromised action in a secrets job could read the key.
+name: data-fixes
+
+on:
+  push:
+    branches: [main]
+    paths: ["packages/db/fixes/*.sql"] # README edits don't trigger a run
+  workflow_dispatch:
+
+# Least privilege: only checkout needs the repo, and nothing here writes to it.
+permissions:
+  contents: read
+
+# One apply at a time, in push order. Never cancel an in-flight apply: the runner's transaction would roll
+# back cleanly, but a queued run must still see the fix the cancelled one was about to apply.
+concurrency:
+  group: data-fixes
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    if: github.ref == 'refs/heads/main' # the Environment rule enforces this too; skip early and quietly
+    runs-on: ubuntu-latest
+    environment: data-fixes # DATA_FIX_DATABASE_URL lives here (branch rule = main), NOT in repo secrets
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 24 # engines.node >=24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      # The secret is scoped to this one step: install scripts and other steps never see it.
+      - name: Apply pending data fixes
+        run: pnpm --filter @opusfinder/db run fixes:apply
+        env:
+          DATA_FIX_DATABASE_URL: ${{ secrets.DATA_FIX_DATABASE_URL }}

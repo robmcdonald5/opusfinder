@@ -169,6 +169,13 @@
       "when": 1781916687783,
       "tag": "0023_tiny_amazoness",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1791421892747,
+      "tag": "0024_data_fixes",
+      "breakpoints": true
     }
   ]
 }

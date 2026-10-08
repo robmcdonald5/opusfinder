@@ -10,7 +10,8 @@
     "./repos": "./src/repos/index.ts",
     "./env": "./src/env.ts",
     "./health": "./src/health.ts",
-    "./errors": "./src/errors.ts"
+    "./errors": "./src/errors.ts",
+    "./fixes": "./src/fixes.ts"
   },
   "types": "./src/client.ts",
   "scripts": {
@@ -25,6 +26,9 @@
     "runs": "tsx scripts/show-runs.ts",
     "shadow-closes": "tsx scripts/show-shadow-closes.ts",
     "delivery": "tsx scripts/show-digest-delivery.ts",
+    "fixes:apply": "tsx scripts/apply-fixes.ts",
+    "fixes:check": "tsx scripts/check-fixes.ts",
+    "data-fixer:setup": "tsx scripts/data-fixer-setup.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
