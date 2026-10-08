@@ -9,7 +9,8 @@
     "./schema": "./src/schema.ts",
     "./repos": "./src/repos/index.ts",
     "./env": "./src/env.ts",
-    "./health": "./src/health.ts"
+    "./health": "./src/health.ts",
+    "./errors": "./src/errors.ts"
   },
   "types": "./src/client.ts",
   "scripts": {

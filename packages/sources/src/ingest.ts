@@ -9,6 +9,7 @@
  * this module carries zero dependency on `@opusfinder/embeddings` and its key-reading env module.
  */
 import type { Db } from "@opusfinder/db";
+import { describeDbError } from "@opusfinder/db/errors";
 import {
   backfillJobEmbeddings,
   finishRun,
@@ -44,8 +45,8 @@ export type IngestEmbedFn = (
 
 /**
  * One board's outcome, handed to the optional `onBoard` progress hook as each board finishes.
- * `error` is the board-failure message when `ok` is false, OR an embed-failure warning on an
- * otherwise-ok board (jobs were still persisted).
+ * `error` is the board failure when `ok` is false, OR an embed-failure warning on an otherwise-ok board
+ * (jobs were still persisted) — as {@link describeDbError} text, so a failed query shows its cause first.
  */
 export interface IngestBoardResult {
   source: SourceName;
@@ -326,7 +327,7 @@ export async function runIngestion(db: Db, opts: IngestionOptions = {}): Promise
             // Shape-only (no job text); company.id is a non-secret int.
             console.warn(
               `markJobsPresent/markCompanyIngested failed for company ${company.id}: ` +
-                `${err instanceof Error ? err.message : String(err)}`.slice(0, 200),
+                describeDbError(err).slice(0, 200),
             );
           }
         }
@@ -354,7 +355,7 @@ export async function runIngestion(db: Db, opts: IngestionOptions = {}): Promise
             // Shape-only (no job text): the count feeds item-6 health; company.id is a non-secret int.
             console.warn(
               `sweepLifecycle failed for company ${company.id}: ` +
-                `${err instanceof Error ? err.message : String(err)}`.slice(0, 200),
+                describeDbError(err).slice(0, 200),
             );
           }
         }
@@ -377,7 +378,7 @@ export async function runIngestion(db: Db, opts: IngestionOptions = {}): Promise
             // idempotent backfill. It must not fail the board or the run, nor mask a board error
             // in `errorSample` — the count + the per-board warning surface it.
             counts.embedFailed += 1;
-            embedWarning = err instanceof Error ? err.message : String(err);
+            embedWarning = describeDbError(err);
           }
         }
         result = {
@@ -403,7 +404,7 @@ export async function runIngestion(db: Db, opts: IngestionOptions = {}): Promise
           hydrateSkipped: 0,
           embedded: 0,
           embedTokens: 0,
-          error: err instanceof Error ? err.message : String(err),
+          error: describeDbError(err),
         };
       }
       const finishedAt = clock(); // ok or failed — either way this key's host was just hit
@@ -469,12 +470,7 @@ export async function runIngestion(db: Db, opts: IngestionOptions = {}): Promise
         counts.staleWouldClose += staleResult.wouldClose;
       } catch (err) {
         counts.staleSweepFailed += 1;
-        console.warn(
-          `sweepStaleJobs failed: ${err instanceof Error ? err.message : String(err)}`.slice(
-            0,
-            200,
-          ),
-        );
+        console.warn(`sweepStaleJobs failed: ${describeDbError(err)}`.slice(0, 200));
       }
     }
 
@@ -483,13 +479,13 @@ export async function runIngestion(db: Db, opts: IngestionOptions = {}): Promise
     return counts;
   } catch (err) {
     // Infrastructural failure (not a per-board one) ⇒ the RUN itself errors.
-    const sample = (err instanceof Error ? err.message : String(err)).slice(0, 500);
+    const sample = describeDbError(err).slice(0, 500);
     await finishRun(db, runId, { status: "error", counts, errorSample: sample });
     throw err;
   }
 }
 
-/** First-error sample: secret-free (slug + adapter message, never creds), truncated to 500. */
+/** First-error sample: secret-free (slug + describeDbError text, never creds), truncated to 500. */
 function sampleOf(company: { source: SourceName; slug: string }, message: string): string {
   return `${company.source}:${company.slug} ${message}`.slice(0, 500);
 }
