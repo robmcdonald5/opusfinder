@@ -26,7 +26,7 @@ describe("the committed fixes directory", () => {
 });
 
 describe("lintFixSql", () => {
-  it("accepts guarded DO blocks, CASE ... END, and forbidden words inside comments, strings and quoted names", () => {
+  it("accepts guarded DO blocks, CASE ... END, and forbidden words inside comments and strings", () => {
     const sql = `${PREVIEW}-- we never DROP or CREATE anything here
 DO $$
 DECLARE n int;
@@ -36,7 +36,7 @@ BEGIN
   IF n > 1 THEN RAISE EXCEPTION 'would ALTER % rows; ROLLBACK', n; END IF;
   RAISE NOTICE 'deactivated %', n;
 END $$;
-UPDATE jobs SET title = CASE WHEN title = '' THEN 'untitled' ELSE title END WHERE "create" IS NULL;
+UPDATE jobs SET title = CASE WHEN title = '' THEN 'untitled' ELSE title END WHERE "Title" IS NULL;
 SELECT E'it\\'s fine; COMMIT';`;
     expect(lintFixSql(sql)).toEqual([]);
   });
@@ -66,6 +66,21 @@ SELECT E'it\\'s fine; COMMIT';`;
       "dynamic SQL",
       "DO $$ BEGIN EXECUTE 'DEL' || 'ETE FROM jobs'; END $$;",
       /contains EXECUTE: dynamic SQL/,
+    ],
+    [
+      "a top-level END after a body that quotes another $tag$",
+      "DO $$ BEGIN PERFORM $y$ has $x$ inside $y$; END $$;\nEND;",
+      /starts a statement with END/,
+    ],
+    [
+      "writing the applied-fix record",
+      "INSERT INTO data_fixes (id, name, sha256) VALUES (2, 'x', 'y');",
+      /references data_fixes/,
+    ],
+    [
+      "a quoted data_fixes",
+      `DO $$ BEGIN INSERT INTO public."data_fixes" VALUES (2, 'x', 'y'); END $$;`,
+      /references data_fixes/,
     ],
   ])("rejects %s", (_label, apply, expected) => {
     expect(lintFixSql(`${PREVIEW}${apply}`).join("\n")).toMatch(expected);
@@ -152,6 +167,21 @@ describe("formatFixRun", () => {
     expect(md).toContain("### 0001-x.sql: applied\n\n```\nmoved 5 jobs\n```");
     expect(md).toContain(
       "### 0002-x.sql: FAILED, rolled back\n\n```\nmoved 1 job\n```\n\nError:\n```\nguard tripped\n```",
+    );
+  });
+
+  it("flags a COMMIT that did not confirm as an unknown outcome, not a rollback", () => {
+    const md = formatFixRun({
+      alreadyApplied: 0,
+      outcomes: [{ fix: fix(1), notices: [], error: "connection lost", unconfirmed: true }],
+    });
+    expect(md).toContain("### 0001-x.sql: OUTCOME UNKNOWN: COMMIT did not confirm.");
+    expect(md).not.toContain("rolled back");
+  });
+
+  it("reports an error that stopped the run before any fix", () => {
+    expect(formatFixRun({ error: "DATA_FIX_DATABASE_URL is not set." })).toBe(
+      "## Data fixes\n\nNothing applied:\n```\nDATA_FIX_DATABASE_URL is not set.\n```\n",
     );
   });
 });

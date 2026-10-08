@@ -91,7 +91,7 @@ describe("data fixes: applied once, atomically, as the data_fixer role (integrat
              concat_ws(',', ${privs
                .map(
                  (p) =>
-                   `CASE WHEN has_table_privilege('${DATA_FIXER_ROLE}', format('public.%I', tablename), '${p}') THEN '${p}' END`,
+                   `CASE WHEN has_table_privilege('${DATA_FIXER_ROLE}', format('%I.%I', schemaname, tablename), '${p}') THEN '${p}' END`,
                )
                .join(", ")}) AS privs
       FROM pg_tables
@@ -138,6 +138,29 @@ describe("data fixes: applied once, atomically, as the data_fixer role (integrat
     await expect(pg.query("SELECT count(*) FROM user_profiles")).rejects.toThrow(
       /permission denied/,
     );
+  });
+
+  it("setup aborts, changing nothing, when the role holds a privilege another role granted", async () => {
+    // The owner's REVOKE ALL removes only the owner's own grants; this one has another grantor.
+    await pg.exec(`
+      RESET ROLE;
+      CREATE ROLE other_admin;
+      GRANT SELECT ON "user" TO other_admin WITH GRANT OPTION;
+      SET ROLE other_admin;
+      GRANT SELECT ON "user" TO ${DATA_FIXER_ROLE};
+      RESET ROLE;
+    `);
+    try {
+      await expect(pg.exec(buildDataFixerSetupSql("q".repeat(32)))).rejects.toThrow(
+        /data_fixer holds privileges beyond its allowlist \(on: user;/,
+      );
+    } finally {
+      await pg.exec(`
+        REVOKE SELECT ON "user" FROM other_admin CASCADE;
+        DROP ROLE other_admin;
+        SET ROLE ${DATA_FIXER_ROLE};
+      `);
+    }
   });
 
   it("applies pending fixes in order, records each with the git sha, and returns their notices", async () => {
@@ -211,6 +234,39 @@ INSERT INTO data_fixes (id, name, sha256) VALUES (1, 'squatter', 'y');`,
     expect(run.outcomes[0]!.error).toMatch(/duplicate key/);
     expect((await companyState())[1]!.active).toBe(true);
     expect(await recordedIds()).toEqual([]);
+  });
+
+  it("reports a failure AT COMMIT as unconfirmed, since the fix may have committed", async () => {
+    // The server commits, then the connection drops before the client hears back.
+    const dropsAtCommit: FixClient = {
+      async query(sql, params) {
+        const rows = await fixer.query(sql, params);
+        if (sql === "COMMIT") throw new Error("connection lost");
+        return rows;
+      },
+      takeNotices: () => fixer.takeNotices(),
+    };
+
+    const run = await applyPendingFixes(dropsAtCommit, [deactivateAcme], null);
+
+    expect(run.outcomes).toEqual([
+      {
+        fix: deactivateAcme,
+        notices: ["deactivated 1 row"],
+        error: "connection lost",
+        unconfirmed: true,
+      },
+    ]);
+    expect(await recordedIds()).toEqual([1]);
+  });
+
+  it("refuses to run anything when an applied fix's file is gone", async () => {
+    await applyPendingFixes(fixer, [deactivateAcme], null);
+
+    await expect(applyPendingFixes(fixer, [tagGlobex], null)).rejects.toThrow(
+      /applied fix files are missing: 0001-deactivate-acme\.sql/,
+    );
+    expect((await companyState())[1]!.metadata).toBeNull();
   });
 
   it("refuses to run anything when an applied fix's file has changed since", async () => {

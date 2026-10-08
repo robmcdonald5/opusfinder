@@ -109,9 +109,16 @@ await runScript("data-fixer setup", async () => {
     `Role ${DATA_FIXER_ROLE}: ${existed ? "password rotated" : "created"}; grants reset.`,
   );
 
-  gh(
-    ["secret", "set", SECRET, "--env", ENVIRONMENT, "--repo", repo],
-    buildDataFixerUrl(ownerUrl, password),
-  );
+  try {
+    gh(
+      ["secret", "set", SECRET, "--env", ENVIRONMENT, "--repo", repo],
+      buildDataFixerUrl(ownerUrl, password),
+    );
+  } catch (err) {
+    // The role's password is already changed, so the stored secret is now stale until this succeeds.
+    throw new Error(`password changed but secret ${SECRET} not updated: re-run setup`, {
+      cause: err,
+    });
+  }
   console.log(`Secret ${SECRET} set on environment ${ENVIRONMENT}.`);
 });

@@ -4,7 +4,13 @@ import { Client } from "@neondatabase/serverless";
 import { runScript } from "@opusfinder/shared/script";
 
 import { getDataFixDatabaseUrl } from "../src/env";
-import { applyPendingFixes, formatFixRun, readFixes, type FixClient } from "../src/fixes";
+import {
+  applyPendingFixes,
+  formatFixRun,
+  readFixes,
+  type FixClient,
+  type FixRun,
+} from "../src/fixes";
 
 // Applies every pending packages/db/fixes file as the data_fixer role. Run by .github/workflows/data-fixes.yml
 // (main only, DATA_FIX_DATABASE_URL from the data-fixes Environment); see fixes/README.md.
@@ -13,27 +19,11 @@ import { applyPendingFixes, formatFixRun, readFixes, type FixClient } from "../s
 // plus the record insert, which neon-http can't hold (same reason auth uses createAuthDb). A single Client, not
 // a Pool, so the transaction stays on one connection and its NOTICEs can be collected.
 
-/** Write the report to the Actions job summary when running in Actions. */
-function writeSummary(markdown: string): void {
-  const path = process.env.GITHUB_STEP_SUMMARY;
-  if (path) appendFileSync(path, `${markdown}\n`);
-}
-
-await runScript("Data fixes", async () => {
+async function applyAll(): Promise<FixRun> {
   const { fixes, problems } = readFixes();
   if (problems.length > 0) {
-    writeSummary(
-      [
-        "## Data fixes",
-        "",
-        "Not run: the fix files are invalid.",
-        "",
-        ...problems.map((p) => `- ${p}`),
-      ].join("\n"),
-    );
-    throw new Error(`invalid fix files:\n${problems.join("\n")}`);
+    throw new Error(`the fix files are invalid:\n${problems.map((p) => `- ${p}`).join("\n")}`);
   }
-
   const client = new Client(getDataFixDatabaseUrl());
   const notices: string[] = [];
   client.on("notice", (n) => notices.push(n.message ?? ""));
@@ -48,18 +38,25 @@ await runScript("Data fixes", async () => {
       },
       takeNotices: () => notices.splice(0),
     };
-    let report: string;
-    try {
-      const run = await applyPendingFixes(db, fixes, process.env.GITHUB_SHA ?? null);
-      report = formatFixRun(run);
-      if (run.outcomes.some((o) => o.error !== undefined)) process.exitCode = 1;
-    } catch (err) {
-      report = `## Data fixes\n\nNothing applied: ${err instanceof Error ? err.message : String(err)}\n`;
-      process.exitCode = 1;
-    }
-    console.log(report);
-    writeSummary(report);
+    return await applyPendingFixes(db, fixes, process.env.GITHUB_SHA ?? null);
   } finally {
     await client.end();
   }
+}
+
+// Every outcome, including a failure before any fix runs (bad files, the secret unset, a refused connection),
+// lands in the log AND the Actions job summary.
+await runScript("Data fixes", async () => {
+  let report: string;
+  try {
+    const run = await applyAll();
+    report = formatFixRun(run);
+    if (run.outcomes.some((o) => o.error !== undefined)) process.exitCode = 1;
+  } catch (err) {
+    report = formatFixRun({ error: err instanceof Error ? err.message : String(err) });
+    process.exitCode = 1;
+  }
+  console.log(report);
+  const summary = process.env.GITHUB_STEP_SUMMARY;
+  if (summary) appendFileSync(summary, `${report}\n`);
 });

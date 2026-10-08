@@ -121,20 +121,25 @@ export function lintFixSql(sql: string): string[] {
   );
   for (const word of found)
     problems.push(`contains ${word}: ${FORBIDDEN_WORDS[word]} is not allowed in a fix`);
+  if (/\bdata_fixes\b/i.test(code)) {
+    problems.push("references data_fixes: only the runner writes the applied-fix record");
+  }
   return problems;
 }
 
 /**
- * Reduce SQL to its code: comments and quoted strings/identifiers are blanked, so a keyword inside a RAISE
- * message or a comment can't trip {@link lintFixSql}. Dollar-quoted bodies are KEPT as code (a DO block's body
- * is PL/pgSQL and is checked too). Also returns the top-level statements (split on `;` outside dollar quotes),
- * blank ones dropped. A lint aid, not a full SQL lexer: the `data_fixer` role's grants are the real boundary.
+ * Reduce SQL to its code: comments and string literals are blanked, so a keyword inside a RAISE message or a
+ * comment can't trip {@link lintFixSql}. Quoted identifiers are kept (so `"data_fixes"` is still seen), and so
+ * are dollar-quoted bodies (a DO block's body is PL/pgSQL and is checked too). As in Postgres, a dollar quote
+ * ends only at its own opening tag; any other `$tag$` inside it is text. Also returns the top-level statements
+ * (split on `;` outside dollar quotes), blank ones dropped. A lint aid, not a full SQL lexer: the `data_fixer`
+ * role's grants are the real boundary.
  */
 export function scanSql(sql: string): { code: string; statements: string[] } {
   let code = "";
   let stmt = "";
   const statements: string[] = [];
-  const dollar: string[] = []; // open $tag$ delimiters, innermost last
+  let open: string | null = null; // the open dollar-quote tag, e.g. "$$"
   const emit = (s: string) => {
     code += s;
     stmt += s;
@@ -163,30 +168,39 @@ export function scanSql(sql: string): { code: string; statements: string[] } {
         }
       }
       emit(" ");
-    } else if (ch === "'" || ch === '"') {
-      // '' / "" escape a quote; an E'...' string also takes backslash escapes.
-      const backslash = ch === "'" && /[eE]/.test(sql[i - 1] ?? "") && !isWordChar(sql[i - 2]);
+    } else if (ch === "'") {
+      // '' escapes a quote; an E'...' string also takes backslash escapes.
+      const backslash = /[eE]/.test(sql[i - 1] ?? "") && !isWordChar(sql[i - 2]);
       i++;
       while (i < sql.length) {
         if (backslash && sql[i] === "\\") i += 2;
-        else if (sql[i] === ch && sql[i + 1] === ch) i += 2;
-        else if (sql[i] === ch) break;
+        else if (sql[i] === "'" && sql[i + 1] === "'") i += 2;
+        else if (sql[i] === "'") break;
         else i++;
       }
       i++;
       emit(" ");
+    } else if (ch === '"') {
+      // A quoted identifier: its name stays code, so a quoted "data_fixes" is still seen. "" escapes a quote.
+      let j = i + 1;
+      while (j < sql.length) {
+        if (sql[j] === '"' && sql[j + 1] === '"') j += 2;
+        else if (sql[j] === '"') break;
+        else j++;
+      }
+      emit(` ${sql.slice(i + 1, j)} `);
+      i = j + 1;
     } else if (ch === "$" && !isWordChar(sql[i - 1])) {
       const tag = /^\$(?:[A-Za-z_][A-Za-z0-9_]*)?\$/.exec(sql.slice(i, i + 64))?.[0];
-      if (tag === undefined) {
+      if (tag === undefined || (open !== null && tag !== open)) {
         emit(ch);
         i++;
       } else {
-        if (dollar.at(-1) === tag) dollar.pop();
-        else dollar.push(tag);
+        open = open === null ? tag : null;
         emit(" ");
         i += tag.length;
       }
-    } else if (ch === ";" && dollar.length === 0) {
+    } else if (ch === ";" && open === null) {
       code += ch;
       statements.push(stmt);
       stmt = "";
@@ -213,8 +227,10 @@ export interface FixClient {
 export interface FixOutcome {
   fix: FixFile;
   notices: string[];
-  /** Set when the fix failed; its transaction was rolled back. */
+  /** Set when the fix failed; its transaction was rolled back (unless `unconfirmed`). */
   error?: string;
+  /** The error came from COMMIT itself (e.g. the connection dropped), so the fix MAY be applied and recorded. */
+  unconfirmed?: true;
 }
 
 export interface FixRun {
@@ -228,7 +244,7 @@ export interface FixRun {
  * Apply every fix not yet recorded in `data_fixes`, in order, each in ONE transaction together with the insert
  * of its record, so a fix is applied and recorded atomically and never twice (a concurrent duplicate fails on
  * the primary key and rolls back). Stops at the first failing fix. Throws before applying anything if an
- * already-applied fix's file no longer matches the sha256 recorded when it ran.
+ * already-applied fix's file is missing or no longer matches the sha256 recorded when it ran.
  */
 export async function applyPendingFixes(
   db: FixClient,
@@ -236,8 +252,15 @@ export async function applyPendingFixes(
   gitSha: string | null,
 ): Promise<FixRun> {
   const recorded = new Map<number, string>();
-  for (const row of await db.query("SELECT id, sha256 FROM data_fixes")) {
+  const gone: string[] = [];
+  for (const row of await db.query("SELECT id, name, sha256 FROM data_fixes ORDER BY id")) {
     recorded.set(Number(row.id), String(row.sha256));
+    if (!fixes.some((f) => f.id === Number(row.id))) gone.push(String(row.name));
+  }
+  if (gone.length > 0) {
+    throw new Error(
+      `applied fix files are missing: ${gone.join(", ")}. Restore them; fixes are append-only.`,
+    );
   }
   for (const fix of fixes) {
     const sha = recorded.get(fix.id);
@@ -253,6 +276,7 @@ export async function applyPendingFixes(
   for (const fix of fixes) {
     if (recorded.has(fix.id)) continue;
     db.takeNotices();
+    let committing = false;
     try {
       await db.query("BEGIN");
       await db.query(fix.sql);
@@ -262,25 +286,42 @@ export async function applyPendingFixes(
         fix.sha256,
         gitSha,
       ]);
+      committing = true;
       await db.query("COMMIT");
       outcomes.push({ fix, notices: db.takeNotices() });
     } catch (err) {
       const notices = db.takeNotices();
       await db.query("ROLLBACK").catch(() => undefined);
-      outcomes.push({ fix, notices, error: err instanceof Error ? err.message : String(err) });
+      const error = err instanceof Error ? err.message : String(err);
+      outcomes.push(
+        committing ? { fix, notices, error, unconfirmed: true } : { fix, notices, error },
+      );
       break;
     }
   }
   return { alreadyApplied: fixes.filter((f) => recorded.has(f.id)).length, outcomes };
 }
 
-/** Markdown report of a run: printed to the log and appended to the GitHub Actions job summary. */
-export function formatFixRun(run: FixRun): string {
+/**
+ * Markdown report of a run, or of the error that stopped it before any fix ran (bad files, a missing secret, a
+ * failed connection): printed to the log and appended to the GitHub Actions job summary.
+ */
+export function formatFixRun(run: FixRun | { error: string }): string {
   const lines = ["## Data fixes", ""];
+  if ("error" in run) {
+    lines.push("Nothing applied:", "```", run.error, "```", "");
+    return lines.join("\n");
+  }
   if (run.outcomes.length === 0)
     lines.push(`Nothing to apply (${run.alreadyApplied} already applied).`, "");
-  for (const { fix, notices, error } of run.outcomes) {
-    lines.push(`### ${fix.name}: ${error === undefined ? "applied" : "FAILED, rolled back"}`, "");
+  for (const { fix, notices, error, unconfirmed } of run.outcomes) {
+    const status =
+      error === undefined
+        ? "applied"
+        : unconfirmed
+          ? "OUTCOME UNKNOWN: COMMIT did not confirm. Check data_fixes for this id before retrying"
+          : "FAILED, rolled back";
+    lines.push(`### ${fix.name}: ${status}`, "");
     if (notices.length > 0) lines.push("```", ...notices, "```", "");
     if (error !== undefined) lines.push("Error:", "```", error, "```", "");
   }

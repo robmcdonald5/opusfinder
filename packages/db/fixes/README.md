@@ -23,7 +23,7 @@ Schema changes stay in `packages/db/drizzle/` migrations. A fix can't run DDL.
   then the owner re-runs the setup command.
 - The PR check `pnpm guard:fixes` (in `ci.yml`, no secrets) enforces the file rules below. It also fails if
   a PR edits, renames or deletes a fix that is already on `main`. The runner adds a backstop: it refuses to
-  run if an applied fix's file no longer matches the sha256 recorded when it ran.
+  run if an applied fix's file is missing or no longer matches the sha256 recorded when it ran.
 
 ## Writing a fix (agents)
 
@@ -42,13 +42,16 @@ Copy the shape of `0001-merge-case-variant-boards.sql`:
    - **Be safe to re-run**: idempotent (`WHERE active` before setting `active = false`) or guarded.
    - **Not contain** `BEGIN`/`COMMIT`/`ROLLBACK`/`SAVEPOINT` (the runner owns the transaction),
      `CREATE`/`ALTER`/`DROP`/`TRUNCATE`/`GRANT`/`REVOKE`, or `EXECUTE` (dynamic SQL hides the real statement
-     from review). These words are allowed in comments and string literals.
+     from review), or reference `data_fixes` (only the runner writes it). These words are allowed in
+     comments and string literals.
 4. Run `pnpm guard:fixes` locally, then open a PR containing only the fix (plus anything it depends on).
 
 Never edit a fix that has been applied. Write a new fix instead. A merged fix that **failed** is different:
 it was rolled back and never recorded, and it blocks every later fix until it applies. Correct it in place
-in a new PR. The immutability check flags that edit, and the owner merges over it after confirming in the
-Actions summary that the fix failed.
+in a new PR. The immutability check flags that edit, and the owner merges over it after confirming that the
+fix is NOT in `data_fixes` (ask `neon-ops`). The summary shows `OUTCOME UNKNOWN` instead of `FAILED` when
+the connection dropped during COMMIT: then the fix may well be applied, so check `data_fixes` before
+touching anything.
 
 ## Previewing (orchestrator)
 
@@ -87,7 +90,9 @@ The setup command does the following:
 
 - Creates or updates the `data-fixes` Environment so only `main` may deploy to it.
 - Creates `data_fixer` with plain SQL, or rotates its password if it exists. It does not use the Neon
-  Console, because Console/API roles join `neon_superuser`. It then resets the role's grants.
+  Console, because Console/API roles join `neon_superuser`. It then resets the role's grants, and aborts
+  (changing nothing) if the role still holds any privilege beyond the list, such as one granted by
+  another role.
 - Pipes the new connection string into `gh secret set DATA_FIX_DATABASE_URL --env data-fixes` on stdin.
 
 It never prints the password or the connection string. Re-run it any time to rotate the password. Add

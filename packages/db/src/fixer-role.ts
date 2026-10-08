@@ -25,9 +25,11 @@ export function generateDataFixerPassword(): string {
 
 /**
  * The setup SQL, run by the owner's role in ONE transaction. Idempotent: it creates the role or rotates its
- * password, then RESETS its table privileges to exactly the allowlist (revoke all, grant the list), so a re-run
- * converges even if the list shrank. Aborts if `data_fixes` is missing (run the migration first) or if the role
- * has elevated attributes or any role membership (e.g. it was created in the Neon Console).
+ * password, then resets its table privileges to the allowlist (revoke all, grant the list), so a re-run
+ * converges even if the list shrank. Aborts if `data_fixes` is missing (run the migration first), if the role
+ * has elevated attributes or any role membership (e.g. it was created in the Neon Console), or if the role still
+ * holds any privilege beyond the allowlist afterwards. That last check matters because the owner's REVOKE only
+ * removes the owner's own grants, so a grant made by another role would survive it.
  */
 export function buildDataFixerSetupSql(password: string): string {
   // The password is spliced into the SQL (CREATE/ALTER ROLE take no bind parameters), so pin its alphabet.
@@ -36,6 +38,7 @@ export function buildDataFixerSetupSql(password: string): string {
   }
   const role = DATA_FIXER_ROLE;
   const tables = DATA_FIXER_TABLES.join(", ");
+  const tableLiterals = DATA_FIXER_TABLES.map((t) => `'${t}'`).join(", ");
   const sequences = DATA_FIXER_TABLES.map((t) => `${t}_id_seq`).join(", ");
   return `DO $$
 BEGIN
@@ -62,6 +65,24 @@ GRANT USAGE ON SCHEMA public TO ${role};
 GRANT SELECT, INSERT, UPDATE, DELETE ON ${tables} TO ${role};
 GRANT USAGE ON SEQUENCE ${sequences} TO ${role};
 GRANT SELECT, INSERT ON ${getTableName(dataFixes)} TO ${role};
+DO $$
+DECLARE
+  extra text;
+BEGIN
+  -- Effective privileges (direct, via PUBLIC, from any grantor) beyond the allowlist above.
+  SELECT string_agg(t.tablename, ', ' ORDER BY t.tablename) INTO extra
+  FROM pg_tables t
+  WHERE t.schemaname = 'public'
+    AND has_table_privilege('${role}', format('%I.%I', t.schemaname, t.tablename),
+          CASE
+            WHEN t.tablename IN (${tableLiterals}) THEN 'TRUNCATE, REFERENCES, TRIGGER'
+            WHEN t.tablename = '${getTableName(dataFixes)}' THEN 'UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER'
+            ELSE 'SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER'
+          END);
+  IF extra IS NOT NULL OR has_schema_privilege('${role}', 'public', 'CREATE') THEN
+    RAISE EXCEPTION '${role} holds privileges beyond its allowlist (on: %; or CREATE on schema public), granted by another role: revoke them, then re-run', coalesce(extra, 'no table');
+  END IF;
+END $$;
 `;
 }
 
