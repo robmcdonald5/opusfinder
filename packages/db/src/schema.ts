@@ -84,6 +84,15 @@ export const companies = pgTable(
   },
   (t) => [
     uniqueIndex("companies_slug_source_uq").on(t.slug, t.source),
+    // One row per board for the sources whose API ignores slug case (`boschgroup` and `BoschGroup` are one
+    // SmartRecruiters board). upsertCompany's ON CONFLICT (slug, source) can't absorb a conflict here, so a
+    // case-variant insert FAILS instead of adding a duplicate. The list must equal @opusfinder/sources'
+    // CASE_INSENSITIVE_SLUG_SOURCES (db can't import it: sources depends on db), which a sync test there
+    // enforces. drizzle-kit emits it bare; the migration hand-adds IF NOT EXISTS (neon-http migrations aren't
+    // transactional — same discipline as the guarded indexes below).
+    uniqueIndex("companies_source_lower_slug_uq")
+      .on(t.source, sql`lower(${t.slug})`)
+      .where(sql`${t.source} IN ('ashby', 'smartrecruiters')`),
     // Partial index over active rows, keyed to MATCH the reprobe query's ordering (last_probed_at
     // ASC NULLS FIRST, then id) so the planner range-scans it and LIMIT stops early instead of
     // sorting the whole active set.

@@ -58,6 +58,9 @@ describe("fix 0001: merge the case-variant duplicate boards (integration: real P
 
   beforeAll(async () => {
     ({ db, client: pg, close } = await createTestDb());
+    // The fix ran BEFORE migration 0025, whose case-folded unique index forbids the duplicate pairs seeded
+    // below: drop it to reproduce the database the fix was written for.
+    await pg.exec('DROP INDEX "companies_source_lower_slug_uq"');
     await pg.exec(buildDataFixerSetupSql("p".repeat(32)));
     fixer = pgliteFixClient(pg);
     fix0001 = readFixes().fixes.find((f) => f.id === 1)!;

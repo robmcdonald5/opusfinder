@@ -369,56 +369,29 @@ describe("runDiscovery — orchestration over real PGlite (fetch stubbed)", () =
   });
 
   describe("partition — case-insensitive sources match case-folded; other sources stay exact", () => {
-    // Both seed orders, so the ACTIVE variant must win however listCompanyStates happens to order the rows
-    // (a last-row-wins map would pass one order by luck).
-    it.each([
-      ["active row first", true],
-      ["inactive alias first", false],
-    ])(
-      "an ACTIVE case variant claims the candidate: no insert, and the INACTIVE alias is never probed or revived (%s)",
-      async (_label, activeFirst) => {
-        // The SmartRecruiters Bosch shape after the data fix: canonical BoschGroup active, alias deactivated.
-        const seedActive = () =>
-          seedCompany({ slug: "BoschGroup", source: "smartrecruiters", active: true });
-        const seedAlias = () =>
-          seedCompany({
-            slug: "boschgroup",
-            source: "smartrecruiters",
-            active: false,
-            lastLiveAt: SENTINEL_2020,
-            lastProbedAt: SENTINEL_2020,
-            updatedAt: SENTINEL_2020,
-          });
-        if (activeFirst) {
-          await seedActive();
-          await seedAlias();
-        } else {
-          await seedAlias();
-          await seedActive();
-        }
-        const fx = installFetch([
-          seedLinksRoute(["https://jobs.smartrecruiters.com/boschgroup"]),
-          srLive,
-        ]);
+    // A candidate whose casing differs from an ACTIVE row must not even ATTEMPT an insert: migration 0025's
+    // case-folded unique index would reject it and fail the run. (An inactive alias beside the active row,
+    // which this partition also guards against, can no longer exist under that index.)
+    it("a case variant of an ACTIVE row is that row: no insert attempt, no probe of the candidate's casing", async () => {
+      await seedCompany({ slug: "BoschGroup", source: "smartrecruiters", active: true });
+      const fx = installFetch([
+        seedLinksRoute(["https://jobs.smartrecruiters.com/boschgroup"]),
+        srLive,
+      ]);
 
-        const counts = await runDiscovery(db, { lanes: ["outscal"], probe: PROBE_OPTS });
+      const counts = await runDiscovery(db, { lanes: ["outscal"], probe: PROBE_OPTS });
 
-        expect(counts).toMatchObject({
-          candidates: 1,
-          alreadyActive: 1,
-          probeWorklist: 0,
-          upserted: 0,
-          reprobed: 1, // the ACTIVE row's normal reprobe
-        });
-        expect(await companiesOf("smartrecruiters")).toHaveLength(2); // no third row
-        const alias = await companyBySlug("boschgroup");
-        expect(alias!.active).toBe(false);
-        expect(alias!.lastLiveAt).toEqual(SENTINEL_2020);
-        expect(alias!.lastProbedAt).toEqual(SENTINEL_2020);
-        expect(fx.calls.filter((u) => srProbe("BoschGroup")(u))).toHaveLength(1);
-        expect(fx.calls.some((u) => srProbe("boschgroup")(u))).toBe(false);
-      },
-    );
+      expect(counts).toMatchObject({
+        candidates: 1,
+        alreadyActive: 1,
+        probeWorklist: 0,
+        upserted: 0,
+        reprobed: 1, // the ACTIVE row's normal reprobe
+      });
+      expect((await companiesOf("smartrecruiters")).map((r) => r.slug)).toEqual(["BoschGroup"]);
+      expect(fx.calls.filter((u) => srProbe("BoschGroup")(u))).toHaveLength(1);
+      expect(fx.calls.some((u) => srProbe("boschgroup")(u))).toBe(false);
+    });
 
     it("only INACTIVE variants: probes under the STORED slug and reactivates that row in place (no new row)", async () => {
       await seedCompany({

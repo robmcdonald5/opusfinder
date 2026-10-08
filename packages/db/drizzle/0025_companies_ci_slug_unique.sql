@@ -1,0 +1,18 @@
+-- One companies row per board for the sources whose API ignores slug case (ashby, smartrecruiters). `boschgroup`
+-- and `BoschGroup` list the same SmartRecruiters postings, but companies_slug_source_uq is case-sensitive, so
+-- discovery once inserted a row per casing (7 groups, merged by data fix 0001). Discovery now folds case itself
+-- (CASE_INSENSITIVE_SLUG_SOURCES in @opusfinder/sources); this index is the guard for EVERY writer. upsertCompany's
+-- ON CONFLICT (slug, source) doesn't cover it, so a case-variant insert now FAILS (23505 on this index) instead
+-- of adding a duplicate. Postgres lower() and discovery's toLowerCase() agree because slugs are ASCII
+-- (companySlug's floor).
+--
+-- Hand-guarded with IF NOT EXISTS (drizzle-kit emits it bare; neon-http migrations are NOT transactional).
+-- NOT CONCURRENTLY: companies is ~1.5k rows, so a plain build takes milliseconds under a brief write lock.
+-- CONCURRENTLY can't run inside the transaction the PGlite test migrator uses, and a failed concurrent build
+-- leaves an INVALID index that IF NOT EXISTS would then skip forever.
+--
+-- ROLLOUT: apply AFTER data fix 0001 (applied 2026-10-08). If any case-variant pair is left, the build fails
+-- with a unique violation, creates nothing, and is retried on the next `pnpm db:migrate`. Pre-check (expect no
+-- rows): SELECT source, lower(slug), count(*) FROM companies WHERE source IN ('ashby', 'smartrecruiters')
+-- GROUP BY 1, 2 HAVING count(*) > 1;
+CREATE UNIQUE INDEX IF NOT EXISTS "companies_source_lower_slug_uq" ON "companies" USING btree ("source",lower("slug")) WHERE "companies"."source" IN ('ashby', 'smartrecruiters');

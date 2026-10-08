@@ -9,7 +9,13 @@
  */
 import { and, type AnyColumn, eq, gt, inArray, ne, or, sql, type SQL } from "drizzle-orm";
 
-import type { CompanySlug, JobId, NormalizedJob, SourceName } from "@opusfinder/shared";
+import {
+  isRecord,
+  type CompanySlug,
+  type JobId,
+  type NormalizedJob,
+  type SourceName,
+} from "@opusfinder/shared";
 
 import type { Db } from "../client";
 import { companies, jobs } from "../schema";
@@ -48,6 +54,9 @@ export function listCompanies(
   return opts.limit !== undefined ? query.limit(opts.limit) : query;
 }
 
+/** One row per board for sources whose API ignores slug case (schema.ts; migration 0025). */
+const CASE_VARIANT_UQ = "companies_source_lower_slug_uq";
+
 /**
  * Get-or-create the company for `(slug, source)` and return its id.
  *
@@ -55,20 +64,37 @@ export function listCompanies(
  * "affected" so `RETURNING` yields the id even when the company already exists —
  * a bare `onConflictDoNothing` returns no rows on conflict. It writes nothing
  * meaningful, so `companies.updated_at` is left untouched.
+ *
+ * A case variant of a stored slug on a case-insensitive source (`boschgroup` beside `BoschGroup`) is NOT
+ * get-or-create: `companies_source_lower_slug_uq` rejects it and this throws a plain message naming the
+ * slug, since the CLI prints only `err.message` and drizzle's own reads "Failed query: …" with no reason.
  */
 export async function upsertCompany(
   db: Db,
   slug: CompanySlug,
   source: SourceName,
 ): Promise<number> {
-  const rows = await db
-    .insert(companies)
-    .values({ slug, source })
-    .onConflictDoUpdate({
-      target: [companies.slug, companies.source],
-      set: { slug: sql`excluded.slug` },
-    })
-    .returning({ id: companies.id });
+  let rows: { id: number }[];
+  try {
+    rows = await db
+      .insert(companies)
+      .values({ slug, source })
+      .onConflictDoUpdate({
+        target: [companies.slug, companies.source],
+        set: { slug: sql`excluded.slug` },
+      })
+      .returning({ id: companies.id });
+  } catch (err) {
+    // The driver error rides drizzle's `cause` (Neon's and PGlite's both carry `constraint`).
+    if (err instanceof Error && isRecord(err.cause) && err.cause.constraint === CASE_VARIANT_UQ) {
+      throw new Error(
+        `${source}:"${slug}" is a case variant of an existing ${source} company (${source} board ids ` +
+          `ignore case; ${CASE_VARIANT_UQ}). That board is already tracked: use its stored slug.`,
+        { cause: err },
+      );
+    }
+    throw err;
+  }
 
   const row = rows[0];
   if (!row) {

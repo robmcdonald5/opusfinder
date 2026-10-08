@@ -648,6 +648,38 @@ describe("upsertCompany + upsertJobs — board persistence semantics (integratio
       expect(lv).not.toBe(gh);
       expect(await db.select({ id: companies.id }).from(companies)).toHaveLength(2);
     });
+
+    // companies_source_lower_slug_uq (migration 0025): ON CONFLICT (slug, source) can't absorb a conflict on
+    // it, so a case variant FAILS instead of adding a second row for one board.
+    it.each([
+      ["smartrecruiters", "BoschGroup", "boschgroup"],
+      ["ashby", "Mapbox", "MAPBOX"],
+    ] as const)(
+      "%s: a case variant of a stored slug throws a plain, named error and inserts nothing",
+      async (source, stored, variant) => {
+        const id = await upsertCompany(db, companySlug(stored), source);
+
+        const err: unknown = await upsertCompany(db, companySlug(variant), source).catch((e) => e);
+        expect(err).toBeInstanceOf(Error);
+        expect((err as Error).message).toBe(
+          `${source}:"${variant}" is a case variant of an existing ${source} company (${source} board ids ` +
+            `ignore case; companies_source_lower_slug_uq). That board is already tracked: use its stored slug.`,
+        );
+        expect((err as Error).cause).toBeDefined(); // the driver's unique violation stays reachable
+
+        const rows = await db.select({ id: companies.id, slug: companies.slug }).from(companies);
+        expect(rows).toEqual([{ id, slug: stored }]);
+        // The stored casing itself is still get-or-create.
+        expect(await upsertCompany(db, companySlug(stored), source)).toBe(id);
+      },
+    );
+
+    it("leaves case-SENSITIVE sources exact: Lever `Acme` and `acme` are two boards", async () => {
+      const upper = await upsertCompany(db, companySlug("Acme"), "lever");
+      const lower = await upsertCompany(db, companySlug("acme"), "lever");
+      expect(lower).not.toBe(upper);
+      expect(await db.select({ id: companies.id }).from(companies)).toHaveLength(2);
+    });
   });
 
   describe("listCompanies — filters and id-keyset", () => {

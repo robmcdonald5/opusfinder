@@ -35,9 +35,11 @@ export const SOURCE_NAMES = Object.keys(adapters) as SourceName[];
 
 /**
  * Sources whose API matches board ids case-INSENSITIVELY while `normalizeSlug` preserves casing (verified
- * live 2026-10-08: `boschgroup`/`BoschGroup` and `mapbox`/`Mapbox` list the same postings). The `companies`
- * unique index is case-sensitive, so discovery folds these slugs' case when matching, to keep one row per
- * board. A source whose `normalizeSlug` already lowercases doesn't need listing.
+ * live 2026-10-08: `boschgroup`/`BoschGroup` and `mapbox`/`Mapbox` list the same postings). Discovery folds
+ * these slugs' case when matching, and the `companies_source_lower_slug_uq` index rejects a case-variant
+ * insert from any writer, to keep one row per board. That index keeps its own copy of this list (db can't
+ * import sources), so adding a source also needs that list + a migration; registry.test.ts fails until they
+ * match. A source whose `normalizeSlug` already lowercases doesn't need listing.
  */
 export const CASE_INSENSITIVE_SLUG_SOURCES: ReadonlySet<SourceName> = new Set([
   "ashby",
