@@ -227,6 +227,41 @@ describe("resolveLanes — dedupe within a run", () => {
     expect(counts.candidates).toBe(1);
     expect(counts.lane_dup_candidates).toBe(1);
   });
+
+  // Intra-lane case folding is resolveSeed's (resolve.test.ts); this is the CROSS-lane guard sharing keyOf.
+  it("folds slug case ACROSS lanes for case-insensitive sources (SmartRecruiters, Ashby) only — Lever casings stay distinct", async () => {
+    const lane = (name: string, links: string[]): SeedLane => ({
+      name,
+      workerSafe: true,
+      fetch: async (): Promise<CompanyRecord[]> => [{ ats_links: links }],
+    });
+    const counts = emptyCounts();
+    const candidates = await resolveLanes(
+      [
+        lane("upper", [
+          "https://jobs.smartrecruiters.com/BoschGroup",
+          "https://jobs.ashbyhq.com/Mapbox",
+          "https://jobs.lever.co/Foo",
+        ]),
+        lane("lower", [
+          "https://jobs.smartrecruiters.com/boschgroup",
+          "https://jobs.ashbyhq.com/mapbox",
+          "https://jobs.lever.co/foo",
+        ]),
+      ],
+      counts,
+      {},
+    );
+    // The FIRST casing seen wins for the folded sources; Lever is case-sensitive, so both are boards.
+    expect(keys(candidates)).toEqual([
+      "smartrecruiters:BoschGroup",
+      "ashby:Mapbox",
+      "lever:Foo",
+      "lever:foo",
+    ]);
+    expect(counts.candidates).toBe(4);
+    expect(counts.lane_lower_candidates).toBe(1); // only lever:foo is new in the second lane
+  });
 });
 
 describe("resolveLanes — empty lanes", () => {

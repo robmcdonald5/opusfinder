@@ -39,8 +39,9 @@ export interface SourceAdapter {
 
   /**
    * ATS-specific slug canonicalization, run ONCE before branding. Greenhouse/Workable
-   * lowercase; Lever/Ashby/SmartRecruiters preserve case (their IDs are case-sensitive,
-   * or apply URLs echo the casing). MUST end in `companySlug(...)` so the universal floor applies.
+   * lowercase; Lever/Gem preserve case (their slugs are case-sensitive); Ashby/SmartRecruiters
+   * preserve it too though their APIs ignore case (see `CASE_INSENSITIVE_SLUG_SOURCES`). MUST end
+   * in `companySlug(...)` so the universal floor applies.
    */
   normalizeSlug(rawSlug: string): CompanySlug;
 

@@ -10,11 +10,12 @@ import {
   markProbed,
   startRun,
   upsertCompany,
+  type CompanyState,
 } from "@opusfinder/db/repos";
 import type { SourceName } from "@opusfinder/shared";
 
 import { probeCandidates, type ProbeOptions } from "./probe";
-import { resolveSeed, type ResolveCounts } from "./resolve";
+import { keyOf, resolveSeed, type ResolveCounts } from "./resolve";
 import { SEED_LANES, type CompanyRecord, type SeedLane } from "./seed";
 import type { Candidate, ProbeResult } from "./types";
 
@@ -121,11 +122,21 @@ export async function runDiscovery(db: Db, opts: DiscoveryOptions = {}): Promise
 
     // 3. PARTITION: NEW or KNOWN-INACTIVE → probe path (a live probe reactivates); KNOWN-ACTIVE → the
     // reprobe pass. Reading `active` (not plain listCompanies) is what closes the reactivation lock-out.
+    // keyOf folds the case variants of a case-insensitive source onto one key: an ACTIVE variant wins (so
+    // an inactive alias of a live board is never revived), and a KNOWN-INACTIVE candidate is probed under
+    // its STORED slug so upsertCompany hits that row instead of inserting a case variant.
     const states = await listCompanyStates(db, { source: opts.source });
-    const activeByKey = new Map(states.map((s) => [keyOf(s.source, s.slug), s.active]));
-    const worklist = resolved.candidates.filter(
-      (c) => activeByKey.get(keyOf(c.source, c.slug)) !== true,
-    );
+    const known = new Map<string, CompanyState>();
+    for (const s of states) {
+      const k = keyOf(s.source, s.slug);
+      if (!known.get(k)?.active) known.set(k, s);
+    }
+    const worklist: Candidate[] = [];
+    for (const c of resolved.candidates) {
+      const row = known.get(keyOf(c.source, c.slug));
+      if (row?.active) continue;
+      worklist.push(row ? { ...c, slug: row.slug, rawSlug: row.slug } : c);
+    }
     counts.alreadyActive = resolved.candidates.length - worklist.length;
     const scoped = opts.limit !== undefined ? worklist.slice(0, opts.limit) : worklist;
     counts.probeWorklist = scoped.length;
@@ -278,8 +289,8 @@ export function selectLanes(
  * Step 1+2 for N lanes: fetch each lane (a `failLoud` lane — the core seed — re-throws to FAIL THE RUN;
  * others isolate the failure as a `lane_<name>_error` tally so one flaky external lane can't zero a run),
  * resolve its records to candidates, accumulate the drop-reason counts field-wise (NOT Object.assign —
- * that clobbers across lanes), and cross-lane-dedupe by (source, slug) — resolveSeed's own `seen` is
- * per-call and the partition only drops already-ACTIVE rows, so two lanes emitting the same pair would
+ * that clobbers across lanes), and cross-lane-dedupe by `keyOf` (source, slug) — resolveSeed's own
+ * `seen` is per-call and the partition only drops already-ACTIVE rows, so two lanes emitting the same pair would
  * otherwise both enter the worklist and double-probe. Mutates `counts` (drop tallies +
  * lane_<name>_candidates/_error + candidates); returns the merged, deduped candidates. Pure of db/probe
  * → unit-testable with stub lanes.
@@ -337,10 +348,6 @@ function accumulateCounts(counts: DiscoveryCounts, r: ResolveCounts): void {
   counts.badUrl += r.badUrl;
   counts.deferredNoAdapter += r.deferredNoAdapter;
   counts.invalidSlug += r.invalidSlug;
-}
-
-function keyOf(source: SourceName, slug: string): string {
-  return JSON.stringify([source, slug]);
 }
 
 export function emptyCounts(): DiscoveryCounts {

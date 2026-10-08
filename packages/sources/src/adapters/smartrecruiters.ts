@@ -29,7 +29,9 @@ const SECTION_ORDER = [
  * (reconstructed apply URL, placeholder empty description) that `hydrate` then patches. A hydrate
  * that fails — or gets a detail with no content — THROWS, so runAdapter keeps the listed job (still
  * present) flagged `contentMissing`, and upsertJobs never writes its placeholder over the stored
- * posting (see `hydratePosting`). Company IDs are case-sensitive, so `normalizeSlug` preserves casing.
+ * posting (see `hydratePosting`). Company IDs are case-INSENSITIVE at the API (`boschgroup` lists
+ * `BoschGroup`'s postings), but `normalizeSlug` preserves casing so it never mints a new row beside a
+ * stored mixed-case slug; discovery folds case when matching instead (`CASE_INSENSITIVE_SLUG_SOURCES`).
  *
  * Pagination uses `body.totalFound`; `nextCursor` and `locate` both read the same envelope (one is
  * the array, the other the count) — an accepted seam. An unknown slug returns 200 + `totalFound:0`
@@ -38,7 +40,7 @@ const SECTION_ORDER = [
 export const smartRecruitersAdapter: SourceAdapter = {
   source: "smartrecruiters",
 
-  // Case-sensitive company IDs: trim only, never lowercase.
+  // Trim only, never lowercase: stored slugs keep their mixed case (see above).
   normalizeSlug: (rawSlug) => companySlug(rawSlug),
 
   // jobs/careers.smartrecruiters.com/{slug} OR api.smartrecruiters.com/v1/companies/{slug}/...
