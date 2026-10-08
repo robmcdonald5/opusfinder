@@ -1,4 +1,4 @@
-import { eq, sql } from "drizzle-orm";
+import { DrizzleQueryError, eq, sql } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Db } from "@opusfinder/db";
@@ -683,7 +683,13 @@ describe("runIngestion — orchestration over real PGlite (fetch stubbed)", () =
           id === "f-2" ? jsonResponse(srDetail(id)) : textResponse("err", 500),
         ),
       );
-      vi.mocked(upsertJobs).mockRejectedValueOnce(new Error("write failed"));
+      // A failed write as drizzle throws it: the SQL + params message, the Postgres reason on `cause`.
+      const cause = Object.assign(new Error("value too long for type character varying(255)"), {
+        code: "22001",
+      });
+      vi.mocked(upsertJobs).mockRejectedValueOnce(
+        new DrizzleQueryError('insert into "jobs" ("id") values ($1)', ["f-2"], cause),
+      );
 
       const counts = await runIngestion(db, { paceMs: 0, adapter: NO_RETRY });
 
@@ -694,6 +700,11 @@ describe("runIngestion — orchestration over real PGlite (fetch stubbed)", () =
       const attempted = vi.mocked(upsertJobs).mock.calls[0]![2];
       expect(attempted.filter((j) => j.contentMissing).map((j) => j.externalId)).toEqual(["f-1"]);
       expect(counts).toMatchObject({ ok: 0, failed: 1, jobs: 0, hydrateSkipped: 0 });
+      // The recorded error leads with the Postgres reason, and drizzle's params line is gone.
+      expect((await allSourceRuns())[0]!.errorSample).toBe(
+        'smartrecruiters:srfail [code=22001] value too long for type character varying(255) | ' +
+          'Failed query: insert into "jobs" ("id") values ($1)',
+      );
     });
   });
 

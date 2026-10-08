@@ -1,3 +1,4 @@
+import { DrizzleQueryError } from "drizzle-orm";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // Phase-1 leaf pure-unit for the scrapers Worker dispatch + cursor state machine (scheduled() →
@@ -198,6 +199,35 @@ describe("scheduled() dispatch", () => {
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     expect(fetchSpy.mock.calls[0]![0]).toBe("https://hc.example/abc/fail");
     expect(fetchSpy.mock.calls[0]![1]).toMatchObject({ method: "POST" });
+    consoleSpy.mockRestore();
+  });
+
+  it("logs and pings a failed query as its Postgres reason first, without the params line", async () => {
+    const cause = Object.assign(new Error("project size limit exceeded"), { code: "53100" });
+    const query = 'update "source_runs" set "status" = $1';
+    const error = new DrizzleQueryError(query, ["secret-value-42"], cause);
+    mocks.runIngestion.mockRejectedValueOnce(error);
+    const fetchSpy = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("fetch", fetchSpy);
+    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    await expect(
+      scheduled(
+        { cron: INGEST_CRON },
+        {
+          DATABASE_URL: "postgres://stub",
+          INGEST_CURSOR: makeKv(null),
+          HEALTH_PING_URL: "https://hc.example/abc",
+        },
+        makeCtx(),
+      ),
+    ).rejects.toBe(error); // the original error is still what Cloudflare records
+
+    const expected =
+      `scheduled(${INGEST_CRON}) failed: Error: [code=53100] project size limit exceeded | ` +
+      'Failed query: update "source_runs" set "status" = $1';
+    expect(consoleSpy).toHaveBeenCalledWith(expected);
+    expect(fetchSpy.mock.calls[0]![1]).toMatchObject({ method: "POST", body: expected });
     consoleSpy.mockRestore();
   });
 

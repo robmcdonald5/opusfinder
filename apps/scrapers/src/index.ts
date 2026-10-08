@@ -1,4 +1,5 @@
 import { createDb, type Db } from "@opusfinder/db";
+import { describeDbError } from "@opusfinder/db/errors";
 import { runDiscovery } from "@opusfinder/discovery";
 import { parseEnforceFlag } from "@opusfinder/shared";
 import { runIngestion } from "@opusfinder/sources";
@@ -136,9 +137,11 @@ export default {
       // only place those failures (and any infrastructural throw) are caught. Log for `wrangler tail`,
       // signal the watchdog WITH the cause, then re-throw so the Cloudflare cron event records this
       // invocation as errored.
-      // Name + message: pingWatchdogFail trims to the first line for the published surface, while
-      // `wrangler tail` keeps the full multi-line message below.
-      const detail = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+      // Name + describeDbError: a failed query (e.g. finishRun's write on a full disk) reads as its
+      // Postgres reason first, redacted, with no `params:` line, in BOTH `wrangler tail` and the watchdog.
+      // Any other error keeps its full message here; pingWatchdogFail trims it to the first line for the
+      // published surface.
+      const detail = err instanceof Error ? `${err.name}: ${describeDbError(err)}` : String(err);
       const message = `scheduled(${controller.cron}) failed: ${detail}`;
       console.error(message);
       // A shape-safe failure ping so the existing watchdog DOWN alert carries WHAT broke and trips
@@ -175,10 +178,11 @@ function pingWatchdog(env: Env, ctx: ExecutionContext): void {
  * check DOWN immediately — no grace wait — unlike the absence-detected dead-cron case.
  *
  * SHAPE-SAFE + PUBLISHED: the body lands in an external service, so it is the error name + FIRST LINE
- * only, capped at 500 chars — never a connection string (which rides `err.cause`, NOT `err.message`;
- * diagnose Neon failures by cause shape, never the URL). First-line-only is LOAD-BEARING: a drizzle
- * `DrizzleQueryError` message is multi-line (`Failed query: <SQL>` then `params: <array>`), so dropping
- * everything past the first newline keeps the bound-param array off the published surface.
+ * only, capped at 500 chars. A failed query arrives already formatted by the caller's describeDbError: its
+ * cause's first line (the Postgres reason, which is where a connection string can ride) with URL-like tokens
+ * and a keyword-form `password=` redacted, and no `params:` line. First-line-only stays LOAD-BEARING for
+ * every other error: a multi-line message (a stack, a wrapped drizzle `params: <array>` line) must not reach
+ * the published surface past its first newline.
  *
  * OPTIONAL: unset secret ⇒ skip silently (no network). `ctx.waitUntil` so a watchdog hiccup never fails
  * the tick (we are already in the catch; the original error is re-thrown by the caller regardless).
