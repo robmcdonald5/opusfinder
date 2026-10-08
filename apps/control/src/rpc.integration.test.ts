@@ -3,8 +3,9 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { startControl, type ControlHarness } from "@test/control/harness";
 
 // The ControlRpc entrypoint, called through REAL service bindings from a second Worker (how the scrapers
-// Worker will reach it in a later slice). A binding caller is the runtime role: it can read a gate, write
-// a ledger row and trip a stage off — and the surface is exactly those three methods.
+// Worker reaches it; the RPC binding's props name matches its wrangler.toml). A binding caller is the
+// runtime role: it can read a gate, write a ledger row and trip a stage off — and the surface is exactly
+// those three methods.
 
 let h: ControlHarness;
 beforeAll(async () => {

@@ -374,13 +374,20 @@ describe("runIngestionTick — cursor wrap math (wrap to 0 only at end of table,
   });
 });
 
+// The seeded ingest gate (migration 0002) and the deployed vars it agrees with (wrangler.toml [vars]).
 const GATE_ON = {
   mode: "on",
   cappedBy: null,
   knobs: { boardsPerTick: DEFAULT_INGEST_LIMIT },
+  policies: {
+    close: { mode: "enforce", knobs: {} },
+    stale_sweep: { mode: "shadow", knobs: { ttlDays: 21 } },
+  },
+  overrides: {},
   by: "owner:owner",
   because: "seed",
 };
+const DEPLOYED_VARS = { LIFECYCLE_CLOSE_ENFORCE: "enforce", STALE_SWEEP_TTL_DAYS: "21" };
 
 /** A fake CONTROL binding (the control Worker's ControlRpc): `gate` answers as given, `recordRun` succeeds. */
 function makeControl(gate: () => Promise<unknown> = async () => GATE_ON) {
@@ -418,14 +425,17 @@ const DISCOVERY_COUNTS = {
 describe("control plane, in shadow — the gate is logged, never obeyed", () => {
   it("reads the ingest gate before the tick, logs it, and runs the tick", async () => {
     const control = makeControl();
-    const { ctx } = await runIngestTick({ env: { CONTROL: control }, counts: FULL_CHUNK });
+    const { ctx } = await runIngestTick({
+      env: { CONTROL: control, ...DEPLOYED_VARS },
+      counts: FULL_CHUNK,
+    });
     await settle(ctx);
     expect(control.gate).toHaveBeenCalledWith("ingest");
     expect(control.gate.mock.invocationCallOrder[0]).toBeLessThan(
       mocks.runIngestion.mock.invocationCallOrder[0]!,
     );
     expect(console.log).toHaveBeenCalledWith("control gate ingest: on (shadow: not enforced)");
-    expect(console.warn).not.toHaveBeenCalled(); // no would-skip, no knob drift, the row recorded
+    expect(console.warn).not.toHaveBeenCalled(); // no would-skip, no drift, the row recorded
   });
 
   it.each<[string, Record<string, unknown>, string]>([
@@ -461,6 +471,16 @@ describe("control plane, in shadow — the gate is logged, never obeyed", () => 
       { CONTROL: makeControl(async () => ({})) },
       "Error: malformed gate answer",
     ],
+    [
+      "answers a mode its stage doesn't have",
+      { CONTROL: makeControl(async () => ({ ...GATE_ON, mode: "shadow" })) },
+      "Error: malformed gate answer",
+    ],
+    [
+      "rejects with a value that can't be printed",
+      { CONTROL: makeControl(async () => Promise.reject(Object.create(null))) },
+      "unprintable error",
+    ],
     ["isn't bound", {}, "Error: no CONTROL binding"],
   ])("a control plane that %s: the tick runs and logs would-skip", async (_label, env, reason) => {
     const { ingestArgs, ctx } = await runIngestTick({ env, counts: FULL_CHUNK });
@@ -472,6 +492,7 @@ describe("control plane, in shadow — the gate is logged, never obeyed", () => 
     await settle(ctx);
     const control = env.CONTROL as ReturnType<typeof makeControl> | undefined;
     if (control) expect(recorded(control)[0]).toMatchObject({ outcome: "ok", gateMode: null });
+    else expect(ctx.waitUntil).not.toHaveBeenCalled(); // unbound: no ledger write is even attempted
   });
 
   it(`stops waiting for the gate after ${GATE_TIMEOUT_MS} ms and runs the tick`, async () => {
@@ -498,27 +519,63 @@ describe("control plane, in shadow — the gate is logged, never obeyed", () => 
     }
   });
 
-  it("logs knob drift against the limits the tick actually uses (and still uses them)", async () => {
-    const control = makeControl(async () => ({ ...GATE_ON, knobs: { boardsPerTick: 200 } }));
-    const { ingestArgs } = await runIngestTick({ env: { CONTROL: control } });
+  it("names the slices its overrides would skip, only while the stage itself is on", async () => {
+    const overrides = { source: { workable: "off", lever: "off" } };
+    await runIngestTick({
+      env: { CONTROL: makeControl(async () => ({ ...GATE_ON, overrides })), ...DEPLOYED_VARS },
+      counts: FULL_CHUNK,
+    });
     expect(console.warn).toHaveBeenCalledWith(
-      "control gate ingest: knobs differ, not enforced: boardsPerTick 200 (gate) vs 250 (in use)",
+      "control gate ingest: would skip source=workable, source=lever (overrides)",
     );
-    expect(ingestArgs?.limit).toBe(DEFAULT_INGEST_LIMIT);
+    expect(mocks.runIngestion).toHaveBeenCalledTimes(1); // every board still runs
+
+    vi.mocked(console.warn).mockClear();
+    const off = makeControl(async () => ({ ...GATE_ON, mode: "off", overrides }));
+    await runIngestTick({ env: { CONTROL: off, ...DEPLOYED_VARS }, counts: FULL_CHUNK });
+    expect(console.warn).not.toHaveBeenCalledWith(expect.stringContaining("(overrides)"));
+  });
+
+  it("logs drift from the knobs and close switches the tick actually uses (and still uses them)", async () => {
+    const control = makeControl(async () => ({
+      ...GATE_ON,
+      knobs: { boardsPerTick: 200 },
+      policies: {
+        close: { mode: "shadow", knobs: {} },
+        stale_sweep: { mode: "enforce", knobs: { ttlDays: 14 } },
+      },
+    }));
+    const { ingestArgs } = await runIngestTick({ env: { CONTROL: control, ...DEPLOYED_VARS } });
+    expect(console.warn).toHaveBeenCalledWith(
+      "control gate ingest: settings differ, not enforced: boardsPerTick 200 (gate) vs 250 (in use), " +
+        "close shadow (gate) vs enforce (in use), stale_sweep enforce (gate) vs shadow (in use), " +
+        "stale_sweep.ttlDays 14 (gate) vs 21 (in use)",
+    );
+    expect(ingestArgs).toMatchObject({
+      limit: DEFAULT_INGEST_LIMIT,
+      enforceLifecycle: true,
+      staleSweep: { ttlDays: 21, enforce: false },
+    });
 
     mocks.runDiscovery.mockResolvedValue(DISCOVERY_COUNTS);
     const discover = makeControl(async () => ({
       ...GATE_ON,
       knobs: { limit: 300, reprobeLimit: 500 },
+      policies: { close: { mode: "enforce", knobs: {} } },
     }));
     await scheduled(
       { cron: DISCOVERY_CRON },
-      { DATABASE_URL: "postgres://stub", INGEST_CURSOR: makeKv(null), CONTROL: discover },
+      {
+        DATABASE_URL: "postgres://stub",
+        INGEST_CURSOR: makeKv(null),
+        CONTROL: discover,
+        ...DEPLOYED_VARS,
+      },
       makeCtx(),
     );
     expect(discover.gate).toHaveBeenCalledWith("discover");
     expect(console.warn).toHaveBeenCalledWith(
-      "control gate discover: knobs differ, not enforced: limit 300 (gate) vs 400 (in use)",
+      "control gate discover: settings differ, not enforced: limit 300 (gate) vs 400 (in use)",
     );
     expect(mocks.runDiscovery.mock.calls[0]![1]).toMatchObject({ limit: 400, reprobeLimit: 500 });
   });
@@ -582,37 +639,48 @@ describe("control plane — one ledger row per tick, which can never fail it", (
     expect(run.units).toEqual({ "cf.wall_ms": run.durationMs });
   });
 
-  it("records a thrown tick as error (first line only) before re-throwing it", async () => {
-    const error = new Error("Failed query: insert into jobs\nparams: 1,2,3");
-    mocks.runIngestion.mockRejectedValueOnce(error);
-    const fetchSpy = vi.fn().mockResolvedValue(undefined);
-    vi.stubGlobal("fetch", fetchSpy);
-    vi.spyOn(console, "error").mockImplementation(() => undefined);
-    const control = makeControl();
-    const ctx = makeCtx();
-    await expect(
-      scheduled(
-        { cron: INGEST_CRON },
-        {
-          DATABASE_URL: "postgres://stub",
-          INGEST_CURSOR: makeKv(null),
-          HEALTH_PING_URL: "https://hc.example/abc",
-          CONTROL: control,
-        },
-        ctx,
-      ),
-    ).rejects.toBe(error);
-    await settle(ctx);
-    const run = recorded(control)[0]!;
-    expect(run).toMatchObject({
-      stage: "ingest",
-      outcome: "error",
-      gateMode: "on",
-      detail: "Error: Failed query: insert into jobs",
-    });
-    expect(run.units).toEqual({ "cf.wall_ms": run.durationMs });
-    expect(fetchSpy).toHaveBeenCalledWith("https://hc.example/abc/fail", expect.anything());
-  });
+  it.each<[string, () => Error, string]>([
+    ["first line only", () => new Error("boom\n    at stack frame"), "Error: boom"],
+    [
+      "led by a failed query's Postgres reason, no params",
+      () =>
+        new DrizzleQueryError(
+          'update "source_runs" set "status" = $1',
+          ["secret-value-42"],
+          Object.assign(new Error("project size limit exceeded"), { code: "53100" }),
+        ),
+      'Error: [code=53100] project size limit exceeded | Failed query: update "source_runs" set "status" = $1',
+    ],
+  ])(
+    "records a thrown tick as error (%s) before re-throwing it",
+    async (_label, makeError, detail) => {
+      const error = makeError();
+      mocks.runIngestion.mockRejectedValueOnce(error);
+      const fetchSpy = vi.fn().mockResolvedValue(undefined);
+      vi.stubGlobal("fetch", fetchSpy);
+      vi.spyOn(console, "error").mockImplementation(() => undefined);
+      const control = makeControl();
+      const ctx = makeCtx();
+      await expect(
+        scheduled(
+          { cron: INGEST_CRON },
+          {
+            DATABASE_URL: "postgres://stub",
+            INGEST_CURSOR: makeKv(null),
+            HEALTH_PING_URL: "https://hc.example/abc",
+            CONTROL: control,
+          },
+          ctx,
+        ),
+      ).rejects.toBe(error);
+      await settle(ctx);
+      const run = recorded(control)[0]!;
+      expect(run).toMatchObject({ stage: "ingest", outcome: "error", gateMode: "on", detail });
+      expect(JSON.stringify(run)).not.toContain("secret-value-42");
+      expect(run.units).toEqual({ "cf.wall_ms": run.durationMs });
+      expect(fetchSpy).toHaveBeenCalledWith("https://hc.example/abc/fail", expect.anything());
+    },
+  );
 
   it.each<[string, () => Promise<unknown>]>([
     [

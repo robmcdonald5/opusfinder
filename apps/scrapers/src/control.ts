@@ -1,4 +1,4 @@
-import type { GateView, RunOutcome, StageMode, stages } from "@opusfinder/control";
+import { stages, type GateAnswer, type RunOutcome, type StageMode } from "@opusfinder/control";
 import type { DiscoveryCounts } from "@opusfinder/discovery";
 import type { IngestionCounts } from "@opusfinder/sources";
 
@@ -10,17 +10,11 @@ import type { IngestionCounts } from "@opusfinder/sources";
  * at the end. Nothing here throws into the tick: a slow, missing or failing control plane is logged and the
  * tick goes on (an unreadable gate is what will make an enforcing tick skip, so it is logged as "would skip").
  *
- * Only TYPES come from @opusfinder/control (erased at build): nothing of the control plane is bundled here.
+ * Of the control plane, only the pure registry (@opusfinder/control: each stage's modes) is bundled here.
  */
 
 /** The stages this Worker runs. */
 export type ScrapersStage = "ingest" | "discover";
-
-/** What the control Worker's gate() answers that this Worker reads: its GateView plus the latest change. */
-type GateAnswer = Pick<GateView, "mode" | "cappedBy" | "knobs"> & {
-  by: string | null;
-  because: string | null;
-};
 
 /** One ledger row, as the control Worker's recordRun() validates it: units must be ones the stage declares. */
 export interface RunRecord<S extends ScrapersStage = ScrapersStage> {
@@ -40,6 +34,12 @@ export interface ControlBinding {
   recordRun(run: RunRecord): Promise<unknown>;
 }
 
+/**
+ * The settings a tick actually runs with, keyed like the gate's: a stage knob by name (`boardsPerTick`), a
+ * policy by id (`close`, its mode) and a policy knob as `<policy>.<knob>` (`stale_sweep.ttlDays`).
+ */
+export type InUse = Readonly<Record<string, number | string>>;
+
 /** When the tick started and what its gate said (null = unreadable): shared by the tick's ledger row. */
 export interface TickStart {
   startedMs: number;
@@ -49,13 +49,20 @@ export interface TickStart {
 // A binding call normally answers in milliseconds; past this the gate counts as unreadable.
 export const GATE_TIMEOUT_MS = 2_000;
 
-/** The first line of `text`, capped: a drizzle error's second line is its bound params. */
-function firstLine(text: string, max: number): string {
+/**
+ * The first line of `text`, capped: what may leave the tick in a log row or a ping. A multi-line message (a
+ * stack, a wrapped drizzle `params:` line) must not get past its first newline.
+ */
+export function firstLine(text: string, max: number): string {
   return (text.split("\n")[0] ?? "").slice(0, max);
 }
 
 function errorLine(err: unknown): string {
-  return firstLine(err instanceof Error ? `${err.name}: ${err.message}` : String(err), 200);
+  try {
+    return firstLine(err instanceof Error ? `${err.name}: ${err.message}` : String(err), 200);
+  } catch {
+    return "unprintable error"; // e.g. a rejection value whose String() throws: still never thrown here
+  }
 }
 
 async function readGate(control: ControlBinding | undefined, stage: ScrapersStage) {
@@ -71,24 +78,37 @@ async function readGate(control: ControlBinding | undefined, stage: ScrapersStag
         );
       }),
     ]);
-    // Fail closed on an answer this Worker can't read, as an enforcing tick would.
-    if (!["off", "shadow", "on"].includes(gate?.mode)) throw new Error("malformed gate answer");
+    // Fail closed, as an enforcing tick would, on an answer this Worker can't read or a mode its stage
+    // doesn't have (the control Worker would refuse that mode in the ledger row too).
+    const modes: readonly string[] = stages[stage].modes;
+    if (!modes.includes(gate?.mode)) throw new Error("malformed gate answer");
     return gate;
   } finally {
     clearTimeout(timer);
   }
 }
 
+/** The gate's knobs and policies, keyed like {@link InUse}. */
+function gateValues(gate: GateAnswer): Record<string, number | string> {
+  const values: Record<string, number | string> = { ...gate.knobs };
+  for (const [id, policy] of Object.entries(gate.policies ?? {})) {
+    values[id] = policy.mode;
+    for (const [knob, value] of Object.entries(policy.knobs ?? {})) values[`${id}.${knob}`] = value;
+  }
+  return values;
+}
+
 /**
  * Read `stage`'s gate and log one line: `on (shadow: not enforced)`, or `would skip: …` when it says off
- * or can't be read within GATE_TIMEOUT_MS. Plus a drift line when the gate's knobs differ from `used`, the
- * values this tick actually runs with. Returns the gate's mode for the ledger row (null = unreadable).
- * Never throws; the caller runs the tick whatever it returns.
+ * or can't be read within GATE_TIMEOUT_MS. When it says on, another line names the slices its overrides
+ * turn off (e.g. `source=workable`). And a drift line when the gate's knobs or policies differ from
+ * `inUse`, what this tick actually runs with. Returns the gate's mode for the ledger row (null =
+ * unreadable). Never throws; the caller runs the tick whatever it returns.
  */
 export async function shadowGate(
   control: ControlBinding | undefined,
   stage: ScrapersStage,
-  used: Readonly<Record<string, number>>,
+  inUse: InUse,
 ): Promise<StageMode | null> {
   const tag = `control gate ${stage}:`;
   try {
@@ -101,13 +121,18 @@ export async function shadowGate(
       console.warn(`${tag} would skip: off (${why})`);
     } else {
       console.log(`${tag} ${gate.mode} (shadow: not enforced)`);
-    }
-    const drift = Object.entries(used)
-      .filter(([knob, value]) => gate.knobs?.[knob] !== value)
-      .map(
-        ([knob, value]) => `${knob} ${gate.knobs?.[knob] ?? "unset"} (gate) vs ${value} (in use)`,
+      const slices = Object.entries(gate.overrides ?? {}).flatMap(([dim, byValue]) =>
+        Object.entries(byValue ?? {})
+          .filter(([, mode]) => mode === "off")
+          .map(([value]) => `${dim}=${value}`),
       );
-    if (drift.length > 0) console.warn(`${tag} knobs differ, not enforced: ${drift.join(", ")}`);
+      if (slices.length > 0) console.warn(`${tag} would skip ${slices.join(", ")} (overrides)`);
+    }
+    const values = gateValues(gate);
+    const drift = Object.entries(inUse)
+      .filter(([key, value]) => values[key] !== value)
+      .map(([key, value]) => `${key} ${values[key] ?? "unset"} (gate) vs ${value} (in use)`);
+    if (drift.length > 0) console.warn(`${tag} settings differ, not enforced: ${drift.join(", ")}`);
     return gate.mode;
   } catch (err) {
     console.warn(`${tag} would skip: control plane unreadable (${errorLine(err)})`);
@@ -141,7 +166,7 @@ function timing(tick: TickStart, finishedMs: number) {
   return {
     startedAt: new Date(tick.startedMs).toISOString(),
     finishedAt: new Date(finishedMs).toISOString(),
-    durationMs: finishedMs - tick.startedMs,
+    durationMs: finishedMs - tick.startedMs, // also the row's cf.wall_ms
     gateMode: tick.gateMode,
   };
 }
@@ -155,12 +180,13 @@ export function ingestRun(
   counts: IngestionCounts,
 ): RunRecord<"ingest"> {
   const budgetStop = counts.processed < counts.companies;
+  const time = timing(tick, finishedMs);
   return {
     stage: "ingest",
     outcome: budgetStop ? "partial" : "ok",
-    ...timing(tick, finishedMs),
+    ...time,
     units: {
-      "cf.wall_ms": finishedMs - tick.startedMs,
+      "cf.wall_ms": time.durationMs,
       "ingest.boards": counts.processed,
       "ingest.boards_failed": counts.failed,
       "ingest.boards_rate_limited": counts.rateLimitSkipped,
@@ -181,11 +207,12 @@ export function discoverRun(
   finishedMs: number,
   counts: DiscoveryCounts,
 ): RunRecord<"discover"> {
+  const time = timing(tick, finishedMs);
   return {
     stage: "discover",
     outcome: "ok",
-    ...timing(tick, finishedMs),
-    units: { "cf.wall_ms": finishedMs - tick.startedMs },
+    ...time,
+    units: { "cf.wall_ms": time.durationMs },
     detail: [
       `${n(counts.candidates)} candidates`,
       `${n(counts.probed)} probed`,
@@ -203,11 +230,12 @@ export function errorRun(
   finishedMs: number,
   message: string,
 ): RunRecord {
+  const time = timing(tick, finishedMs);
   return {
     stage,
     outcome: "error",
-    ...timing(tick, finishedMs),
-    units: { "cf.wall_ms": finishedMs - tick.startedMs },
+    ...time,
+    units: { "cf.wall_ms": time.durationMs },
     detail: firstLine(message, 300),
   };
 }

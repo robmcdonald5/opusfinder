@@ -2,6 +2,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { stages } from "@opusfinder/control";
 import { build } from "esbuild";
 import { Miniflare } from "miniflare";
 
@@ -307,7 +308,7 @@ export async function startControl(
           RPC: {
             name: "control",
             entrypoint: "ControlRpc",
-            props: { name: "cf:opusfinder-scrapers" },
+            props: { name: stages.ingest.runtime }, // as the scrapers Worker's wrangler.toml sets it
           },
           RPC_ANON: { name: "control", entrypoint: "ControlRpc" },
           PLAIN: "control",

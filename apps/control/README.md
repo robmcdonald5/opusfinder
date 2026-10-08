@@ -253,19 +253,26 @@ pnpm exec wrangler d1 execute opusfinder-control --remote --command "UPDATE stat
 ## Runtimes wired
 
 **The scrapers Worker (`opusfinder-scrapers`), in SHADOW.** Its `CONTROL` service binding
-(`apps/scrapers/wrangler.toml`, props `name = "scrapers"`, so its rows read `runtime:scrapers`) reaches
-`ControlRpc`. Every `ingest` and `discover` tick reads its gate at the start (waiting at most ~2 s),
-runs exactly as before whatever the gate said, and writes one ledger row at the end, in `ctx.waitUntil`:
+(`apps/scrapers/wrangler.toml`; props `name` is the registry's runtime id, so its rows read
+`runtime:cf:opusfinder-scrapers`) reaches `ControlRpc`. Every `ingest` and `discover` tick reads its gate
+at the start (waiting at most ~2 s), runs exactly as before whatever the gate said, and writes one ledger
+row at the end, in `ctx.waitUntil`:
 
 - **Log:** one line per tick — `control gate ingest: on (shadow: not enforced)`,
   `control gate ingest: would skip: off (by <who>: <reason>)` or
-  `control gate ingest: would skip: control plane unreadable (<reason>)` — plus one when the gate's
-  knobs differ from what the tick runs with (`boardsPerTick` vs the resolved `INGEST_LIMIT`; `limit` /
-  `reprobeLimit` vs the Worker's constants).
+  `control gate ingest: would skip: control plane unreadable (<reason>)` (also for a mode the stage
+  doesn't have). While the stage is on, `control gate ingest: would skip source=workable (overrides)`
+  names the slices its overrides turn off. And
+  `control gate ingest: settings differ, not enforced: <key> <gate> (gate) vs <value> (in use), …` when
+  the gate's knobs or policies differ from what the tick runs with: `boardsPerTick` vs the resolved
+  `INGEST_LIMIT`; `limit` / `reprobeLimit` vs the Worker's constants; `close` / `stale_sweep` vs
+  `LIFECYCLE_CLOSE_ENFORCE` / `STALE_SWEEP`; `stale_sweep.ttlDays` vs `STALE_SWEEP_TTL_DAYS`.
 - **Ledger row:** `ok`, `partial` (the run budget stopped ingest early) or `error` (the tick threw;
   recorded before the re-throw); the gate mode it read (null when unreadable); the Worker's own
-  start/finish clock; `cf.wall_ms`; a one-line `detail`; and for ingest the work counts
-  `ingest.boards`, `ingest.boards_failed`, `ingest.boards_rate_limited` and `ingest.jobs_changed`.
+  start/finish clock; `cf.wall_ms`; a one-line `detail` (for an error, the watchdog's `describeDbError`
+  text: a failed query's Postgres reason first, never its params); and for ingest the work counts
+  `ingest.boards` (rate-limit-skipped boards included), `ingest.boards_failed`,
+  `ingest.boards_rate_limited` and `ingest.jobs_changed`.
 
 A control-plane failure (slow, unbound, refusing the row) is logged and never fails a tick, changes its
 outcome or skips a watchdog ping. `cf.subrequests` and `neon.awake_s` stay declared but unsent: the

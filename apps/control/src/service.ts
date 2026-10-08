@@ -16,7 +16,7 @@ import {
   stateViews,
   type Classification,
   type DimKey,
-  type GateView,
+  type GateAnswer,
   type StateMap,
   type Target,
 } from "@opusfinder/control";
@@ -173,13 +173,6 @@ export async function status(db: D1Database, caller: Caller, now: string) {
 }
 
 export type StatusView = Awaited<ReturnType<typeof status>>;
-
-export interface GateAnswer extends GateView {
-  /** S4: why the stage's own mode is what it is (the latest change to it). */
-  since: string | null;
-  by: string | null;
-  because: string | null;
-}
 
 // Every dimension the registry declares is a gate parameter: adding one to DIMENSIONS is enough.
 const DIM_PARAMS = Object.keys(DIMENSIONS) as DimKey[];

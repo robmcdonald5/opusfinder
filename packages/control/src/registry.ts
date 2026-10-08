@@ -1,12 +1,13 @@
 // The stage registry — the ONE place every switch is declared (control-surface architecture §5, §13).
-// The control Worker's API + page, `pnpm ctl`, the classify() policy and (later slices) the runtime gates
-// and guard:schedules all DERIVE their lists from this file; nothing else keeps its own copy.
+// The control Worker's API + page, `pnpm ctl`, the classify() policy, the runtime gates (the scrapers Worker,
+// in shadow) and (a later slice) guard:schedules all DERIVE their lists from this file; nothing else keeps
+// its own copy.
 //
-// WORKER-SAFE, PURE DATA + TYPES. This package is compiled into the control Worker (and, in a later slice,
-// the scrapers Worker), so: no `process`, no Buffer, no node:* imports, and NO workspace dependency at all —
-// never @opusfinder/db (and so never @opusfinder/db/health, the H1 landmine). `pnpm guard:worker` enforces
-// it (source scan + a browser-platform bundle with an inputs allow-list) and the control Worker's
-// node-types-free tsconfig fails on any Node global reached through this graph.
+// WORKER-SAFE, PURE DATA + TYPES. This package is compiled into the control Worker and the scrapers Worker
+// (which checks its gate's mode against `stages`), so: no `process`, no Buffer, no node:* imports, and NO
+// workspace dependency at all — never @opusfinder/db (and so never @opusfinder/db/health, the H1 landmine).
+// `pnpm guard:worker` enforces it (source scan + a browser-platform bundle with an inputs allow-list) and
+// the control Worker's node-types-free tsconfig fails on any Node global reached through this graph.
 
 /** A stage's run mode. `shadow` = run, compute and log what it WOULD do, spend/change nothing irreversible. */
 export type StageMode = "off" | "shadow" | "on";
@@ -48,7 +49,7 @@ export const UNIT_IDS = [
   "neon.awake_s",
   "gh.minutes",
   "r2.bytes",
-  "ingest.boards", // boards processed (a budget stop leaves the rest of the chunk for the next tick)
+  "ingest.boards", // boards the tick got through: ok, failed or rate-limit-skipped (not the budget-stopped rest)
   "ingest.boards_failed", // boards whose final outcome was an error
   "ingest.boards_rate_limited", // boards skipped while their ATS was cooling down from a 429
   "ingest.jobs_changed", // postings inserted or updated
