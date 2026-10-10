@@ -22,6 +22,17 @@ database_name = "opusfinder-control"
 database_id = "56897414-e7aa-4ca2-9864-b616bc5077d2"
 migrations_dir = "migrations"
 
+# Workers AI: reads the amount on each invoice the billing mailbox receives (src/statements.ts). Billed on
+# Workers Paid per use, a few invoices a month (inside the daily free allocation); capped at 50 model
+# reads a day (src/mailbox.ts).
+[ai]
+binding = "AI"
+
+# The billing mailbox: Email Routing sends this address to the Worker's email() handler (README "Billing
+# mailbox"); mail for any other address is refused. Not a secret: it's on every forwarded invoice.
+[vars]
+BILLING_ADDRESS = "billing@opusfinder.ai"
+
 # Secrets (never [vars] — they identify the account and the owner), set with `wrangler secret put`:
 #   ACCESS_TEAM_DOMAIN  https://<team>.cloudflareaccess.com
 #   ACCESS_AUD          the Access application's AUD tag

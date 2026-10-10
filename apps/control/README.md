@@ -11,20 +11,22 @@ switch can't wake the database (C4).
 
 **Not built yet** (by design): no runtime OBEYS the gate — the scrapers Worker reads it in shadow (see
 "Runtimes wired" below) and Inngest doesn't read it at all, so both keep obeying their env vars — no
-drift probes, no prices or reconciliation, no notifications, no observer agent.
+drift probes, no notifications, no observer agent.
 
 ## Pieces
 
-| Path                          | What                                                                                                                                                                                                                                      |
-| ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `packages/control`            | The pure registry (`registry.ts`), target addresses (`targets.ts`), the fail-closed resolver / `effectiveMode()` (`resolve.ts`), `classify(change, role)` (`classify.ts`) and the read models (`views.ts`). Worker-safe, dependency-free. |
-| `apps/control/src/index.ts`   | HTTP routing (JSON API + the page + its form posts) and the `ControlRpc` entrypoint.                                                                                                                                                      |
-| `apps/control/src/auth.ts`    | Caller identity from a verified Access token (default deny).                                                                                                                                                                              |
-| `apps/control/src/service.ts` | The operations, shared by API, page and RPC.                                                                                                                                                                                              |
-| `apps/control/src/store.ts`   | All SQL; the atomic state + change-log write.                                                                                                                                                                                             |
-| `apps/control/src/page.ts`    | The one server-rendered page.                                                                                                                                                                                                             |
-| `apps/control/migrations/`    | `0001_init.sql` (tables), `0002_seed.sql` (today's reality).                                                                                                                                                                              |
-| `packages/ctl`                | `pnpm ctl`, the Node CLI agents use.                                                                                                                                                                                                      |
+| Path                             | What                                                                                                                                                                                                                                      |
+| -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `packages/control`               | The pure registry (`registry.ts`), target addresses (`targets.ts`), the fail-closed resolver / `effectiveMode()` (`resolve.ts`), `classify(change, role)` (`classify.ts`) and the read models (`views.ts`). Worker-safe, dependency-free. |
+| `apps/control/src/index.ts`      | HTTP routing (JSON API + the page + its form posts) and the `ControlRpc` entrypoint.                                                                                                                                                      |
+| `apps/control/src/auth.ts`       | Caller identity from a verified Access token (default deny).                                                                                                                                                                              |
+| `apps/control/src/service.ts`    | The operations, shared by API, page and RPC.                                                                                                                                                                                              |
+| `apps/control/src/store.ts`      | All SQL; the atomic state + change-log write.                                                                                                                                                                                             |
+| `apps/control/src/ui/`           | The panel's server-rendered pages: `html.ts` (layout, nav, styles), `forms.ts` (the change forms), one module per section.                                                                                                                |
+| `apps/control/src/mailbox.ts`    | The billing mailbox: the `email()` handler's logic (Email Routing → one `statement` row per forwarded invoice).                                                                                                                           |
+| `apps/control/src/statements.ts` | Reading one invoice email: Gmail's forwarding code, the Workers AI read (JSON mode, PDF fallback), field validation.                                                                                                                      |
+| `apps/control/migrations/`       | `0001_init.sql` (tables), `0002_seed.sql` (today's reality), `0003_ledger_started.sql` (run-time indexes), `0004_statements.sql` (the Cost page's statements).                                                                            |
+| `packages/ctl`                   | `pnpm ctl`, the Node CLI agents use.                                                                                                                                                                                                      |
 
 ## Who can do what
 
@@ -74,20 +76,24 @@ type is 415 — and at most 16 KB, counted in bytes. Every POST that a browser m
 `cross_origin`), so another site can't drive the API with the owner's Access cookie. Errors are
 `{ "error": { "code", "message" } }`.
 
-| Route                                                                                               | Roles                          | What                                                                                                                                                                                                                    |
-| --------------------------------------------------------------------------------------------------- | ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GET /v1/status`                                                                                    | owner, agent                   | Every stage/policy/knob: desired + effective mode, last ledger row, recent changes, open proposals.                                                                                                                     |
-| `GET /v1/gate/:stage[?source=…&lane=…]`                                                             | all                            | "May I run, and with what settings?" — effective mode (narrowed to the slice), knobs, the policies the stage reads, set overrides, and `since`/`by`/`because`.                                                          |
-| `POST /v1/changes` `{target, value, reason, proposeIfNeeded?, dryRun?}`                             | owner, agent                   | Applies if `classify` allows; else **403 `needs_approval`** with a ready-to-send `propose` body, or — with `proposeIfNeeded: true` — files it and answers **202 `proposed`**. Re-setting the current value is a `noop`. |
-| `GET /v1/proposals[?status=all]`                                                                    | owner, agent                   | Open (default) or all proposals; `status` reads `expired` past 7 days. In `/v1/status`, each open proposal also says whether it is `stale` (see approve).                                                               |
-| `POST /v1/proposals` `{target, value, reason}`                                                      | owner, agent                   | File a proposal. Idempotent: an open one with the same target, current value and proposed value is returned (200, `duplicate: true`).                                                                                   |
-| `GET /v1/proposals/:id`                                                                             | owner, agent                   | One proposal.                                                                                                                                                                                                           |
-| `POST /v1/proposals/:id/approve` (optional `{note}`)                                                | owner                          | Applies it and closes it in **one D1 batch** — unless the target has moved off the value it was proposed from: then **409 `stale_proposal`**, closed as `stale` with the reason, nothing applied.                       |
-| `POST /v1/proposals/:id/reject` (optional `{note}`)                                                 | owner                          | Closes it.                                                                                                                                                                                                              |
-| `POST /v1/proposals/:id/withdraw` (no body)                                                         | the proposer                   | Takes it back.                                                                                                                                                                                                          |
-| `POST /v1/runs` `{stage, outcome, startedAt, finishedAt?, durationMs?, gateMode?, units?, detail?}` | runtime                        | One ledger row; units must be ones the stage declares, each 0 … 2^53−1; `durationMs` at most 7 days; out of range is 400 `invalid_run`.                                                                                 |
-| `POST /v1/trip` `{stage, reason: runaway\|error-storm, detail?}`                                    | runtime                        | Turns the stage off, logged.                                                                                                                                                                                            |
-| `GET /` and `POST /ui/…`                                                                            | owner (agents: read-only page) | The page and its same-origin form posts.                                                                                                                                                                                |
+| Route                                                                                                   | Roles                           | What                                                                                                                                                                                                                                |
+| ------------------------------------------------------------------------------------------------------- | ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /v1/status`                                                                                        | owner, agent                    | Every stage/policy/knob: desired + effective mode, last ledger row, when the stage is next due and whether it is `overdue` (from its `expect` period), run counts for the last 24 h (`recentRuns`), recent changes, open proposals. |
+| `GET /v1/runs[?stage=…&outcome=…&before=<id>&limit=…]`                                                  | owner, agent                    | The run ledger, newest start first, 50 per page (max 200); `more: true` means pass the last row's id as `before`.                                                                                                                   |
+| `GET /v1/changes[?stage=…&before=<id>&limit=…]`                                                         | owner, agent                    | The change log, newest first; `stage` keeps that stage's own targets (the stage, its knobs, its overrides).                                                                                                                         |
+| `GET /v1/cost[?month=YYYY-MM]`                                                                          | owner, agent                    | What vendors charged: totals per month and vendor, that month's statements, the review queue, the advisory target and the vendor ceilings. Amounts in US cents.                                                                     |
+| `POST /v1/statements` `{vendor, amount, chargedOn, kind?, periodStart?, reference?, note?}`             | owner, agent                    | Record a charge by hand (history, or a vendor that emails no invoice). A repeat of a recorded charge is stored as `duplicate`.                                                                                                      |
+| `GET /v1/gate/:stage[?source=…&lane=…]`                                                                 | all                             | "May I run, and with what settings?" — effective mode (narrowed to the slice), knobs, the policies the stage reads, set overrides, and `since`/`by`/`because`.                                                                      |
+| `POST /v1/changes` `{target, value, reason, proposeIfNeeded?, dryRun?}`                                 | owner, agent                    | Applies if `classify` allows; else **403 `needs_approval`** with a ready-to-send `propose` body, or — with `proposeIfNeeded: true` — files it and answers **202 `proposed`**. Re-setting the current value is a `noop`.             |
+| `GET /v1/proposals[?status=all]`                                                                        | owner, agent                    | Open (default) or all proposals; `status` reads `expired` past 7 days. In `/v1/status`, each open proposal also says whether it is `stale` (see approve).                                                                           |
+| `POST /v1/proposals` `{target, value, reason}`                                                          | owner, agent                    | File a proposal. Idempotent: an open one with the same target, current value and proposed value is returned (200, `duplicate: true`).                                                                                               |
+| `GET /v1/proposals/:id`                                                                                 | owner, agent                    | One proposal.                                                                                                                                                                                                                       |
+| `POST /v1/proposals/:id/approve` (optional `{note}`)                                                    | owner                           | Applies it and closes it in **one D1 batch** — unless the target has moved off the value it was proposed from: then **409 `stale_proposal`**, closed as `stale` with the reason, nothing applied.                                   |
+| `POST /v1/proposals/:id/reject` (optional `{note}`)                                                     | owner                           | Closes it.                                                                                                                                                                                                                          |
+| `POST /v1/proposals/:id/withdraw` (no body)                                                             | the proposer                    | Takes it back.                                                                                                                                                                                                                      |
+| `POST /v1/runs` `{stage, outcome, startedAt, finishedAt?, durationMs?, gateMode?, units?, detail?}`     | runtime                         | One ledger row; units must be ones the stage declares, each 0 … 2^53−1; `durationMs` at most 7 days; out of range is 400 `invalid_run`.                                                                                             |
+| `POST /v1/trip` `{stage, reason: runaway\|error-storm, detail?}`                                        | runtime                         | Turns the stage off, logged.                                                                                                                                                                                                        |
+| `GET /`, `/approvals`, `/stages`, `/stages/:id`, `/health`, `/runs`, `/cost`, `/activity`; `POST /ui/…` | owner (agents: read-only pages) | The panel: a home page of sections, each its own page, rendered from the reads above, and its same-origin form posts.                                                                                                               |
 
 Targets: `global`, `<stage>`, `<policy>`, `<entry>.<knob>`, `<stage>@<dim>=<value>` (e.g.
 `ingest@source=smartrecruiters`; value `inherit` clears an override, and an override at the stage's
@@ -99,7 +105,7 @@ RPC (`ControlRpc`, for a service binding): `gate(stage, dims?)`, `recordRun(run)
 
 ## Storage and the fail-closed rules
 
-D1 tables: `state` (one row per target), `change_log` (append-only), `proposal`, `ledger`. Every
+D1 tables: `state` (one row per target), `change_log` (append-only), `proposal`, `ledger`, `statement` (the billing mailbox). Every
 state change and its change-log row are written in the **same `db.batch()`** (one transaction), and
 both statements are conditional on the state still holding the value the caller was classified
 against — so a concurrent trip can't turn an agent's safe "on → shadow" into an unapproved
@@ -124,6 +130,70 @@ nixpkgs), as `curl -H "cf-access-jwt-assertion: $TOKEN" http://localhost:8787/v1
 Tests: `pnpm test` runs the Miniflare suites (`src/*.integration.test.ts`) — the real Worker bundle
 in workerd against a real local D1 with these migrations — plus the `packages/control` and
 `packages/ctl` unit tests.
+
+## Billing mailbox (the Cost page)
+
+The Cost page shows what each vendor actually charged, read from their own invoice emails (owner decision
+2026-10-10: statements, not a maintained price table or estimates). The owner's Gmail filter forwards
+vendor invoices to `BILLING_ADDRESS` (`billing@opusfinder.ai`, wrangler `[vars]`); Cloudflare Email Routing
+on `opusfinder.ai` sends that address to this Worker's `email()` handler, which records one `statement`
+row per email:
+
+- **Only what the owner forwarded.** Mail is accepted only when its envelope sender (`message.from`, which
+  Cloudflare treats as trustworthy; header addresses can be spoofed) is an `OWNER_EMAILS` address — a
+  Gmail forward arrives as `owner+caf_=…@gmail.com`, so the `+tag` (and, for Gmail, dots) are ignored —
+  plus Gmail's forwarding confirmation. Everything else is refused at the SMTP stage: no row, no model
+  read. Without this gate anyone who learned the address could put an invented charge in the totals.
+  UNVERIFIED until the first real forward: that Gmail's auto-forward envelope is the owner's address; if it
+  isn't, Gmail reports the bounce, and the Worker logs the refused domain.
+- **Read by a model.** Workers AI (`[ai]` binding, `@cf/meta/llama-3.3-70b-instruct-fp8-fast` in JSON
+  mode) reads vendor, kind, total, currency, charge date, service period and invoice number; when the body
+  has no total, the attached PDF (via `toMarkdown`) is read too. Every field is validated (real calendar
+  dates, a day of timezone slack); the email is untrusted text and the model has no tools.
+- **Never guessed.** No total, a currency other than USD, a failed model call, an unparseable or oversized
+  (> 10 MiB) email → status `review`, for the owner to count (with the amount, date and service period they
+  read) or exclude. Not a bill → `ignored`. Past 50 model reads in a UTC day the rest wait in `review`; past
+  100 emails a day mail is refused. A database error is not swallowed: the handler throws and Email Routing
+  reports a temporary failure, so the sender retries.
+- **Counted once.** A redelivered email (same `Message-ID`) is dropped; a second email for a recorded charge
+  (same vendor and invoice number, or — when either has no number — same vendor and amount within 3 days:
+  Stripe sends an invoice AND a receipt) is stored as `duplicate`. Different invoice numbers never merge.
+- **Filed by month.** Under the service period the invoice states, else the charge date. Prepaid credits
+  always go by the charge date (cash, not usage).
+- **Gmail's forwarding confirmation** (the code Gmail sends when the forwarding address is added) is shown
+  on the Cost page to the owner only; agents see neither the code nor the subject that repeats it.
+- Mail for any address other than `BILLING_ADDRESS` is rejected.
+
+**Scope** (owner, 2026-10-10): only what it costs to run opusfinder — Neon, Cloudflare (Workers Paid and
+the `opusfinder.ai` domain; not the account's other domains), Voyage AI, OpenRouter (the product's LLM
+calls), and Vercel if it bills again. Personal subscriptions (Claude Max) are out. The Gmail filter is
+where the scope is set; anything that slips through is excluded on the Cost page.
+
+Owner setup, once (notes in `research/rnd/email-forwarding-setup.md`):
+
+1. Apply the migrations and deploy (see "Shipping a change").
+2. Email Routing on `opusfinder.ai` (enabled 2026-10-10): Routing rules → custom address
+   `billing@opusfinder.ai` → action **Send to a Worker** → `opusfinder-control`. Make the rule in the
+   dashboard: Wrangler ≥ 4.113 can own routing rules through an `addresses` field in the Worker config, but
+   this repo's Wrangler is older, and using both makes the next deploy report a takeover conflict.
+3. Gmail → Settings → Forwarding → add `billing@opusfinder.ai`. Gmail's confirmation mail appears on the
+   Cost page under "Not counted", with its link (clickable, owner only) and code if it has one.
+4. A Gmail filter forwarding one email per charge from each in-scope vendor. It affects new mail only: forward
+   older invoices by hand with plain **Forward** (the mailbox reads the inlined original; an invoice forwarded
+   as an attachment isn't read and lands in review), or add them on the Cost page.
+
+## Shipping a change
+
+When a PR adds a migration under `apps/control/migrations/`, apply it to production **before** deploying the
+Worker, from `apps/control`:
+
+```bash
+pnpm exec wrangler d1 migrations apply opusfinder-control --remote   # lists, then applies, only the new ones
+pnpm exec wrangler deploy
+```
+
+A deploy without its migration still serves, but the queries the migration was written for run without
+their indexes, or fail outright when a table or column is missing.
 
 ## Owner provisioning checklist
 
@@ -302,6 +372,7 @@ Worker has no subrequest counter, and Neon awake time is an estimate for the cos
   (`.github/workflows/live-integration.yml`), the `discover` knobs' min/max, every `expect` period
   (update it with its cron), `embed.pagesPerRun`, `digest.topK`, `stale_sweep.ttlDays` and
   `alerts.cooldownH`.
+
 - Approvals don't force a fresh Access login (feasibility unverified).
 - Proposals expire lazily (read-time), with no notification.
 

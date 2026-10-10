@@ -3,7 +3,9 @@ import {
   INHERIT,
   PROPOSAL_TTL_MS,
   RUN_OUTCOMES,
+  STAGE_IDS,
   TRIP_REASONS,
+  cadence,
   classify,
   desiredValue,
   formatTarget,
@@ -17,8 +19,12 @@ import {
   type Classification,
   type DimKey,
   type GateAnswer,
+  type RunOutcome,
+  type StageId,
   type StateMap,
   type Target,
+  ceilings,
+  totalTargetUsdPerMonth,
 } from "@opusfinder/control";
 
 import type { Caller } from "./auth";
@@ -28,16 +34,34 @@ import {
   closeProposal,
   fileProposal,
   getProposal,
+  findSameCharge,
+  getStatement,
   insertRun,
+  insertStatement,
+  listChanges,
   listProposals,
+  listRuns,
+  readCost,
+  readCostSummary,
   readGate,
   readState,
   readStatus,
+  updateStatement,
   type ChangeRow,
   type Channel,
   type LedgerRow,
+  type NewStatement,
   type ProposalRow,
+  type StatementRow,
 } from "./store";
+import {
+  STATEMENT_KINDS,
+  cents,
+  filingMonth,
+  isGmailConfirmation,
+  validDay,
+  type StatementKind,
+} from "./statements";
 
 /**
  * The control plane's operations — shared by the JSON API, the page's forms and the RPC entrypoint, so
@@ -59,11 +83,26 @@ export class ApiError extends Error {
 }
 
 const RECENT_CHANGES = 30;
+/** The window `status().recentRuns` counts over: "what ran, and what failed, in the last 24 h" (S1). */
+const RECENT_RUNS_MS = 24 * 60 * 60 * 1000;
+/** Page sizes for the run and change lists (default / most a caller may ask for). */
+const LIST_DEFAULT = 50;
+const LIST_MAX = 200;
 const DETAIL_MAX = 500;
 /** A trip or a ledger write must not be lost to a concurrent change: re-read and retry this many times. */
 const TRIP_ATTEMPTS = 3;
 /** The longest run a ledger row may describe. Longer = a unit bug (e.g. seconds sent as ms·1000). */
 const MAX_RUN_DURATION_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * An error as one safe line: its name and the first line of its message, capped. A D1 error can quote SQL
+ * on later lines; nothing past the first is kept. Shared by the HTTP handler's log and the mailbox's notes.
+ */
+export function errorSummary(err: unknown): string {
+  return err instanceof Error
+    ? `${err.name}: ${(err.message.split("\n")[0] ?? "").slice(0, 200)}`
+    : "unknown error";
+}
 
 function requireRole(caller: Caller, ...roles: Caller["role"][]): void {
   if (!roles.includes(caller.role)) {
@@ -133,6 +172,8 @@ function proposalView(row: ProposalRow, now: string): ProposalView {
   };
 }
 
+export type RunView = ReturnType<typeof ledgerView>;
+
 function ledgerView(row: LedgerRow) {
   let units: unknown;
   try {
@@ -150,14 +191,31 @@ function currentValue(state: StateMap, address: string): string | null | undefin
 }
 
 export async function status(db: D1Database, caller: Caller, now: string) {
-  const s = await readStatus(db, now, RECENT_CHANGES);
+  const nowMs = Date.parse(now);
+  const since = new Date(nowMs - RECENT_RUNS_MS).toISOString();
+  const s = await readStatus(db, now, RECENT_CHANGES, since, STAGE_IDS);
+  const globalResumed = s.resumedAt.get("global");
   const views = stateViews(s.state);
   const lastRun = new Map(s.lastRuns.map((r) => [r.stage, ledgerView(r)]));
+  const byStage: Record<string, Partial<Record<RunOutcome, number>>> = {};
+  for (const c of s.runCounts) (byStage[c.stage] ??= {})[c.outcome as RunOutcome] = c.n;
   return {
     generatedAt: now,
     caller,
     global: views.global,
-    stages: views.stages.map((v) => ({ ...v, lastRun: lastRun.get(v.id) ?? null })),
+    stages: views.stages.map((v) => {
+      const last = lastRun.get(v.id) ?? null;
+      // ISO times sort as strings: the later of the stage's and the master switch's last resume.
+      const resumed = [s.resumedAt.get(v.id), globalResumed]
+        .filter((t) => t !== undefined)
+        .sort()
+        .at(-1);
+      return {
+        ...v,
+        lastRun: last,
+        ...cadence(v.expect, v.effective, last?.started_at, resumed, nowMs),
+      };
+    }),
     policies: views.policies,
     openProposals: s.proposals.map((p): OpenProposalView => {
       const current = currentValue(s.state, p.target);
@@ -169,7 +227,70 @@ export async function status(db: D1Database, caller: Caller, now: string) {
     }),
     closedProposals: s.closedProposals.map((p) => proposalView(p, now)),
     recentChanges: s.changes,
+    /** Runs that started in the last 24 h, per stage and outcome. */
+    recentRuns: { since, byStage },
   };
+}
+
+function listLimit(raw: unknown): number {
+  if (raw === undefined || raw === null || raw === "") return LIST_DEFAULT;
+  const n = Number(raw);
+  if (!Number.isSafeInteger(n) || n < 1 || n > LIST_MAX) {
+    throw new ApiError(400, "invalid_limit", `limit must be a whole number from 1 to ${LIST_MAX}`);
+  }
+  return n;
+}
+
+function beforeId(raw: unknown): number | undefined {
+  if (raw === undefined || raw === null || raw === "") return undefined;
+  const n = Number(raw);
+  if (!Number.isSafeInteger(n) || n < 1) {
+    throw new ApiError(400, "invalid_before", "before must be a positive whole number (a row id)");
+  }
+  return n;
+}
+
+function stageFilter(raw: unknown): StageId | undefined {
+  if (raw === undefined || raw === null || raw === "") return undefined;
+  if (typeof raw !== "string" || !isStageId(raw)) {
+    throw new ApiError(400, "invalid_stage", `stage must be one of: ${STAGE_IDS.join(", ")}`);
+  }
+  return raw;
+}
+
+/** Query parameters of the run and change lists, as strings (absent = no filter). */
+export type ListQuery = Partial<Record<"stage" | "outcome" | "before" | "limit", string | null>>;
+
+/** The run ledger, newest first: `GET /v1/runs` and the Runs page. */
+export async function runs(db: D1Database, q: ListQuery) {
+  const outcome = q.outcome || undefined;
+  if (outcome !== undefined && !(RUN_OUTCOMES as readonly string[]).includes(outcome)) {
+    throw new ApiError(
+      400,
+      "invalid_outcome",
+      `outcome must be one of: ${RUN_OUTCOMES.join(", ")}`,
+    );
+  }
+  const limit = listLimit(q.limit);
+  // One extra row says whether another page exists, without a count query.
+  const rows = await listRuns(db, {
+    stage: stageFilter(q.stage),
+    outcome,
+    beforeId: beforeId(q.before),
+    limit: limit + 1,
+  });
+  return { runs: rows.slice(0, limit).map(ledgerView), more: rows.length > limit };
+}
+
+/** The change log, newest first: `GET /v1/changes` and the Activity page. */
+export async function changes(db: D1Database, q: ListQuery) {
+  const limit = listLimit(q.limit);
+  const rows = await listChanges(db, {
+    stage: stageFilter(q.stage),
+    beforeId: beforeId(q.before),
+    limit: limit + 1,
+  });
+  return { changes: rows.slice(0, limit), more: rows.length > limit };
 }
 
 export type StatusView = Awaited<ReturnType<typeof status>>;
@@ -619,3 +740,176 @@ export async function trip(
 }
 
 export type { ChangeRow };
+
+// ---------- cost: statements from the vendors' own invoice emails ----------
+
+const MONTH = /^\d{4}-\d{2}$/;
+
+/**
+ * A statement as the API and page show it. Gmail's forwarding code (in the confirmation's subject AND body,
+ * kept in note) is the owner's alone: with it, whoever controls the billing address could finish setting up
+ * forwarding from the owner's inbox.
+ */
+function statementView(row: StatementRow, caller: Caller) {
+  if (caller.role === "owner" || !isGmailConfirmation(row.sender)) return row;
+  return {
+    ...row,
+    subject: "Gmail forwarding confirmation",
+    note: "The confirmation code is shown to the owner only.",
+  };
+}
+
+export type StatementView = ReturnType<typeof statementView>;
+
+/** `GET /v1/cost` and the Cost page: totals per month and vendor, one month's statements, the review queue. */
+export async function cost(
+  db: D1Database,
+  caller: Caller,
+  monthParam: string | null,
+  now: string,
+  billingAddress: string | null = null,
+) {
+  const current = now.slice(0, 7);
+  const month = monthParam || current;
+  if (!MONTH.test(month)) throw new ApiError(400, "invalid_month", "month must look like YYYY-MM");
+  const c = await readCost(db, month);
+  const months = new Map<
+    string,
+    { month: string; cents: number; vendors: { vendor: string; cents: number; n: number }[] }
+  >();
+  for (const t of c.totals) {
+    const m = months.get(t.month) ?? { month: t.month, cents: 0, vendors: [] };
+    m.cents += t.cents;
+    m.vendors.push({ vendor: t.vendor ?? "unknown", cents: t.cents, n: t.n });
+    months.set(t.month, m);
+  }
+  const view = (r: StatementRow) => statementView(r, caller);
+  return {
+    generatedAt: now,
+    month,
+    currentMonth: current,
+    /** Advisory (owner decision T4), not a cap. */
+    targetUsdPerMonth: totalTargetUsdPerMonth,
+    /** Where the owner's invoice filter forwards to. */
+    billingAddress,
+    /** Newest first; only months with a recorded statement. Amounts in US cents. */
+    months: [...months.values()],
+    statements: c.rows.map(view),
+    /** The newest 50 waiting for the owner; `reviewCount` is how many wait in all. */
+    review: c.review.map(view),
+    reviewCount: c.reviewCount,
+    notCounted: c.notCounted.map(view),
+    ceilings,
+  };
+}
+
+export type CostView = Awaited<ReturnType<typeof cost>>;
+
+function statementFields(body: unknown, now: string) {
+  const vendor =
+    typeof field(body, "vendor") === "string" ? String(field(body, "vendor")).trim() : "";
+  if (vendor.length < 1 || vendor.length > 80)
+    throw new ApiError(400, "invalid_vendor", "vendor is required (at most 80 characters)");
+  const amount = cents(field(body, "amount") as string | number);
+  if (amount === null)
+    throw new ApiError(400, "invalid_amount", "amount is the USD total charged, e.g. 8.42");
+  const chargedOn = validDay(field(body, "chargedOn"), now);
+  if (!chargedOn)
+    throw new ApiError(
+      400,
+      "invalid_date",
+      "chargedOn is the charge date: a real YYYY-MM-DD date, from 2020 on, not after tomorrow",
+    );
+  const periodRaw = field(body, "periodStart");
+  const periodStart = periodRaw === undefined || periodRaw === "" ? null : validDay(periodRaw, now);
+  if (periodRaw !== undefined && periodRaw !== "" && !periodStart)
+    throw new ApiError(400, "invalid_date", "periodStart, when given, is a real YYYY-MM-DD date");
+  const kindRaw = field(body, "kind") ?? "other";
+  if (typeof kindRaw !== "string" || !(STATEMENT_KINDS as readonly string[]).includes(kindRaw))
+    throw new ApiError(400, "invalid_kind", `kind is one of: ${STATEMENT_KINDS.join(", ")}`);
+  return {
+    vendor,
+    amount_cents: amount,
+    charged_on: chargedOn,
+    period_start: periodStart,
+    kind: kindRaw as StatementKind,
+    reference: oneLine(field(body, "reference"), 80),
+    note: oneLine(field(body, "note"), 300),
+  };
+}
+
+/** Record a statement by hand (history from before the mailbox, or a vendor that doesn't email one). */
+export async function addStatement(db: D1Database, caller: Caller, body: unknown, now: string) {
+  requireRole(caller, "owner", "agent");
+  const f = statementFields(body, now);
+  const same = await findSameCharge(db, f);
+  const row: NewStatement = {
+    received_at: now,
+    source: "manual",
+    message_id: null,
+    sender: null,
+    subject: null,
+    ...f,
+    currency: "USD",
+    month: filingMonth(f.kind, f.period_start, f.charged_on),
+    status: same === null ? "recorded" : "duplicate",
+    note: same === null ? f.note : `Same charge as #${same}.${f.note ? ` ${f.note}` : ""}`,
+    updated_at: now,
+    updated_by: actorLabel(caller),
+  };
+  const id = await insertStatement(db, row);
+  return { statement: { id, ...row }, duplicateOf: same };
+}
+
+/**
+ * The owner's decision on one statement: count it (with the fields they confirmed or corrected) or exclude
+ * it. Counting what the mailbox flagged as a duplicate is allowed: the owner knows two charges apart.
+ */
+export async function reviewStatement(
+  db: D1Database,
+  caller: Caller,
+  id: number,
+  action: string | null,
+  body: unknown,
+  now: string,
+) {
+  requireRole(caller, "owner");
+  const row = await getStatement(db, id);
+  if (!row) throw new ApiError(404, "not_found", `no statement #${id}`);
+  if (action === "exclude") {
+    await updateStatement(db, id, {
+      ...row,
+      status: "excluded",
+      updated_at: now,
+      updated_by: actorLabel(caller),
+    });
+    return "excluded" as const;
+  }
+  if (action !== "count") throw new ApiError(400, "invalid_action", "action is count or exclude");
+  const f = statementFields(body, now);
+  // The owner's form carries the service period too (pre-filled with what the model read): their answer
+  // decides the month, so a misread period can be corrected or cleared.
+  await updateStatement(db, id, {
+    vendor: f.vendor,
+    kind: f.kind,
+    amount_cents: f.amount_cents,
+    currency: "USD",
+    charged_on: f.charged_on,
+    period_start: f.period_start,
+    month: filingMonth(f.kind, f.period_start, f.charged_on),
+    status: "recorded",
+    // The review reason ("no total found", …) no longer applies once the owner has confirmed the fields.
+    note: f.note,
+    updated_at: now,
+    updated_by: actorLabel(caller),
+  });
+  return "counted" as const;
+}
+
+/** The home page's Cost card: this month's recorded total and how many statements wait for the owner. */
+export async function costSummary(db: D1Database, now: string) {
+  const s = await readCostSummary(db, now.slice(0, 7));
+  return { ...s, month: now.slice(0, 7), targetUsdPerMonth: totalTargetUsdPerMonth };
+}
+
+export type CostSummary = Awaited<ReturnType<typeof costSummary>>;

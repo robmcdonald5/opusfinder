@@ -3,9 +3,15 @@
  * at provisioning, see README) — never a `[vars]` entry — so no team domain, AUD tag, owner email or
  * service-token client id is ever committed to the repo.
  */
+import type { InvoiceAi } from "./statements";
+
 export interface Env {
-  /** D1 `opusfinder-control`: state, change_log, proposal, ledger. */
+  /** D1 `opusfinder-control`: state, change_log, proposal, ledger, statement. */
   DB: D1Database;
+  /** Workers AI (wrangler `[ai]`): reads the amount on a forwarded invoice. Absent → the owner reads it. */
+  AI?: InvoiceAi;
+  /** The address the owner's invoice filter forwards to (wrangler `[vars]`); mail for any other is refused. */
+  BILLING_ADDRESS?: string;
   /** `https://<team>.cloudflareaccess.com` — the Access issuer and the JWKS host. */
   ACCESS_TEAM_DOMAIN?: string;
   /** The Access application's AUD tag (Zero Trust → Access → Applications → the Worker's app). */

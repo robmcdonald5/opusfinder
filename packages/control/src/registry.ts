@@ -126,6 +126,13 @@ export interface StageDef {
   initial: StageMode;
   /** C5. Every stage skips if the store can't be read; kept explicit so the panel can show it. */
   onUnreadable: "skip";
+  /**
+   * How far this stage's runtime has been wired to the control plane (§12.2), so the panel can say whether
+   * flipping it changes anything yet: "unwired" = the runtime never reads its gate (its env vars, constants
+   * and vendor pauses still rule); "shadow" = it reads and logs the gate, then runs exactly as before;
+   * "enforced" = the gate decides. Change it in the PR that changes the runtime.
+   */
+  gate: "unwired" | "shadow" | "enforced";
   units: readonly UnitId[];
   dims?: readonly DimKey[];
   knobs?: Readonly<Record<string, Knob>>;
@@ -191,6 +198,7 @@ export const stages = {
     modes: ["off", "on"],
     initial: "on",
     onUnreadable: "skip",
+    gate: "shadow",
     units: [
       "cf.wall_ms",
       "cf.subrequests",
@@ -226,6 +234,7 @@ export const stages = {
     modes: ["off", "on"],
     initial: "on",
     onUnreadable: "skip",
+    gate: "shadow",
     units: ["cf.wall_ms", "cf.subrequests", "neon.awake_s"],
     dims: ["lane"],
     knobs: {
@@ -257,6 +266,7 @@ export const stages = {
     shadowMeans: "count the backlog and estimate tokens; no Voyage calls",
     initial: "off",
     onUnreadable: "skip",
+    gate: "unwired",
     units: ["voyage.tokens", "neon.awake_s"],
     knobs: {
       // was MAX_PAGES_PER_RUN
@@ -290,6 +300,7 @@ export const stages = {
     modes: ["off", "on"],
     initial: "off",
     onUnreadable: "skip",
+    gate: "unwired",
     units: ["resend.emails", "neon.awake_s"],
     // Turning alerting off is how an outage goes unseen, so — like the health checks — every agent move
     // here, the cooldown knob included, needs the owner (decision 2026-10-04).
@@ -318,6 +329,7 @@ export const stages = {
     shadowMeans: "resolve eligible users and retrieve candidates; no LLM, no email",
     initial: "off",
     onUnreadable: "skip",
+    gate: "unwired",
     units: [
       "anthropic.haiku.in",
       "anthropic.haiku.out",
@@ -349,6 +361,7 @@ export const stages = {
     modes: ["off", "on"],
     initial: "off",
     onUnreadable: "skip",
+    gate: "unwired",
     units: ["gh.minutes", "voyage.tokens", "neon.awake_s"],
     expect: { everyMin: 24 * 60, graceMin: 180 }, // GitHub schedules can be delayed or dropped
   },
@@ -359,6 +372,7 @@ export const stages = {
     modes: ["off", "on"],
     initial: "on",
     onUnreadable: "skip",
+    gate: "unwired",
     units: ["anthropic.haiku.in", "anthropic.haiku.out", "r2.bytes"],
   },
 } as const satisfies Record<string, StageDef>;
@@ -469,9 +483,10 @@ export type PolicyId = keyof typeof policies;
 export const ceilings = {
   neonMaxCu: { value: 8, where: "Neon console", probe: "manual" },
   voyageAutoRecharge: { value: "unknown", where: "Voyage dashboard", probe: "manual" },
-  anthropicMonthlyLimit: {
+  // Owner decision 2026-10-10: the product's LLM calls go through OpenRouter (prepaid credits).
+  openrouterCredits: {
     value: "unknown",
-    where: "Anthropic Console > Billing / workspace Spend limits",
+    where: "OpenRouter > Settings > Credits (auto top-up) and per-key credit limits",
     probe: "manual",
   },
 } as const;

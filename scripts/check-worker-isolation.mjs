@@ -90,7 +90,8 @@ const WORKERS = [
   },
   {
     // The control plane holds no Neon credential and must not be able to import one: @opusfinder/db is
-    // forbidden on top of the scrapers list, and the bundle may contain nothing but these two source dirs.
+    // forbidden on top of the scrapers list, and the bundle may contain nothing but these two source dirs
+    // plus postal-mime (the dependency-free MIME parser the statements mailbox reads invoices with).
     name: "control",
     src: "apps/control/src",
     entry: "apps/control/src/index.ts",
@@ -98,7 +99,11 @@ const WORKERS = [
     scanTests: false,
     forbiddenImports: [...FORBIDDEN_IMPORTS, "@opusfinder/db"],
     forbiddenDeps: [...FORBIDDEN_DEPS, "@opusfinder/db"],
-    allowedBundlePrefixes: ["apps/control/src/", "packages/control/src/"],
+    allowedBundlePrefixes: [
+      "apps/control/src/",
+      "packages/control/src/",
+      "node_modules/.pnpm/postal-mime@",
+    ],
     external: ["cloudflare:workers"],
   },
 ];

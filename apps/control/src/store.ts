@@ -78,20 +78,34 @@ export async function readState(db: D1Database): Promise<Map<string, string>> {
   return new Map(results.map((r) => [r.key, r.value]));
 }
 
+export interface RunCount {
+  stage: string;
+  outcome: string;
+  n: number;
+}
+
 /** Everything /v1/status needs, in one round trip (one batch = one consistent snapshot). */
 export async function readStatus(
   db: D1Database,
   now: string,
   changeLimit: number,
+  runsSince: string,
+  /** The stages to report a last run for (the registry's ids). */
+  stageIds: readonly string[],
 ): Promise<{
   state: StateMap;
   changes: ChangeRow[];
   proposals: ProposalRow[];
   /** The latest proposals that are no longer open (decided, stale or lapsed), newest first. */
   closedProposals: ProposalRow[];
+  /** Each stage's latest run by START (a row is written when its run ends). */
   lastRuns: LedgerRow[];
+  /** Runs started at or after `runsSince`, counted per stage and outcome. */
+  runCounts: RunCount[];
+  /** When the master switch and each stage were last turned back on from off: target → ISO time. */
+  resumedAt: Map<string, string>;
 }> {
-  const [state, changes, proposals, closed, runs] = await db.batch([
+  const [state, changes, proposals, closed, runs, counts, resumed] = await db.batch([
     db.prepare("SELECT key, value FROM state"),
     db.prepare(`${CHANGE_SELECT} ORDER BY c.id DESC LIMIT ?`).bind(changeLimit),
     db
@@ -104,7 +118,26 @@ export async function readStatus(
         "SELECT * FROM proposal WHERE status <> 'open' OR expires_at <= ? ORDER BY id DESC LIMIT 10",
       )
       .bind(now),
-    db.prepare("SELECT * FROM ledger WHERE id IN (SELECT MAX(id) FROM ledger GROUP BY stage)"),
+    // One index seek per stage on (stage, started_at, id), instead of scanning the whole ledger.
+    db
+      .prepare(
+        `SELECT * FROM ledger WHERE id IN (
+           SELECT (SELECT id FROM ledger WHERE stage = j.value ORDER BY started_at DESC, id DESC LIMIT 1)
+           FROM json_each(?) AS j)`,
+      )
+      .bind(JSON.stringify(stageIds)),
+    db
+      .prepare(
+        "SELECT stage, outcome, COUNT(*) AS n FROM ledger WHERE started_at >= ? GROUP BY stage, outcome",
+      )
+      .bind(runsSince),
+    db
+      .prepare(
+        `SELECT target, MAX(at) AS at FROM change_log
+         WHERE target IN (SELECT value FROM json_each(?)) AND from_value = 'off' AND to_value <> 'off'
+         GROUP BY target`,
+      )
+      .bind(JSON.stringify(["global", ...stageIds])),
   ]);
   const rows = (state?.results ?? []) as { key: string; value: string }[];
   return {
@@ -113,6 +146,10 @@ export async function readStatus(
     proposals: (proposals?.results ?? []) as ProposalRow[],
     closedProposals: (closed?.results ?? []) as ProposalRow[],
     lastRuns: (runs?.results ?? []) as LedgerRow[],
+    runCounts: (counts?.results ?? []) as RunCount[],
+    resumedAt: new Map(
+      ((resumed?.results ?? []) as { target: string; at: string }[]).map((r) => [r.target, r.at]),
+    ),
   };
 }
 
@@ -326,6 +363,54 @@ export interface NewRun {
   recordedBy: string;
 }
 
+export interface RunFilter {
+  stage?: string;
+  outcome?: string;
+  /** Only rows that sort after this row (paging: pass the last id of the previous page). */
+  beforeId?: number;
+  limit: number;
+}
+
+/**
+ * Ledger rows, newest START first (a row is written when its run ends, so id order would put a short run
+ * that started later above a long one still going). Paging is by the last row of the previous page:
+ * everything that sorts after it on (started_at, id). Every filter is a bound parameter (NULL = no filter).
+ */
+export async function listRuns(db: D1Database, f: RunFilter): Promise<LedgerRow[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT * FROM ledger
+       WHERE (?1 IS NULL OR stage = ?1) AND (?2 IS NULL OR outcome = ?2)
+         AND (?3 IS NULL OR (started_at, id) < (SELECT started_at, id FROM ledger WHERE id = ?3))
+       ORDER BY started_at DESC, id DESC LIMIT ?4`,
+    )
+    .bind(f.stage ?? null, f.outcome ?? null, f.beforeId ?? null, f.limit)
+    .all<LedgerRow>();
+  return results;
+}
+
+export interface ChangeFilter {
+  /** A stage's own targets: the stage itself, its knobs (`<stage>.<knob>`) and overrides (`<stage>@…`). */
+  stage?: string;
+  beforeId?: number;
+  limit: number;
+}
+
+/** Change-log rows, newest first. */
+export async function listChanges(db: D1Database, f: ChangeFilter): Promise<ChangeRow[]> {
+  // substr, not LIKE: stage ids contain "_", a LIKE wildcard.
+  const { results } = await db
+    .prepare(
+      `${CHANGE_SELECT}
+       WHERE (?1 IS NULL OR c.target = ?1 OR substr(c.target, 1, length(?1) + 1) IN (?1 || '.', ?1 || '@'))
+         AND (?2 IS NULL OR c.id < ?2)
+       ORDER BY c.id DESC LIMIT ?3`,
+    )
+    .bind(f.stage ?? null, f.beforeId ?? null, f.limit)
+    .all<ChangeRow>();
+  return results;
+}
+
 export async function insertRun(db: D1Database, run: NewRun): Promise<number> {
   const row = await db
     .prepare(
@@ -347,4 +432,215 @@ export async function insertRun(db: D1Database, run: NewRun): Promise<number> {
     .first<{ id: number }>();
   if (!row) throw new Error("ledger insert returned no row");
   return row.id;
+}
+
+// ---- Statements (the Cost page: what each vendor actually charged) ----
+
+export interface StatementRow {
+  id: number;
+  received_at: string;
+  source: "email" | "manual";
+  message_id: string | null;
+  sender: string | null;
+  subject: string | null;
+  vendor: string | null;
+  kind: string;
+  amount_cents: number | null;
+  currency: string | null;
+  charged_on: string | null;
+  period_start: string | null;
+  month: string | null;
+  reference: string | null;
+  status: "recorded" | "review" | "duplicate" | "ignored" | "excluded";
+  note: string | null;
+  updated_at: string;
+  updated_by: string;
+}
+
+export type NewStatement = Omit<StatementRow, "id">;
+
+/** True when an email with this Message-ID was already received (a redelivery or a second forward). */
+export async function statementExists(db: D1Database, messageId: string): Promise<boolean> {
+  return (
+    (await db.prepare("SELECT 1 FROM statement WHERE message_id = ?").bind(messageId).first()) !==
+    null
+  );
+}
+
+/** Emails received since `since` (the mailbox's daily cap on model reads). */
+export async function emailsSince(db: D1Database, since: string): Promise<number> {
+  const row = await db
+    .prepare("SELECT COUNT(*) AS n FROM statement WHERE source = 'email' AND received_at >= ?")
+    .bind(since)
+    .first<{ n: number }>();
+  return row?.n ?? 0;
+}
+
+/**
+ * The recorded statement this one repeats, if any: the same vendor and invoice number, or — when either
+ * side has no number — the same vendor and amount charged within 3 days. Two numbered invoices with
+ * different numbers are two charges, however alike (two domain renewals on one day). Vendors billing through Stripe send an invoice AND a
+ * receipt for one charge; forwarding both must not count it twice.
+ */
+export async function findSameCharge(
+  db: D1Database,
+  s: {
+    vendor: string | null;
+    reference: string | null;
+    amount_cents: number | null;
+    charged_on: string | null;
+  },
+): Promise<number | null> {
+  if (!s.vendor) return null;
+  const row = await db
+    .prepare(
+      `SELECT id FROM statement
+       WHERE status = 'recorded' AND lower(vendor) = lower(?1)
+         AND ((?2 IS NOT NULL AND reference = ?2)
+           OR ((?2 IS NULL OR reference IS NULL) AND ?3 IS NOT NULL AND amount_cents = ?3
+               AND ?4 IS NOT NULL AND abs(julianday(charged_on) - julianday(?4)) <= 3))
+       ORDER BY id LIMIT 1`,
+    )
+    .bind(s.vendor, s.reference, s.amount_cents, s.charged_on)
+    .first<{ id: number }>();
+  return row?.id ?? null;
+}
+
+/** Insert one statement; a Message-ID seen before is ignored (returns null). */
+export async function insertStatement(db: D1Database, s: NewStatement): Promise<number | null> {
+  const row = await db
+    .prepare(
+      `INSERT INTO statement (received_at, source, message_id, sender, subject, vendor, kind, amount_cents,
+         currency, charged_on, period_start, month, reference, status, note, updated_at, updated_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT (message_id) DO NOTHING RETURNING id`,
+    )
+    .bind(
+      s.received_at,
+      s.source,
+      s.message_id,
+      s.sender,
+      s.subject,
+      s.vendor,
+      s.kind,
+      s.amount_cents,
+      s.currency,
+      s.charged_on,
+      s.period_start,
+      s.month,
+      s.reference,
+      s.status,
+      s.note,
+      s.updated_at,
+      s.updated_by,
+    )
+    .first<{ id: number }>();
+  return row?.id ?? null;
+}
+
+export async function getStatement(db: D1Database, id: number): Promise<StatementRow | null> {
+  return db.prepare("SELECT * FROM statement WHERE id = ?").bind(id).first<StatementRow>();
+}
+
+/** The owner's correction: the fields they confirmed, and whether it counts. */
+export async function updateStatement(
+  db: D1Database,
+  id: number,
+  s: Pick<
+    StatementRow,
+    | "vendor"
+    | "kind"
+    | "amount_cents"
+    | "currency"
+    | "charged_on"
+    | "period_start"
+    | "month"
+    | "status"
+    | "note"
+    | "updated_at"
+    | "updated_by"
+  >,
+): Promise<boolean> {
+  const res = await db
+    .prepare(
+      `UPDATE statement SET vendor = ?2, kind = ?3, amount_cents = ?4, currency = ?5, charged_on = ?6,
+         period_start = ?7, month = ?8, status = ?9, note = ?10, updated_at = ?11, updated_by = ?12
+       WHERE id = ?1`,
+    )
+    .bind(
+      id,
+      s.vendor,
+      s.kind,
+      s.amount_cents,
+      s.currency,
+      s.charged_on,
+      s.period_start,
+      s.month,
+      s.status,
+      s.note,
+      s.updated_at,
+      s.updated_by,
+    )
+    .run();
+  return res.meta.changes === 1;
+}
+
+export interface MonthVendorTotal {
+  month: string;
+  vendor: string;
+  cents: number;
+  n: number;
+}
+
+/** Everything the Cost page needs, in one batch: totals per month and vendor, one month's rows, the queue. */
+export async function readCost(
+  db: D1Database,
+  month: string,
+): Promise<{
+  totals: MonthVendorTotal[];
+  rows: StatementRow[];
+  review: StatementRow[];
+  reviewCount: number;
+  notCounted: StatementRow[];
+}> {
+  const [totals, rows, review, reviewCount, notCounted] = await db.batch([
+    db.prepare(
+      `SELECT month, vendor, SUM(amount_cents) AS cents, COUNT(*) AS n FROM statement
+       WHERE status = 'recorded' AND month IS NOT NULL GROUP BY month, vendor ORDER BY month DESC, cents DESC`,
+    ),
+    db
+      .prepare(
+        "SELECT * FROM statement WHERE month = ? AND status = 'recorded' ORDER BY charged_on DESC, id DESC",
+      )
+      .bind(month),
+    db.prepare("SELECT * FROM statement WHERE status = 'review' ORDER BY id DESC LIMIT 50"),
+    db.prepare("SELECT COUNT(*) AS n FROM statement WHERE status = 'review'"),
+    db.prepare(
+      "SELECT * FROM statement WHERE status IN ('duplicate', 'ignored', 'excluded') ORDER BY id DESC LIMIT 20",
+    ),
+  ]);
+  return {
+    totals: (totals?.results ?? []) as MonthVendorTotal[],
+    rows: (rows?.results ?? []) as StatementRow[],
+    review: (review?.results ?? []) as StatementRow[],
+    reviewCount: ((reviewCount?.results ?? [])[0] as { n: number } | undefined)?.n ?? 0,
+    notCounted: (notCounted?.results ?? []) as StatementRow[],
+  };
+}
+
+/** The home page's Cost card, without the page's lists: one month's recorded total, the review count. */
+export async function readCostSummary(
+  db: D1Database,
+  month: string,
+): Promise<{ cents: number; recorded: number; reviewCount: number }> {
+  const row = await db
+    .prepare(
+      `SELECT
+         (SELECT COALESCE(SUM(amount_cents), 0) FROM statement WHERE status = 'recorded' AND month = ?1) AS cents,
+         (SELECT COUNT(*) FROM statement WHERE status = 'recorded') AS recorded,
+         (SELECT COUNT(*) FROM statement WHERE status = 'review') AS reviewCount`,
+    )
+    .bind(month)
+    .first<{ cents: number; recorded: number; reviewCount: number }>();
+  return row ?? { cents: 0, recorded: 0, reviewCount: 0 };
 }
