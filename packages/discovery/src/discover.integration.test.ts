@@ -385,7 +385,7 @@ describe("runDiscovery — orchestration over real PGlite (fetch stubbed)", () =
       });
       afterAll(async () => {
         await truncate(db, companies, jobs, sourceRuns); // a seeded alias pair would fail the rebuild
-        await pg.exec(indexdef);
+        if (indexdef) await pg.exec(indexdef); // unset if beforeAll failed: keep its error the visible one
       });
 
       // Both seed orders, so the ACTIVE variant must win however listCompanyStates happens to order the rows

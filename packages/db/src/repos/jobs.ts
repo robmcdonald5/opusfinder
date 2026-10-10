@@ -62,7 +62,8 @@ export function listCompanies(
  * that insert raises on it instead, and this returns the stored row's id: like the conflict path above it
  * writes nothing, so the stored casing, `active` and the timestamps stay as they are. The same catch
  * resolves two writers racing to insert one new board in one casing (only one index is the arbiter). Any
- * other failure, or a violation with no stored row left to find, is rethrown as is.
+ * other failure, or a violation with no stored row left to find, is rethrown as is. NOT transaction-safe:
+ * the failed INSERT aborts an enclosing transaction, so the fold's SELECT would fail (no caller uses one).
  */
 export async function upsertCompany(
   db: Db,
