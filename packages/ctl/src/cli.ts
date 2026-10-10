@@ -201,7 +201,9 @@ function formatStatus(s: Json): string {
       (c) =>
         `  ${short(c.at)} ${String(c.target)}: ${val(c.from_value as string | null)} → ${val(
           c.to_value as string | null,
-        )} by ${String(c.actor_role)}:${String(c.actor_name)} (${String(c.channel)}) — ${String(c.reason)}`,
+        )} by ${String(c.actor_role)}:${String(c.actor_name)} (${String(c.channel)})${
+          typeof c.reason === "string" ? ` — ${c.reason}` : ""
+        }`,
     ),
   );
   return out.join("\n");

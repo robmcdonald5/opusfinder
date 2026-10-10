@@ -390,14 +390,14 @@ describe("the Cost page", () => {
     expect(owner).toContain("$8.42");
     expect(owner).toContain("Needs your review (1)");
     expect(owner).toContain("Invoice with a PDF");
-    expect(owner).toContain(`<code>${BILLING_ADDRESS}</code>`);
     expect(owner).toContain('action="/ui/statements"');
     const agent = await (await h.request("/cost", { as: "agent" })).text();
     expect(agent).toContain("$8.42");
     expect(agent).not.toContain('method="post"');
     const home = await (await h.request("/", { as: "owner" })).text();
-    expect(home).toContain("$8.42 this month");
-    expect(home).toContain("1 to review");
+    expect(home).toContain("Spend this month");
+    expect(home).toContain(">$8.42<");
+    expect(home).toContain("1 charge to review");
   });
 
   it("lets the owner count a reviewed statement with the amount they read, or exclude one", async () => {
@@ -583,6 +583,48 @@ describe("the Cost page", () => {
     });
     expect(await (await h.request("/cost?month=2026-07", { as: "owner" })).text()).toContain(
       "Pro plan",
+    );
+  });
+
+  it("shows a period of whole months picked on the calendar, and keeps ?month= working", async () => {
+    for (const [vendor, chargedOn] of [
+      ["Neon", "2026-08-01"],
+      ["Vercel", "2026-09-13"],
+      ["Voyage AI", "2026-10-02"],
+    ])
+      await h.request("/v1/statements", {
+        as: "owner",
+        json: { vendor, amount: "5.00", chargedOn, kind: "subscription" },
+      });
+    const vendors = (c: Json) => c.statements.map((s: Json) => s.vendor);
+    const range = (await (
+      await h.request("/v1/cost?from=2026-08-15&to=2026-09-02", { as: "agent" })
+    ).json()) as Json;
+    expect(range).toMatchObject({ month: "2026-08", toMonth: "2026-09" });
+    expect(vendors(range)).toEqual(["Vercel", "Neon"]);
+    expect(vendors(await costJson("agent", "2026-10"))).toEqual(["Voyage AI"]);
+
+    const page = await (
+      await h.request("/cost?from=2026-08-15&to=2026-09-02", { as: "owner" })
+    ).text();
+    expect(page).toContain("Aug – Sep 2026 · $10.00");
+    expect(page).toContain('<input type="date" name="from" value="2026-08-01">');
+    expect(page).toContain('<input type="date" name="to" value="2026-09-30">');
+    expect(page).toContain('href="/cost?from=2026-09-01&amp;to=2026-09-30#month"');
+
+    // One end left open runs like the Log tabs: back to the first filed month, or on to this one.
+    const upTo = (await (
+      await h.request("/v1/cost?to=2026-09-30", { as: "agent" })
+    ).json()) as Json;
+    expect(upTo).toMatchObject({ month: "2026-08", toMonth: "2026-09" });
+    expect(vendors(upTo)).toEqual(["Vercel", "Neon"]);
+    const onFrom = (await (
+      await h.request("/v1/cost?from=2026-09-01", { as: "agent" })
+    ).json()) as Json;
+    expect(onFrom.month).toBe("2026-09");
+    expect(vendors(onFrom)).toEqual(["Voyage AI", "Vercel"]);
+    expect((await h.request("/cost?from=2026-09-30&to=2026-09-01", { as: "owner" })).status).toBe(
+      400,
     );
   });
 

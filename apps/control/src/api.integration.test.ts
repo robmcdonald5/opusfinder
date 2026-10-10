@@ -302,7 +302,6 @@ describe("POST /v1/changes", () => {
       400,
       "invalid_value",
     ],
-    ["a missing reason", { target: "ingest", value: "off" }, 400, "invalid_reason"],
     [
       "an over-long reason",
       { target: "ingest", value: "off", reason: "x".repeat(301) },
@@ -314,6 +313,35 @@ describe("POST /v1/changes", () => {
     const res = await h.request("/v1/changes", { as: "owner", json });
     expect(res.status).toBe(status);
     expect((await body(res)).error.code).toBe(code);
+  });
+
+  it("needs a reason from an agent but not from the owner", async () => {
+    const agent = await h.request("/v1/changes", {
+      as: "agent",
+      json: { target: "ingest", value: "off" },
+    });
+    expect(agent.status).toBe(400);
+    expect((await body(agent)).error.code).toBe("invalid_reason");
+    for (const reason of [undefined, "   ", "\u0000\u0001"]) {
+      await h.reset();
+      const owner = await h.request("/v1/changes", {
+        as: "owner",
+        json: { target: "ingest", value: "off", reason },
+      });
+      expect(owner.status).toBe(200);
+      expect(await lastLog()).toMatchObject({
+        actor_role: "owner",
+        target: "ingest",
+        reason: null,
+      });
+    }
+    await h.reset();
+    const typed = await h.request("/v1/changes", {
+      as: "owner",
+      json: { target: "ingest", value: "off", reason: 42 },
+    });
+    expect(typed.status).toBe(400);
+    expect((await body(typed)).error.code).toBe("invalid_reason");
   });
 
   it("only accepts JSON bodies (no cross-site form can drive the API)", async () => {
@@ -538,6 +566,49 @@ describe("the approval queue", () => {
     expect(approve.status).toBe(409);
     expect((await body(approve)).error.code).toBe("expired");
     expect(await stateValue("embed")).toBe("off");
+  });
+
+  it("lists closed proposals newest first, paged, filtered by stage and outcome (status=closed)", async () => {
+    const a = await fileProposal("embed", "on");
+    const b = await fileProposal("digest", "shadow");
+    const c = await fileProposal("ingest.boardsPerTick", "400");
+    await h.request(`/v1/proposals/${a.id}/reject`, { as: "owner", json: {} });
+    await h.request(`/v1/proposals/${b.id}/approve`, { as: "owner", json: {} });
+    await h.db
+      .prepare("UPDATE proposal SET expires_at = '2000-01-01T00:00:00.000Z' WHERE id = ?")
+      .bind(c.id)
+      .run();
+    const closed = async (q: string) =>
+      body(await h.request(`/v1/proposals?status=closed${q}`, { as: "agent" }));
+
+    const all = await closed("");
+    expect(all.proposals.map((p: { id: number }) => p.id)).toEqual([c.id, b.id, a.id]);
+    expect(all.proposals.map((p: { status: string }) => p.status)).toEqual([
+      "expired",
+      "approved",
+      "rejected",
+    ]);
+    expect(all.more).toBe(false);
+
+    const page1 = await closed("&limit=2");
+    expect(page1.more).toBe(true);
+    const page2 = await closed(`&limit=2&before=${page1.proposals[1].id}`);
+    expect(page2.proposals.map((p: { id: number }) => p.id)).toEqual([a.id]);
+
+    expect((await closed("&outcome=expired")).proposals.map((p: { id: number }) => p.id)).toEqual([
+      c.id,
+    ]);
+    expect((await closed("&stage=ingest")).proposals.map((p: { id: number }) => p.id)).toEqual([
+      c.id,
+    ]);
+    const yesterday = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
+    // Filtered by when each closed: c lapsed (expires_at backdated to 2000), a and b closed today.
+    expect((await closed(`&to=${yesterday}`)).proposals.map((p: { id: number }) => p.id)).toEqual([
+      c.id,
+    ]);
+    const bad = await h.request("/v1/proposals?status=closed&outcome=open", { as: "agent" });
+    expect(bad.status).toBe(400);
+    expect((await body(bad)).error.code).toBe("invalid_outcome");
   });
 
   it("refuses a STALE proposal (target moved since filing): 409, closed as stale, nothing applied", async () => {
@@ -948,6 +1019,41 @@ describe("GET /v1/runs and /v1/changes (the history behind the panel's Runs and 
     );
     expect(page2.runs.map((r: Json) => r.stage)).toEqual(["ingest"]);
     expect(page2.more).toBe(false);
+  });
+
+  it("keeps a From/To period (inclusive UTC days) on runs and changes, and refuses a bad one", async () => {
+    const day = (n: number) => new Date(Date.now() - n * 86_400_000).toISOString().slice(0, 10);
+    for (const [n, detail] of [
+      [3, "three"],
+      [2, "two"],
+      [1, "one"],
+    ] as const)
+      await run({ stage: "ingest", outcome: "ok", startedAt: `${day(n)}T12:00:00.000Z`, detail });
+    const details = async (q: string) =>
+      (await body(await h.request(`/v1/runs?${q}`, { as: "agent" }))).runs.map(
+        (r: Json) => r.detail,
+      );
+    expect(await details(`from=${day(2)}&to=${day(2)}`)).toEqual(["two"]);
+    expect(await details(`from=${day(2)}`)).toEqual(["one", "two"]);
+    expect(await details(`to=${day(2)}`)).toEqual(["two", "three"]);
+    expect(await details("to=9999-12-31")).toEqual(["one", "two", "three"]);
+
+    await h.request("/v1/changes", {
+      as: "owner",
+      json: { target: "embed", value: "shadow", reason: "in the period" },
+    });
+    const reasons = async (q: string) =>
+      (await body(await h.request(`/v1/changes?${q}`, { as: "agent" }))).changes.map(
+        (c: Json) => c.reason,
+      );
+    expect(await reasons(`from=${day(0)}`)).toContain("in the period");
+    expect(await reasons(`to=${day(1)}`)).toEqual([]);
+
+    for (const q of ["from=2026-02-30", "from=yesterday", `from=${day(1)}&to=${day(2)}`]) {
+      const res = await h.request(`/v1/runs?${q}`, { as: "agent" });
+      expect(res.status).toBe(400);
+      expect((await body(res)).error.code).toBe("invalid_period");
+    }
   });
 
   it("orders by when a run started, not when it was recorded, and pages across a tie", async () => {

@@ -1,38 +1,56 @@
 import type { CostView, StatementView, StatusView } from "../service";
 import { GMAIL_LINK, STATEMENT_KINDS, isConfirmationRow, isGmailConfirmation } from "../statements";
-import { esc, isOwner, layout, mode, when } from "./html";
+import {
+  card,
+  clip,
+  filterForm,
+  item,
+  level,
+  meter,
+  periodFields,
+  rowList,
+  stat,
+  type Change,
+} from "./components";
+import {
+  day,
+  esc,
+  monthEnd,
+  monthName,
+  monthShort,
+  monthSpan,
+  shiftMonth,
+  ts,
+  usd,
+} from "./format";
+import { isOwner, layout } from "./layout";
+import { mode, who } from "./vocab";
 
-/**
- * Cost: what each vendor actually charged, from the invoices forwarded to the billing address (owner
- * decision 2026-10-10: statements, not a maintained price table). Amounts are US cents in the data.
- */
+/** Amounts are US cents in the data; the page calls each statement a "charge". */
 
-export function usd(cents: number | null | undefined): string {
-  if (cents === null || cents === undefined) return "—";
-  return `$${(cents / 100).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const CEILING_NAMES: Record<string, string> = {
+  neonMaxCu: "Neon max compute (CU)",
+  voyageAutoRecharge: "Voyage auto-recharge",
+  openrouterCredits: "OpenRouter credit limit",
+};
+
+function vendorName(vendor: string | null): string {
+  if (!vendor) return "Unknown vendor";
+  return (
+    vendor
+      .replace(/[\s,]+(llc|l\.l\.c\.|inc\.?|ltd\.?|limited|corp\.?|corporation|gmbh|plc|pbc)$/i, "")
+      .trim() || vendor
+  );
 }
 
-function shiftMonth(month: string, by: number): string {
-  const [y, m] = month.split("-").map(Number) as [number, number];
-  const d = new Date(Date.UTC(y, m - 1 + by, 1));
-  return d.toISOString().slice(0, 7);
+function source(s: StatementView, view: StatusView): string {
+  if (s.source === "manual") return `entered by ${who(s.updated_by, view.caller)}`;
+  const subject = (s.subject ?? "").replace(/^(fwd?|fw):\s*/i, "");
+  return `<span title="${esc(`from ${s.sender ?? "unknown sender"}: ${s.subject ?? ""}`)}">${esc(
+    subject || (s.sender ?? "unknown sender"),
+  )}</span>`;
 }
 
-function monthName(month: string): string {
-  const [y, m] = month.split("-").map(Number) as [number, number];
-  return new Date(Date.UTC(y, m - 1, 1)).toLocaleString("en-US", {
-    month: "long",
-    year: "numeric",
-    timeZone: "UTC",
-  });
-}
-
-function from(s: StatementView): string {
-  if (s.source === "manual") return `<span class="muted">entered by ${esc(s.updated_by)}</span>`;
-  return `<span class="muted">${esc(s.sender ?? "unknown sender")}${s.subject ? ` · ${esc(s.subject)}` : ""}</span>`;
-}
-
-/** The owner's fields for one charge: shared by "count it", "change" and "add by hand". */
 function fields(s: Partial<StatementView>, extra = ""): string {
   const kind = s.kind ?? "other";
   return `<label>Vendor<input name="vendor" required maxlength="80" autocomplete="off" value="${esc(s.vendor ?? "")}"></label>
@@ -45,39 +63,73 @@ function fields(s: Partial<StatementView>, extra = ""): string {
       : ""
   }"></label>
 <label>Charged on<input name="chargedOn" type="date" required value="${esc(s.charged_on ?? "")}"></label>
-<label>Service period starts (optional; files a usage charge under that month)<input name="periodStart" type="date" value="${esc(
+<label>Service period starts (optional)<input name="periodStart" type="date" value="${esc(
     s.period_start ?? "",
   )}"></label>
 <label>Kind<select name="kind">${STATEMENT_KINDS.map(
     (k) => `<option value="${k}"${k === kind ? " selected" : ""}>${k}</option>`,
   ).join("")}</select></label>${extra}
-<label>Note (optional)<input name="note" maxlength="300" autocomplete="off" value="${
+<label class="full">Note (optional)<input name="note" maxlength="300" autocomplete="off" value="${
     // A counted row's note is the owner's own: keep it on edit. Other rows' notes are the mailbox's reasons.
     s.status === "recorded" ? esc(s.note ?? "") : ""
   }"></label>`;
 }
 
-function decideForm(s: StatementView, summary: string): string {
-  return `<details class="change"><summary>${esc(summary)}</summary><form class="form" method="post" action="/ui/statements/${esc(
-    s.id,
-  )}">${fields(s)}<div class="actions"><button type="submit" name="action" value="count">Count it</button><button type="submit" name="action" value="exclude" class="reject" formnovalidate>Don&#39;t count</button></div></form></details>`;
+function decideForm(s: StatementView, label: string): Change {
+  return {
+    label,
+    body: `<form class="form two" method="post" action="/ui/statements/${esc(
+      s.id,
+    )}">${fields(s)}<div class="actions"><button type="submit" name="action" value="count" class="primary">Count it</button><button type="submit" name="action" value="exclude" class="danger" formnovalidate>Don&#39;t count</button></div></form>`,
+  };
 }
 
-function statementLine(s: StatementView): string {
-  return `${s.vendor ? `<strong>${esc(s.vendor)}</strong> ` : ""}${usd(s.amount_cents)}${
-    s.currency && s.currency !== "USD" ? ` ${esc(s.currency)}` : ""
-  } <span class="muted">${esc(s.kind)}${s.charged_on ? ` · charged ${esc(s.charged_on)}` : ""}${
-    s.period_start ? ` · for the period from ${esc(s.period_start)}` : ""
-  }${s.reference ? ` · #${esc(s.reference)}` : ""}</span>`;
-}
-
-/** Gmail's forwarding confirmation link, clickable for the owner (only a Google mail-settings URL). */
+/** Only ever a Google mail-settings URL (GMAIL_LINK), and only shown to the owner. */
 function confirmLink(s: StatementView): string {
   if (!isGmailConfirmation(s.sender)) return "";
   const link = GMAIL_LINK.exec(s.note ?? "")?.[0];
   return link
-    ? `<br><a href="${esc(link)}" rel="noreferrer noopener" target="_blank">Open Gmail's confirmation link</a>`
+    ? `<a href="${esc(link)}" rel="noreferrer noopener" target="_blank">Open Gmail's confirmation link</a>`
     : "";
+}
+
+/** An agent's hand entry starts with the service's "Added by …: count it or don't."; the row already says who, so only the agent's own words are kept. */
+function noteText(s: StatementView): string {
+  const note = s.note ?? "";
+  const boiler = `Added by ${s.updated_by}: count it or don't.`;
+  return s.source === "manual" && note.startsWith(boiler) ? note.slice(boiler.length).trim() : note;
+}
+
+/** The source goes last on the facts line: it varies most, so it's what an ellipsis cuts. */
+function statementItem(
+  s: StatementView,
+  view: StatusView,
+  o: {
+    received?: boolean;
+    noteCls?: string;
+    status?: boolean;
+    change?: Change | false;
+    extra?: string;
+  } = {},
+): string {
+  const now = view.generatedAt;
+  const facts = [
+    s.charged_on ? `charged ${day(s.charged_on, now)}` : "no charge date",
+    s.period_start ? `for ${monthShort(s.period_start, now)}` : "",
+    s.reference ? `#${esc(s.reference)}` : "",
+    o.received ? `received ${ts(s.received_at, now)}` : "",
+    source(s, view),
+  ].filter(Boolean);
+  const note = noteText(s);
+  return item({
+    title: `<strong title="${esc(s.vendor ?? "")}">${esc(vendorName(s.vendor))}</strong> <span class="muted">${esc(s.kind)}</span>`,
+    ...(note ? { body: clip(note, o.noteCls ?? "muted") } : {}),
+    lines: [facts.join(" · "), o.extra ?? ""],
+    end: `${o.status ? mode(s.status) : ""}<strong>${usd(s.amount_cents)}</strong>${
+      s.currency && s.currency !== "USD" ? ` ${esc(s.currency)}` : ""
+    }`,
+    change: o.change,
+  });
 }
 
 export function renderCost(view: StatusView, c: CostView, flash: string | null): string {
@@ -85,119 +137,130 @@ export function renderCost(view: StatusView, c: CostView, flash: string | null):
   const parts: string[] = [];
   const byMonth = new Map(c.months.map((m) => [m.month, m]));
   const current = byMonth.get(c.currentMonth);
-  const last = byMonth.get(shiftMonth(c.currentMonth, -1));
+  const lastMonth = shiftMonth(c.currentMonth, -1);
+  const last = byMonth.get(lastMonth);
   const targetCents = c.targetUsdPerMonth * 100;
   const count = current ? current.vendors.reduce((n, v) => n + v.n, 0) : 0;
-  const address = c.billingAddress
-    ? `<code>${esc(c.billingAddress)}</code>`
-    : "the billing address";
+  const tone = level(current?.cents ?? 0, targetCents);
 
-  parts.push(`<p class="muted">What each vendor actually charged, read from the invoices forwarded to ${address}. A charge is filed under the month its service period covers when the invoice says so, else the month it was charged; prepaid credits count when bought.</p>
-<div class="stats">
-<div class="stat"><span class="muted">${esc(monthName(c.currentMonth))} so far</span><span class="v${
-    current && current.cents > targetCents ? " bad" : ""
-  }">${usd(current?.cents ?? 0)}</span><span class="muted">${count} statement${count === 1 ? "" : "s"}</span></div>
-<div class="stat"><span class="muted">${esc(monthName(shiftMonth(c.currentMonth, -1)))}</span><span class="v">${usd(
-    last?.cents ?? 0,
-  )}</span></div>
-<div class="stat"><span class="muted">Target (advisory)</span><span class="v">${usd(targetCents)}</span><span class="muted">a month</span></div>
-</div>`);
+  parts.push(
+    `<div class="stats">${stat(
+      `${monthName(c.currentMonth)} so far`,
+      usd(current?.cents ?? 0),
+      `${count} charge${count === 1 ? "" : "s"}`,
+      { meter: meter(current?.cents ?? 0, targetCents), ...(tone ? { tone } : {}) },
+    )}${stat(monthName(lastMonth), usd(last?.cents ?? 0), "")}${stat(
+      "Monthly target",
+      usd(targetCents),
+      "",
+    )}</div>`,
+  );
 
-  if (c.months.length === 0 && c.reviewCount === 0)
+  if (c.reviewCount > 0)
     parts.push(
-      `<p class="note">Nothing recorded yet. Once ${address} reaches this Worker, each forwarded invoice shows up here within a minute. For older invoices, forward them by hand or add them below.</p>`,
+      card({
+        title: `Needs your review (${c.reviewCount})`,
+        ...(c.reviewCount > c.review.length
+          ? { aside: `<span class="muted">newest ${c.review.length}</span>` }
+          : {}),
+        flush: true,
+        body: rowList(
+          c.review.map((s) =>
+            statementItem(s, view, {
+              received: true,
+              noteCls: "warn",
+              change: owner && decideForm(s, "Review"),
+            }),
+          ),
+        ),
+      }),
     );
 
-  // ---- the owner's queue ----
-  if (c.reviewCount > 0) {
-    parts.push(
-      `<h2>Needs your review (${c.reviewCount})</h2>${
-        c.reviewCount > c.review.length
-          ? `<p class="muted">Showing the newest ${c.review.length}.</p>`
-          : ""
-      }`,
-    );
-    for (const s of c.review) {
-      parts.push(
-        `<div class="card"><p>${statementLine(s)}</p><p>${from(s)} ${when(s.received_at)}</p>${
-          s.note ? `<p class="warn">${esc(s.note)}</p>` : ""
-        }${owner ? decideForm(s, "Count it or don't") : ""}</div>`,
-      );
-    }
-  }
+  const total = c.months
+    .filter((m) => m.month >= c.month && m.month <= c.toMonth)
+    .reduce((n, m) => n + m.cents, 0);
+  // Charges are filed by month, so the period widens to whole months.
+  parts.push(
+    filterForm("/cost", periodFields(`${c.month}-01`, monthEnd(c.toMonth))) +
+      card({
+        id: "month",
+        title: `${monthSpan(c.month, c.toMonth)} · ${usd(total)}`,
+        flush: true,
+        body: rowList(
+          c.statements.map((s) =>
+            statementItem(s, view, { change: owner && decideForm(s, "Change") }),
+          ),
+          "No charges in this period.",
+        ),
+      }),
+  );
 
-  // ---- by month ----
-  parts.push(`<h2>By month</h2>`);
-  if (c.months.length === 0) parts.push(`<p class="muted">No recorded statements yet.</p>`);
-  else
+  if (c.months.length > 0)
     parts.push(
-      `<div class="scroll"><table class="stack"><thead><tr><th>Month</th><th>Total</th><th>Vendors</th></tr></thead><tbody>${c.months
-        .map(
-          (m) =>
-            `<tr><td><a href="/cost?month=${esc(m.month)}">${esc(monthName(m.month))}</a></td><td${
-              m.cents > targetCents ? ' class="bad"' : ""
-            }>${usd(m.cents)}</td><td class="muted">${m.vendors
-              .map((v) => `${esc(v.vendor)} ${usd(v.cents)}`)
-              .join(" · ")}</td></tr>`,
-        )
-        .join("")}</tbody></table></div>`,
-    );
-
-  // ---- one month's statements ----
-  const prev = shiftMonth(c.month, -1);
-  const next = shiftMonth(c.month, 1);
-  parts.push(`<h2 id="month">${esc(monthName(c.month))}</h2>
-<p><a href="/cost?month=${esc(prev)}#month">← ${esc(monthName(prev))}</a>${
-    c.month < c.currentMonth
-      ? ` · <a href="/cost?month=${esc(next)}#month">${esc(monthName(next))} →</a>`
-      : ""
-  }</p>`);
-  if (c.statements.length === 0)
-    parts.push(`<p class="muted">No recorded statements this month.</p>`);
-  else
-    parts.push(
-      `<ul class="rows">${c.statements
-        .map(
-          (s) =>
-            `<li>${statementLine(s)}<br>${from(s)}${
-              s.note ? `<br><span class="muted">${esc(s.note)}</span>` : ""
-            }${owner ? decideForm(s, "Change") : ""}</li>`,
-        )
-        .join("")}</ul>`,
+      card({
+        title: "By month",
+        flush: true,
+        body: rowList(
+          c.months.map((m) =>
+            item({
+              title: `<a href="/cost?from=${esc(m.month)}-01&amp;to=${esc(monthEnd(m.month))}#month">${esc(monthName(m.month))}</a>`,
+              lines: [
+                m.vendors.map((v) => `${esc(vendorName(v.vendor))} ${usd(v.cents)}`).join(" · "),
+              ],
+              end:
+                m.cents > targetCents
+                  ? `<span class="bad">${usd(m.cents)}</span>`
+                  : `<strong>${usd(m.cents)}</strong>`,
+            }),
+          ),
+        ),
+      }),
     );
 
-  // ---- what isn't counted ----
   if (c.notCounted.length > 0)
     parts.push(
-      `<details><summary class="muted">Not counted (${c.notCounted.length} most recent): duplicates, excluded, and Gmail&#39;s confirmations</summary><ul class="rows">${c.notCounted
-        .map(
-          (s) =>
-            `<li>${mode(s.status)} ${statementLine(s)}<br>${from(s)} ${when(s.received_at)}${
-              s.note ? `<br><span class="muted">${esc(s.note)}</span>` : ""
-            }${owner ? confirmLink(s) : ""}${
-              owner && !isConfirmationRow(s) ? decideForm(s, "Count it") : ""
-            }</li>`,
-        )
-        .join("")}</ul></details>`,
+      card({
+        body: `<details class="more"><summary>Not counted (${c.notCounted.length})</summary>${rowList(
+          c.notCounted.map((s) =>
+            statementItem(s, view, {
+              received: true,
+              status: true,
+              extra: owner ? confirmLink(s) : "",
+              change: owner && !isConfirmationRow(s) && decideForm(s, "Count it"),
+            }),
+          ),
+        )}</details>`,
+      }),
     );
 
   if (owner)
-    parts.push(`<h2>Add a statement by hand</h2><p class="muted">For history from before the mailbox, or a vendor that doesn&#39;t email an invoice.</p>
-<details class="change"><summary>Add</summary><form class="form" method="post" action="/ui/statements">${fields(
-      {},
-      `<label>Invoice number (optional)<input name="reference" maxlength="80" autocomplete="off"></label>`,
-    )}<button type="submit">Add</button></form></details>`);
+    parts.push(
+      card({
+        body: `<details class="more"><summary>Add a charge by hand</summary><form class="form two" method="post" action="/ui/statements">${fields(
+          {},
+          `<label>Invoice number (optional)<input name="reference" maxlength="80" autocomplete="off"></label>`,
+        )}<div class="actions"><button type="submit" class="primary">Add</button></div></form></details>`,
+      }),
+    );
 
   parts.push(
-    `<h2>Spend ceilings at the vendors</h2><p class="muted">The last line of defence, set in each vendor&#39;s console; listed here so they're set on purpose.</p><ul class="rows">${Object.entries(
-      c.ceilings,
-    )
-      .map(
-        ([name, v]) =>
-          `<li><code>${esc(name)}</code>: <strong>${esc(v.value)}</strong> <span class="muted">· ${esc(v.where)}</span></li>`,
-      )
-      .join("")}</ul>`,
+    card({
+      title: "Spend ceilings at the vendors",
+      flush: true,
+      body: rowList(
+        Object.entries(c.ceilings).map(([name, v]) =>
+          item({
+            title: `<strong title="${esc(name)}">${esc(CEILING_NAMES[name] ?? name)}</strong>`,
+            lines: [`<span title="${esc(v.where)}">${esc(v.where)}</span>`],
+            end:
+              v.value === "unknown"
+                ? `<span class="warn">unknown</span>`
+                : `<strong>${esc(v.value)}</strong>`,
+          }),
+        ),
+      ),
+    }),
   );
 
-  return layout(view, { section: "cost", title: "Cost", flash, body: parts.join("\n") });
+  return layout(view, { section: "cost", flash, body: parts.join("\n") });
 }

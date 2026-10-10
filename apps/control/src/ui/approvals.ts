@@ -1,60 +1,81 @@
-import type { StatusView } from "../service";
-import { esc, isOwner, layout, mode, targetLink, value, when } from "./html";
+import { CLOSED_OUTCOMES, type ProposalView, type StatusView } from "../service";
+import { card, clip, empty, fold, item, rowList } from "./components";
+import { ago, esc, ts } from "./format";
+import { isOwner, layout } from "./layout";
+import { logPage, type LogQuery } from "./log";
+import { changeLine, mode, value, who } from "./vocab";
 
-/** Approvals: the open proposals (Approve / Reject) and the recently closed ones. */
+/** An open proposal's reason is shown whole (it's what the owner decides on); a closed one's is clipped. */
+
+function closedItem(c: ProposalView, view: StatusView): string {
+  return item({
+    title: changeLine(c.target, c.from_value, c.to_value),
+    body: clip(c.reason),
+    lines: [
+      `#${esc(c.id)} by ${who(c.proposer, view.caller)}${
+        c.decided_by ? `, closed by ${who(c.decided_by, view.caller)}` : ""
+      }${c.decision_note ? ` · note: ${esc(c.decision_note)}` : ""}`,
+    ],
+    end: `${mode(c.status)} ${ts(c.decided_at ?? c.expires_at, view.generatedAt)}`,
+  });
+}
+
+function openCard(p: StatusView["openProposals"][number], view: StatusView): string {
+  const now = view.generatedAt;
+  const stale = p.stale
+    ? `<p class="banner warn">Stale: it is now ${value(p.current, p.target)}, not ${value(p.from_value, p.target)}.</p>`
+    : "";
+  const form = isOwner(view)
+    ? `<form class="actions" method="post" action="/ui/proposals/${esc(p.id)}/${p.stale ? "reject" : "approve"}">${
+        p.stale
+          ? `<button type="submit" class="danger">Reject</button>`
+          : `<button type="submit" class="primary">Approve</button><button type="submit" class="danger" formaction="/ui/proposals/${esc(
+              p.id,
+            )}/reject">Reject</button>`
+      }</form>`
+    : "";
+  return card({
+    titleHtml: changeLine(p.target, p.from_value, p.to_value),
+    aside: `<span class="muted">#${esc(p.id)}</span>`,
+    body: `<p>${esc(p.reason)}</p><p class="sub">${who(p.proposer, view.caller)} · filed ${ts(
+      p.created_at,
+      now,
+    )} · expires ${esc(ago(p.expires_at, now))}</p>${stale}${form}`,
+  });
+}
+
 export function renderApprovals(view: StatusView, flash: string | null): string {
-  const owner = isOwner(view);
-  const parts: string[] = [];
+  const open =
+    view.openProposals.length === 0
+      ? card({
+          title: "Open proposals (0)",
+          flush: true,
+          body: empty("Nothing waiting for approval."),
+        })
+      : view.openProposals.map((p) => openCard(p, view)).join("\n");
+  const closed = fold({
+    title: `Recently closed (${view.closedProposals.length})`,
+    body: rowList(
+      view.closedProposals.map((c) => closedItem(c, view)),
+      "None yet.",
+    ),
+  });
+  return layout(view, { section: "approvals", flash, body: `${open}\n${closed}` });
+}
 
-  parts.push(
-    `<p class="muted">An agent files a proposal for any change it may not make itself (anything that turns something on, raises spend, or touches alerting). It lapses after 7 days.</p>`,
-  );
-  parts.push(`<h2>Open proposals (${view.openProposals.length})</h2>`);
-  if (view.openProposals.length === 0)
-    parts.push(`<p class="muted">Nothing waiting for approval.</p>`);
-  for (const p of view.openProposals) {
-    parts.push(`<div class="card"><p><strong>#${esc(p.id)}</strong> ${targetLink(p.target)}: ${value(
-      p.from_value,
-    )} → ${value(p.to_value)}</p>
-<p>${esc(p.reason)}</p>
-<p class="muted">by ${esc(p.proposer)} · ${when(p.created_at)} · expires ${when(p.expires_at)}</p>${
-      p.stale
-        ? `<p class="warn">Stale: <code>${esc(p.target)}</code> is now ${value(p.current)}, not ${value(
-            p.from_value,
-          )}. Approving would be refused; reject it and let the agent re-propose.</p>`
-        : ""
-    }${
-      owner
-        ? `<form method="post" action="/ui/proposals/${esc(p.id)}/${p.stale ? "reject" : "approve"}">
-<label>Note (optional, logged)<input name="note" maxlength="300" autocomplete="off"></label>
-<div class="actions">${
-            p.stale
-              ? `<button type="submit" class="reject">Reject</button>`
-              : `<button type="submit">Approve</button><button type="submit" class="reject" formaction="/ui/proposals/${esc(
-                  p.id,
-                )}/reject">Reject</button>`
-          }</div></form>`
-        : ""
-    }</div>`);
-  }
-
-  parts.push(`<h2>Recently closed (${view.closedProposals.length})</h2>`);
-  if (view.closedProposals.length === 0) parts.push(`<p class="muted">None yet.</p>`);
-  else
-    parts.push(
-      `<ul class="log">${view.closedProposals
-        .map(
-          (c) =>
-            `<li><strong>#${esc(c.id)}</strong> ${targetLink(c.target)}: ${value(c.from_value)} → ${value(
-              c.to_value,
-            )} ${mode(c.status)} <span class="muted">by ${esc(c.proposer)}${
-              c.decided_by ? `, closed by ${esc(c.decided_by)}` : ""
-            } ${when(c.decided_at ?? c.expires_at)}</span><br>${esc(c.reason)}${
-              c.decision_note ? `<br><span class="muted">Note: ${esc(c.decision_note)}</span>` : ""
-            }</li>`,
-        )
-        .join("")}</ul>`,
-    );
-
-  return layout(view, { section: "approvals", title: "Approvals", flash, body: parts.join("\n") });
+export function renderProposals(
+  view: StatusView,
+  list: { proposals: ProposalView[]; more: boolean },
+  q: Required<LogQuery>,
+): string {
+  return logPage(view, {
+    tab: "proposals",
+    q,
+    outcomes: CLOSED_OUTCOMES,
+    list: rowList(list.proposals.map((c) => closedItem(c, view))),
+    empty: { none: "No proposals closed yet.", noMatch: "No closed proposals match." },
+    more: list.more,
+    lastId: list.proposals.at(-1)?.id,
+    noun: "proposals",
+  });
 }

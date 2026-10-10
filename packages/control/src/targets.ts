@@ -213,11 +213,15 @@ export function allTargets(): Target[] {
 }
 
 /** Collapse runs of whitespace/control characters and trim — reasons are one-line audit text. */
+export function foldReason(raw: string): string {
+  // eslint-disable-next-line no-control-regex -- deliberately folding control characters into spaces
+  return raw.replace(/[\s\u0000-\u001f\u007f]+/g, " ").trim();
+}
+
 export const REASON_MAX = 300;
 export function normalizeReason(raw: unknown): ParseResult<string> {
   if (typeof raw !== "string") return { ok: false, error: "reason is required" };
-  // eslint-disable-next-line no-control-regex -- deliberately folding control characters into spaces
-  const reason = raw.replace(/[\s\u0000-\u001f\u007f]+/g, " ").trim();
+  const reason = foldReason(raw);
   if (reason.length === 0) return { ok: false, error: "reason is required" };
   if (reason.length > REASON_MAX) {
     return { ok: false, error: `reason must be at most ${REASON_MAX} characters` };

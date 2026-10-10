@@ -173,7 +173,7 @@ export interface GlobalDef {
  * heartbeat's driver included) is an owner call — hence "approval", in both directions.
  */
 export const globalSwitch: GlobalDef = {
-  label: "Master switch (everything)",
+  label: "Master switch",
   modes: ["off", "on"],
   initial: "on",
   agent: "approval",
@@ -355,7 +355,7 @@ export const stages = {
     expect: { everyMin: 24 * 60, graceMin: 120 },
   },
   live_integration: {
-    label: "Nightly live-integration lane",
+    label: "Nightly live-integration tests",
     runtime: "gh:live-integration.yml",
     trigger: { cron: "0 7 * * *" },
     modes: ["off", "on"],
@@ -396,21 +396,23 @@ const healthCheck = (label: string, watches: StageId, threshold?: Knob): PolicyD
 
 export const policies = {
   close: {
-    label: "Lifecycle close (arms A/B/C)",
+    // Arms A/B/C: the job left its board's feed (ingest), its board died (discover), or a digest's
+    // pre-send probe got a 410.
+    label: "Close removed jobs",
     modes: ["shadow", "enforce"],
     initial: "enforce",
     readBy: ["ingest", "discover", "digest"], // one row → the atomic both-runtimes flip is automatic
     legacyEnv: "LIFECYCLE_CLOSE_ENFORCE",
   },
   stale_sweep: {
-    label: "Universal staleness close",
+    label: "Close stale jobs",
     modes: ["shadow", "enforce"],
     initial: "shadow",
     readBy: ["ingest"],
     knobs: {
       // A SHORTER TTL closes more, so riskier is DOWN.
       ttlDays: {
-        label: "Close after (days unseen)",
+        label: "Close when unseen for",
         default: 21,
         min: 7,
         max: 90,
@@ -436,7 +438,7 @@ export const policies = {
     unit: "h",
     legacyEnv: "HEALTH_INGEST_MAX_AGE_H",
   }),
-  "health.board_fail_ratio": healthCheck("Board failure ratio", "ingest", {
+  "health.board_fail_ratio": healthCheck("Board failures", "ingest", {
     label: "Max failed-board ratio",
     default: 0.5,
     min: 0.05,
@@ -446,15 +448,15 @@ export const policies = {
   }),
   // Share of postings on hydrating boards (today only SmartRecruiters) whose detail fetch failed, so their
   // stored content went stale.
-  "health.hydrate_skip_ratio": healthCheck("Hydrate skip ratio", "ingest", {
-    label: "Max skipped-detail ratio",
+  "health.hydrate_skip_ratio": healthCheck("Job detail failures", "ingest", {
+    label: "Max failed-detail ratio",
     default: 0.2,
     min: 0.05,
     max: 1,
     riskier: "up",
     legacyEnv: "HEALTH_HYDRATE_SKIP_RATIO",
   }),
-  "health.discovery_window": healthCheck("Discovery window", "discover", {
+  "health.discovery_window": healthCheck("Discovery staleness", "discover", {
     label: "Max discovery age",
     default: 13,
     min: 7,
@@ -475,7 +477,7 @@ export const policies = {
     legacyEnv: "HEALTH_BACKLOG_MAX",
   }),
   "health.digest_health": healthCheck("Digest errors", "digest"),
-  "health.bounce_suppression": healthCheck("Bounces / suppressions", "digest"),
+  "health.bounce_suppression": healthCheck("Email bounces", "digest"),
 } as const satisfies Record<string, PolicyDef>;
 export type PolicyId = keyof typeof policies;
 

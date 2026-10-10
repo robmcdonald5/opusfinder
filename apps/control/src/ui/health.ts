@@ -1,61 +1,71 @@
-import { stageDef } from "@opusfinder/control";
+import { stageDef, type PolicyView } from "@opusfinder/control";
 
 import type { StatusView } from "../service";
-import { modeForm } from "./forms";
-import { GATE_LONG, esc, isHealthCheck, isOwner, layout, modeLine, stageHref } from "./html";
-import { knobItem } from "./stages";
+import { card, controlRow, rowList } from "./components";
+import { knobRow, modeControl } from "./forms";
+import { esc } from "./format";
+import { isOwner, layout } from "./layout";
+import { isHealthCheck, modeLine, stageHref, wiring } from "./vocab";
 
-/**
- * Health & alerts: the alerts stage (which runs the checks and sends the emails) and the health checks it
- * reads. One rule covers the whole page — any agent change here, quieter or louder, needs the owner
- * (owner decision 2026-10-04) — so it lives on its own page rather than among the stage policies.
- */
+/** Any agent change on this page, quieter or louder, needs the owner (decision 2026-10-04): hence the checks' own page. */
+
+function checkRow(p: PolicyView, edit: string | null): string {
+  const watched = p.watches ? stageDef(p.watches) : null;
+  return controlRow({
+    id: `policy-${p.id}`,
+    name: p.label,
+    hover: p.id,
+    lines: [
+      [
+        p.knobs.length > 0 ? "" : "fires on any occurrence",
+        p.watches && watched
+          ? `watches <a href="${stageHref(p.watches)}" title="${esc(watched.label)}">${esc(p.watches)}</a>${
+              p.watchedStageOff ? ` <span class="muted">(off, so skipped)</span>` : ""
+            }`
+          : "",
+      ]
+        .filter(Boolean)
+        .join(" · "),
+    ],
+    value: modeLine(p, "check", edit && modeControl(p, "check", edit, p.label)),
+    settings: p.knobs.map((k) => knobRow(k, edit)),
+  });
+}
+
 export function renderHealth(view: StatusView, flash: string | null): string {
-  const owner = isOwner(view);
-  const back = "/health";
-  const parts: string[] = [];
+  const edit = isOwner(view) ? "/health" : null;
   const alerts = view.stages.find((s) => s.id === "alerts");
   const checks = view.policies.filter((p) => isHealthCheck(p.id));
+  const parts: string[] = [];
+
+  if (alerts)
+    parts.push(
+      card({
+        flush: true,
+        body: rowList([
+          controlRow({
+            name: alerts.label,
+            href: stageHref(alerts.id),
+            hover: alerts.id,
+            lines: [wiring(alerts.gate)],
+            value: modeLine(
+              alerts,
+              "stage",
+              edit && modeControl(alerts, "stage", edit, alerts.label),
+            ),
+            settings: alerts.knobs.map((k) => knobRow(k, edit)),
+          }),
+        ]),
+      }),
+    );
 
   parts.push(
-    `<p class="muted">A check in <strong>enforce</strong> pages you when it fires; in <strong>shadow</strong> it is computed and logged only. Every agent change on this page needs your approval, in either direction.</p>`,
+    card({
+      title: `Checks (${checks.length})`,
+      flush: true,
+      body: rowList(checks.map((p) => checkRow(p, edit))),
+    }),
   );
 
-  if (alerts) {
-    parts.push(
-      `<div class="card"><h3><a href="${stageHref(alerts.id)}">${esc(alerts.label)}</a> <code>${esc(
-        alerts.id,
-      )}</code></h3><p>${modeLine(alerts)}</p><p class="note">${esc(GATE_LONG[alerts.gate])} The checks run inside this stage, so no check results are recorded here yet.</p>${
-        owner ? modeForm(alerts.id, alerts.modes, alerts.desired, back) : ""
-      }${
-        alerts.knobs.length > 0
-          ? `<ul class="rows">${alerts.knobs.map((k) => knobItem(k, owner, back)).join("")}</ul>`
-          : ""
-      }</div>`,
-    );
-  }
-
-  parts.push(`<h2>Checks (${checks.length})</h2>`);
-  for (const p of checks) {
-    const watched = p.watches ? stageDef(p.watches) : null;
-    parts.push(`<div class="card" id="policy-${esc(p.id)}"><h3>${esc(p.label)} <code>${esc(p.id)}</code></h3>
-<p>${modeLine(p)}${
-      p.watches && watched
-        ? ` <span class="muted">· watches <a href="${stageHref(p.watches)}">${esc(watched.label.toLowerCase())}</a>${
-            p.watchedStageOff ? " (off, so this check is skipped)" : ""
-          }</span>`
-        : ""
-    }</p>${owner ? modeForm(p.id, p.modes, p.desired, back) : ""}${
-      p.knobs.length > 0
-        ? `<ul class="rows">${p.knobs.map((k) => knobItem(k, owner, back)).join("")}</ul>`
-        : `<p class="muted">No threshold: it fires on any occurrence.</p>`
-    }</div>`);
-  }
-
-  return layout(view, {
-    section: "health",
-    title: "Health & alerts",
-    flash,
-    body: parts.join("\n"),
-  });
+  return layout(view, { section: "health", flash, body: parts.join("\n") });
 }
