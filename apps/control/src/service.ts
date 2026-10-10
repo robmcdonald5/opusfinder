@@ -61,6 +61,7 @@ import {
   isConfirmationRow,
   mayBeGmailConfirmation,
   validDay,
+  vendorKey,
   type StatementKind,
 } from "./statements";
 
@@ -744,7 +745,7 @@ export type { ChangeRow };
 
 // ---------- cost: statements from the vendors' own invoice emails ----------
 
-const MONTH = /^\d{4}-\d{2}$/;
+const MONTH = /^\d{4}-(0[1-9]|1[0-2])$/;
 
 /**
  * A statement as the API and page show it. Gmail's forwarding code (in the confirmation's subject AND body,
@@ -781,7 +782,14 @@ export async function cost(
   for (const t of c.totals) {
     const m = months.get(t.month) ?? { month: t.month, cents: 0, vendors: [] };
     m.cents += t.cents;
-    m.vendors.push({ vendor: t.vendor ?? "unknown", cents: t.cents, n: t.n });
+    // One line per vendor however the model or a hand entry spelled it ("Neon, LLC" and "Neon"):
+    // the first spelling seen (the month's largest) names the line.
+    const key = vendorKey(t.vendor);
+    const line = m.vendors.find((v) => vendorKey(v.vendor) === key);
+    if (line) {
+      line.cents += t.cents;
+      line.n += t.n;
+    } else m.vendors.push({ vendor: t.vendor ?? "unknown", cents: t.cents, n: t.n });
     months.set(t.month, m);
   }
   const view = (r: StatementRow) => statementView(r, caller);
@@ -839,11 +847,23 @@ function statementFields(body: unknown, now: string) {
   };
 }
 
-/** Record a statement by hand (history from before the mailbox, or a vendor that doesn't email one). */
+/**
+ * Record a statement by hand (history from before the mailbox, or a vendor that doesn't email one). The
+ * owner's entry counts at once; an agent's waits in the owner's review queue, like anything the mailbox
+ * isn't sure of: agents may record, but only the owner decides what counts.
+ */
 export async function addStatement(db: D1Database, caller: Caller, body: unknown, now: string) {
   requireRole(caller, "owner", "agent");
   const f = statementFields(body, now);
   const same = await findSameCharge(db, f);
+  const byAgent = caller.role !== "owner";
+  const status = same !== null ? "duplicate" : byAgent ? "review" : "recorded";
+  const note =
+    same !== null
+      ? `Same charge as #${same}.${f.note ? ` ${f.note}` : ""}`
+      : byAgent
+        ? `Added by ${actorLabel(caller)}: count it or don't.${f.note ? ` ${f.note}` : ""}`
+        : f.note;
   const row: NewStatement = {
     received_at: now,
     source: "manual",
@@ -853,8 +873,9 @@ export async function addStatement(db: D1Database, caller: Caller, body: unknown
     ...f,
     currency: "USD",
     month: filingMonth(f.kind, f.period_start, f.charged_on),
-    status: same === null ? "recorded" : "duplicate",
-    note: same === null ? f.note : `Same charge as #${same}.${f.note ? ` ${f.note}` : ""}`,
+    status,
+    note,
+    auth: null,
     updated_at: now,
     updated_by: actorLabel(caller),
   };

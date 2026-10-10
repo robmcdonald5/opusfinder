@@ -2,16 +2,24 @@ import PostalMime, { addressParser, type Email } from "postal-mime";
 
 import { parseOwnerEmails } from "./auth-config";
 import type { Env } from "./env";
-import { DAILY_MAIL_CAP, DAILY_MODEL_READS, MAX_EMAIL_BYTES } from "./limits";
+import {
+  DAILY_CONFIRMATION_CAP,
+  DAILY_MAIL_CAP,
+  DAILY_MODEL_READS,
+  MAX_EMAIL_BYTES,
+} from "./limits";
 import { errorSummary } from "./service";
 import {
   EMPTY_READING,
+  GMAIL_FORWARDING_SENDER,
+  authSummary,
   filingMonth,
   isGmailConfirmation,
+  readConfirmation,
   readEmail,
   type Reading,
 } from "./statements";
-import { emailsSince, findSameCharge, insertStatement, statementExists } from "./store";
+import { findSameCharge, insertStatement, mailCountsSince, statementExists } from "./store";
 
 /**
  * The billing mailbox: Email Routing delivers each email sent to the billing address (the owner's Gmail
@@ -42,10 +50,12 @@ export function mailboxKey(address: string): string {
   return `${local}@${domain}`;
 }
 
-/** The bare address in a From header ("Name" <a@b> → a@b), or null. */
-function headerAddress(header: string | null): string | null {
-  const first = addressParser(header ?? "")[0];
-  return first?.address ? first.address.toLowerCase() : null;
+/** Every address in a From header ("Name" <a@b>, groups flattened), lowercase. */
+function fromHeaderAddresses(header: string | null): string[] {
+  return addressParser(header ?? "")
+    .flatMap((a) => (a.group ? a.group : [a]))
+    .map((a) => (a.address ?? "").trim().toLowerCase())
+    .filter((a) => a.length > 0);
 }
 
 function forwardedByOwner(envelopeFrom: string, ownerEmails: string | undefined): boolean {
@@ -63,11 +73,17 @@ export async function receiveEmail(
     message.setReject("Unknown recipient");
     return;
   }
-  const headerFrom = message.headers.get("from");
-  if (
-    !isGmailConfirmation(headerAddress(headerFrom)) &&
-    !forwardedByOwner(message.from, env.OWNER_EMAILS)
-  ) {
+  // One From address, or nothing: with two, the gate and the parser could each see a different one.
+  const fromAddresses = fromHeaderAddresses(message.headers.get("from"));
+  if (fromAddresses.length !== 1) {
+    message.setReject("Not accepted: exactly one From address");
+    return;
+  }
+  // Decided once, here: mail the owner forwarded is read as a possible bill; mail let in only as Gmail's
+  // forwarding confirmation is only ever filed as that confirmation (never read by the model, never counted).
+  const fromOwner = forwardedByOwner(message.from, env.OWNER_EMAILS);
+  const confirmation = !fromOwner && isGmailConfirmation(fromAddresses[0]);
+  if (!fromOwner && !confirmation) {
     // The domain only: the full address may be a person's.
     console.log(`billing mailbox: refused mail from the domain ${message.from.split("@").pop()}`);
     message.setReject("Not accepted: forward invoices from the owner's mailbox");
@@ -75,45 +91,50 @@ export async function receiveEmail(
   }
   const db = env.DB;
   const dayStart = `${now.slice(0, 10)}T00:00:00.000Z`;
-  const today = await emailsSince(db, dayStart);
-  if (today >= DAILY_MAIL_CAP) {
-    message.setReject("Daily limit reached; try again tomorrow");
+  const counts = await mailCountsSince(db, dayStart, GMAIL_FORWARDING_SENDER);
+  if (
+    confirmation
+      ? counts.confirmations >= DAILY_CONFIRMATION_CAP
+      : counts.forwards >= DAILY_MAIL_CAP
+  ) {
+    message.setReject("Not accepted: today's limit for this mailbox is reached");
     return;
   }
+  const auth = authSummary(message.headers);
+  console.log(
+    `billing mailbox: accepted ${confirmation ? "a Gmail confirmation" : "an owner forward"}; auth: ${auth ?? "none recorded"}`,
+  );
 
   let email: Email | null = null;
-  let reading: Reading | null = null;
+  let failure: string | null = null;
   if (message.rawSize > MAX_EMAIL_BYTES) {
-    reading = {
-      ...EMPTY_READING,
-      status: "review",
-      note: `Too large to read (${message.rawSize} bytes).`,
-    };
+    failure = `Too large to read (${message.rawSize} bytes).`;
   } else {
     const raw = await new Response(message.raw).arrayBuffer();
     try {
       email = await PostalMime.parse(raw);
     } catch (err) {
-      reading = {
-        ...EMPTY_READING,
-        status: "review",
-        note: `Unreadable email: ${errorSummary(err)}`,
-      };
+      failure = `Unreadable email: ${errorSummary(err)}`;
     }
   }
 
   const messageId = email?.messageId ?? message.headers.get("message-id");
   if (messageId && (await statementExists(db, messageId))) return; // redelivered or forwarded twice
 
-  if (email && !reading) {
-    const capped = today >= DAILY_MODEL_READS;
+  let reading: Reading;
+  if (confirmation) {
+    reading = readConfirmation(email);
+  } else if (!email) {
+    reading = { ...EMPTY_READING, status: "review", note: failure };
+  } else {
+    const capped = counts.forwards >= DAILY_MODEL_READS;
     try {
       reading = await readEmail(
         email,
         capped ? undefined : env.AI,
         now,
         capped
-          ? `Over today's limit of ${DAILY_MODEL_READS} model reads: read it by hand.`
+          ? `Over today's limit of ${DAILY_MODEL_READS} emails read by the model: read it by hand.`
           : undefined,
       );
     } catch (err) {
@@ -124,7 +145,6 @@ export async function receiveEmail(
       };
     }
   }
-  if (!reading) return; // unreachable: every branch above sets a reading or an email
 
   const same =
     reading.status === "recorded"
@@ -135,13 +155,16 @@ export async function receiveEmail(
           charged_on: reading.chargedOn,
         })
       : null;
-  const sender = email?.from?.address ?? headerFrom;
+  // A confirmation's sender is stored as exactly Gmail's address: that is what marks the row as one.
+  const sender = confirmation
+    ? GMAIL_FORWARDING_SENDER
+    : (email?.from?.address ?? fromAddresses[0]);
   const subject = email?.subject ?? message.headers.get("subject");
   await insertStatement(db, {
     received_at: now,
     source: "email",
     // No Message-ID is rare; the time keeps the column unique without merging two such emails.
-    message_id: messageId ?? `<no-id-${now}@${message.from}>`,
+    message_id: messageId ?? `<no-id-${now}@billing-mailbox>`,
     sender: sender?.slice(0, 200) ?? null,
     subject: subject?.slice(0, 200) ?? null,
     vendor: reading.vendor,
@@ -154,6 +177,7 @@ export async function receiveEmail(
     reference: reading.reference,
     status: same === null ? reading.status : "duplicate",
     note: same === null ? reading.note : `Same charge as #${same}.`,
+    auth,
     updated_at: now,
     updated_by: "mailbox",
   });

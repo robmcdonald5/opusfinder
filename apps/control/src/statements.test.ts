@@ -7,8 +7,11 @@ import {
   cents,
   filingMonth,
   htmlToText,
+  authSummary,
+  readConfirmation,
   readEmail,
   validDay,
+  vendorKey,
   type InvoiceAi,
 } from "./statements";
 
@@ -108,9 +111,8 @@ describe("readEmail", () => {
     expect(ai.asked[0]).not.toContain("<td>");
   });
 
-  it("shows Gmail's forwarding confirmation code instead of asking the model", async () => {
-    const ai = fakeAi([]);
-    const r = await readEmail(
+  it("reads Gmail's forwarding confirmation for its code, without the model", async () => {
+    const r = readConfirmation(
       await parse(
         raw({
           from: `Gmail Team <${GMAIL_FORWARDING_SENDER}>`,
@@ -119,19 +121,20 @@ describe("readEmail", () => {
           body: "Confirmation code: 123456789",
         }),
       ),
-      ai,
-      RECEIVED,
     );
     expect(r).toMatchObject({
       status: "ignored",
       note: "Gmail forwarding confirmation code: 123456789",
     });
-    expect(ai.asked).toHaveLength(0);
+    expect(readConfirmation(null)).toMatchObject({
+      status: "ignored",
+      note: "Gmail forwarding confirmation (couldn't be read).",
+    });
   });
 
   it("keeps Gmail's verification link (from the HTML too), but only on Google's own mail hosts", async () => {
     const link = "https://mail-settings.google.com/mail/vf-%5BABC%5D-xyz";
-    const r = await readEmail(
+    const r = readConfirmation(
       await parse(
         raw({
           from: `Gmail Team <${GMAIL_FORWARDING_SENDER}>`,
@@ -139,21 +142,36 @@ describe("readEmail", () => {
           html: `<p>Click <a href="${link}">here</a> to confirm.</p>`,
         }),
       ),
-      fakeAi([]),
-      RECEIVED,
     );
     expect(r.note).toBe(`Gmail forwarding confirmation link: ${link}`);
-    const spoof = await readEmail(
+    const spoof = readConfirmation(
       await parse(
         raw({
           from: `Gmail Team <${GMAIL_FORWARDING_SENDER}>`,
           body: "Confirm at https://mail-settings.google.com.evil.example/x or https://evil.example/mail.google.com/",
         }),
       ),
-      fakeAi([]),
-      RECEIVED,
     );
     expect(spoof.note).toBe("Gmail forwarding confirmation (no code or link found).");
+  });
+
+  it("never dates a hand forward by the day it was forwarded", async () => {
+    // An old invoice forwarded today: if the model finds no charge date, the owner enters it.
+    const r = await readEmail(
+      await parse(
+        raw({ from: "Owner <owner@gmail.com>", subject: "Fwd: Your invoice", body: "$8.42" }),
+      ),
+      fakeAi([bill({ charged_on: "" })]),
+      RECEIVED,
+    );
+    expect(r).toMatchObject({ status: "review", chargedOn: null, amountCents: 842 });
+    expect(r.note).toContain("No charge date found");
+  });
+
+  it("asks for the invoice number over a receipt number", async () => {
+    const ai = fakeAi([bill()]);
+    await readEmail(await parse(raw({ body: "$8.42" })), ai, RECEIVED);
+    expect(ai.asked[0]).toContain("give the invoice number");
   });
 
   it("sends a bill to review when there is no model to read it", async () => {
@@ -336,6 +354,30 @@ describe("cents", () => {
     [null, null],
   ])("%j → %j", (raw, expected) => {
     expect(cents(raw)).toBe(expected);
+  });
+});
+
+describe("vendorKey / authSummary", () => {
+  it("compares vendors without case, punctuation or legal suffixes", () => {
+    expect(vendorKey("Neon, LLC")).toBe("neon");
+    expect(vendorKey("NEON Inc.")).toBe("neon");
+    expect(vendorKey("Voyage AI, Inc.")).toBe("voyage ai");
+    expect(vendorKey(null)).toBe("");
+  });
+
+  it("keeps the verdicts and domains, never a full address", () => {
+    const headers = new Headers({
+      "authentication-results":
+        "mx.cloudflare.net; spf=pass smtp.mailfrom=owner+caf_=billing=opusfinder.ai@gmail.com; dkim=pass header.d=gmail.com header.i=@gmail.com; dmarc=pass header.from=neon.tech",
+      "received-spf":
+        "pass (mx.cloudflare.net: domain of owner@gmail.com designates 209.85.0.1 as permitted sender)",
+    });
+    const summary = authSummary(headers);
+    expect(summary).toBe(
+      "spf=pass(gmail.com) dkim=pass(gmail.com) dmarc=pass(neon.tech) received-spf=pass",
+    );
+    expect(summary).not.toContain("owner");
+    expect(authSummary(new Headers())).toBeNull();
   });
 });
 

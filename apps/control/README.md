@@ -25,7 +25,7 @@ drift probes, no notifications, no observer agent.
 | `apps/control/src/ui/`           | The panel's server-rendered pages: `html.ts` (layout, nav, styles), `forms.ts` (the change forms), one module per section.                                                                                                                |
 | `apps/control/src/mailbox.ts`    | The billing mailbox: the `email()` handler's logic (Email Routing → one `statement` row per forwarded invoice).                                                                                                                           |
 | `apps/control/src/statements.ts` | Reading one invoice email: Gmail's forwarding code, the Workers AI read (JSON mode, PDF fallback), field validation.                                                                                                                      |
-| `apps/control/migrations/`       | `0001_init.sql` (tables), `0002_seed.sql` (today's reality), `0003_ledger_started.sql` (run-time indexes), `0004_statements.sql` (the Cost page's statements).                                                                            |
+| `apps/control/migrations/`       | `0001_init.sql` (tables), `0002_seed.sql` (today's reality), `0003_ledger_started.sql` (run-time indexes), `0004_statements.sql` (the Cost page's statements), `0005_statement_auth.sql` (the mailbox's auth evidence).                   |
 | `packages/ctl`                   | `pnpm ctl`, the Node CLI agents use.                                                                                                                                                                                                      |
 
 ## Who can do what
@@ -139,32 +139,47 @@ vendor invoices to `BILLING_ADDRESS` (`billing@opusfinder.ai`, wrangler `[vars]`
 on `opusfinder.ai` sends that address to this Worker's `email()` handler, which records one `statement`
 row per email:
 
-- **Only what the owner forwarded.** Mail is accepted only when its envelope sender (`message.from`, which
-  Cloudflare treats as trustworthy; header addresses can be spoofed) is an `OWNER_EMAILS` address — a
-  Gmail forward arrives as `owner+caf_=…@gmail.com`, so the `+tag` (and, for Gmail, dots) are ignored —
-  plus Gmail's forwarding confirmation. Everything else is refused at the SMTP stage: no row, no model
-  read. Without this gate anyone who learned the address could put an invented charge in the totals.
-  UNVERIFIED until the first real forward: that Gmail's auto-forward envelope is the owner's address; if it
-  isn't, Gmail reports the bounce, and the Worker logs the refused domain.
+- **Only what the owner forwarded.** The gate decides once, before anything is read:
+  - a message must carry exactly one From address (with two, the gate and the parser could each see a
+    different one);
+  - mail whose envelope sender (`message.from`) is an `OWNER_EMAILS` address is an owner forward (a Gmail
+    filter forward arrives as `owner+caf_=…@gmail.com`, so the `+tag` and Gmail dots are ignored; a hand
+    forward arrives as the owner's own address — verified 2026-10-10);
+  - otherwise, mail whose single From is exactly Gmail's `forwarding-noreply@google.com` is filed as Gmail's
+    forwarding confirmation and nothing else: never read by the model, never counted;
+  - everything else is refused at the SMTP stage (no row, no model read; the Worker logs the domain only).
+
+  The envelope sender is SMTP's unauthenticated MAIL FROM, and Cloudflare admits mail that passes SPF _or_
+  carries any valid DKIM signature, so someone who knows the owner's address could forge it. **Shadow:**
+  each accepted email's SPF / DKIM / DMARC / ARC verdicts, domains only, are stored in `statement.auth`
+  (and logged); once real filter forwards have been seen there, require the verdict they carry (e.g. SPF
+  pass for the envelope's gmail.com). UNVERIFIED until the first filter forward (Cloudflare's, ~23rd).
+
 - **Read by a model.** Workers AI (`[ai]` binding, `@cf/meta/llama-3.3-70b-instruct-fp8-fast` in JSON
-  mode) reads vendor, kind, total, currency, charge date, service period and invoice number; when the body
-  doesn't settle it, the attached PDF (via `toMarkdown`) is read too. Every field is validated (real calendar
-  dates, a day of timezone slack); the email is untrusted text and the model has no tools.
-- **Never guessed.** No total, a currency other than USD, a failed model call, an unparseable or oversized
-  (> 10 MiB) email → status `review`, for the owner to count (with the amount, date and service period they
-  read) or exclude. That includes mail the model doesn't see a bill in: only the owner's forwards get
-  this far, so the model never drops one (a forward quotes the vendor's original below its "Forwarded
-  message" line; when the body doesn't settle it, the attached PDF is read). `ignored` is only for
-  Gmail's forwarding confirmation. Past 50 model reads in a UTC day the rest wait in `review`; past
-  100 emails a day mail is refused. A database error is not swallowed: the handler throws and Email Routing
-  reports a temporary failure, so the sender retries.
-- **Counted once.** A redelivered email (same `Message-ID`) is dropped; a second email for a recorded charge
-  (same vendor and invoice number, or — when either has no number — same vendor and amount within 3 days:
-  Stripe sends an invoice AND a receipt) is stored as `duplicate`. Different invoice numbers never merge.
+  mode) reads vendor, kind, total, currency, charge date, service period and invoice number (the invoice's,
+  over a receipt's); it gets both the plain-text and HTML parts, and when the body doesn't settle it, the
+  attached PDF (via `toMarkdown`). Every field is validated (real calendar dates, a day of timezone slack);
+  the email is untrusted text and the model has no tools.
+- **Never guessed.** No total, no charge date on a hand forward (its own date is the forward's, not the
+  invoice's), a currency other than USD, a failed model call, an unparseable or oversized (> 10 MiB) email,
+  or mail the model doesn't see a bill in → status `review`, for the owner to count (with the amount, date
+  and service period they read) or exclude. Only owner forwards reach the model, so it never drops one.
+  `ignored` is only for Gmail's confirmation, which can't be counted (the server refuses, whatever the
+  row's status). An agent's hand entry also waits in `review`; the owner's counts at once.
+- **Caps.** Per UTC day: 100 owner forwards and, apart from them, 5 Gmail confirmations (anyone can write
+  that From header, so junk confirmations can't use up the owner's quota); past either, mail is refused at
+  the SMTP stage. Past 50 forwards in a day the rest wait in `review` unread (each read is at most two model
+  calls and one PDF conversion). How Email Routing answers when the handler itself throws (e.g. a D1
+  outage) isn't documented: the email may be lost, so check the Email Routing activity log after an outage.
+- **Counted once, mostly.** A redelivered email (same `Message-ID`) is dropped. A second email for a
+  recorded charge — same vendor (compared without case, punctuation or legal suffixes: "Neon, LLC" is
+  "Neon") and invoice number, or, when either has no number, same vendor and amount within 3 days — is
+  stored as `duplicate`. Different invoice numbers never merge, so the filter should still forward one
+  email per charge.
 - **Filed by month.** Under the service period the invoice states, else the charge date. Prepaid credits
-  always go by the charge date (cash, not usage).
-- **Gmail's forwarding confirmation** (the code Gmail sends when the forwarding address is added) is shown
-  on the Cost page to the owner only; agents see neither the code nor the subject that repeats it.
+  always go by the charge date (cash, not usage). The month view groups vendor spellings into one line.
+- **Gmail's forwarding confirmation** (code and/or link) is shown on the Cost page to the owner only;
+  agents see neither the code nor the subject that repeats it.
 - Mail for any address other than `BILLING_ADDRESS` is rejected.
 
 **Scope** (owner, 2026-10-10): only what it costs to run opusfinder — Neon, Cloudflare (Workers Paid and

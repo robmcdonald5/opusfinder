@@ -68,7 +68,7 @@ Fields:
 - currency: ISO code, e.g. "USD". Empty if not stated.
 - charged_on: the date of the charge or invoice, YYYY-MM-DD. Empty if not stated.
 - period_start: the first day of the service period the charge covers, YYYY-MM-DD, only if stated. Else empty.
-- reference: the invoice or receipt number, if any. Else empty.`;
+- reference: the invoice number; if the email shows both an invoice number and a receipt number, give the invoice number. Else empty.`;
 
 const SCHEMA = {
   type: "object",
@@ -190,9 +190,50 @@ export function mayBeGmailConfirmation(sender: string | null | undefined): boole
   return (sender ?? "").toLowerCase().includes(GMAIL_FORWARDING_SENDER);
 }
 
-/** Gmail's confirmation as the mailbox filed it: never a charge, so it can't be counted. */
-export function isConfirmationRow(row: { status: string; sender: string | null }): boolean {
-  return row.status === "ignored" && isGmailConfirmation(row.sender);
+/**
+ * Gmail's confirmation as the mailbox filed it (it stores exactly GMAIL_FORWARDING_SENDER as the sender of
+ * every row it admitted as one, whatever its status later): never a charge, so it can't be counted.
+ */
+export function isConfirmationRow(row: { sender: string | null }): boolean {
+  return row.sender === GMAIL_FORWARDING_SENDER;
+}
+
+/**
+ * A vendor name for comparing and grouping: case, punctuation and legal suffixes ignored, so "Neon, LLC",
+ * "Neon Inc." and "neon" are one vendor.
+ */
+export function vendorKey(vendor: string | null | undefined): string {
+  return (vendor ?? "")
+    .toLowerCase()
+    .replace(/[.,'’"()&]/g, " ")
+    .replace(/\b(llc|inc|incorporated|ltd|limited|corp|corporation|co|gmbh|plc|pbc|sa|bv)\b/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * The sender-authentication verdicts the receiving server recorded (Authentication-Results, its ARC copy,
+ * Received-SPF), as "spf=pass(gmail.com) dkim=pass(gmail.com) …": domains only, never a full address (an
+ * envelope sender is the owner's). Shadow evidence for deciding what the mailbox should later require.
+ */
+export function authSummary(headers: { get(name: string): string | null }): string | null {
+  const found: string[] = [];
+  const results = ["authentication-results", "arc-authentication-results"]
+    .map((h) => headers.get(h) ?? "")
+    .join(";");
+  for (const m of results.matchAll(/\b(spf|dkim|dmarc|arc)=(\w+)([^;]*)/gi)) {
+    const domain =
+      /(?:smtp\.mailfrom|header\.d|header\.from|header\.i)=(?:[^@\s;]*@)?([^\s;)]+)/i.exec(
+        m[3] ?? "",
+      )?.[1];
+    found.push(
+      `${(m[1] ?? "").toLowerCase()}=${(m[2] ?? "").toLowerCase()}${domain ? `(${domain.toLowerCase()})` : ""}`,
+    );
+  }
+  const spf = headers.get("received-spf")?.trim().split(/\s/)[0];
+  if (spf) found.push(`received-spf=${spf.toLowerCase()}`);
+  const unique = [...new Set(found)];
+  return unique.length > 0 ? unique.join(" ").slice(0, 300) : null;
 }
 
 /** "8.42", "$1,234.5", "USD 5" → cents; anything else (negative, huge, words) → null. */
@@ -265,20 +306,30 @@ function fromAnswer(
   const stated = typeof a.currency === "string" ? a.currency.trim().toUpperCase() : "";
   // An unstated currency with a "$" amount in the email is USD; anything else stays unknown.
   const currency = /^[A-Z]{3}$/.test(stated) ? stated : /\$\s?\d/.test(read) ? "USD" : null;
-  const emailDay = email.date ? validDay(email.date.slice(0, 10), receivedAt) : null;
+  // A hand forward's own Date is when it was forwarded, not when the vendor charged: no fallback for it.
+  const fallbackDay = isForward(email, read)
+    ? null
+    : ((email.date ? validDay(email.date.slice(0, 10), receivedAt) : null) ??
+      receivedAt.slice(0, 10));
   const reading: Reading = {
     status: "recorded",
     vendor: clean(a.vendor, 80) ?? senderDomain(email, read),
     kind,
     amountCents,
     currency,
-    chargedOn: validDay(a.charged_on, receivedAt) ?? emailDay ?? receivedAt.slice(0, 10),
+    chargedOn: validDay(a.charged_on, receivedAt) ?? fallbackDay,
     periodStart: validDay(a.period_start, receivedAt),
     reference: clean(a.reference, 80),
     note: null,
   };
   if (amountCents === null)
     return { ...reading, status: "review", note: "No total found in the email." };
+  if (reading.chargedOn === null)
+    return {
+      ...reading,
+      status: "review",
+      note: "No charge date found (a forward's own date isn't the invoice's): enter it.",
+    };
   if (currency !== "USD")
     return {
       ...reading,
@@ -311,6 +362,34 @@ async function pdfText(ai: InvoiceAi, pdf: { name: string; content: ArrayBuffer 
 }
 
 /**
+ * Gmail's forwarding confirmation, as the owner needs it: the code and/or the verification link (Gmail Help
+ * describes a link; older mails also carry a numeric code). The mailbox calls this — never the model — for
+ * mail it admitted only as Gmail's confirmation; `email` is null when it couldn't be parsed or was too big.
+ */
+export function readConfirmation(email: Email | null): Reading {
+  if (!email)
+    return {
+      ...EMPTY_READING,
+      status: "ignored",
+      note: "Gmail forwarding confirmation (couldn't be read).",
+    };
+  const code =
+    /confirmation code:\s*(\d+)/i.exec(emailText(email))?.[1] ??
+    /\(#(\d+)\)/.exec(email.subject ?? "")?.[1];
+  // The link from the raw HTML too: htmlToText drops hrefs.
+  const link = GMAIL_LINK.exec(`${email.text ?? ""} ${email.html ?? ""}`)?.[0];
+  const found = [code ? `code: ${code}` : "", link ? `link: ${link}` : ""].filter(Boolean);
+  return {
+    ...EMPTY_READING,
+    status: "ignored",
+    note:
+      found.length > 0
+        ? `Gmail forwarding confirmation ${found.join(" · ")}`
+        : "Gmail forwarding confirmation (no code or link found).",
+  };
+}
+
+/**
  * Read one parsed email. `ai` is undefined when there is no binding or today's cap is reached; then the
  * email waits for the owner. Throws only on an AI transport error (the caller records it for review).
  */
@@ -323,21 +402,6 @@ export async function readEmail(
   const subject = email.subject ?? "";
   const body = emailText(email);
 
-  if (isGmailConfirmation(email.from?.address)) {
-    // Gmail Help describes a verification link; older mails also carry a numeric code. Keep whichever is
-    // there (the link from the HTML too: htmlToText drops hrefs).
-    const code = /confirmation code:\s*(\d+)/i.exec(body)?.[1] ?? /\(#(\d+)\)/.exec(subject)?.[1];
-    const link = GMAIL_LINK.exec(`${email.text ?? ""} ${email.html ?? ""}`)?.[0];
-    const found = [code ? `code: ${code}` : "", link ? `link: ${link}` : ""].filter(Boolean);
-    return {
-      ...EMPTY_READING,
-      status: "ignored",
-      note:
-        found.length > 0
-          ? `Gmail forwarding confirmation ${found.join(" · ")}`
-          : "Gmail forwarding confirmation (no code or link found).",
-    };
-  }
   if (!ai)
     return { ...EMPTY_READING, status: "review", vendor: senderDomain(email, body), note: whyNoAi };
 
