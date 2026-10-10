@@ -48,6 +48,9 @@ export const EMBEDDING_DIMENSIONS = 1024;
  * has no `IF NOT EXISTS`, which would break the idempotent-migration rule. */
 export type LifecycleState = "active" | "closed";
 
+/** The companies index keeping one row per board where the API ignores slug case (migration 0025). */
+export const COMPANIES_LOWER_SLUG_UQ = "companies_source_lower_slug_uq";
+
 /**
  * One row per (company, ATS) pair. The same company can in principle exist on
  * more than one ATS, so identity is `(slug, source)`, not slug alone. Slugs are
@@ -84,6 +87,15 @@ export const companies = pgTable(
   },
   (t) => [
     uniqueIndex("companies_slug_source_uq").on(t.slug, t.source),
+    // One row per board for the sources whose API ignores slug case (`boschgroup` and `BoschGroup` are one
+    // SmartRecruiters board). upsertCompany's ON CONFLICT (slug, source) can't absorb a conflict here, so it
+    // catches a case variant's violation and returns the stored row. The list must equal @opusfinder/sources'
+    // CASE_INSENSITIVE_SLUG_SOURCES (db can't import it: sources depends on db), which a test there checks
+    // against the migrated database. drizzle-kit emits it bare; the migration hand-adds IF NOT EXISTS
+    // (neon-http migrations aren't transactional — same discipline as the guarded indexes below).
+    uniqueIndex(COMPANIES_LOWER_SLUG_UQ)
+      .on(t.source, sql`lower(${t.slug})`)
+      .where(sql`${t.source} IN ('ashby', 'smartrecruiters')`),
     // Partial index over active rows, keyed to MATCH the reprobe query's ordering (last_probed_at
     // ASC NULLS FIRST, then id) so the planner range-scans it and LIMIT stops early instead of
     // sorting the whole active set.

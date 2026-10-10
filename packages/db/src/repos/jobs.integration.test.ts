@@ -1,11 +1,16 @@
 import { createHash } from "node:crypto";
 
-import { eq } from "drizzle-orm";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { DrizzleQueryError, eq } from "drizzle-orm";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Db } from "@opusfinder/db";
 import { listCompanies, upsertCompany, upsertJobs, writeJobEmbeddings } from "@opusfinder/db/repos";
-import { companies, EMBEDDING_DIMENSIONS, jobs } from "@opusfinder/db/schema";
+import {
+  companies,
+  COMPANIES_LOWER_SLUG_UQ,
+  EMBEDDING_DIMENSIONS,
+  jobs,
+} from "@opusfinder/db/schema";
 import { companySlug, jobId, type NormalizedJob } from "@opusfinder/shared";
 
 import { createTestDb } from "@test/db/pglite";
@@ -603,42 +608,57 @@ describe("upsertCompany + upsertJobs — board persistence semantics (integratio
   });
 
   describe("upsertCompany — (slug, source) get-or-create", () => {
-    it("returns the existing id on conflict without clobbering active, metadata, or updated_at", async () => {
-      const idA = await upsertCompany(db, companySlug("acme"), "greenhouse");
-      // Pre-mutate real fields to sentinels so any conflict-path clobber is observable — INCLUDING
-      // the probe columns: a "reset the probe streak when discovery re-finds a board" refactor
-      // writing them on conflict would zero deactivateStale's staleness clock on every discovery
-      // pass (the capped-board-zombie class), invisibly so if they sat at their defaults.
-      await db
-        .update(companies)
-        .set({
-          active: false,
-          metadata: { name: "Acme" },
-          updatedAt: SENTINEL_2020,
-          consecutiveProbeFailures: 2,
-          lastProbedAt: SENTINEL_2020,
-          lastLiveAt: SENTINEL_2020,
-          lastIngestedAt: SENTINEL_2020,
-        })
-        .where(eq(companies.id, idA));
-
-      // Removing the no-op set (i.e. onConflictDoNothing) makes RETURNING empty and this throw.
-      const again = await upsertCompany(db, companySlug("acme"), "greenhouse");
-      expect(again).toBe(idA);
-
-      const rows = await db.select().from(companies);
-      // A broken conflict target would insert a duplicate row.
-      expect(rows).toHaveLength(1);
-      // The conflict write must stay a NO-OP: real-field writes on conflict destroy these.
-      expect(rows[0]!.active).toBe(false);
-      expect(rows[0]!.metadata).toEqual({ name: "Acme" });
-      // companies.updated_at has no $onUpdate — only an explicit (regressed) write could move it.
-      expect(rows[0]!.updatedAt).toEqual(SENTINEL_2020);
-      expect(rows[0]!.consecutiveProbeFailures).toBe(2);
-      expect(rows[0]!.lastProbedAt).toEqual(SENTINEL_2020);
-      expect(rows[0]!.lastLiveAt).toEqual(SENTINEL_2020);
-      expect(rows[0]!.lastIngestedAt).toEqual(SENTINEL_2020);
+    afterEach(() => {
+      vi.restoreAllMocks();
     });
+
+    // The exact-casing conflict path and, for the sources whose board ids ignore case (Ashby,
+    // SmartRecruiters: COMPANIES_LOWER_SLUG_UQ), the case-variant fold must behave alike — the stored
+    // row's id, no second row, no column written.
+    it.each([
+      ["greenhouse", "acme", "acme"],
+      ["smartrecruiters", "BoschGroup", "BoschGroup"],
+      ["smartrecruiters", "BoschGroup", "boschgroup"],
+      ["ashby", "Mapbox", "MAPBOX"],
+    ] as const)(
+      "%s `%s` then `%s`: returns the existing id without clobbering slug, active, metadata, or updated_at",
+      async (source, stored, again) => {
+        const idA = await upsertCompany(db, companySlug(stored), source);
+        // Pre-mutate real fields to sentinels so any conflict-path clobber is observable — INCLUDING
+        // the probe columns: a "reset the probe streak when discovery re-finds a board" refactor
+        // writing them on conflict would zero deactivateStale's staleness clock on every discovery
+        // pass (the capped-board-zombie class), invisibly so if they sat at their defaults.
+        await db
+          .update(companies)
+          .set({
+            active: false,
+            metadata: { name: "Acme" },
+            updatedAt: SENTINEL_2020,
+            consecutiveProbeFailures: 2,
+            lastProbedAt: SENTINEL_2020,
+            lastLiveAt: SENTINEL_2020,
+            lastIngestedAt: SENTINEL_2020,
+          })
+          .where(eq(companies.id, idA));
+
+        // Removing the no-op set (i.e. onConflictDoNothing) makes RETURNING empty and this throw.
+        expect(await upsertCompany(db, companySlug(again), source)).toBe(idA);
+
+        const rows = await db.select().from(companies);
+        // A broken conflict target, or an unfolded case variant, would insert a second row.
+        expect(rows).toHaveLength(1);
+        expect(rows[0]!.slug).toBe(stored); // the fold never rewrites the stored casing
+        // The conflict write must stay a NO-OP: real-field writes on conflict destroy these.
+        expect(rows[0]!.active).toBe(false);
+        expect(rows[0]!.metadata).toEqual({ name: "Acme" });
+        // companies.updated_at has no $onUpdate — only an explicit (regressed) write could move it.
+        expect(rows[0]!.updatedAt).toEqual(SENTINEL_2020);
+        expect(rows[0]!.consecutiveProbeFailures).toBe(2);
+        expect(rows[0]!.lastProbedAt).toEqual(SENTINEL_2020);
+        expect(rows[0]!.lastLiveAt).toEqual(SENTINEL_2020);
+        expect(rows[0]!.lastIngestedAt).toEqual(SENTINEL_2020);
+      },
+    );
 
     it("treats identity as (slug, source) — the same slug on another source creates a new row", async () => {
       // IDENTICAL slugs are the discriminating part: if identity collapsed to slug alone, the
@@ -646,6 +666,57 @@ describe("upsertCompany + upsertJobs — board persistence semantics (integratio
       const gh = await upsertCompany(db, companySlug("acme"), "greenhouse");
       const lv = await upsertCompany(db, companySlug("acme"), "lever");
       expect(lv).not.toBe(gh);
+      expect(await db.select({ id: companies.id }).from(companies)).toHaveLength(2);
+    });
+
+    it("folds within the source only: another source's board of the same name is never returned", async () => {
+      // Seeded FIRST, so a lookup that dropped the source filter would find this row first.
+      await upsertCompany(db, companySlug("boschgroup"), "lever");
+      const id = await upsertCompany(db, companySlug("BoschGroup"), "smartrecruiters");
+
+      expect(await upsertCompany(db, companySlug("boschgroup"), "smartrecruiters")).toBe(id);
+    });
+
+    // A Postgres unique violation as the driver raises it, wrapped by drizzle (the driver error is `cause`).
+    function violation(constraint: string): DrizzleQueryError {
+      const cause = Object.assign(new Error("duplicate key value violates unique constraint"), {
+        code: "23505",
+        constraint,
+      });
+      return new DrizzleQueryError('insert into "companies"', [], cause);
+    }
+
+    // Two writers inserting one NEW board in one casing: ON CONFLICT arbitrates only (slug, source), so the
+    // loser can raise on COMPANIES_LOWER_SLUG_UQ instead. Single-connection PGlite can't interleave the two
+    // inserts, so the loser's INSERT raises that violation here over the winner's already-stored row.
+    it("a get-or-create race lost on the case-folded index returns the winner's row", async () => {
+      const id = await upsertCompany(db, companySlug("BoschGroup"), "smartrecruiters");
+      vi.spyOn(db, "insert").mockImplementationOnce(() => {
+        throw violation(COMPANIES_LOWER_SLUG_UQ);
+      });
+
+      expect(await upsertCompany(db, companySlug("BoschGroup"), "smartrecruiters")).toBe(id);
+    });
+
+    it.each([
+      ["another constraint's violation", "companies_slug_source_uq", true],
+      ["a case-folded violation with no stored row to return", COMPANIES_LOWER_SLUG_UQ, false],
+    ])("rethrows %s unchanged", async (_label, constraint, seeded) => {
+      if (seeded) await upsertCompany(db, companySlug("BoschGroup"), "smartrecruiters");
+      const err = violation(constraint);
+      vi.spyOn(db, "insert").mockImplementationOnce(() => {
+        throw err;
+      });
+
+      await expect(upsertCompany(db, companySlug("BoschGroup"), "smartrecruiters")).rejects.toBe(
+        err,
+      );
+    });
+
+    it("leaves case-SENSITIVE sources exact: Lever `Acme` and `acme` are two boards", async () => {
+      const upper = await upsertCompany(db, companySlug("Acme"), "lever");
+      const lower = await upsertCompany(db, companySlug("acme"), "lever");
+      expect(lower).not.toBe(upper);
       expect(await db.select({ id: companies.id }).from(companies)).toHaveLength(2);
     });
   });

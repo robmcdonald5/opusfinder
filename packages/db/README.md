@@ -71,7 +71,8 @@ Run from the repo root via the workspace filter so the cwd is `packages/db`:
 ## Caveats
 
 - **Schema (Phase 2 + 4 + 7).** `src/schema.ts` defines `companies` (unique
-  `(slug, source)`) and `jobs` (unique `(source, external_id)`, FK → `companies`,
+  `(slug, source)`, plus `(source, lower(slug))` for the case-insensitive Ashby/SmartRecruiters —
+  `companies_source_lower_slug_uq`, migration 0025) and `jobs` (unique `(source, external_id)`, FK → `companies`,
   `company_id` index, text `lifecycle_state`). `jobs.embedding` is a nullable
   `vector(1024)` — width = the exported `EMBEDDING_DIMENSIONS` constant (the single source of truth, kept
   in sync with `@opusfinder/embeddings`' `EMBED_DIMENSIONS`); populated in Phase 4 and

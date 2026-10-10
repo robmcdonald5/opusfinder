@@ -2,17 +2,18 @@
  * Persistence for companies + jobs. Functional style: the Drizzle client is
  * injected (no module-level singleton), matching `createDb()` in ../client.
  *
- * Both upserts are idempotent. `upsertCompany` is get-or-create; `upsertJobs`
- * dedupes the batch, never writes a failed hydrate's placeholder content (its stored row only
- * follows the board listing it), then only advances `updated_at` when a job actually changed, so
- * re-ingesting an unchanged board is a no-op.
+ * Both upserts are idempotent. `upsertCompany` is get-or-create, case-insensitive for a source whose
+ * board ids are (COMPANIES_LOWER_SLUG_UQ); `upsertJobs` dedupes the batch, never writes a failed
+ * hydrate's placeholder content (its stored row only follows the board listing it), then only advances
+ * `updated_at` when a job actually changed, so re-ingesting an unchanged board is a no-op.
  */
 import { and, type AnyColumn, eq, gt, inArray, ne, or, sql, type SQL } from "drizzle-orm";
 
 import type { CompanySlug, JobId, NormalizedJob, SourceName } from "@opusfinder/shared";
 
 import type { Db } from "../client";
-import { companies, jobs } from "../schema";
+import { pgConstraintOf } from "../errors";
+import { companies, COMPANIES_LOWER_SLUG_UQ, jobs } from "../schema";
 import { NUL, signatureSql, stripNul } from "./sql";
 
 /** One row of the companies table, as the ingestion driver needs it (id + identity). */
@@ -55,20 +56,39 @@ export function listCompanies(
  * "affected" so `RETURNING` yields the id even when the company already exists —
  * a bare `onConflictDoNothing` returns no rows on conflict. It writes nothing
  * meaningful, so `companies.updated_at` is left untouched.
+ *
+ * On a source whose API ignores slug case, a case variant of a stored slug (`boschgroup` beside
+ * `BoschGroup`) is the same board. ON CONFLICT (slug, source) can't arbitrate COMPANIES_LOWER_SLUG_UQ, so
+ * that insert raises on it instead, and this returns the stored row's id: like the conflict path above it
+ * writes nothing, so the stored casing, `active` and the timestamps stay as they are. The same catch
+ * resolves two writers racing to insert one new board in one casing (only one index is the arbiter). Any
+ * other failure, or a violation with no stored row left to find, is rethrown as is. NOT transaction-safe:
+ * the failed INSERT aborts an enclosing transaction, so the fold's SELECT would fail (no caller uses one).
  */
 export async function upsertCompany(
   db: Db,
   slug: CompanySlug,
   source: SourceName,
 ): Promise<number> {
-  const rows = await db
-    .insert(companies)
-    .values({ slug, source })
-    .onConflictDoUpdate({
-      target: [companies.slug, companies.source],
-      set: { slug: sql`excluded.slug` },
-    })
-    .returning({ id: companies.id });
+  let rows: { id: number }[];
+  try {
+    rows = await db
+      .insert(companies)
+      .values({ slug, source })
+      .onConflictDoUpdate({
+        target: [companies.slug, companies.source],
+        set: { slug: sql`excluded.slug` },
+      })
+      .returning({ id: companies.id });
+  } catch (err) {
+    if (pgConstraintOf(err) !== COMPANIES_LOWER_SLUG_UQ) throw err;
+    const [stored] = await db
+      .select({ id: companies.id })
+      .from(companies)
+      .where(and(eq(companies.source, source), sql`lower(${companies.slug}) = lower(${slug})`));
+    if (!stored) throw err;
+    return stored.id;
+  }
 
   const row = rows[0];
   if (!row) {

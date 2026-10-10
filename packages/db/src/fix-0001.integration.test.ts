@@ -2,7 +2,7 @@ import type { PGlite } from "@electric-sql/pglite";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import type { Db } from "@opusfinder/db";
-import { companies, dataFixes, jobs } from "@opusfinder/db/schema";
+import { companies, COMPANIES_LOWER_SLUG_UQ, dataFixes, jobs } from "@opusfinder/db/schema";
 
 import { pgliteFixClient } from "@test/db/fix-client";
 import { createTestDb } from "@test/db/pglite";
@@ -58,6 +58,9 @@ describe("fix 0001: merge the case-variant duplicate boards (integration: real P
 
   beforeAll(async () => {
     ({ db, client: pg, close } = await createTestDb());
+    // The fix ran BEFORE migration 0025, whose case-folded unique index forbids the duplicate pairs seeded
+    // below: drop it to reproduce the database the fix was written for.
+    await pg.exec(`DROP INDEX "${COMPANIES_LOWER_SLUG_UQ}"`);
     await pg.exec(buildDataFixerSetupSql("p".repeat(32)));
     fixer = pgliteFixClient(pg);
     fix0001 = readFixes().fixes.find((f) => f.id === 1)!;
