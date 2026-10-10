@@ -1,5 +1,5 @@
 import type { CostView, StatementView, StatusView } from "../service";
-import { GMAIL_LINK, STATEMENT_KINDS, isGmailConfirmation } from "../statements";
+import { GMAIL_LINK, STATEMENT_KINDS, isConfirmationRow, isGmailConfirmation } from "../statements";
 import { esc, isOwner, layout, mode, when } from "./html";
 
 /**
@@ -163,12 +163,14 @@ export function renderCost(view: StatusView, c: CostView, flash: string | null):
   // ---- what isn't counted ----
   if (c.notCounted.length > 0)
     parts.push(
-      `<details><summary class="muted">Not counted (${c.notCounted.length} most recent): duplicates, non-bills, excluded</summary><ul class="rows">${c.notCounted
+      `<details><summary class="muted">Not counted (${c.notCounted.length} most recent): duplicates, excluded, and Gmail&#39;s confirmations</summary><ul class="rows">${c.notCounted
         .map(
           (s) =>
             `<li>${mode(s.status)} ${statementLine(s)}<br>${from(s)} ${when(s.received_at)}${
               s.note ? `<br><span class="muted">${esc(s.note)}</span>` : ""
-            }${owner ? confirmLink(s) : ""}${owner && s.status !== "ignored" ? decideForm(s, "Count it") : ""}</li>`,
+            }${owner ? confirmLink(s) : ""}${
+              owner && !isConfirmationRow(s) ? decideForm(s, "Count it") : ""
+            }</li>`,
         )
         .join("")}</ul></details>`,
     );

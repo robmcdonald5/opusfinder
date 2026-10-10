@@ -1,4 +1,4 @@
-import PostalMime, { type Email } from "postal-mime";
+import PostalMime, { addressParser, type Email } from "postal-mime";
 
 import { parseOwnerEmails } from "./auth-config";
 import type { Env } from "./env";
@@ -42,6 +42,12 @@ export function mailboxKey(address: string): string {
   return `${local}@${domain}`;
 }
 
+/** The bare address in a From header ("Name" <a@b> → a@b), or null. */
+function headerAddress(header: string | null): string | null {
+  const first = addressParser(header ?? "")[0];
+  return first?.address ? first.address.toLowerCase() : null;
+}
+
 function forwardedByOwner(envelopeFrom: string, ownerEmails: string | undefined): boolean {
   const owners = new Set(parseOwnerEmails(ownerEmails).map(mailboxKey));
   return owners.has(mailboxKey(envelopeFrom));
@@ -58,7 +64,10 @@ export async function receiveEmail(
     return;
   }
   const headerFrom = message.headers.get("from");
-  if (!isGmailConfirmation(headerFrom) && !forwardedByOwner(message.from, env.OWNER_EMAILS)) {
+  if (
+    !isGmailConfirmation(headerAddress(headerFrom)) &&
+    !forwardedByOwner(message.from, env.OWNER_EMAILS)
+  ) {
     // The domain only: the full address may be a person's.
     console.log(`billing mailbox: refused mail from the domain ${message.from.split("@").pop()}`);
     message.setReject("Not accepted: forward invoices from the owner's mailbox");

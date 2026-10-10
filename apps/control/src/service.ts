@@ -58,7 +58,8 @@ import {
   STATEMENT_KINDS,
   cents,
   filingMonth,
-  isGmailConfirmation,
+  isConfirmationRow,
+  mayBeGmailConfirmation,
   validDay,
   type StatementKind,
 } from "./statements";
@@ -751,7 +752,7 @@ const MONTH = /^\d{4}-\d{2}$/;
  * forwarding from the owner's inbox.
  */
 function statementView(row: StatementRow, caller: Caller) {
-  if (caller.role === "owner" || !isGmailConfirmation(row.sender)) return row;
+  if (caller.role === "owner" || !mayBeGmailConfirmation(row.sender)) return row;
   return {
     ...row,
     subject: "Gmail forwarding confirmation",
@@ -886,6 +887,12 @@ export async function reviewStatement(
     return "excluded" as const;
   }
   if (action !== "count") throw new ApiError(400, "invalid_action", "action is count or exclude");
+  if (isConfirmationRow(row))
+    throw new ApiError(
+      400,
+      "not_a_charge",
+      "this is Gmail's forwarding confirmation, not a charge",
+    );
   const f = statementFields(body, now);
   // The owner's form carries the service period too (pre-filled with what the model read): their answer
   // decides the month, so a misread period can be corrected or cleared.

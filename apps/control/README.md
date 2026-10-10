@@ -148,11 +148,14 @@ row per email:
   isn't, Gmail reports the bounce, and the Worker logs the refused domain.
 - **Read by a model.** Workers AI (`[ai]` binding, `@cf/meta/llama-3.3-70b-instruct-fp8-fast` in JSON
   mode) reads vendor, kind, total, currency, charge date, service period and invoice number; when the body
-  has no total, the attached PDF (via `toMarkdown`) is read too. Every field is validated (real calendar
+  doesn't settle it, the attached PDF (via `toMarkdown`) is read too. Every field is validated (real calendar
   dates, a day of timezone slack); the email is untrusted text and the model has no tools.
 - **Never guessed.** No total, a currency other than USD, a failed model call, an unparseable or oversized
   (> 10 MiB) email → status `review`, for the owner to count (with the amount, date and service period they
-  read) or exclude. Not a bill → `ignored`. Past 50 model reads in a UTC day the rest wait in `review`; past
+  read) or exclude. That includes mail the model doesn't see a bill in: only the owner's forwards get
+  this far, so the model never drops one (a forward quotes the vendor's original below its "Forwarded
+  message" line; when the body doesn't settle it, the attached PDF is read). `ignored` is only for
+  Gmail's forwarding confirmation. Past 50 model reads in a UTC day the rest wait in `review`; past
   100 emails a day mail is refused. A database error is not swallowed: the handler throws and Email Routing
   reports a temporary failure, so the sender retries.
 - **Counted once.** A redelivered email (same `Message-ID`) is dropped; a second email for a recorded charge
