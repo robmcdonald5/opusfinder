@@ -153,6 +153,17 @@ describe("the billing mailbox", () => {
     expect((await rows()).map((r) => r.reference)).toEqual(["A", "B"]);
   });
 
+  it("refuses a display-name spoof of Gmail's forwarding sender", async () => {
+    await h.email(
+      email({ from: "x@evil.example", body: "Confirmation code: 1", answer: bill() }).replace(
+        "From: Vendor <x@evil.example>",
+        'From: "forwarding-noreply@google.com" <x@evil.example>',
+      ),
+      { from: "x@evil.example" },
+    );
+    expect(await rows()).toHaveLength(0);
+  });
+
   it("stops accepting mail after the day's cap", async () => {
     const now = new Date().toISOString();
     await h.db.batch(
@@ -194,7 +205,10 @@ describe("the billing mailbox", () => {
     expect(await rows()).toMatchObject([
       { status: "review", note: "No total found in the email." },
       { status: "review", note: "The model call failed: Error: AI unavailable (fake)" },
-      { status: "ignored", note: "Not a bill." },
+      {
+        status: "review",
+        note: "The model didn't find a bill in it: count it with the amount, or don't.",
+      },
     ]);
   });
 
@@ -398,6 +412,44 @@ describe("the Cost page", () => {
     const page = await (await h.request("/cost", { as: "owner" })).text();
     expect(page).toContain("Needs your review (55)");
     expect(await (await h.request("/", { as: "owner" })).text()).toContain("55 to review");
+  });
+
+  it("offers Count it on every uncounted row except Gmail's confirmation", async () => {
+    await h.email(email({ answer: bill({ reference: "D-1" }) }));
+    await h.email(email({ answer: bill({ reference: "D-1" }), subject: "Your receipt" })); // duplicate
+    await h.email(
+      email({ from: "forwarding-noreply@google.com", body: "Confirmation code: 111222333" }),
+      { from: "forwarding-noreply@google.com" },
+    );
+    // A row an earlier build filed as "ignored" (the 2026-10-10 Neon forward) must be rescuable.
+    await h.db
+      .prepare(
+        "INSERT INTO statement (received_at, source, message_id, sender, subject, status, note, updated_at, updated_by) VALUES (?, 'email', '<old@x>', 'owner@example.com', 'Fwd: Neon', 'ignored', 'Not a bill.', ?, 'mailbox')",
+      )
+      .bind(new Date().toISOString(), new Date().toISOString())
+      .run();
+    const r = await rows();
+    const page = await (await h.request("/cost", { as: "owner" })).text();
+    const duplicate = r.find((x) => x.status === "duplicate");
+    const old = r.find((x) => x.message_id === "<old@x>");
+    const confirmation = r.find((x) => x.sender === "forwarding-noreply@google.com");
+    expect(page).toContain(`action="/ui/statements/${duplicate?.id}"`);
+    expect(page).toContain(`action="/ui/statements/${old?.id}"`);
+    expect(page).not.toContain(`action="/ui/statements/${confirmation?.id}"`);
+  });
+
+  it("refuses to count Gmail's confirmation, even when asked directly", async () => {
+    await h.email(email({ from: "forwarding-noreply@google.com", body: "Confirmation code: 4" }), {
+      from: "forwarding-noreply@google.com",
+    });
+    const id = (await rows())[0]?.id;
+    const res = await h.request(`/ui/statements/${id}`, {
+      as: "owner",
+      form: { action: "count", vendor: "Google", amount: "1", chargedOn: today(), kind: "other" },
+    });
+    expect(res.status).toBe(400);
+    expect(await res.text()).toContain("not_a_charge");
+    expect((await rows())[0]?.status).toBe("ignored");
   });
 
   it("adds a statement from the page", async () => {

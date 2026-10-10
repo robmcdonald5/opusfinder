@@ -33,6 +33,10 @@ function raw(opts: {
       opts.pdf,
     )}\r\n--b--\r\n`;
   }
+  if (opts.html && opts.body !== undefined) {
+    // Both parts, as most vendors (and every Gmail forward) send them.
+    return `${head}Content-Type: multipart/alternative; boundary="a"\r\n\r\n--a\r\nContent-Type: text/plain\r\n\r\n${opts.body}\r\n--a\r\nContent-Type: text/html\r\n\r\n${opts.html}\r\n--a--\r\n`;
+  }
   if (opts.html) return `${head}Content-Type: text/html\r\n\r\n${opts.html}\r\n`;
   return `${head}Content-Type: text/plain\r\n\r\n${opts.body ?? ""}\r\n`;
 }
@@ -162,13 +166,79 @@ describe("readEmail", () => {
     expect(r).toMatchObject({ status: "review", vendor: "neon.tech", note: "Over the cap." });
   });
 
-  it("ignores what the model says isn't a bill", async () => {
+  it("sends what the model doesn't see as a bill to the owner, never drops it", async () => {
+    // Only the owner's forwards reach the reader (mailbox.ts), so a "not a bill" verdict is a doubt.
     const r = await readEmail(
       await parse(raw({ body: "Our new pricing page" })),
       fakeAi([bill({ is_bill: false })]),
       RECEIVED,
     );
-    expect(r).toMatchObject({ status: "ignored", note: "Not a bill." });
+    expect(r).toMatchObject({ status: "review", vendor: "neon.tech" });
+    expect(r.note).toContain("didn't find a bill");
+  });
+
+  it("reads the attached PDF when the model doesn't see a bill in a forward's body", async () => {
+    // The 2026-10-10 case: a hand-forwarded Neon payment receipt carrying its invoice PDFs.
+    const ai = fakeAi([bill({ is_bill: false }), bill({ total: "8.42" })], "Amount paid $8.42");
+    const r = await readEmail(
+      await parse(
+        raw({
+          from: "Owner <owner@example.com>",
+          subject: "Fwd: Payment received for Neon, LLC invoice (#LKUXNR-00004)",
+          body: "---------- Forwarded message ---------\nFrom: Neon <noreply@ar.neon.tech>",
+          pdf: "%PDF fake",
+        }),
+      ),
+      ai,
+      RECEIVED,
+    );
+    expect(ai.pdfs).toBe(1);
+    expect(r).toMatchObject({ status: "recorded", vendor: "Neon", amountCents: 842 });
+  });
+
+  it("tells the model a forward quotes the vendor's original", async () => {
+    const ai = fakeAi([bill()]);
+    await readEmail(await parse(raw({ body: "$8.42" })), ai, RECEIVED);
+    expect(ai.asked[0]).toContain("Forwarded message");
+  });
+
+  it("gives the model both the plain-text part and the HTML part, each within half the budget", async () => {
+    const ai = fakeAi([bill()]);
+    await readEmail(
+      await parse(
+        raw({
+          body: "View your invoice online.",
+          html: "<table><tr><td>Neon Launch plan</td><td>Amount paid</td><td>&#x24;8.42</td></tr></table>",
+        }),
+      ),
+      ai,
+      RECEIVED,
+    );
+    expect(ai.asked[0]).toContain("View your invoice online.");
+    expect(ai.asked[0]).toContain("The same email's HTML part");
+    expect(ai.asked[0]).toContain("Amount paid");
+    expect(ai.asked[0]).toContain("$8.42");
+  });
+
+  it("leaves the vendor blank for a hand forward the model doesn't recognise (not the forwarder's domain)", async () => {
+    const r = await readEmail(
+      await parse(raw({ from: "Owner <owner@gmail.com>", subject: "Fwd: something", body: "hi" })),
+      fakeAi([bill({ is_bill: false })]),
+      RECEIVED,
+    );
+    expect(r).toMatchObject({ status: "review", vendor: null });
+  });
+
+  it("keeps the body's reading when the attached PDF can't be read", async () => {
+    const ai = fakeAi([bill({ total: "" })]);
+    ai.toMarkdown = () => Promise.reject(new Error("encrypted PDF"));
+    const r = await readEmail(
+      await parse(raw({ body: "See attached.", pdf: "%PDF" })),
+      ai,
+      RECEIVED,
+    );
+    expect(r).toMatchObject({ status: "review", vendor: "Neon", reference: "INV-0003" });
+    expect(r.note).toBe("No total found in the email. The attached PDF couldn't be read.");
   });
 
   it.each([
@@ -287,6 +357,12 @@ describe("filingMonth / htmlToText", () => {
     ["10/10/2026", null],
   ])("validDay(%j) → %j", (raw, expected) => {
     expect(validDay(raw, "2026-10-10T20:00:00.000Z")).toBe(expected);
+  });
+
+  it("decodes hex and named entities and drops zero-width preheader padding", () => {
+    expect(
+      htmlToText("<p>Total&zwnj;&nbsp;\u200c&#x24;5 &rsquo;paid&rsquo; &mdash; &bogus;</p>"),
+    ).toBe("Total $5 'paid' - &bogus;");
   });
 
   it("keeps the text and drops markup, styles and scripts", () => {

@@ -7,7 +7,10 @@ export const MAX_BODY_BYTES = 16 * 1024;
 
 /** The billing mailbox: bigger than any invoice email; a larger message is recorded unread, never parsed. */
 export const MAX_EMAIL_BYTES = 10 * 1024 * 1024;
-/** Model reads per UTC day. Past it, emails wait for the owner (a runaway guard against junk mail). */
+/**
+ * Emails the model reads per UTC day, each costing at most two model calls and one PDF conversion. Past
+ * it, emails wait for the owner (a runaway guard on Workers AI spend).
+ */
 export const DAILY_MODEL_READS = 50;
 /**
  * Emails the billing mailbox accepts per UTC day. Past it, mail is refused at the SMTP stage: nothing
