@@ -912,3 +912,153 @@ describe("compare-and-set: a change lands only on the value it was classified ag
     expect(await changeCount()).toBe(before);
   });
 });
+
+describe("GET /v1/runs and /v1/changes (the history behind the panel's Runs and Activity pages)", () => {
+  const hoursAgo = (n: number) => new Date(Date.now() - n * 3_600_000).toISOString();
+  const run = async (json: Json) =>
+    expect((await h.request("/v1/runs", { as: "runtime", json })).status).toBe(201);
+
+  it("lists runs newest first, filtered, paged by id", async () => {
+    await run({
+      stage: "ingest",
+      outcome: "ok",
+      startedAt: hoursAgo(3),
+      units: { "ingest.boards": 9 },
+    });
+    await run({ stage: "discover", outcome: "ok", startedAt: hoursAgo(2) });
+    await run({ stage: "ingest", outcome: "error", startedAt: hoursAgo(1) });
+
+    const all = await body(await h.request("/v1/runs", { as: "agent" }));
+    expect(all.runs.map((r: Json) => [r.stage, r.outcome])).toEqual([
+      ["ingest", "error"],
+      ["discover", "ok"],
+      ["ingest", "ok"],
+    ]);
+    expect(all.runs[2].units).toEqual({ "ingest.boards": 9 });
+    expect(all.more).toBe(false);
+
+    const ingest = await body(await h.request("/v1/runs?stage=ingest&outcome=ok", { as: "owner" }));
+    expect(ingest.runs).toHaveLength(1);
+
+    const page1 = await body(await h.request("/v1/runs?limit=2", { as: "agent" }));
+    expect(page1.runs).toHaveLength(2);
+    expect(page1.more).toBe(true);
+    const page2 = await body(
+      await h.request(`/v1/runs?limit=2&before=${page1.runs[1].id}`, { as: "agent" }),
+    );
+    expect(page2.runs.map((r: Json) => r.stage)).toEqual(["ingest"]);
+    expect(page2.more).toBe(false);
+  });
+
+  it("orders by when a run started, not when it was recorded, and pages across a tie", async () => {
+    // A long ingest tick that started first is recorded AFTER a short alerts run that started later.
+    const t = hoursAgo(2);
+    await run({ stage: "alerts", outcome: "ok", startedAt: hoursAgo(1) });
+    await run({ stage: "ingest", outcome: "ok", startedAt: t, detail: "a" });
+    await run({ stage: "discover", outcome: "ok", startedAt: t, detail: "b" }); // same start: id breaks the tie
+    await run({ stage: "ingest", outcome: "ok", startedAt: hoursAgo(3) });
+    const all = await body(await h.request("/v1/runs", { as: "agent" }));
+    expect(all.runs.map((r: Json) => r.stage)).toEqual(["alerts", "discover", "ingest", "ingest"]);
+
+    const p1 = await body(await h.request("/v1/runs?limit=2", { as: "agent" }));
+    const p2 = await body(
+      await h.request(`/v1/runs?limit=2&before=${p1.runs[1].id}`, { as: "agent" }),
+    );
+    expect([...p1.runs, ...p2.runs].map((r: Json) => r.id)).toEqual(
+      all.runs.map((r: Json) => r.id),
+    );
+  });
+
+  it.each([
+    ["stage=nope", "invalid_stage"],
+    ["outcome=great", "invalid_outcome"],
+    ["limit=0", "invalid_limit"],
+    ["limit=201", "invalid_limit"],
+    ["before=-1", "invalid_before"],
+  ])("refuses ?%s", async (query, code) => {
+    const res = await h.request(`/v1/runs?${query}`, { as: "agent" });
+    expect(res.status).toBe(400);
+    expect((await body(res)).error.code).toBe(code);
+  });
+
+  it("lists changes, filtered to one stage's own targets (stage, knobs, overrides)", async () => {
+    for (const [target, value] of [
+      ["ingest", "off"],
+      ["ingest.boardsPerTick", "200"],
+      ["ingest@source=workable", "off"],
+      ["live_integration", "on"],
+      ["embed", "shadow"],
+    ]) {
+      await h.request("/v1/changes", {
+        as: "owner",
+        json: { target, value, reason: "test" },
+      });
+    }
+    const res = await body(await h.request("/v1/changes?stage=ingest&limit=10", { as: "agent" }));
+    expect(res.changes.map((c: Json) => [c.target, c.actor_role])).toEqual([
+      ["ingest@source=workable", "owner"],
+      ["ingest.boardsPerTick", "owner"],
+      ["ingest", "owner"],
+      ["ingest", "seed"], // the migration's starting value
+    ]);
+    // "_" is a LIKE wildcard: the filter must match the literal id, not e.g. "liveXintegration".
+    const li = await body(await h.request("/v1/changes?stage=live_integration", { as: "agent" }));
+    expect(li.changes.map((c: Json) => c.to_value)).toEqual(["on", "off"]);
+  });
+
+  it("is for the owner and agents only", async () => {
+    expect((await h.request("/v1/runs", { as: "runtime" })).status).toBe(403);
+    expect((await h.request("/v1/changes", { as: "runtime" })).status).toBe(403);
+  });
+
+  it("status counts the last 24 h of runs and says when each stage is next due", async () => {
+    await run({ stage: "ingest", outcome: "ok", startedAt: hoursAgo(30) }); // outside the window
+    await run({ stage: "ingest", outcome: "ok", startedAt: hoursAgo(3) });
+    await run({ stage: "ingest", outcome: "partial", startedAt: hoursAgo(1) });
+    const s = await body(await h.request("/v1/status", { as: "agent" }));
+    expect(s.recentRuns.byStage).toEqual({ ingest: { ok: 1, partial: 1 } });
+    const ingest = s.stages.find((x: Json) => x.id === "ingest");
+    expect(Date.parse(ingest.nextDueAt)).toBeCloseTo(Date.now() + 3_600_000, -4);
+    expect(ingest.overdue).toBe(false);
+    const embed = s.stages.find((x: Json) => x.id === "embed");
+    expect(embed).toMatchObject({ nextDueAt: null, overdue: false, gate: "unwired" });
+  });
+});
+
+describe("status: last run and due times (review fixes)", () => {
+  const hoursAgo = (n: number) => new Date(Date.now() - n * 3_600_000).toISOString();
+  const run = async (json: Json) =>
+    expect((await h.request("/v1/runs", { as: "runtime", json })).status).toBe(201);
+  const ingest = async () =>
+    (await body(await h.request("/v1/status", { as: "agent" }))).stages.find(
+      (x: Json) => x.id === "ingest",
+    );
+
+  it("takes the last run by start, not by when it was recorded", async () => {
+    await run({ stage: "ingest", outcome: "ok", startedAt: hoursAgo(1), detail: "newer start" });
+    await run({ stage: "ingest", outcome: "ok", startedAt: hoursAgo(3), detail: "recorded last" });
+    expect((await ingest()).lastRun.detail).toBe("newer start");
+  });
+
+  it("counts the period from a resume, so turning it back on after a pause isn't overdue", async () => {
+    await run({ stage: "ingest", outcome: "ok", startedAt: hoursAgo(5) });
+    expect((await ingest()).overdue).toBe(true);
+    for (const value of ["off", "on"]) {
+      await h.request("/v1/changes", {
+        as: "owner",
+        json: { target: "ingest", value, reason: "pause and resume" },
+      });
+    }
+    const resumed = await ingest();
+    expect(resumed.overdue).toBe(false);
+    expect(Date.parse(resumed.nextDueAt)).toBeGreaterThan(Date.now());
+  });
+
+  it("pages exactly: a full last page says there is no more", async () => {
+    await run({ stage: "ingest", outcome: "ok", startedAt: hoursAgo(2) });
+    await run({ stage: "ingest", outcome: "ok", startedAt: hoursAgo(1) });
+    const page = await body(await h.request("/v1/runs?limit=2", { as: "agent" }));
+    expect(page.runs).toHaveLength(2);
+    expect(page.more).toBe(false);
+  });
+});

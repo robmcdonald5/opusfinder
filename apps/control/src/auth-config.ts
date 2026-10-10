@@ -77,16 +77,19 @@ function parseServiceTokens(
   return out;
 }
 
+/** OWNER_EMAILS → lowercase addresses. Shared with the billing mailbox, which accepts their forwards. */
+export function parseOwnerEmails(raw: string | undefined): string[] {
+  return (raw ?? "")
+    .split(",")
+    .map((e) => e.trim().toLowerCase())
+    .filter((e) => e.length > 0);
+}
+
 function parse(secrets: AuthSecrets, log: (message: string) => void): AuthConfig | null {
   const teamDomain = normalizeTeamDomain(secrets.ACCESS_TEAM_DOMAIN);
   const aud = secrets.ACCESS_AUD?.trim();
   if (!teamDomain || !aud) return null;
-  const owners = new Set(
-    (secrets.OWNER_EMAILS ?? "")
-      .split(",")
-      .map((e) => e.trim().toLowerCase())
-      .filter((e) => e.length > 0),
-  );
+  const owners = new Set(parseOwnerEmails(secrets.OWNER_EMAILS));
   return { teamDomain, aud, owners, tokens: parseServiceTokens(secrets.SERVICE_TOKENS, log) };
 }
 

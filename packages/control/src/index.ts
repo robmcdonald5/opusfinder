@@ -6,3 +6,4 @@ export * from "./targets";
 export * from "./resolve";
 export * from "./classify";
 export * from "./views";
+export * from "./cadence";

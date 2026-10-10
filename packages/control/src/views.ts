@@ -59,7 +59,17 @@ export interface GlobalView {
 
 export interface StageView extends Pick<
   StageDef,
-  "label" | "runtime" | "trigger" | "modes" | "shadowMeans" | "units" | "budget" | "expect"
+  | "label"
+  | "runtime"
+  | "platformId"
+  | "trigger"
+  | "modes"
+  | "shadowMeans"
+  | "units"
+  | "budget"
+  | "expect"
+  | "heartbeat"
+  | "gate"
 > {
   id: StageId;
   target: string;
@@ -147,12 +157,15 @@ export function stageView(state: StateMap, id: StageId): StageView {
     target: id,
     label: def.label,
     runtime: def.runtime,
+    platformId: def.platformId,
     trigger: def.trigger,
     modes: def.modes,
     shadowMeans: def.shadowMeans,
     units: def.units,
     budget: def.budget,
     expect: def.expect,
+    heartbeat: def.heartbeat,
+    gate: def.gate,
     desired: d.value,
     source: d.source,
     effective: eff.mode,

@@ -33,7 +33,10 @@ export const RUNTIME_CLIENT_ID = "runtime-client.access";
 export const RUNTIME_NAME = "runtime-inngest";
 export const ORIGIN = "https://control.test";
 
+export const BILLING_ADDRESS = "billing@control.test";
+
 export const DEFAULT_BINDINGS: Record<string, string> = {
+  BILLING_ADDRESS,
   ACCESS_TEAM_DOMAIN: TEAM_DOMAIN,
   ACCESS_AUD: AUD,
   OWNER_EMAILS: ` ${OWNER_EMAIL.toUpperCase()} , second-owner@example.com`,
@@ -212,6 +215,29 @@ export class AccessKeys {
 
 // ---------------------------------------------------------------- Miniflare
 
+/**
+ * A stand-in for the Workers AI binding (the real one only runs on Cloudflare). The control Worker reaches it
+ * as env.AI over a service binding (JS RPC). A test scripts the model's answer by putting "FAKE_AI <json>"
+ * on one line of the email: that JSON comes back as the model's response; without it, the answer is "not a
+ * bill". "FAKE_AI_FAIL" makes the call throw, like a transport error.
+ */
+const FAKE_AI_SCRIPT = `
+import { WorkerEntrypoint } from "cloudflare:workers";
+export class FakeAi extends WorkerEntrypoint {
+  async run(model, inputs) {
+    const text = inputs.messages.map((m) => m.content).join("\\n");
+    if (text.includes("FAKE_AI_FAIL")) throw new Error("AI unavailable (fake)");
+    const m = /FAKE_AI (\\{.*\\})/.exec(text);
+    return { response: m ? JSON.parse(m[1]) : { is_bill: false, vendor: "", kind: "other", total: "",
+      currency: "", charged_on: "", period_start: "", reference: "" } };
+  }
+  async toMarkdown() {
+    return [{ format: "error", error: "not supported in tests" }];
+  }
+}
+export default { fetch: () => new Response("fake ai") };
+`;
+
 const CALLER_SCRIPT = `
 export default {
   async fetch(request, env) {
@@ -262,6 +288,8 @@ export interface ControlHarness {
   bindingFetch: (path: string) => Promise<{ status: number; body: string }>;
   /** Call store.applyChange() directly (same D1) — see bundleStoreProbe(). */
   applyChange: (input: Record<string, unknown>) => Promise<{ applied: boolean; changeId?: number }>;
+  /** Deliver a raw RFC 5322 email to the Worker's email() handler (Miniflare's local trigger). */
+  email: (raw: string, envelope?: { from?: string; to?: string }) => Promise<Response>;
   /** Drop every table and re-apply the migrations: a fresh, seeded store. */
   reset: () => Promise<void>;
   dispose: () => Promise<void>;
@@ -281,6 +309,9 @@ export async function startControl(
   ) as Record<string, string>;
 
   const mf = new Miniflare({
+    // Enables POST /cdn-cgi/handler/email?from=…&to=… (Miniflare's local trigger for the email() handler),
+    // answered by Miniflare itself before the Worker's fetch (and so before Access): tests only.
+    unsafeTriggerHandlers: true,
     workers: [
       {
         name: "control",
@@ -288,6 +319,7 @@ export async function startControl(
         compatibilityDate: date,
         d1Databases: { DB: "opusfinder-control-test" },
         bindings: definedBindings,
+        serviceBindings: { AI: { name: "fake-ai", entrypoint: "FakeAi" } },
         outboundService: (request: Request) => {
           if (request.url === `${TEAM_DOMAIN}/cdn-cgi/access/certs`) {
             jwksFetches++;
@@ -313,6 +345,12 @@ export async function startControl(
           RPC_ANON: { name: "control", entrypoint: "ControlRpc" },
           PLAIN: "control",
         },
+      },
+      {
+        name: "fake-ai",
+        modules: true,
+        script: FAKE_AI_SCRIPT,
+        compatibilityDate: date,
       },
       {
         name: "store-probe",
@@ -394,9 +432,16 @@ export async function startControl(
       });
       return (await res.json()) as { applied: boolean; changeId?: number };
     },
+    async email(raw, envelope = {}) {
+      const url = new URL("http://localhost/cdn-cgi/handler/email");
+      url.searchParams.set("from", envelope.from ?? "owner@example.com");
+      url.searchParams.set("to", envelope.to ?? BILLING_ADDRESS);
+      const res = await mf.dispatchFetch(url, { method: "POST", body: raw });
+      return res as unknown as Response;
+    },
     async reset() {
       await db.batch(
-        ["change_log", "ledger", "proposal", "state"].map((t) =>
+        ["change_log", "ledger", "proposal", "state", "statement"].map((t) =>
           db.prepare(`DROP TABLE IF EXISTS ${t}`),
         ),
       );

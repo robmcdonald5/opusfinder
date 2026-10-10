@@ -1,15 +1,20 @@
 import { WorkerEntrypoint } from "cloudflare:workers";
 
-import type { Role } from "@opusfinder/control";
+import { isStageId, type Role } from "@opusfinder/control";
 
 import { identify, type Caller } from "./auth";
 import { AUDIT_NAME_RE } from "./auth-config";
 import type { Env } from "./env";
 import { MAX_BODY_BYTES } from "./limits";
-import { renderError, renderPage } from "./page";
+import { receiveEmail } from "./mailbox";
 import {
   ApiError,
+  addStatement,
   approve,
+  changes,
+  cost,
+  costSummary,
+  errorSummary,
   field,
   gate,
   proposal,
@@ -19,10 +24,23 @@ import {
   recordRun,
   reject,
   requestChange,
+  reviewStatement,
+  runs,
   status,
   trip,
   withdraw,
+  type ListQuery,
+  type StatusView,
 } from "./service";
+import { renderActivity } from "./ui/activity";
+import { renderApprovals } from "./ui/approvals";
+import { renderCost } from "./ui/cost";
+import { BACK_PATH } from "./ui/forms";
+import { renderHealth } from "./ui/health";
+import { renderHome } from "./ui/home";
+import { renderError } from "./ui/html";
+import { renderRuns } from "./ui/runs";
+import { renderStage, renderStages } from "./ui/stages";
 
 /**
  * opusfinder-control — the edge control plane (control-surface architecture, candidate B, slice 1).
@@ -166,11 +184,26 @@ async function formBody(request: Request, url: URL): Promise<URLSearchParams> {
   return new URLSearchParams(await readBody(request));
 }
 
-function proposalId(raw: string): number {
+/** A row id from the URL (a proposal, a statement). */
+function rowId(raw: string): number {
   const id = Number(raw);
-  if (!Number.isSafeInteger(id) || id <= 0)
-    throw new ApiError(400, "invalid_id", "bad proposal id");
+  if (!Number.isSafeInteger(id) || id <= 0) throw new ApiError(400, "invalid_id", "bad id");
   return id;
+}
+
+/** The page a form came from (its hidden `back` field), if it is a panel page; else home. Never a URL. */
+function backPath(raw: string | null): string {
+  return raw !== null && BACK_PATH.test(raw) ? raw : "/";
+}
+
+function listQuery(url: URL): ListQuery {
+  const p = url.searchParams;
+  return {
+    stage: p.get("stage"),
+    outcome: p.get("outcome"),
+    before: p.get("before"),
+    limit: p.get("limit"),
+  };
 }
 
 /** The CLI marks its requests so the change log can say "via cli"; it is audit metadata, never authority. */
@@ -199,15 +232,104 @@ interface Route {
 
 const OWNER_AGENT: readonly Role[] = ["owner", "agent"];
 
-const ROUTES: readonly Route[] = [
-  {
+/**
+ * A panel page: the status read (every page's header needs it) and the page's own reads, started together.
+ * `load` runs synchronously first, so it can refuse a bad URL (e.g. an unknown stage) before any D1 read.
+ */
+function page<T = undefined>(
+  pattern: RegExp,
+  load: ((ctx: RouteCtx) => Promise<T>) | null,
+  render: (ctx: RouteCtx, view: StatusView, data: T) => string,
+): Route {
+  return {
     method: "GET",
-    pattern: /^\/$/,
+    pattern,
     roles: OWNER_AGENT,
     ui: true,
-    handler: async ({ env, caller, url, now }) =>
-      html(renderPage(await status(env.DB, caller, now), url.searchParams.get("done"))),
+    handler: async (ctx) => {
+      const extra = load?.(ctx);
+      const [view, data] = await Promise.all([status(ctx.env.DB, ctx.caller, ctx.now), extra]);
+      return html(render(ctx, view, data as T));
+    },
+  };
+}
+
+const done = (url: URL) => url.searchParams.get("done");
+
+const ROUTES: readonly Route[] = [
+  // ---- the panel: a home page of sections, each its own page ----
+  page(
+    /^\/$/,
+    ({ env, now }) => costSummary(env.DB, now),
+    ({ url }, view, c) => renderHome(view, c, done(url)),
+  ),
+  page(/^\/approvals$/, null, ({ url }, view) => renderApprovals(view, done(url))),
+  page(/^\/stages$/, null, ({ url }, view) => renderStages(view, done(url))),
+  page(
+    /^\/stages\/([a-z0-9_]+)$/,
+    ({ env, params }) => {
+      const stage = params[0] ?? "";
+      if (!isStageId(stage)) throw new ApiError(404, "unknown_stage", `unknown stage "${stage}"`);
+      return Promise.all([
+        runs(env.DB, { stage, limit: "10" }),
+        changes(env.DB, { stage, limit: "10" }),
+      ]).then(([r, c]) => ({ stage, runs: r.runs, changes: c.changes }));
+    },
+    ({ url }, view, data) => {
+      const stage = view.stages.find((s) => s.id === data.stage);
+      if (!stage) throw new ApiError(404, "unknown_stage", `unknown stage "${data.stage}"`);
+      return renderStage(view, stage, data.runs, data.changes, done(url));
+    },
+  ),
+  page(/^\/health$/, null, ({ url }, view) => renderHealth(view, done(url))),
+  page(
+    /^\/runs$/,
+    ({ env, url }) => runs(env.DB, listQuery(url)),
+    ({ url }, view, list) => {
+      const q = listQuery(url);
+      return renderRuns(view, list, { stage: q.stage ?? "", outcome: q.outcome ?? "" });
+    },
+  ),
+  page(
+    /^\/cost$/,
+    ({ env, caller, url, now }) =>
+      cost(env.DB, caller, url.searchParams.get("month"), now, env.BILLING_ADDRESS ?? null),
+    ({ url }, view, c) => renderCost(view, c, done(url)),
+  ),
+  {
+    method: "POST",
+    pattern: /^\/ui\/statements$/,
+    roles: ["owner"],
+    ui: true,
+    handler: async ({ request, env, caller, url, now }) => {
+      const form = await formBody(request, url);
+      await addStatement(env.DB, caller, Object.fromEntries(form), now);
+      return redirect("/cost?done=statement_added");
+    },
   },
+  {
+    method: "POST",
+    pattern: /^\/ui\/statements\/(\d+)$/,
+    roles: ["owner"],
+    ui: true,
+    handler: async ({ request, env, caller, url, params, now }) => {
+      const form = await formBody(request, url);
+      const result = await reviewStatement(
+        env.DB,
+        caller,
+        rowId(params[0] ?? ""),
+        form.get("action"),
+        Object.fromEntries(form),
+        now,
+      );
+      return redirect(`/cost?done=statement_${result}`);
+    },
+  },
+  page(
+    /^\/activity$/,
+    ({ env, url }) => changes(env.DB, listQuery(url)),
+    ({ url }, view, list) => renderActivity(view, list, { stage: listQuery(url).stage ?? "" }),
+  ),
   {
     method: "POST",
     pattern: /^\/ui\/change$/,
@@ -221,7 +343,9 @@ const ROUTES: readonly Route[] = [
         reason: form.get("reason"),
       };
       const res = await requestChange(env.DB, caller, body, "panel", now);
-      return redirect(`/?done=${res.result === "noop" ? "noop" : "applied"}`);
+      return redirect(
+        `${backPath(form.get("back"))}?done=${res.result === "noop" ? "noop" : "applied"}`,
+      );
     },
   },
   {
@@ -231,11 +355,11 @@ const ROUTES: readonly Route[] = [
     ui: true,
     handler: async ({ request, env, caller, url, params, now }) => {
       const form = await formBody(request, url);
-      const id = proposalId(params[0] ?? "");
+      const id = rowId(params[0] ?? "");
       const note = proposalNote(form.get("note"));
       if (params[1] === "reject") {
         await reject(env.DB, caller, id, note, now);
-        return redirect("/?done=rejected");
+        return redirect("/approvals?done=rejected");
       }
       try {
         await approve(env.DB, caller, id, note, "panel", now);
@@ -243,10 +367,10 @@ const ROUTES: readonly Route[] = [
         // Not an error from the owner's point of view: the page says the proposal went stale and why
         // (it is now listed under recently closed), nothing was applied.
         if (err instanceof ApiError && err.code === "stale_proposal")
-          return redirect("/?done=stale");
+          return redirect("/approvals?done=stale");
         throw err;
       }
-      return redirect("/?done=approved");
+      return redirect("/approvals?done=approved");
     },
   },
   {
@@ -254,6 +378,34 @@ const ROUTES: readonly Route[] = [
     pattern: /^\/v1\/status$/,
     roles: OWNER_AGENT,
     handler: async ({ env, caller, now }) => json(await status(env.DB, caller, now)),
+  },
+  {
+    method: "GET",
+    pattern: /^\/v1\/runs$/,
+    roles: OWNER_AGENT,
+    handler: async ({ env, url }) => json(await runs(env.DB, listQuery(url))),
+  },
+  {
+    method: "GET",
+    pattern: /^\/v1\/changes$/,
+    roles: OWNER_AGENT,
+    handler: async ({ env, url }) => json(await changes(env.DB, listQuery(url))),
+  },
+  {
+    method: "GET",
+    pattern: /^\/v1\/cost$/,
+    roles: OWNER_AGENT,
+    handler: async ({ env, caller, url, now }) =>
+      json(
+        await cost(env.DB, caller, url.searchParams.get("month"), now, env.BILLING_ADDRESS ?? null),
+      ),
+  },
+  {
+    method: "POST",
+    pattern: /^\/v1\/statements$/,
+    roles: OWNER_AGENT,
+    handler: async ({ request, env, caller, now }) =>
+      json(await addStatement(env.DB, caller, await jsonBody(request), now), 201),
   },
   {
     method: "GET",
@@ -298,7 +450,7 @@ const ROUTES: readonly Route[] = [
     pattern: /^\/v1\/proposals\/(\d+)$/,
     roles: OWNER_AGENT,
     handler: async ({ env, params, now }) =>
-      json({ proposal: await proposal(env.DB, proposalId(params[0] ?? ""), now) }),
+      json({ proposal: await proposal(env.DB, rowId(params[0] ?? ""), now) }),
   },
   {
     method: "POST",
@@ -307,7 +459,7 @@ const ROUTES: readonly Route[] = [
     handler: async ({ request, env, caller, params, now }) => {
       const note = proposalNote(field(await jsonBody(request), "note"));
       return json(
-        await approve(env.DB, caller, proposalId(params[0] ?? ""), note, apiChannel(request), now),
+        await approve(env.DB, caller, rowId(params[0] ?? ""), note, apiChannel(request), now),
       );
     },
   },
@@ -318,7 +470,7 @@ const ROUTES: readonly Route[] = [
     handler: async ({ request, env, caller, params, now }) => {
       const note = proposalNote(field(await jsonBody(request), "note"));
       return json({
-        proposal: await reject(env.DB, caller, proposalId(params[0] ?? ""), note, now),
+        proposal: await reject(env.DB, caller, rowId(params[0] ?? ""), note, now),
       });
     },
   },
@@ -328,7 +480,7 @@ const ROUTES: readonly Route[] = [
     roles: OWNER_AGENT,
     handler: async ({ request, env, caller, params, now }) => {
       await jsonBody(request);
-      return json({ proposal: await withdraw(env.DB, caller, proposalId(params[0] ?? ""), now) });
+      return json({ proposal: await withdraw(env.DB, caller, rowId(params[0] ?? ""), now) });
     },
   },
   {
@@ -393,11 +545,7 @@ async function handle(request: Request, env: Env): Promise<Response> {
   } catch (err) {
     if (err instanceof ApiError) return fail(err, route.ui === true);
     // Name + first line only: a D1 error message can quote SQL; nothing from the request is echoed back.
-    const detail =
-      err instanceof Error
-        ? `${err.name}: ${(err.message.split("\n")[0] ?? "").slice(0, 200)}`
-        : "unknown";
-    console.error(`${request.method} ${url.pathname} failed: ${detail}`);
+    console.error(`${request.method} ${url.pathname} failed: ${errorSummary(err)}`);
     return fail(
       new ApiError(500, "internal", "internal error (see Worker logs)"),
       route.ui === true,
@@ -407,6 +555,8 @@ async function handle(request: Request, env: Env): Promise<Response> {
 
 export default {
   fetch: (request, env) => handle(request, env),
+  // The billing mailbox (Email Routing → this Worker): one statement row per forwarded invoice.
+  email: (message, env) => receiveEmail(env, message, new Date().toISOString()),
 } satisfies ExportedHandler<Env>;
 
 /** Props a service binding may attach (wrangler `services = [{ …, props = { name = "…" } }]`). The name is
