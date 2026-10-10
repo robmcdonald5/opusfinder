@@ -2,9 +2,9 @@
 -- and `BoschGroup` list the same SmartRecruiters postings, but companies_slug_source_uq is case-sensitive, so
 -- discovery once inserted a row per casing (7 groups, merged by data fix 0001). Discovery now folds case itself
 -- (CASE_INSENSITIVE_SLUG_SOURCES in @opusfinder/sources); this index is the guard for EVERY writer. upsertCompany's
--- ON CONFLICT (slug, source) doesn't cover it, so a case-variant insert now FAILS (23505 on this index) instead
--- of adding a duplicate. Postgres lower() and discovery's toLowerCase() agree because slugs are ASCII
--- (companySlug's floor).
+-- ON CONFLICT (slug, source) doesn't cover it, so it catches a case variant's 23505 on this index and
+-- returns the stored row instead of adding a duplicate. Postgres lower() and discovery's toLowerCase() agree
+-- because slugs are ASCII (companySlug's floor).
 --
 -- Hand-guarded with IF NOT EXISTS (drizzle-kit emits it bare; neon-http migrations are NOT transactional).
 -- NOT CONCURRENTLY: companies is ~1.5k rows, so a plain build takes milliseconds under a brief write lock.

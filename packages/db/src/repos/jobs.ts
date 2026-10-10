@@ -2,23 +2,18 @@
  * Persistence for companies + jobs. Functional style: the Drizzle client is
  * injected (no module-level singleton), matching `createDb()` in ../client.
  *
- * Both upserts are idempotent. `upsertCompany` is get-or-create; `upsertJobs`
- * dedupes the batch, never writes a failed hydrate's placeholder content (its stored row only
- * follows the board listing it), then only advances `updated_at` when a job actually changed, so
- * re-ingesting an unchanged board is a no-op.
+ * Both upserts are idempotent. `upsertCompany` is get-or-create, case-insensitive for a source whose
+ * board ids are (COMPANIES_LOWER_SLUG_UQ); `upsertJobs` dedupes the batch, never writes a failed
+ * hydrate's placeholder content (its stored row only follows the board listing it), then only advances
+ * `updated_at` when a job actually changed, so re-ingesting an unchanged board is a no-op.
  */
 import { and, type AnyColumn, eq, gt, inArray, ne, or, sql, type SQL } from "drizzle-orm";
 
-import {
-  isRecord,
-  type CompanySlug,
-  type JobId,
-  type NormalizedJob,
-  type SourceName,
-} from "@opusfinder/shared";
+import type { CompanySlug, JobId, NormalizedJob, SourceName } from "@opusfinder/shared";
 
 import type { Db } from "../client";
-import { companies, jobs } from "../schema";
+import { pgConstraintOf } from "../errors";
+import { companies, COMPANIES_LOWER_SLUG_UQ, jobs } from "../schema";
 import { NUL, signatureSql, stripNul } from "./sql";
 
 /** One row of the companies table, as the ingestion driver needs it (id + identity). */
@@ -54,9 +49,6 @@ export function listCompanies(
   return opts.limit !== undefined ? query.limit(opts.limit) : query;
 }
 
-/** One row per board for sources whose API ignores slug case (schema.ts; migration 0025). */
-const CASE_VARIANT_UQ = "companies_source_lower_slug_uq";
-
 /**
  * Get-or-create the company for `(slug, source)` and return its id.
  *
@@ -65,9 +57,12 @@ const CASE_VARIANT_UQ = "companies_source_lower_slug_uq";
  * a bare `onConflictDoNothing` returns no rows on conflict. It writes nothing
  * meaningful, so `companies.updated_at` is left untouched.
  *
- * A case variant of a stored slug on a case-insensitive source (`boschgroup` beside `BoschGroup`) is NOT
- * get-or-create: `companies_source_lower_slug_uq` rejects it and this throws a plain message naming the
- * slug, since the CLI prints only `err.message` and drizzle's own reads "Failed query: …" with no reason.
+ * On a source whose API ignores slug case, a case variant of a stored slug (`boschgroup` beside
+ * `BoschGroup`) is the same board. ON CONFLICT (slug, source) can't arbitrate COMPANIES_LOWER_SLUG_UQ, so
+ * that insert raises on it instead, and this returns the stored row's id: like the conflict path above it
+ * writes nothing, so the stored casing, `active` and the timestamps stay as they are. The same catch
+ * resolves two writers racing to insert one new board in one casing (only one index is the arbiter). Any
+ * other failure, or a violation with no stored row left to find, is rethrown as is.
  */
 export async function upsertCompany(
   db: Db,
@@ -85,15 +80,13 @@ export async function upsertCompany(
       })
       .returning({ id: companies.id });
   } catch (err) {
-    // The driver error rides drizzle's `cause` (Neon's and PGlite's both carry `constraint`).
-    if (err instanceof Error && isRecord(err.cause) && err.cause.constraint === CASE_VARIANT_UQ) {
-      throw new Error(
-        `${source}:"${slug}" is a case variant of an existing ${source} company (${source} board ids ` +
-          `ignore case; ${CASE_VARIANT_UQ}). That board is already tracked: use its stored slug.`,
-        { cause: err },
-      );
-    }
-    throw err;
+    if (pgConstraintOf(err) !== COMPANIES_LOWER_SLUG_UQ) throw err;
+    const [stored] = await db
+      .select({ id: companies.id })
+      .from(companies)
+      .where(and(eq(companies.source, source), sql`lower(${companies.slug}) = lower(${slug})`));
+    if (!stored) throw err;
+    return stored.id;
   }
 
   const row = rows[0];

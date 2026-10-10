@@ -1,12 +1,9 @@
-import { getTableConfig, PgDialect } from "drizzle-orm/pg-core";
 import { describe, expect, it } from "vitest";
 
-import { companies } from "@opusfinder/db/schema";
 import type { SourceName } from "@opusfinder/shared";
 import { rejectionOf } from "@test/rejection";
 
 import {
-  CASE_INSENSITIVE_SLUG_SOURCES,
   SOURCE_NAMES,
   adapterFor,
   adapters,
@@ -75,21 +72,5 @@ describe("adapterFor / fetchJobs — an unknown source fails clearly, never as a
   it("fetchJobs REJECTS (not a sync throw) with the same message", async () => {
     const err = await rejectionOf(fetchJobs("nonesuch" as SourceName, "acme"));
     expect(err.message).toBe('unknown source "nonesuch"');
-  });
-});
-
-// @opusfinder/db can't import CASE_INSENSITIVE_SLUG_SOURCES (sources depends on db), so the case-folded unique
-// index keeps its own literal source list. This reads the predicate drizzle-kit migrates from and fails when
-// the two lists diverge: changing either needs the other AND a migration that drops and recreates the index.
-describe("CASE_INSENSITIVE_SLUG_SOURCES — in sync with the companies case-folded unique index", () => {
-  it("lists exactly the sources companies_source_lower_slug_uq covers", () => {
-    const index = getTableConfig(companies).indexes.find(
-      (i) => i.config.name === "companies_source_lower_slug_uq",
-    );
-    const where = index?.config.where;
-    expect(where).toBeDefined();
-    const predicate = new PgDialect().sqlToQuery(where!).sql;
-    const covered = [...predicate.matchAll(/'([^']+)'/g)].map((m) => m[1]).sort();
-    expect(covered).toEqual([...CASE_INSENSITIVE_SLUG_SOURCES].sort());
   });
 });

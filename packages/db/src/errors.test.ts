@@ -1,7 +1,7 @@
 import { DrizzleQueryError } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 
-import { describeDbError } from "./errors";
+import { describeDbError, pgConstraintOf } from "./errors";
 
 // Locks what a failed ingest records: a failed query's Postgres reason FIRST (the SQL text used to fill the
 // 500-char sample before reaching it), never drizzle's `params:` line or a connection string, and every
@@ -113,5 +113,17 @@ describe("describeDbError", () => {
     });
     expect(describeDbError(wrapped)).toBe(wrapped.message);
     expect(describeDbError("boom")).toBe("boom");
+  });
+});
+
+describe("pgConstraintOf", () => {
+  it("reads the violated constraint off a failed query's driver error, else undefined", () => {
+    const constraint = "companies_slug_source_uq";
+    const cause = pgError("duplicate key", { code: "23505", constraint });
+    expect(pgConstraintOf(new DrizzleQueryError("insert", [], cause))).toBe(constraint);
+    const timeout = new DrizzleQueryError("select 1", [], pgError("timeout"));
+    expect(pgConstraintOf(timeout)).toBeUndefined();
+    expect(pgConstraintOf(new Error("plain"))).toBeUndefined();
+    expect(pgConstraintOf("boom")).toBeUndefined();
   });
 });

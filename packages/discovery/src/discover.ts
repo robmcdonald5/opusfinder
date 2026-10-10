@@ -122,9 +122,10 @@ export async function runDiscovery(db: Db, opts: DiscoveryOptions = {}): Promise
 
     // 3. PARTITION: NEW or KNOWN-INACTIVE → probe path (a live probe reactivates); KNOWN-ACTIVE → the
     // reprobe pass. Reading `active` (not plain listCompanies) is what closes the reactivation lock-out.
-    // keyOf folds the case variants of a case-insensitive source onto one key: an ACTIVE variant wins (so
-    // an inactive alias of a live board is never revived), and a KNOWN-INACTIVE candidate is probed under
-    // its STORED slug so upsertCompany hits that row instead of inserting a case variant.
+    // keyOf folds the case variants of a case-insensitive source onto one key, and a KNOWN-INACTIVE candidate
+    // is probed under its STORED slug so upsertCompany hits that row exactly. Preferring an ACTIVE variant (so
+    // an inactive alias of a live board is never revived) guards a database without migration 0025, whose
+    // case-folded unique index leaves one row per board.
     const states = await listCompanyStates(db, { source: opts.source });
     const known = new Map<string, CompanyState>();
     for (const s of states) {

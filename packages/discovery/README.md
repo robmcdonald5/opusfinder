@@ -36,8 +36,8 @@ isolate (`runDiscovery` is argv-free for that).
    inactive alias is never revived), and one with only INACTIVE variants is probed under the stored slug,
    so discovery never inserts a second row for one board. The database backs this for every writer:
    migration 0025's partial unique index `companies_source_lower_slug_uq` on `(source, lower(slug))` for
-   these sources, so a case-variant insert (e.g. `pnpm ingest` with another casing) fails with a named
-   error instead of adding a row.
+   these sources. `upsertCompany` catches that index's violation and returns the stored row, so a
+   case-variant upsert (e.g. `pnpm ingest` with another casing) resolves to the board's one row.
 4. **Probe + classify** (`probe.ts`) — `probeCandidates` reuses `adapters[source].jobsRequest(ctx,
 null)` through a NON-throwing, per-host-throttled fetcher (a 404/400/200-empty is the signal, not an
    error). Each response is classified by `adapters[source].classifyProbe?` or the status-first
