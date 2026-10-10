@@ -37,7 +37,10 @@ function fields(s: Partial<StatementView>, extra = ""): string {
   const kind = s.kind ?? "other";
   return `<label>Vendor<input name="vendor" required maxlength="80" autocomplete="off" value="${esc(s.vendor ?? "")}"></label>
 <label>Amount (USD)<input name="amount" type="number" inputmode="decimal" min="0" step="0.01" required value="${
-    s.amount_cents !== null && s.amount_cents !== undefined
+    // A non-USD amount is not the USD figure this field asks for: leave it for the owner to enter.
+    s.amount_cents !== null &&
+    s.amount_cents !== undefined &&
+    (s.currency === null || s.currency === undefined || s.currency === "USD")
       ? esc((s.amount_cents / 100).toFixed(2))
       : ""
   }"></label>
@@ -48,7 +51,10 @@ function fields(s: Partial<StatementView>, extra = ""): string {
 <label>Kind<select name="kind">${STATEMENT_KINDS.map(
     (k) => `<option value="${k}"${k === kind ? " selected" : ""}>${k}</option>`,
   ).join("")}</select></label>${extra}
-<label>Note (optional)<input name="note" maxlength="300" autocomplete="off"></label>`;
+<label>Note (optional)<input name="note" maxlength="300" autocomplete="off" value="${
+    // A counted row's note is the owner's own: keep it on edit. Other rows' notes are the mailbox's reasons.
+    s.status === "recorded" ? esc(s.note ?? "") : ""
+  }"></label>`;
 }
 
 function decideForm(s: StatementView, summary: string): string {

@@ -13,7 +13,12 @@ export const MAX_EMAIL_BYTES = 10 * 1024 * 1024;
  */
 export const DAILY_MODEL_READS = 50;
 /**
- * Emails the billing mailbox accepts per UTC day. Past it, mail is refused at the SMTP stage: nothing
- * legitimate sends this many invoices, and the statement table must not grow without bound.
+ * The owner's forwards the billing mailbox accepts per UTC day. Past it, mail is refused at the SMTP stage:
+ * nothing legitimate sends this many invoices, and the statement table must not grow without bound.
  */
 export const DAILY_MAIL_CAP = 100;
+/**
+ * Gmail forwarding confirmations accepted per UTC day, counted apart from the owner's forwards: anyone can
+ * write that From header, so junk "confirmations" must never use up the owner's quota.
+ */
+export const DAILY_CONFIRMATION_CAP = 5;

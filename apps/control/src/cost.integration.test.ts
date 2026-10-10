@@ -2,7 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import { BILLING_ADDRESS, ORIGIN, startControl, type ControlHarness } from "@test/control/harness";
 
-import { DAILY_MAIL_CAP, DAILY_MODEL_READS } from "./limits";
+import { DAILY_CONFIRMATION_CAP, DAILY_MAIL_CAP, DAILY_MODEL_READS } from "./limits";
 
 // The billing mailbox and the Cost page, end to end: a raw email through Miniflare's email trigger into the
 // real email() handler (the model is the harness's FakeAi), the statement rows it writes, the cost read
@@ -164,6 +164,53 @@ describe("the billing mailbox", () => {
     expect(await rows()).toHaveLength(0);
   });
 
+  it("refuses a message with two From addresses (the gate and the reader could see different ones)", async () => {
+    const twoFroms = email({ from: "x@evil.example", answer: bill({ total: "950.00" }) }).replace(
+      "From: Vendor <x@evil.example>",
+      "From: forwarding-noreply@google.com\r\nFrom: invoices@neon.tech",
+    );
+    await h.email(twoFroms, { from: "x@evil.example" });
+    expect(await rows()).toHaveLength(0);
+  });
+
+  it("files mail let in only as Gmail's confirmation as that and nothing else: never read, never counted", async () => {
+    await h.email(
+      email({ from: "forwarding-noreply@google.com", answer: bill({ total: "950.00" }) }),
+      { from: "bounce@google.example" },
+    );
+    expect(await rows()).toMatchObject([
+      { status: "ignored", sender: "forwarding-noreply@google.com", amount_cents: null },
+    ]);
+  });
+
+  it("caps confirmations apart from the owner's forwards, so junk ones can't use up the quota", async () => {
+    const now = new Date().toISOString();
+    await h.db.batch(
+      Array.from({ length: DAILY_CONFIRMATION_CAP }, (_, i) =>
+        h.db
+          .prepare(
+            "INSERT INTO statement (received_at, source, message_id, sender, status, updated_at, updated_by) VALUES (?, 'email', ?, 'forwarding-noreply@google.com', 'ignored', ?, 'test')",
+          )
+          .bind(now, `<conf-${i}@test>`, now),
+      ),
+    );
+    await h.email(email({ from: "forwarding-noreply@google.com", body: "Confirmation code: 9" }), {
+      from: "forwarding-noreply@google.com",
+    });
+    expect(await rows()).toHaveLength(DAILY_CONFIRMATION_CAP);
+    await h.email(email({ answer: bill() })); // the owner's forward still gets in
+    expect((await rows()).at(-1)).toMatchObject({ status: "recorded", amount_cents: 842 });
+  });
+
+  it("records the receiving server's authentication verdicts, domains only (shadow evidence)", async () => {
+    const withAuth = email({ answer: bill() }).replace(
+      "Content-Type: text/plain",
+      "Authentication-Results: mx.cloudflare.net; spf=pass smtp.mailfrom=owner+caf_=billing=control.test@example.com; dkim=pass header.d=neon.tech\r\nContent-Type: text/plain",
+    );
+    await h.email(withAuth);
+    expect((await rows())[0]?.auth).toBe("spf=pass(example.com) dkim=pass(neon.tech)");
+  });
+
   it("stops accepting mail after the day's cap", async () => {
     const now = new Date().toISOString();
     await h.db.batch(
@@ -270,12 +317,12 @@ describe("Gmail's confirmation link", () => {
   });
 });
 
-describe("statements by hand", () => {
-  const add = (as: "owner" | "agent" | "runtime", json: Record<string, unknown>) =>
-    h.request("/v1/statements", { as, json });
+const add = (as: "owner" | "agent" | "runtime", json: Record<string, unknown>) =>
+  h.request("/v1/statements", { as, json });
 
-  it("lets the owner and agents add history; a repeat is a duplicate", async () => {
-    const first = await add("agent", {
+describe("statements by hand", () => {
+  it("counts the owner's entries; an agent's wait for the owner's review; a repeat is a duplicate", async () => {
+    const first = await add("owner", {
       vendor: "Neon",
       amount: "8.42",
       chargedOn: "2026-10-01",
@@ -283,14 +330,24 @@ describe("statements by hand", () => {
       periodStart: "2026-09-01",
     });
     expect(first.status).toBe(201);
+    const firstId = ((await first.json()) as Json).statement.id;
+    // The same charge again, spelled differently: still a duplicate.
     const again = (await (
-      await add("owner", { vendor: "Neon", amount: 8.42, chargedOn: "2026-10-02" })
+      await add("agent", { vendor: "Neon, LLC", amount: 8.42, chargedOn: "2026-10-02" })
     ).json()) as Json;
-    expect(again.duplicateOf).toBe(((await first.json()) as Json).statement.id);
+    expect(again.duplicateOf).toBe(firstId);
+    await add("agent", { vendor: "Voyage AI", amount: "120", chargedOn: "2026-10-09" });
     expect(await rows()).toMatchObject([
-      { source: "manual", month: "2026-09", status: "recorded", updated_by: "agent:observer" },
-      { source: "manual", status: "duplicate", updated_by: `owner:owner@example.com` },
+      {
+        source: "manual",
+        month: "2026-09",
+        status: "recorded",
+        updated_by: "owner:owner@example.com",
+      },
+      { source: "manual", status: "duplicate", updated_by: "agent:observer" },
+      { source: "manual", vendor: "Voyage AI", status: "review", updated_by: "agent:observer" },
     ]);
+    expect((await rows())[2]?.note).toContain("Added by agent:observer");
     expect(
       (await add("runtime", { vendor: "x", amount: "1", chargedOn: "2026-10-01" })).status,
     ).toBe(403);
@@ -438,6 +495,51 @@ describe("the Cost page", () => {
     expect(page).not.toContain(`action="/ui/statements/${confirmation?.id}"`);
   });
 
+  it("keeps a counted statement's note when it's edited, and never pre-fills a non-USD amount as USD", async () => {
+    await add("owner", {
+      vendor: "Neon",
+      amount: "8.42",
+      chargedOn: "2026-10-01",
+      note: "Q3 back-fill",
+    });
+    await h.email(email({ answer: bill({ currency: "EUR", total: "8.42", reference: "EU-1" }) }));
+    const page = await (await h.request("/cost", { as: "owner" })).text();
+    expect(page).toContain('value="Q3 back-fill"');
+    const eur = (await rows()).find((r) => r.currency === "EUR");
+    const form = page.slice(page.indexOf(`action="/ui/statements/${eur?.id}"`));
+    expect(form.slice(0, form.indexOf("</form>"))).toContain(
+      'name="amount" type="number" inputmode="decimal" min="0" step="0.01" required value=""',
+    );
+  });
+
+  it("refuses an impossible month", async () => {
+    expect((await h.request("/v1/cost?month=2026-13", { as: "agent" })).status).toBe(400);
+    expect((await h.request("/cost?month=2026-00", { as: "owner" })).status).toBe(400);
+  });
+
+  it("shows one line per vendor in a month, however the name was spelled", async () => {
+    await add("owner", {
+      vendor: "Neon, LLC",
+      amount: "8.42",
+      chargedOn: "2026-10-01",
+      kind: "usage",
+    });
+    expect(
+      (
+        await add("owner", {
+          vendor: "Neon",
+          amount: "1.00",
+          chargedOn: "2026-10-05",
+          kind: "usage",
+        })
+      ).status,
+    ).toBe(201);
+    const c = await costJson("owner", "2026-10");
+    expect(c.months.find((m: Json) => m.month === "2026-10").vendors).toEqual([
+      { vendor: "Neon, LLC", cents: 942, n: 2 },
+    ]);
+  });
+
   it("refuses to count Gmail's confirmation, even when asked directly", async () => {
     await h.email(email({ from: "forwarding-noreply@google.com", body: "Confirmation code: 4" }), {
       from: "forwarding-noreply@google.com",
@@ -450,6 +552,13 @@ describe("the Cost page", () => {
     expect(res.status).toBe(400);
     expect(await res.text()).toContain("not_a_charge");
     expect((await rows())[0]?.status).toBe("ignored");
+    // Still refused after the owner excludes it (the row stays a confirmation whatever its status).
+    await h.request(`/ui/statements/${id}`, { as: "owner", form: { action: "exclude" } });
+    const again = await h.request(`/ui/statements/${id}`, {
+      as: "owner",
+      form: { action: "count", vendor: "Google", amount: "1", chargedOn: today(), kind: "other" },
+    });
+    expect(again.status).toBe(400);
   });
 
   it("adds a statement from the page", async () => {

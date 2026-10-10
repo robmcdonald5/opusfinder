@@ -1,6 +1,7 @@
 import type { StateMap } from "@opusfinder/control";
 
 import type { Caller } from "./auth";
+import { vendorKey } from "./statements";
 
 /**
  * D1 access — the ONLY module that writes SQL. Every desired-state write goes through {@link applyChange},
@@ -453,6 +454,8 @@ export interface StatementRow {
   reference: string | null;
   status: "recorded" | "review" | "duplicate" | "ignored" | "excluded";
   note: string | null;
+  /** The receiving server's sender-authentication verdicts, domains only (shadow evidence; email only). */
+  auth: string | null;
   updated_at: string;
   updated_by: string;
 }
@@ -467,20 +470,32 @@ export async function statementExists(db: D1Database, messageId: string): Promis
   );
 }
 
-/** Emails received since `since` (the mailbox's daily cap on model reads). */
-export async function emailsSince(db: D1Database, since: string): Promise<number> {
+/**
+ * Emails received since `since`, split into the owner's forwards and Gmail confirmations (stored with
+ * `confirmationSender` as their sender): each has its own daily cap, so junk confirmations can't use up the
+ * owner's quota.
+ */
+export async function mailCountsSince(
+  db: D1Database,
+  since: string,
+  confirmationSender: string,
+): Promise<{ forwards: number; confirmations: number }> {
   const row = await db
-    .prepare("SELECT COUNT(*) AS n FROM statement WHERE source = 'email' AND received_at >= ?")
-    .bind(since)
-    .first<{ n: number }>();
-  return row?.n ?? 0;
+    .prepare(
+      `SELECT COALESCE(SUM(sender IS NOT ?2), 0) AS forwards, COALESCE(SUM(sender IS ?2), 0) AS confirmations
+       FROM statement WHERE source = 'email' AND received_at >= ?1`,
+    )
+    .bind(since, confirmationSender)
+    .first<{ forwards: number; confirmations: number }>();
+  return row ?? { forwards: 0, confirmations: 0 };
 }
 
 /**
- * The recorded statement this one repeats, if any: the same vendor and invoice number, or — when either
- * side has no number — the same vendor and amount charged within 3 days. Two numbered invoices with
- * different numbers are two charges, however alike (two domain renewals on one day). Vendors billing through Stripe send an invoice AND a
- * receipt for one charge; forwarding both must not count it twice.
+ * The recorded statement this one repeats, if any: the same vendor (compared by vendorKey, so "Neon, LLC"
+ * and "Neon" match) and invoice number, or — when either side has no number — the same vendor and amount
+ * charged within 3 days. Two invoices with different numbers are two charges, however alike (two domain
+ * renewals on one day); the reader asks the model for the invoice number over a receipt number, so a
+ * Stripe invoice and its receipt carry the same one.
  */
 export async function findSameCharge(
   db: D1Database,
@@ -491,19 +506,20 @@ export async function findSameCharge(
     charged_on: string | null;
   },
 ): Promise<number | null> {
-  if (!s.vendor) return null;
-  const row = await db
+  const key = vendorKey(s.vendor);
+  if (!key) return null;
+  const { results } = await db
     .prepare(
-      `SELECT id FROM statement
-       WHERE status = 'recorded' AND lower(vendor) = lower(?1)
-         AND ((?2 IS NOT NULL AND reference = ?2)
-           OR ((?2 IS NULL OR reference IS NULL) AND ?3 IS NOT NULL AND amount_cents = ?3
-               AND ?4 IS NOT NULL AND abs(julianday(charged_on) - julianday(?4)) <= 3))
-       ORDER BY id LIMIT 1`,
+      `SELECT id, vendor FROM statement
+       WHERE status = 'recorded'
+         AND ((?1 IS NOT NULL AND reference = ?1)
+           OR ((?1 IS NULL OR reference IS NULL) AND ?2 IS NOT NULL AND amount_cents = ?2
+               AND ?3 IS NOT NULL AND abs(julianday(charged_on) - julianday(?3)) <= 3))
+       ORDER BY id`,
     )
-    .bind(s.vendor, s.reference, s.amount_cents, s.charged_on)
-    .first<{ id: number }>();
-  return row?.id ?? null;
+    .bind(s.reference, s.amount_cents, s.charged_on)
+    .all<{ id: number; vendor: string | null }>();
+  return results.find((r) => vendorKey(r.vendor) === key)?.id ?? null;
 }
 
 /** Insert one statement; a Message-ID seen before is ignored (returns null). */
@@ -511,8 +527,8 @@ export async function insertStatement(db: D1Database, s: NewStatement): Promise<
   const row = await db
     .prepare(
       `INSERT INTO statement (received_at, source, message_id, sender, subject, vendor, kind, amount_cents,
-         currency, charged_on, period_start, month, reference, status, note, updated_at, updated_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         currency, charged_on, period_start, month, reference, status, note, auth, updated_at, updated_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT (message_id) DO NOTHING RETURNING id`,
     )
     .bind(
@@ -531,6 +547,7 @@ export async function insertStatement(db: D1Database, s: NewStatement): Promise<
       s.reference,
       s.status,
       s.note,
+      s.auth,
       s.updated_at,
       s.updated_by,
     )
