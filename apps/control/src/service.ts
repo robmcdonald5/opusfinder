@@ -8,6 +8,7 @@ import {
   cadence,
   classify,
   desiredValue,
+  foldReason,
   formatTarget,
   gateView,
   isStageId,
@@ -39,6 +40,7 @@ import {
   insertRun,
   insertStatement,
   listChanges,
+  listClosedProposals,
   listProposals,
   listRuns,
   readCost,
@@ -53,6 +55,7 @@ import {
   type NewStatement,
   type ProposalRow,
   type StatementRow,
+  type TimeRange,
 } from "./store";
 import {
   STATEMENT_KINDS,
@@ -139,6 +142,14 @@ function parsedReason(raw: unknown): string {
   const r = normalizeReason(raw);
   if (!r.ok) throw new ApiError(400, "invalid_reason", r.error);
   return r.value;
+}
+
+/** The owner may leave the reason out or blank; an agent's reason is how the owner learns why it acted. */
+function changeReason(caller: Caller, raw: unknown): string | null {
+  const blank =
+    raw === undefined || raw === null || (typeof raw === "string" && foldReason(raw) === "");
+  if (caller.role === "owner" && blank) return null;
+  return parsedReason(raw);
 }
 
 /** First line only, capped — the same shape-safety rule as the scrapers Worker's /fail ping. */
@@ -261,7 +272,39 @@ function stageFilter(raw: unknown): StageId | undefined {
 }
 
 /** Query parameters of the run and change lists, as strings (absent = no filter). */
-export type ListQuery = Partial<Record<"stage" | "outcome" | "before" | "limit", string | null>>;
+export type ListQuery = Partial<
+  Record<"stage" | "outcome" | "before" | "limit" | "from" | "to", string | null>
+>;
+
+/** A calendar day (YYYY-MM-DD, UTC) as epoch ms, or a 400 naming the parameter. */
+function periodDay(raw: string | null | undefined, name: "from" | "to"): number | undefined {
+  if (!raw) return undefined;
+  const ms = Date.parse(`${raw}T00:00:00Z`);
+  // Date.parse rolls 2026-02-30 over to March: a real date round-trips unchanged.
+  if (
+    !/^\d{4}-\d{2}-\d{2}$/.test(raw) ||
+    !Number.isFinite(ms) ||
+    new Date(ms).toISOString().slice(0, 10) !== raw
+  )
+    throw new ApiError(400, "invalid_period", `${name} must be a date like 2026-10-01`);
+  return ms;
+}
+
+/** The inclusive From/To days of a list query as the half-open time range the store queries take. */
+function period(q: ListQuery): TimeRange {
+  const from = periodDay(q.from, "from");
+  const to = periodDay(q.to, "to");
+  if (from !== undefined && to !== undefined && to < from)
+    throw new ApiError(400, "invalid_period", "to must not be before from");
+  const until = to === undefined ? undefined : to + 86_400_000;
+  return {
+    ...(from !== undefined ? { since: new Date(from).toISOString() } : {}),
+    // The day after 9999-12-31 is "+010000-…", which sorts before every stored time: leave that end open.
+    ...(until !== undefined && until < Date.UTC(10000, 0, 1)
+      ? { until: new Date(until).toISOString() }
+      : {}),
+  };
+}
 
 /** The run ledger, newest first: `GET /v1/runs` and the Runs page. */
 export async function runs(db: D1Database, q: ListQuery) {
@@ -280,6 +323,7 @@ export async function runs(db: D1Database, q: ListQuery) {
     outcome,
     beforeId: beforeId(q.before),
     limit: limit + 1,
+    ...period(q),
   });
   return { runs: rows.slice(0, limit).map(ledgerView), more: rows.length > limit };
 }
@@ -291,6 +335,7 @@ export async function changes(db: D1Database, q: ListQuery) {
     stage: stageFilter(q.stage),
     beforeId: beforeId(q.before),
     limit: limit + 1,
+    ...period(q),
   });
   return { changes: rows.slice(0, limit), more: rows.length > limit };
 }
@@ -355,7 +400,7 @@ export async function requestChange(
 ): Promise<ChangeOutcome> {
   const target = parsedTarget(field(body, "target"));
   const to = parsedValue(target, field(body, "value"));
-  const reason = parsedReason(field(body, "reason"));
+  const reason = changeReason(caller, field(body, "reason"));
   const address = formatTarget(target);
 
   const state = await readState(db);
@@ -372,13 +417,15 @@ export async function requestChange(
   if (decision.outcome === "deny")
     throw new ApiError(403, "forbidden", decision.rule, { decision });
   if (decision.outcome === "propose") {
+    // classify() applies whatever the owner sends, so this is an agent's proposal: its reason is required above.
+    const why = reason as string;
     if (field(body, "proposeIfNeeded") === true) {
       const filed = await fileProposal(db, {
         proposer: caller,
         target: address,
         from,
         to,
-        reason,
+        reason: why,
         now,
         expiresAt: new Date(Date.parse(now) + PROPOSAL_TTL_MS).toISOString(),
       });
@@ -394,7 +441,7 @@ export async function requestChange(
       propose: {
         method: "POST",
         path: "/v1/proposals",
-        body: { target: address, value: to ?? INHERIT, reason },
+        body: { target: address, value: to ?? INHERIT, reason: why },
       },
     });
   }
@@ -450,11 +497,37 @@ export async function propose(db: D1Database, caller: Caller, body: unknown, now
 
 export async function proposals(db: D1Database, which: string | null, now: string) {
   if (which !== null && which !== "open" && which !== "all") {
-    throw new ApiError(400, "invalid_status", 'status must be "open" or "all"');
+    throw new ApiError(400, "invalid_status", 'status must be "open", "all" or "closed"');
   }
   return (await listProposals(db, which === "all" ? "all" : "open", now)).map((p) =>
     proposalView(p, now),
   );
+}
+
+/** "expired" isn't stored: it is an open proposal past its expiry. */
+export const CLOSED_OUTCOMES = ["approved", "rejected", "withdrawn", "stale", "expired"] as const;
+
+export async function closedProposals(db: D1Database, q: ListQuery, now: string) {
+  const outcome = q.outcome || undefined;
+  if (outcome !== undefined && !(CLOSED_OUTCOMES as readonly string[]).includes(outcome)) {
+    throw new ApiError(
+      400,
+      "invalid_outcome",
+      `outcome must be one of: ${CLOSED_OUTCOMES.join(", ")}`,
+    );
+  }
+  const limit = listLimit(q.limit);
+  const rows = await listClosedProposals(db, now, {
+    stage: stageFilter(q.stage),
+    outcome,
+    beforeId: beforeId(q.before),
+    limit: limit + 1,
+    ...period(q),
+  });
+  return {
+    proposals: rows.slice(0, limit).map((p) => proposalView(p, now)),
+    more: rows.length > limit,
+  };
 }
 
 export async function proposal(db: D1Database, id: number, now: string): Promise<ProposalView> {
@@ -763,18 +836,38 @@ function statementView(row: StatementRow, caller: Caller) {
 
 export type StatementView = ReturnType<typeof statementView>;
 
-/** `GET /v1/cost` and the Cost page: totals per month and vendor, one month's statements, the review queue. */
+/**
+ * `GET /v1/cost` and the Cost page: totals per month and vendor, the statements filed in a period of whole
+ * months, the review queue. The period is `from`/`to` days (their months), or `month`, or this month. Like
+ * the Log tabs, a lone `from` runs to this month and a lone `to` back to the first month anything was filed.
+ */
 export async function cost(
   db: D1Database,
   caller: Caller,
-  monthParam: string | null,
+  q: { month?: string | null; from?: string | null; to?: string | null },
   now: string,
   billingAddress: string | null = null,
 ) {
   const current = now.slice(0, 7);
-  const month = monthParam || current;
-  if (!MONTH.test(month)) throw new ApiError(400, "invalid_month", "month must look like YYYY-MM");
-  const c = await readCost(db, month);
+  let fromMonth = current;
+  let toMonth = current;
+  let openStart = false;
+  if (q.month) {
+    if (!MONTH.test(q.month))
+      throw new ApiError(400, "invalid_month", "month must look like YYYY-MM");
+    fromMonth = toMonth = q.month;
+  } else if (q.from || q.to) {
+    period({ from: q.from ?? null, to: q.to ?? null });
+    openStart = !q.from;
+    fromMonth = q.from ? q.from.slice(0, 7) : "0000-01";
+    toMonth = q.to ? q.to.slice(0, 7) : fromMonth > current ? fromMonth : current;
+  }
+  const c = await readCost(db, fromMonth, toMonth);
+  if (openStart) {
+    // totals are newest first: the last is the first month anything was filed.
+    const first = c.totals.at(-1)?.month;
+    fromMonth = first !== undefined && first < toMonth ? first : toMonth;
+  }
   const months = new Map<
     string,
     { month: string; cents: number; vendors: { vendor: string; cents: number; n: number }[] }
@@ -795,7 +888,9 @@ export async function cost(
   const view = (r: StatementRow) => statementView(r, caller);
   return {
     generatedAt: now,
-    month,
+    /** The period's first and last month (the same month unless a range was asked for). */
+    month: fromMonth,
+    toMonth,
     currentMonth: current,
     /** Advisory (owner decision T4), not a cap. */
     targetUsdPerMonth: totalTargetUsdPerMonth,

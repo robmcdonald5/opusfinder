@@ -51,6 +51,11 @@ describe("control registry ⇄ db/health", () => {
     expectTypeOf<RegistryHealthId>().toEqualTypeOf<HealthCheckId>();
   });
 
+  it("names each check the same in the panel and in the alert emails", () => {
+    for (const c of checksUnder())
+      expect(policyDef(`health.${c.id}` as PolicyId).label).toBe(c.label);
+  });
+
   it("declares exactly the checks evaluateHealth emits (runtime)", () => {
     const emitted = checksUnder()
       .map((c) => `health.${c.id}`)

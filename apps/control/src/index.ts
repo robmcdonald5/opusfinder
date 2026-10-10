@@ -20,6 +20,7 @@ import {
   proposal,
   proposalNote,
   proposals,
+  closedProposals,
   propose,
   recordRun,
   reject,
@@ -32,13 +33,13 @@ import {
   type ListQuery,
   type StatusView,
 } from "./service";
-import { renderActivity } from "./ui/activity";
-import { renderApprovals } from "./ui/approvals";
+import { renderChanges } from "./ui/changes";
+import { renderApprovals, renderProposals } from "./ui/approvals";
 import { renderCost } from "./ui/cost";
 import { BACK_PATH } from "./ui/forms";
 import { renderHealth } from "./ui/health";
 import { renderHome } from "./ui/home";
-import { renderError } from "./ui/html";
+import { renderError } from "./ui/layout";
 import { renderRuns } from "./ui/runs";
 import { renderStage, renderStages } from "./ui/stages";
 
@@ -203,7 +204,20 @@ function listQuery(url: URL): ListQuery {
     outcome: p.get("outcome"),
     before: p.get("before"),
     limit: p.get("limit"),
+    from: p.get("from"),
+    to: p.get("to"),
   };
+}
+
+/** A Log tab's filters as the page shows them back (absent = empty). */
+function logQuery(url: URL) {
+  const q = listQuery(url);
+  return { stage: q.stage ?? "", outcome: q.outcome ?? "", from: q.from ?? "", to: q.to ?? "" };
+}
+
+function costQuery(url: URL) {
+  const p = url.searchParams;
+  return { month: p.get("month"), from: p.get("from"), to: p.get("to") };
 }
 
 /** The CLI marks its requests so the change log can say "via cli"; it is audit metadata, never authority. */
@@ -234,7 +248,8 @@ const OWNER_AGENT: readonly Role[] = ["owner", "agent"];
 
 /**
  * A panel page: the status read (every page's header needs it) and the page's own reads, started together.
- * `load` runs synchronously first, so it can refuse a bad URL (e.g. an unknown stage) before any D1 read.
+ * Only a check `load` makes before its first await (e.g. an unknown stage) refuses a bad URL before any D1
+ * read; one inside an async service call (a bad from/to or outcome) fails after the status read has begun.
  */
 function page<T = undefined>(
   pattern: RegExp,
@@ -257,7 +272,7 @@ function page<T = undefined>(
 const done = (url: URL) => url.searchParams.get("done");
 
 const ROUTES: readonly Route[] = [
-  // ---- the panel: a home page of sections, each its own page ----
+  // ---- the panel: an overview, then one page per section ----
   page(
     /^\/$/,
     ({ env, now }) => costSummary(env.DB, now),
@@ -271,8 +286,8 @@ const ROUTES: readonly Route[] = [
       const stage = params[0] ?? "";
       if (!isStageId(stage)) throw new ApiError(404, "unknown_stage", `unknown stage "${stage}"`);
       return Promise.all([
-        runs(env.DB, { stage, limit: "10" }),
-        changes(env.DB, { stage, limit: "10" }),
+        runs(env.DB, { stage, limit: "5" }),
+        changes(env.DB, { stage, limit: "5" }),
       ]).then(([r, c]) => ({ stage, runs: r.runs, changes: c.changes }));
     },
     ({ url }, view, data) => {
@@ -285,15 +300,12 @@ const ROUTES: readonly Route[] = [
   page(
     /^\/runs$/,
     ({ env, url }) => runs(env.DB, listQuery(url)),
-    ({ url }, view, list) => {
-      const q = listQuery(url);
-      return renderRuns(view, list, { stage: q.stage ?? "", outcome: q.outcome ?? "" });
-    },
+    ({ url }, view, list) => renderRuns(view, list, logQuery(url)),
   ),
   page(
     /^\/cost$/,
     ({ env, caller, url, now }) =>
-      cost(env.DB, caller, url.searchParams.get("month"), now, env.BILLING_ADDRESS ?? null),
+      cost(env.DB, caller, costQuery(url), now, env.BILLING_ADDRESS ?? null),
     ({ url }, view, c) => renderCost(view, c, done(url)),
   ),
   {
@@ -326,9 +338,14 @@ const ROUTES: readonly Route[] = [
     },
   },
   page(
+    /^\/proposals$/,
+    ({ env, url, now }) => closedProposals(env.DB, listQuery(url), now),
+    ({ url }, view, list) => renderProposals(view, list, logQuery(url)),
+  ),
+  page(
     /^\/activity$/,
     ({ env, url }) => changes(env.DB, listQuery(url)),
-    ({ url }, view, list) => renderActivity(view, list, { stage: listQuery(url).stage ?? "" }),
+    ({ url }, view, list) => renderChanges(view, list, logQuery(url)),
   ),
   {
     method: "POST",
@@ -337,11 +354,7 @@ const ROUTES: readonly Route[] = [
     ui: true,
     handler: async ({ request, env, caller, url, now }) => {
       const form = await formBody(request, url);
-      const body = {
-        target: form.get("target"),
-        value: form.get("value"),
-        reason: form.get("reason"),
-      };
+      const body = { target: form.get("target"), value: form.get("value") };
       const res = await requestChange(env.DB, caller, body, "panel", now);
       return redirect(
         `${backPath(form.get("back"))}?done=${res.result === "noop" ? "noop" : "applied"}`,
@@ -354,15 +367,15 @@ const ROUTES: readonly Route[] = [
     roles: ["owner"],
     ui: true,
     handler: async ({ request, env, caller, url, params, now }) => {
-      const form = await formBody(request, url);
+      // Only for its same-origin check: Approve and Reject post no fields.
+      await formBody(request, url);
       const id = rowId(params[0] ?? "");
-      const note = proposalNote(form.get("note"));
       if (params[1] === "reject") {
-        await reject(env.DB, caller, id, note, now);
+        await reject(env.DB, caller, id, null, now);
         return redirect("/approvals?done=rejected");
       }
       try {
-        await approve(env.DB, caller, id, note, "panel", now);
+        await approve(env.DB, caller, id, null, "panel", now);
       } catch (err) {
         // Not an error from the owner's point of view: the page says the proposal went stale and why
         // (it is now listed under recently closed), nothing was applied.
@@ -396,9 +409,7 @@ const ROUTES: readonly Route[] = [
     pattern: /^\/v1\/cost$/,
     roles: OWNER_AGENT,
     handler: async ({ env, caller, url, now }) =>
-      json(
-        await cost(env.DB, caller, url.searchParams.get("month"), now, env.BILLING_ADDRESS ?? null),
-      ),
+      json(await cost(env.DB, caller, costQuery(url), now, env.BILLING_ADDRESS ?? null)),
   },
   {
     method: "POST",
@@ -433,8 +444,13 @@ const ROUTES: readonly Route[] = [
     method: "GET",
     pattern: /^\/v1\/proposals$/,
     roles: OWNER_AGENT,
-    handler: async ({ env, url, now }) =>
-      json({ proposals: await proposals(env.DB, url.searchParams.get("status"), now) }),
+    handler: async ({ env, url, now }) => {
+      const status = url.searchParams.get("status");
+      // Closed proposals are paged like the other lists ({ proposals, more }); open and all keep their shape.
+      return status === "closed"
+        ? json(await closedProposals(env.DB, listQuery(url), now))
+        : json({ proposals: await proposals(env.DB, status, now) });
+    },
   },
   {
     method: "POST",

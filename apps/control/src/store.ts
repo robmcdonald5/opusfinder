@@ -25,7 +25,8 @@ export interface ChangeRow {
   target: string;
   from_value: string | null;
   to_value: string | null;
-  reason: string;
+  /** Null when the owner changed it without one. */
+  reason: string | null;
   channel: string;
   proposal_id: number | null;
   /** From the proposal, when the change came from an approval: "<role>:<name>". */
@@ -184,7 +185,7 @@ export interface ApplyInput {
   to: string | null;
   actor: Caller;
   channel: Channel;
-  reason: string;
+  reason: string | null;
   now: string;
   /** Set when an owner approves a proposal: the batch also flips that proposal to 'approved', and the
    *  whole batch is additionally conditional on it still being open and unexpired. */
@@ -330,6 +331,44 @@ export async function listProposals(
   return (await stmt.all<ProposalRow>()).results;
 }
 
+export interface ClosedProposalFilter extends TimeRange {
+  stage?: string | undefined;
+  /** A stored status, or "expired" (still 'open' in the table but past expires_at). */
+  outcome?: string | undefined;
+  beforeId?: number | undefined;
+  limit: number;
+}
+
+export async function listClosedProposals(
+  db: D1Database,
+  now: string,
+  f: ClosedProposalFilter,
+): Promise<ProposalRow[]> {
+  // substr, not LIKE: stage ids contain "_", a LIKE wildcard.
+  const { results } = await db
+    .prepare(
+      `SELECT * FROM proposal
+       WHERE (status <> 'open' OR expires_at <= ?1)
+         AND (?2 IS NULL OR target = ?2 OR substr(target, 1, length(?2) + 1) IN (?2 || '.', ?2 || '@'))
+         AND (?3 IS NULL OR (?3 = 'expired' AND status = 'open') OR (?3 <> 'expired' AND status = ?3))
+         AND (?4 IS NULL OR id < ?4)
+         AND (?6 IS NULL OR COALESCE(decided_at, expires_at) >= ?6)
+         AND (?7 IS NULL OR COALESCE(decided_at, expires_at) < ?7)
+       ORDER BY id DESC LIMIT ?5`,
+    )
+    .bind(
+      now,
+      f.stage ?? null,
+      f.outcome ?? null,
+      f.beforeId ?? null,
+      f.limit,
+      f.since ?? null,
+      f.until ?? null,
+    )
+    .all<ProposalRow>();
+  return results;
+}
+
 /** Close an open, unexpired proposal without applying it (reject / withdraw / stale). */
 export async function closeProposal(
   db: D1Database,
@@ -364,7 +403,13 @@ export interface NewRun {
   recordedBy: string;
 }
 
-export interface RunFilter {
+/** A half-open time range as ISO strings: rows at or after `since`, before `until`. */
+export interface TimeRange {
+  since?: string;
+  until?: string;
+}
+
+export interface RunFilter extends TimeRange {
   stage?: string;
   outcome?: string;
   /** Only rows that sort after this row (paging: pass the last id of the previous page). */
@@ -383,14 +428,22 @@ export async function listRuns(db: D1Database, f: RunFilter): Promise<LedgerRow[
       `SELECT * FROM ledger
        WHERE (?1 IS NULL OR stage = ?1) AND (?2 IS NULL OR outcome = ?2)
          AND (?3 IS NULL OR (started_at, id) < (SELECT started_at, id FROM ledger WHERE id = ?3))
+         AND (?5 IS NULL OR started_at >= ?5) AND (?6 IS NULL OR started_at < ?6)
        ORDER BY started_at DESC, id DESC LIMIT ?4`,
     )
-    .bind(f.stage ?? null, f.outcome ?? null, f.beforeId ?? null, f.limit)
+    .bind(
+      f.stage ?? null,
+      f.outcome ?? null,
+      f.beforeId ?? null,
+      f.limit,
+      f.since ?? null,
+      f.until ?? null,
+    )
     .all<LedgerRow>();
   return results;
 }
 
-export interface ChangeFilter {
+export interface ChangeFilter extends TimeRange {
   /** A stage's own targets: the stage itself, its knobs (`<stage>.<knob>`) and overrides (`<stage>@…`). */
   stage?: string;
   beforeId?: number;
@@ -405,9 +458,10 @@ export async function listChanges(db: D1Database, f: ChangeFilter): Promise<Chan
       `${CHANGE_SELECT}
        WHERE (?1 IS NULL OR c.target = ?1 OR substr(c.target, 1, length(?1) + 1) IN (?1 || '.', ?1 || '@'))
          AND (?2 IS NULL OR c.id < ?2)
+         AND (?4 IS NULL OR c.at >= ?4) AND (?5 IS NULL OR c.at < ?5)
        ORDER BY c.id DESC LIMIT ?3`,
     )
-    .bind(f.stage ?? null, f.beforeId ?? null, f.limit)
+    .bind(f.stage ?? null, f.beforeId ?? null, f.limit, f.since ?? null, f.until ?? null)
     .all<ChangeRow>();
   return results;
 }
@@ -612,7 +666,8 @@ export interface MonthVendorTotal {
 /** Everything the Cost page needs, in one batch: totals per month and vendor, one month's rows, the queue. */
 export async function readCost(
   db: D1Database,
-  month: string,
+  fromMonth: string,
+  toMonth: string,
 ): Promise<{
   totals: MonthVendorTotal[];
   rows: StatementRow[];
@@ -627,9 +682,9 @@ export async function readCost(
     ),
     db
       .prepare(
-        "SELECT * FROM statement WHERE month = ? AND status = 'recorded' ORDER BY charged_on DESC, id DESC",
+        "SELECT * FROM statement WHERE month BETWEEN ? AND ? AND status = 'recorded' ORDER BY month DESC, charged_on DESC, id DESC",
       )
-      .bind(month),
+      .bind(fromMonth, toMonth),
     db.prepare("SELECT * FROM statement WHERE status = 'review' ORDER BY id DESC LIMIT 50"),
     db.prepare("SELECT COUNT(*) AS n FROM statement WHERE status = 'review'"),
     db.prepare(

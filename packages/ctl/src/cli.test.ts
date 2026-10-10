@@ -115,6 +115,16 @@ const STATUS = {
       channel: "panel",
       reason: "resume",
     },
+    {
+      at: "2026-10-04T17:20:00.000Z",
+      target: "embed",
+      from_value: "on",
+      to_value: "off",
+      actor_role: "owner",
+      actor_name: "o@x",
+      channel: "panel",
+      reason: null,
+    },
   ],
 };
 
@@ -204,6 +214,7 @@ describe("requests", () => {
     expect(text).toContain("knobs (non-default): ingest.boardsPerTick=75");
     expect(text).toContain("#4 embed: off → on by agent:observer [open]");
     expect(text).toContain("resume");
+    expect(text).toMatch(/embed: on → off by owner:o@x \(panel\)$/m);
   });
 
   it("lists proposals, all statuses with --all", async () => {

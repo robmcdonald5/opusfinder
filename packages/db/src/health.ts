@@ -149,7 +149,11 @@ export interface HealthSignals {
   hardBounces: number;
   suppressed: number;
   /** raw cost rollup inputs (summed over recent `digests`). */
-  cost: { digestsConsidered: number; rerankCacheReadTokens: number; rerankCacheCreationTokens: number };
+  cost: {
+    digestsConsidered: number;
+    rerankCacheReadTokens: number;
+    rerankCacheCreationTokens: number;
+  };
 }
 
 export interface HealthReport {
@@ -161,16 +165,18 @@ export interface HealthReport {
 
 /** A check that should page: `enforce` mode AND `firing`. Single source of truth so the alert can
  *  never drift from the report's own verdict. */
-export const isEnforceFiring = (c: HealthCheck): boolean => c.mode === "enforce" && c.state === "firing";
+export const isEnforceFiring = (c: HealthCheck): boolean =>
+  c.mode === "enforce" && c.state === "firing";
 
+/** The names the alert emails and `pnpm health` use: the same as the control panel's (a sync test pins them). */
 const CHECK_LABELS: Record<HealthCheckId, string> = {
   ingestion_staleness: "Ingestion staleness",
-  board_fail_ratio: "Board fail-ratio",
-  hydrate_skip_ratio: "Hydrate skip-ratio",
-  discovery_window: "Discovery window",
+  board_fail_ratio: "Board failures",
+  hydrate_skip_ratio: "Job detail failures",
+  discovery_window: "Discovery staleness",
   embedding_backlog: "Embedding backlog",
-  digest_health: "Digest health",
-  bounce_suppression: "Bounce / suppression",
+  digest_health: "Digest errors",
+  bounce_suppression: "Email bounces",
   discovery_lane_errors: "Discovery lane errors",
 };
 
@@ -210,18 +216,18 @@ export async function gatherHealthSignals(
     costResult,
     discoveryLaneResult,
   ] = await Promise.all([
-      // (a) last successful ingestion age (index source_runs_pipeline_started_idx).
-      db.execute(sql`
+    // (a) last successful ingestion age (index source_runs_pipeline_started_idx).
+    db.execute(sql`
         SELECT extract(epoch FROM (now() - max(finished_at))) / 3600.0 AS age_h
         FROM source_runs WHERE pipeline = 'ingestion' AND status = 'ok'
       `),
-      // (b) + (i) latest FINISHED ingestion run's status, fail-ratio inputs (see latestIngestStatus) and
-      //     hydrate-skip inputs — one row, no extra query. A `running` row is skipped: its counts are still the
-      //     `{}` default, so reading it would score an in-flight tick as a healthy 0 — and the health cron
-      //     fires at :10, inside a tick that runs long. (A zombie running row is terminalized `error` by the
-      //     next startRun's failStaleRuns, and then counts.) `::numeric` (not `::int`) so a non-integer value
-      //     can never abort the query and take the checker dark.
-      db.execute(sql`
+    // (b) + (i) latest FINISHED ingestion run's status, fail-ratio inputs (see latestIngestStatus) and
+    //     hydrate-skip inputs — one row, no extra query. A `running` row is skipped: its counts are still the
+    //     `{}` default, so reading it would score an in-flight tick as a healthy 0 — and the health cron
+    //     fires at :10, inside a tick that runs long. (A zombie running row is terminalized `error` by the
+    //     next startRun's failStaleRuns, and then counts.) `::numeric` (not `::int`) so a non-integer value
+    //     can never abort the query and take the checker dark.
+    db.execute(sql`
         SELECT status,
                coalesce((counts->>'failed')::numeric, 0)          AS failed,
                coalesce((counts->>'rateLimitSkipped')::numeric, 0) AS rate_limit_skipped,
@@ -232,39 +238,39 @@ export async function gatherHealthSignals(
         FROM source_runs WHERE pipeline = 'ingestion' AND status <> 'running'
         ORDER BY started_at DESC LIMIT 1
       `),
-      // (c) discovery window — last SUCCESS (finished_at WHERE status='ok'), mirroring (a).
-      db.execute(sql`
+    // (c) discovery window — last SUCCESS (finished_at WHERE status='ok'), mirroring (a).
+    db.execute(sql`
         SELECT extract(epoch FROM (now() - max(finished_at))) / 86400.0 AS age_d
         FROM source_runs WHERE pipeline = 'discovery' AND status = 'ok'
       `),
-      // (d) un-embedded backlog.
-      db.execute(sql`
+    // (d) un-embedded backlog.
+    db.execute(sql`
         SELECT count(*) FILTER (WHERE embedding IS NULL) AS embedding_backlog
         FROM jobs
       `),
-      // (e) digest health — count error-status runs in the recent window.
-      db.execute(sql`
+    // (e) digest health — count error-status runs in the recent window.
+    db.execute(sql`
         SELECT count(*) FILTER (WHERE status = 'error')::int AS errors
         FROM (SELECT status FROM digest_runs ORDER BY started_at DESC LIMIT ${digestWindowN}) t
       `),
-      // (f) bounce / suppression spike.
-      db.execute(sql`
+    // (f) bounce / suppression spike.
+    db.execute(sql`
         SELECT count(*) FILTER (WHERE digest_bounce_status = 'hard')    AS hard_bounced,
                count(*) FILTER (WHERE digest_suppressed_at IS NOT NULL) AS suppressed
         FROM user_preferences
       `),
-      // cost rollup — the NAMED rerank-cache keys over recent digests (counts carries other keys too).
-      db.execute(sql`
+    // cost rollup — the NAMED rerank-cache keys over recent digests (counts carries other keys too).
+    db.execute(sql`
         SELECT counts FROM digests ORDER BY created_at DESC LIMIT ${costRollupN}
       `),
-      // (h) latest discovery run's per-lane error tallies — sum lane_*_error in JS (dynamic keys).
-      //     `source IS NULL` scopes to the all-source weekly sweep so an ad-hoc `pnpm discover --source=X`
-      //     run can't shadow it.
-      db.execute(sql`
+    // (h) latest discovery run's per-lane error tallies — sum lane_*_error in JS (dynamic keys).
+    //     `source IS NULL` scopes to the all-source weekly sweep so an ad-hoc `pnpm discover --source=X`
+    //     run can't shadow it.
+    db.execute(sql`
         SELECT counts FROM source_runs
         WHERE pipeline = 'discovery' AND source IS NULL ORDER BY started_at DESC LIMIT 1
       `),
-    ]);
+  ]);
 
   const ingestAge = resultRows(ingestAgeResult)[0] as { age_h: unknown } | undefined;
   const latestIngest = resultRows(latestIngestResult)[0] as
@@ -279,11 +285,11 @@ export async function gatherHealthSignals(
       }
     | undefined;
   const discoveryAge = resultRows(discoveryAgeResult)[0] as { age_d: unknown } | undefined;
-  const backlogs = resultRows(backlogResult)[0] as
-    | { embedding_backlog: unknown }
-    | undefined;
+  const backlogs = resultRows(backlogResult)[0] as { embedding_backlog: unknown } | undefined;
   const digestErr = resultRows(digestErrorResult)[0] as { errors: unknown } | undefined;
-  const bounce = resultRows(bounceResult)[0] as { hard_bounced: unknown; suppressed: unknown } | undefined;
+  const bounce = resultRows(bounceResult)[0] as
+    | { hard_bounced: unknown; suppressed: unknown }
+    | undefined;
   const costRows = resultRows(costResult) as Array<{ counts: Record<string, unknown> | null }>;
 
   let rerankCacheReadTokens = 0;
@@ -342,11 +348,15 @@ export function evaluateHealth(signals: HealthSignals, opts?: HealthOptions): He
 
   // Divide by boards attempted (processed), falling back to companies when processed is 0/absent so the
   // check never goes dark (see latestIngestStatus for the budget-truncated-tick rationale).
-  const failDenom = signals.latestIngestProcessed > 0 ? signals.latestIngestProcessed : signals.latestIngestCompanies;
+  const failDenom =
+    signals.latestIngestProcessed > 0
+      ? signals.latestIngestProcessed
+      : signals.latestIngestCompanies;
   const notIngested = signals.latestIngestFailed + signals.latestIngestRateLimitSkipped;
   const failRatio = failDenom > 0 ? notIngested / failDenom : 0;
   const hydrateListed = signals.latestIngestHydrateListed;
-  const hydrateSkipRatio = hydrateListed > 0 ? signals.latestIngestHydrateSkipped / hydrateListed : 0;
+  const hydrateSkipRatio =
+    hydrateListed > 0 ? signals.latestIngestHydrateSkipped / hydrateListed : 0;
   const bounceTotal = signals.hardBounces + signals.suppressed;
 
   const checks: HealthCheck[] = [
@@ -391,7 +401,12 @@ export function evaluateHealth(signals: HealthSignals, opts?: HealthOptions): He
     make("digest_health", signals.digestErrors, null, signals.digestErrors > 0),
     make("bounce_suppression", bounceTotal, null, bounceTotal > 0),
     // (h) any per-lane discovery fetch error on the latest run (threshold null = boolean, fire on > 0).
-    make("discovery_lane_errors", signals.discoveryLaneErrors, null, signals.discoveryLaneErrors > 0),
+    make(
+      "discovery_lane_errors",
+      signals.discoveryLaneErrors,
+      null,
+      signals.discoveryLaneErrors > 0,
+    ),
   ];
 
   const { rerankCacheReadTokens, rerankCacheCreationTokens } = signals.cost;
