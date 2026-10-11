@@ -64,7 +64,7 @@ function knobControl(k: KnobView, back: string): string {
       k.min,
     )}" max="${esc(k.max)}" step="${k.int ? "1" : "any"}" required placeholder="${esc(num(k.value))}" title="${esc(
       hint,
-    )}" aria-label="${esc(k.label)}" style="width:calc(${chars}ch + 18px)">${
+    )}" aria-label="${esc(k.label)}" style="width:${chars}ch">${
       unit ? `<span>${esc(unit.trim())}</span>` : ""
     }</label>`,
     k.label,
