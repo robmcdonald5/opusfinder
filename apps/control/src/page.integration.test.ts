@@ -368,6 +368,28 @@ describe("health & alerts", () => {
     expect(html).toContain('name="target" value="health.board_fail_ratio.threshold"');
     expect(html).toContain('name="back" value="/health"');
   });
+
+  it("groups the checks under the stage each watches, greying those whose stage is off", async () => {
+    await h.request("/v1/changes", { as: "owner", json: { target: "ingest", value: "on" } });
+    await h.request("/v1/changes", { as: "owner", json: { target: "digest", value: "off" } });
+    const html = await page("/health");
+    const band = (stage: string) =>
+      html.indexOf(`<li class="grp"><span><a href="/stages/${stage}"`);
+    for (const id of POLICY_IDS.filter((p) =>
+      (policyDef(p).readBy as readonly string[]).includes("alerts"),
+    )) {
+      const own = band(policyDef(id).watches ?? "");
+      const at = html.indexOf(`id="policy-${id}"`);
+      const next = html.indexOf('<li class="grp">', own + 1);
+      expect(own).toBeGreaterThan(-1);
+      expect(at).toBeGreaterThan(own);
+      if (next !== -1) expect(at).toBeLessThan(next);
+    }
+    expect(html).toContain('User digests</a></span><span class="mode m-off">off</span></li>');
+    expect(html).toContain('Ingest job boards</a></span><span class="mode m-on">on</span></li>');
+    expect(html).toMatch(/<li class="item [^"]*\bidle" id="policy-health\.digest_health">/);
+    expect(html).not.toMatch(/<li class="item [^"]*\bidle" id="policy-health\.board_fail_ratio">/);
+  });
 });
 
 describe("runs", () => {

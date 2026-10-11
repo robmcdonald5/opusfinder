@@ -41,6 +41,7 @@ export function item(o: {
   change?: Change | false | null;
   id?: string;
   nested?: string;
+  cls?: string;
 }): string {
   const lines = (o.lines ?? []).filter(Boolean);
   const sub =
@@ -49,7 +50,9 @@ export function item(o: {
           .map((l) => `<div class="m">${l}</div>`)
           .join("")}</div>`
       : "";
-  const cls = ["item", sub ? "" : "solo", o.change ? "" : "noact"].filter(Boolean).join(" ");
+  const cls = ["item", sub ? "" : "solo", o.change ? "" : "noact", o.cls ?? ""]
+    .filter(Boolean)
+    .join(" ");
   // The button stays in the row; what it opens is a sibling panel the stylesheet shows while it's open.
   const act = o.change
     ? `<div class="act"><details class="change"><summary>${esc(o.change.label)}</summary></details></div><div class="panel">${o.change.body}</div>`
@@ -190,7 +193,7 @@ export function facts(pairs: readonly (readonly [string, string])[]): string {
 /**
  * The row for every switch and setting, so they all read and line up alike: the name on the left, the value
  * (or the owner's control for it) on the right. A switch's own settings sit indented under it, one row each.
- * `name` is plain text.
+ * `name` is plain text. `idle` greys the names of a switch that isn't being acted on.
  */
 export function controlRow(o: {
   name: string;
@@ -200,6 +203,7 @@ export function controlRow(o: {
   lines?: readonly string[];
   value: string;
   settings?: readonly string[];
+  idle?: boolean;
 }): string {
   const tip = o.hover ? ` title="${esc(o.hover)}"` : "";
   const title = o.href
@@ -211,5 +215,11 @@ export function controlRow(o: {
     ...(o.id ? { id: o.id } : {}),
     ...(o.lines ? { lines: o.lines } : {}),
     ...(o.settings?.length ? { nested: o.settings.join("") } : {}),
+    cls: o.idle ? "ctl idle" : "ctl",
   });
+}
+
+/** A band heading the rows after it in a `rowList`; `title` and `end` are markup. */
+export function groupRow(title: string, end: string): string {
+  return `<li class="grp"><span>${title}</span>${end}</li>`;
 }
