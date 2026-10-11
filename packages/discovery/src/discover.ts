@@ -89,8 +89,8 @@ export interface DiscoveryCounts {
   deactivated: number;
   budgetSkipped: number; // candidates of either pass left unprobed once opts.maxRunMs ran out
   // Board-death close: count-only/shadow → wouldCloseOnDeactivation; enforce writes closed.
-  jobsClosedOnDeactivation: number; // active jobs of deactivated boards flipped to 'closed' (enforce; 0 in shadow)
-  wouldCloseOnDeactivation: number; // active jobs of deactivated boards that WOULD close (shadow; 0 in enforce)
+  jobsClosedOnDeactivation: number; // active jobs of inactive boards flipped to 'closed' (enforce; 0 in shadow)
+  wouldCloseOnDeactivation: number; // active jobs of inactive boards that WOULD close (shadow; 0 in enforce)
 }
 
 /**
@@ -172,10 +172,16 @@ export async function runDiscovery(db: Db, opts: DiscoveryOptions = {}): Promise
     if (!dryRun) {
       const deactivatedIds = await deactivateStale(db, olderThanDays, { source: opts.source });
       counts.deactivated = deactivatedIds.length;
-      // Soft-close every still-active job of a just-deactivated (board-death) company — the reprobe path
-      // can't see them (activeOnly:true never re-fetches a dead board). Default count-only/shadow (tally
-      // wouldCloseOnDeactivation, write no 'closed'); enforcement rides opts.enforceLifecycle.
-      const boardClose = await closeJobsForCompanies(db, deactivatedIds, {
+      // Soft-close every still-active job of an INACTIVE (board-death) company in scope — activeOnly:true
+      // ingestion never re-fetches a dead board, so nothing else reaches them. All of them, not just the rows
+      // deactivateStale flipped now: it never returns a row twice, so a close skipped in shadow (the CLI never
+      // enforces) or lost after the deactivation committed would orphan those jobs for good. Read after the
+      // sweep so this run's reactivations and deactivations both count. Count-only (wouldCloseOnDeactivation)
+      // unless opts.enforceLifecycle.
+      const inactiveIds = (await listCompanyStates(db, { source: opts.source }))
+        .filter((s) => !s.active)
+        .map((s) => s.id);
+      const boardClose = await closeJobsForCompanies(db, inactiveIds, {
         enforce: opts.enforceLifecycle ?? false,
       });
       counts.jobsClosedOnDeactivation = boardClose.closed;

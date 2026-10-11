@@ -183,8 +183,7 @@ export async function markProbed(db: Db, companyId: number): Promise<void> {
  * re-emits its slug.
  * `opts.source` scopes the sweep to one source so a `--source` run doesn't deactivate rows of an
  * unrelated source it never re-probed; omit it (the broader pass) to sweep all sources. Returns the
- * ids of the rows flipped (the caller derives the count via `.length`, and closes their jobs via
- * `closeJobsForCompanies`). `days` is the trunc of an in-code number, never user input.
+ * ids of the rows flipped. `days` is the trunc of an in-code number, never user input.
  */
 export async function deactivateStale(
   db: Db,

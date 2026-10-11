@@ -680,6 +680,35 @@ describe("runDiscovery — orchestration over real PGlite (fetch stubbed)", () =
       expect((await jobsFor(healthyId))[0]!.lifecycleState).toBe("active");
     });
 
+    it("ENFORCE: closes the active jobs of a board deactivated EARLIER and spares a board this run reactivates", async () => {
+      // dead: deactivated by an earlier run whose close never landed (a shadow CLI run, or a failure after
+      // the deactivation committed) — deactivateStale won't return it again.
+      const deadId = await seedCompany({
+        slug: "dead",
+        active: false,
+        consecutiveProbeFailures: 3,
+      });
+      await seedJob(deadId, "dead-1");
+      // zombie: inactive at the start of the run, re-emitted by the seed, probes live → reactivated.
+      const zombieId = await seedCompany({
+        slug: "zombie",
+        active: false,
+        consecutiveProbeFailures: 3,
+      });
+      await seedJob(zombieId, "zombie-1");
+      installFetch([seedRoute(["zombie"]), liveRoute("zombie")]);
+
+      const counts = await runDiscovery(db, {
+        lanes: ["outscal"],
+        enforceLifecycle: true,
+        probe: PROBE_OPTS,
+      });
+
+      expect(counts).toMatchObject({ upserted: 1, deactivated: 0, jobsClosedOnDeactivation: 1 });
+      expect((await jobsFor(deadId))[0]!.lifecycleState).toBe("closed");
+      expect((await jobsFor(zombieId))[0]!.lifecycleState).toBe("active");
+    });
+
     it("coerces a non-positive olderThanDays to the 30-day default — a within-window failing board is NOT swept", async () => {
       await seedCompany({
         slug: "recentfail",

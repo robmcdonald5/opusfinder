@@ -47,13 +47,14 @@ null)` through a NON-throwing, per-host-throttled fetcher (a 404/400/200-empty i
    `defaultClassify` → `live` / `live-empty` / `absent` / `indeterminate`.
 6. **Act** — `live`/`live-empty` ⇒ `upsertCompany` + `markProbeResult(live=true)`; `absent` ⇒ dropped;
    `indeterminate` / transient (network-exhausted) ⇒ left for a later run.
-7. **Sweep** — `deactivateStale(30)` flips `active=false` for any row failing past the window, and (Phase F2,
-   Arm B) bulk-closes those just-deactivated boards' still-active jobs via `closeJobsForCompanies` — the orphan
-   class the ingest-time feed-absence sweep is blind to, since a deactivated board is never re-fetched.
-   `deactivateStale` was widened to RETURN the deactivated company ids; the close is tallied onto the run's
-   `source_runs.counts` (`jobsClosedOnDeactivation` / `wouldCloseOnDeactivation`). Shipped SHADOW (count-only);
-   enforcement rides the single `LIFECYCLE_CLOSE_ENFORCE` switch via `runDiscovery`'s `enforceLifecycle` option (the Worker
-   sets it from `parseEnforceFlag(env.LIFECYCLE_CLOSE_ENFORCE)`, the same flag that flips Arm A + Arm C).
+7. **Sweep** — `deactivateStale(30)` flips `active=false` for any row failing past the window, then (Phase F2,
+   Arm B) `closeJobsForCompanies` soft-closes the still-active jobs of EVERY inactive board in scope — the orphan
+   class the ingest-time feed-absence sweep is blind to, since a deactivated board is never re-fetched. Closing
+   all of them (not just this run's deactivations) means a close that a shadow run skipped or a failure lost is
+   picked up by the next enforcing run. Tallied onto `source_runs.counts` (`jobsClosedOnDeactivation` /
+   `wouldCloseOnDeactivation`). Count-only unless `runDiscovery`'s `enforceLifecycle` is set: the Worker sets it
+   from `parseEnforceFlag(env.LIFECYCLE_CLOSE_ENFORCE)` (the same flag as Arm A + Arm C); `pnpm discover` never
+   does, so a local run only counts.
 
 ## Usage
 
