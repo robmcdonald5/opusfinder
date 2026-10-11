@@ -17,6 +17,7 @@ import { createAllFunctions, inngest } from "@opusfinder/inngest";
 import { buildBackfillDeps } from "@opusfinder/inngest/backfill-deps";
 import { buildDigestDeps } from "@opusfinder/inngest/deps";
 import { buildHealthDeps } from "@opusfinder/inngest/health-deps";
+import { json } from "@sveltejs/kit";
 import { serve } from "inngest/sveltekit";
 
 import type { RequestHandler } from "./$types";
@@ -36,4 +37,12 @@ function getHandler(): ReturnType<typeof serve> {
 
 export const GET: RequestHandler = (event) => getHandler().GET(event);
 export const POST: RequestHandler = (event) => getHandler().POST(event);
-export const PUT: RequestHandler = (event) => getHandler().PUT(event);
+// An unsigned sync registers this request's URL, query string included, as the base of every function's
+// URL — so `PUT ?probe=trust` from anyone would turn every later run into a no-op. `deployId` is the only
+// query param a sync legitimately carries.
+export const PUT: RequestHandler = (event) => {
+  for (const key of event.url.searchParams.keys()) {
+    if (key !== "deployId") return json({ message: "unexpected query parameter" }, { status: 400 });
+  }
+  return getHandler().PUT(event);
+};

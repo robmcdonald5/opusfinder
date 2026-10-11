@@ -24,4 +24,7 @@ export type DigestEvents = {
 export const inngest = new Inngest({
   id: "opusfinder",
   schemas: new EventSchemas().fromRecord<DigestEvents>(),
+  // Pin cloud mode on the production deployment: a stray INNGEST_DEV there would otherwise put the SDK in
+  // dev mode, which skips request signature checks and lets anyone invoke any function.
+  ...(process.env.VERCEL_ENV === "production" ? { isDev: false } : {}),
 });

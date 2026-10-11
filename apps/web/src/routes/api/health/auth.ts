@@ -6,7 +6,7 @@
  * until the owner deliberately sets the token.
  */
 export function isAuthorized(request: Request, url: URL): boolean {
-  const expected = process.env.HEALTH_PING_TOKEN;
+  const expected = process.env.HEALTH_PING_TOKEN?.trim();
   if (!expected) return false; // unset → nobody is authorized for the full body (secure default)
   const bearer = request.headers.get("authorization");
   const presented = bearer?.startsWith("Bearer ") ? bearer.slice(7) : url.searchParams.get("token");

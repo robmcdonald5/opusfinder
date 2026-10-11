@@ -41,7 +41,7 @@ function safeHttpUrl(raw: string): string | null {
 /** "City, City · Remote" / "Remote" / "Location unlisted" — one deterministic line per item. */
 function formatWhere(locations: string[], remote: boolean): string {
   const parts = locations.map((l) => l.trim()).filter((l) => l.length > 0);
-  if (remote) parts.push("Remote");
+  if (remote && !parts.some((p) => /\bremote\b/i.test(p))) parts.push("Remote");
   return parts.length > 0 ? parts.join(" · ") : "Location unlisted";
 }
 
@@ -51,8 +51,9 @@ export function renderDigestEmail(payload: DigestEmailPayload): RenderedEmail {
   const rolesSummary = `${n} matched role${n === 1 ? "" : "s"}`;
   const subject = `Your opusfinder digest — ${rolesSummary} (${date})`;
 
+  // Numbered by position: the stored ranks keep gaps where items were dropped after persisting.
   const itemsHtml = payload.items
-    .map((item) => {
+    .map((item, i) => {
       const url = safeHttpUrl(item.applyUrl);
       const apply = url
         ? `<a href="${escapeHtml(url)}" style="color:#1a73e8;">Apply</a>`
@@ -60,7 +61,7 @@ export function renderDigestEmail(payload: DigestEmailPayload): RenderedEmail {
           `<span style="color:#888;">apply URL withheld (non-http): ${escapeHtml(item.applyUrl)}</span>`;
       return [
         `<tr><td style="padding:14px 0;border-bottom:1px solid #e3e3e3;">`,
-        `<div style="font-size:16px;font-weight:bold;color:#222;">${item.rank}. ${escapeHtml(item.title)} — ${escapeHtml(item.companySlug)}</div>`,
+        `<div style="font-size:16px;font-weight:bold;color:#222;">${i + 1}. ${escapeHtml(item.title)} — ${escapeHtml(item.companySlug)}</div>`,
         `<div style="font-size:13px;color:#555;margin:4px 0;">${escapeHtml(formatWhere(item.locations, item.remote))}</div>`,
         `<div style="font-size:14px;color:#222;margin:4px 0;">${escapeHtml(item.reason)}</div>`,
         `<div style="font-size:14px;">${apply}</div>`,
@@ -90,9 +91,9 @@ ${itemsHtml}
 </html>`;
 
   const itemsText = payload.items
-    .map((item) =>
+    .map((item, i) =>
       [
-        `${item.rank}. ${item.title} — ${item.companySlug}`,
+        `${i + 1}. ${item.title} — ${item.companySlug}`,
         `   ${formatWhere(item.locations, item.remote)}`,
         `   ${item.reason}`,
         `   Apply: ${item.applyUrl}`,
