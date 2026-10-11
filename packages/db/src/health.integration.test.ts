@@ -178,7 +178,10 @@ describe("gatherHealthSignals — run ages, lane errors, digest windows, cost ro
     });
   }
 
-  async function seedDigestRun(status: "ok" | "error", startedAt: Date): Promise<number> {
+  async function seedDigestRun(
+    status: "running" | "ok" | "error",
+    startedAt: Date,
+  ): Promise<number> {
     const rows = await db
       .insert(digestRuns)
       .values({ trigger: "cron", status, startedAt })
@@ -256,6 +259,15 @@ describe("gatherHealthSignals — run ages, lane errors, digest windows, cost ro
 
     expect((await gatherHealthSignals(db)).digestErrors).toBe(3);
     expect((await gatherHealthSignals(db, { digestWindowN: 1 })).digestErrors).toBe(2);
+  });
+
+  it("counts a run still running after an hour, but not one in flight", async () => {
+    // A dead orchestrator can leave its row `running` forever.
+    await seedDigestRun("running", hoursAgo(2));
+    await seedDigestRun("ok", hoursAgo(1));
+    await seedDigestRun("running", hoursAgo(0.1));
+
+    expect((await gatherHealthSignals(db)).digestErrors).toBe(1);
   });
 
   it("counts each user suppressed in the last 7 days once, whether by hard bounce or complaint", async () => {

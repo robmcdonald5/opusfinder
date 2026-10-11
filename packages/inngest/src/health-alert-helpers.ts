@@ -25,7 +25,7 @@ export function formatMetric(check: HealthCheck): string {
     case "embedding_backlog":
       return `${check.metric} rows`;
     case "digest_health":
-      return `${check.metric} errored run(s)`;
+      return `${check.metric} failed run(s)`;
     case "bounce_suppression":
       return `${check.metric} affected user(s)`;
     case "discovery_lane_errors":

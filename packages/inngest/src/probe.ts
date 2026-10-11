@@ -116,6 +116,8 @@ async function fetchStatus(url: string, method: "HEAD" | "GET"): Promise<number 
   const timer = setTimeout(() => ctrl.abort(), PROBE_TIMEOUT_MS);
   try {
     const res = await fetch(url, { method, redirect: "follow", signal: ctrl.signal });
+    // Only the status is read. Cancel a GET's unread page now: left alone, its socket stays held until GC.
+    void res.body?.cancel().catch(() => {});
     return res.status;
   } catch {
     return "error"; // DNS / connection / timeout-abort — ambiguous, kept upstream

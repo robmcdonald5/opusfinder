@@ -190,9 +190,11 @@ function synthesisNote(result: SynthesisResult | undefined): { note: string } | 
  * out one `digest/user.requested` per recipient, and finalizes the run to the dispatch count. Because
  * Inngest fan-out is fire-and-forget, the run row records DISPATCH, not per-user completion (those land
  * on `digests`). A step that exhausts its retries is caught and terminalized onto the run row
- * (`status: 'error'` + `error_sample`) before the failure is rethrown to Inngest — so a dead run never
- * sits `running` forever. The cadence cron (`makeCadenceOrchestrator`) emits this with `trigger: 'cron'`;
- * the orchestrator then filters the recipient sweep by cadence (`listDigestRecipients`' `cadenceDue`).
+ * (`status: 'error'` + `error_sample`) before the failure is rethrown to Inngest. Some dead runs still
+ * stay `running` (that write fails when the DB is what's down; a retried start-run or a dashboard cancel
+ * leaves a row nothing closes), so digest_health counts a row `running` past an hour as an error. The
+ * cadence cron (`makeCadenceOrchestrator`) emits this with `trigger: 'cron'`; the orchestrator then
+ * filters the recipient sweep by cadence (`listDigestRecipients`' `cadenceDue`).
  *
  * Extracted from the Inngest handler so its UUID gate / cadence sweep / fan-out / error-terminalize
  * branches are unit-testable with a recording fake `step` (makeOrchestrator wraps it).
@@ -309,19 +311,18 @@ export async function runPerUser(deps: DigestDeps, event: PerUserEvent, step: Pe
   const userId = event.data.userId as UserId;
   const digestRunId = event.data.digestRunId;
 
-  // 1. Load + gate eligibility (four independent userId-keyed reads → one Promise.all round).
+  // 1. Load + gate eligibility (two independent userId-keyed reads → one Promise.all round).
   //    The gate runs HERE so BOTH the --all sweep (already filtered by listDigestRecipients) and
   //    the single-user/manual path skip a user who is unverified, NOT approved, has disabled digests,
   //    or is suppressed (bounce/unsubscribe) — otherwise a manual trigger would spend tokens on, and
-  //    pollute the already-shown history of, a user the sweep would skip. The profile EMBEDDING is
-  //    deliberately not returned: it is consumed once, in retrieve — a 1024-dim vector is dead
-  //    weight in memoized step state that every poll-loop replay re-ships.
+  //    pollute the already-shown history of, a user the sweep would skip. The profile EMBEDDING and the
+  //    shown-history are deliberately not returned: both are consumed once, in retrieve, and memoized
+  //    step state is re-shipped on every poll-loop replay (the vector is 1024 floats; the history grows
+  //    with every digest the user receives).
   const loaded = await step.run("load", async () => {
-    const [profile, prefs, excludeJobIds, excludeSignatures] = await Promise.all([
+    const [profile, prefs] = await Promise.all([
       getProfileForDigest(deps.db, userId),
       getPreferences(deps.db, userId),
-      alreadyShownJobIds(deps.db, userId),
-      alreadyShownSignatures(deps.db, userId),
     ]);
     if (!profile || !profile.embedding) return { skip: "no-profile-or-embedding" as const };
     if (
@@ -342,19 +343,21 @@ export async function runPerUser(deps: DigestDeps, event: PerUserEvent, step: Pe
       structured: profile.structured,
       prefs: toFilterPrefs(prefs),
       promptPrefs: toPromptPrefs(prefs),
-      excludeJobIds,
-      excludeSignatures,
     };
   });
   if ("skip" in loaded) return { userId, skipped: loaded.skip };
 
   // 2. Deterministic filter + vector retrieval. Geo AND exclusion keywords are applied inside
   //    retrieval's post-filter (before its over-fetch trim — so exclusions can't empty the
-  //    returned set while fetched non-excluded rows are thrown away). Re-reads the embedding here
-  //    (one cheap row select) and returns only the fields + description length the rerank/synthesis
+  //    returned set while fetched non-excluded rows are thrown away). Re-reads the embedding and reads
+  //    the shown-history here, and returns only the fields + description length the rerank/synthesis
   //    prompts consume, keeping the memoized step output slim.
   const candidates = await step.run("retrieve", async (): Promise<RerankCandidate[]> => {
-    const profile = await getProfileForDigest(deps.db, userId);
+    const [profile, excludeJobIds, excludeSignatures] = await Promise.all([
+      getProfileForDigest(deps.db, userId),
+      alreadyShownJobIds(deps.db, userId),
+      alreadyShownSignatures(deps.db, userId),
+    ]);
     if (!profile?.embedding) {
       throw new Error(`digest: profile embedding disappeared mid-run (user ${userId}).`);
     }
@@ -364,8 +367,8 @@ export async function runPerUser(deps: DigestDeps, event: PerUserEvent, step: Pe
       locations: loaded.prefs.locations,
       recencyDays: loaded.prefs.recencyDays,
       exclusions: loaded.prefs.exclusions,
-      excludeJobIds: loaded.excludeJobIds,
-      excludeSignatures: loaded.excludeSignatures,
+      excludeJobIds,
+      excludeSignatures,
     });
     return rawCandidates.map((c) => ({
       id: c.id,

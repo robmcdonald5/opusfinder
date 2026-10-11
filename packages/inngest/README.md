@@ -112,7 +112,7 @@ integration (email ships in Phase 11 on the local dev runtime — locked at Phas
 - `src/backfill.ts` (Phase F8) — `createBackfillFunctions(deps)` → the scheduled drain that keeps the
   embedding backlog from accumulating on the deployed runtime (F8 rides the 12a runtime; the
   original GitHub Actions bridge was dropped):
-  - **`embed-backlog-drain`** (`{ cron: "0 4 * * *", singleton: { mode: "skip" } }`): a **cursorless**
+  - **`embed-backlog-drain`** (`{ cron: "10 10 * * *", singleton: { mode: "skip" } }`): a **cursorless**
     re-query — each page re-selects `embedding IS NULL` (the just-written rows fall out of the predicate),
     so it self-advances with no cursor to thread.
   - It caps at `MAX_PAGES_PER_RUN = 200` PAGED per `step.run` (an uncapped drain would exceed the

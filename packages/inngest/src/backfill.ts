@@ -103,7 +103,7 @@ export async function embedDrainStep(
 function makeEmbedDrain(deps: BackfillDeps) {
   return inngest.createFunction(
     { id: "embed-backlog-drain", singleton: { mode: "skip" } },
-    { cron: "0 4 * * *" }, // 04:00 UTC, alongside that hour's ingest tick; clear of the digest cadence
+    { cron: "10 10 * * *" }, // after the 10:00 ingest tick (Neon awake), ahead of the 12:10 digest
     // The adapter passes Inngest's tools through; the cast is sound — the page step's return
     // ({processed,tokens,done}) is a JSON fixed-point, so Inngest's Jsonify memoization is the identity on it.
     ({ step }) =>

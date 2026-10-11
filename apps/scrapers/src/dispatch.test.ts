@@ -385,6 +385,7 @@ describe("runIngestionTick — stale-sweep TTL parse (falls back to the sweep de
     ["abc", undefined],
     ["0.5", undefined],
     ["21.8", 21],
+    ["1", 7], // raised to the 7-day floor
   ])("STALE_SWEEP_TTL_DAYS %j → ttlDays %j", async (value, expected) => {
     const env = value === undefined ? {} : { STALE_SWEEP_TTL_DAYS: value };
     const { ingestArgs } = await runIngestTick({ env });
