@@ -208,7 +208,9 @@ describe("the billing mailbox", () => {
       "Authentication-Results: mx.cloudflare.net; spf=pass smtp.mailfrom=owner+caf_=billing=control.test@example.com; dkim=pass header.d=neon.tech\r\nContent-Type: text/plain",
     );
     await h.email(withAuth);
-    expect((await rows())[0]?.auth).toBe("spf=pass(example.com) dkim=pass(neon.tech)");
+    expect((await rows())[0]?.auth).toBe(
+      "[mx.cloudflare.net] spf=pass(example.com) dkim=pass(neon.tech)",
+    );
   });
 
   it("stops accepting mail after the day's cap", async () => {

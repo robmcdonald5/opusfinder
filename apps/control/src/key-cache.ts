@@ -7,11 +7,15 @@
  *   - Keys are fresh for `ttlMs`; a hit within that window never fetches.
  *   - An unknown key id (a rotation) may trigger a refetch, but at most once per `minRefreshMs` of ANY
  *     attempt, so a stream of forged kids can't become a stream of outbound fetches.
- *   - STALE-WHILE-ERROR: when a refetch fails, the last good keys keep verifying tokens (Access keeps a
- *     rotated-out key valid for 7 days) for up to `maxStaleMs` after they were fetched. Past that, or with
- *     nothing cached, the cache reports itself unavailable and the caller fails closed (503).
+ *   - STALE-WHILE-ERROR: when a refetch fails (or finds no key at all), the last good keys keep verifying
+ *     tokens (Access keeps a rotated-out key valid for 7 days) for up to `maxStaleMs` after they were
+ *     fetched. Past that, or with nothing cached, the cache reports itself unavailable and the caller fails
+ *     closed (503).
  *   - BACKOFF: after a failure, no attempt until `backoffBaseMs · 2^(failures−1)` (capped at
- *     `backoffMaxMs`) has passed; a success resets it. Concurrent misses share ONE in-flight fetch.
+ *     `backoffMaxMs`) has passed; a success resets it.
+ *   - A fetch is NEVER shared between requests: workerd cancels a request's I/O when its client
+ *     disconnects, and a promise from that I/O never settles, so every request waiting on it would hang.
+ *     Each request that may refresh fetches for itself.
  */
 
 export class KeysUnavailableError extends Error {
@@ -37,7 +41,6 @@ export class KeyCache<K> {
   private lastAttemptAt = Number.NEGATIVE_INFINITY;
   private nextAttemptAt = Number.NEGATIVE_INFINITY;
   private failures = 0;
-  private inflight: Promise<void> | null = null;
 
   private readonly load: () => Promise<Map<string, K>>;
   private readonly now: () => number;
@@ -67,7 +70,7 @@ export class KeyCache<K> {
     // for an unknown kid already happened within minRefreshMs.
     const allowed =
       now >= this.nextAttemptAt && (!fresh || now - this.lastAttemptAt >= this.minRefreshMs);
-    if (allowed || this.inflight) await this.refresh();
+    if (allowed) await this.attempt();
 
     const after = this.now();
     if (this.keys !== null && after - this.fetchedAt < this.maxStaleMs) {
@@ -80,20 +83,13 @@ export class KeyCache<K> {
     );
   }
 
-  private refresh(): Promise<void> {
-    // `.finally` runs as a microtask, i.e. after `inflight` is assigned — so the slot is always cleared,
-    // even if load() throws synchronously.
-    this.inflight ??= this.attempt().finally(() => {
-      this.inflight = null;
-    });
-    return this.inflight;
-  }
-
   private async attempt(): Promise<void> {
     const started = this.now();
     this.lastAttemptAt = started;
     try {
-      this.keys = await this.load();
+      const keys = await this.load();
+      if (keys.size === 0) throw new Error("the key set came back empty");
+      this.keys = keys;
       this.fetchedAt = started;
       this.failures = 0;
       this.nextAttemptAt = Number.NEGATIVE_INFINITY;

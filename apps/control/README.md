@@ -153,9 +153,11 @@ row per email:
 
   The envelope sender is SMTP's unauthenticated MAIL FROM, and Cloudflare admits mail that passes SPF _or_
   carries any valid DKIM signature, so someone who knows the owner's address could forge it. **Shadow:**
-  each accepted email's SPF / DKIM / DMARC / ARC verdicts, domains only, are stored in `statement.auth`
-  (and logged); once real filter forwards have been seen there, require the verdict they carry (e.g. SPF
-  pass for the envelope's gmail.com). UNVERIFIED until the first filter forward (Cloudflare's, ~23rd).
+  each accepted email's SPF / DKIM / DMARC / ARC verdicts are stored in `statement.auth` (and logged), one
+  entry per header in header order, labelled with the server that wrote it, domains only. Any hop, and the
+  sender, can add these headers, so a gate must read only the topmost entry Cloudflare wrote, never match
+  a substring of the column. UNVERIFIED until the first filter forward (Cloudflare's, ~23rd): whether
+  Cloudflare writes such a header where the Worker sees it at all; if not, the gate needs another basis.
 
 - **Read by a model.** Workers AI (`[ai]` binding, `@cf/meta/llama-3.3-70b-instruct-fp8-fast` in JSON
   mode) reads vendor, kind, total, currency, charge date, service period and invoice number (the invoice's,

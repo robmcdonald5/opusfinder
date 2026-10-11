@@ -100,11 +100,6 @@ export async function receiveEmail(
     message.setReject("Not accepted: today's limit for this mailbox is reached");
     return;
   }
-  const auth = authSummary(message.headers);
-  console.log(
-    `billing mailbox: accepted ${confirmation ? "a Gmail confirmation" : "an owner forward"}; auth: ${auth ?? "none recorded"}`,
-  );
-
   let email: Email | null = null;
   let failure: string | null = null;
   if (message.rawSize > MAX_EMAIL_BYTES) {
@@ -117,6 +112,12 @@ export async function receiveEmail(
       failure = `Unreadable email: ${errorSummary(err)}`;
     }
   }
+  // From the parsed header list, not message.headers: Headers.get joins every copy of a header into one,
+  // which loses which server wrote which verdict.
+  const auth = email ? authSummary(email.headers) : null;
+  console.log(
+    `billing mailbox: accepted ${confirmation ? "a Gmail confirmation" : "an owner forward"}; auth: ${auth ?? "none recorded"}`,
+  );
 
   const messageId = email?.messageId ?? message.headers.get("message-id");
   if (messageId && (await statementExists(db, messageId))) return; // redelivered or forwarded twice

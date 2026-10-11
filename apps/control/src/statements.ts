@@ -212,28 +212,49 @@ export function vendorKey(vendor: string | null | undefined): string {
 }
 
 /**
- * The sender-authentication verdicts the receiving server recorded (Authentication-Results, its ARC copy,
- * Received-SPF), as "spf=pass(gmail.com) dkim=pass(gmail.com) …": domains only, never a full address (an
- * envelope sender is the owner's). Shadow evidence for deciding what the mailbox should later require.
+ * The email's sender-authentication verdicts, one entry per Authentication-Results, ARC copy and
+ * Received-SPF header, in header order, each labelled with the server that wrote it:
+ * "[mx.example] spf=pass(gmail.com) dkim=pass(gmail.com) | [arc i=1 mx.google.com] dkim=pass(stripe.com)".
+ * Every hop, and the sender, can add these headers; only the topmost entry written by the receiving server
+ * is its verdict, the rest are upstream claims. Domains only, never a full address (an envelope sender is
+ * the owner's). Shadow evidence for deciding what the mailbox should later require.
  */
-export function authSummary(headers: { get(name: string): string | null }): string | null {
-  const found: string[] = [];
-  const results = ["authentication-results", "arc-authentication-results"]
-    .map((h) => headers.get(h) ?? "")
-    .join(";");
-  for (const m of results.matchAll(/\b(spf|dkim|dmarc|arc)=(\w+)([^;]*)/gi)) {
-    const domain =
-      /(?:smtp\.mailfrom|header\.d|header\.from|header\.i)=(?:[^@\s;]*@)?([^\s;)]+)/i.exec(
-        m[3] ?? "",
-      )?.[1];
-    found.push(
-      `${(m[1] ?? "").toLowerCase()}=${(m[2] ?? "").toLowerCase()}${domain ? `(${domain.toLowerCase()})` : ""}`,
-    );
+export function authSummary(headers: readonly { key: string; value: string }[]): string | null {
+  const entries: string[] = [];
+  for (const { key, value } of headers) {
+    if (key === "received-spf") {
+      // "pass (google.com: domain of x@stripe.com designates …) …" or "… receiver=…; envelope-from=…"
+      const result = /^\s*(\w+)/.exec(value)?.[1];
+      if (!result) continue;
+      const by = /\(([\w.-]+):|receiver=([\w.-]+)/i.exec(value);
+      const domain =
+        /(?:domain of (?:transitioning )?|envelope-from=)["<]?(?:[^@\s"<>;]*@)?([^\s;)",>@]+)/i.exec(
+          value,
+        )?.[1];
+      entries.push(
+        `[received-spf ${by?.[1] ?? by?.[2] ?? "?"}] spf=${result}${domain ? `(${domain})` : ""}`,
+      );
+      continue;
+    }
+    const arc = key === "arc-authentication-results";
+    if (!arc && key !== "authentication-results") continue;
+    // "[i=N;] authserv-id; method=result property=value …; …"
+    const parts = value.split(";");
+    const instance = arc ? (/i=(\d+)/i.exec(parts.shift() ?? "")?.[1] ?? "?") : null;
+    const id = (parts.shift() ?? "").trim().split(/\s/)[0] ?? "";
+    const server = /^[\w.-]+$/.test(id) ? id : "?";
+    const verdicts = parts.flatMap((part) => {
+      const m = /^\s*(spf|dkim|dmarc|arc)=(\w+)(.*)$/i.exec(part);
+      if (!m) return [];
+      const domain =
+        /(?:smtp\.mailfrom|header\.d|header\.from|header\.i)=(?:[^@\s]*@)?([^\s),"@]+)/i.exec(
+          m[3] ?? "",
+        )?.[1];
+      return [`${m[1]}=${m[2]}${domain ? `(${domain})` : ""}`];
+    });
+    entries.push(`[${arc ? `arc i=${instance} ` : ""}${server}] ${verdicts.join(" ") || "none"}`);
   }
-  const spf = headers.get("received-spf")?.trim().split(/\s/)[0];
-  if (spf) found.push(`received-spf=${spf.toLowerCase()}`);
-  const unique = [...new Set(found)];
-  return unique.length > 0 ? unique.join(" ").slice(0, 300) : null;
+  return entries.length > 0 ? entries.join(" | ").toLowerCase().slice(0, 1000) : null;
 }
 
 /** "8.42", "$1,234.5", "USD 5" → cents; anything else (negative, huge, words) → null. */

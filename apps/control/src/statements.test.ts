@@ -366,18 +366,56 @@ describe("vendorKey / authSummary", () => {
   });
 
   it("keeps the verdicts and domains, never a full address", () => {
-    const headers = new Headers({
-      "authentication-results":
-        "mx.cloudflare.net; spf=pass smtp.mailfrom=owner+caf_=billing=opusfinder.ai@gmail.com; dkim=pass header.d=gmail.com header.i=@gmail.com; dmarc=pass header.from=neon.tech",
-      "received-spf":
-        "pass (mx.cloudflare.net: domain of owner@gmail.com designates 209.85.0.1 as permitted sender)",
-    });
-    const summary = authSummary(headers);
+    const summary = authSummary([
+      { key: "from", value: "Neon <billing@neon.tech>" },
+      {
+        key: "authentication-results",
+        value:
+          "mx.cloudflare.net; spf=pass smtp.mailfrom=owner+caf_=billing=opusfinder.ai@gmail.com; dkim=pass header.d=gmail.com header.i=@gmail.com; dmarc=pass header.from=neon.tech",
+      },
+      {
+        key: "received-spf",
+        value:
+          "pass (mx.cloudflare.net: domain of owner@gmail.com designates 209.85.0.1 as permitted sender)",
+      },
+    ]);
     expect(summary).toBe(
-      "spf=pass(gmail.com) dkim=pass(gmail.com) dmarc=pass(neon.tech) received-spf=pass",
+      "[mx.cloudflare.net] spf=pass(gmail.com) dkim=pass(gmail.com) dmarc=pass(neon.tech) | [received-spf mx.cloudflare.net] spf=pass(gmail.com)",
     );
     expect(summary).not.toContain("owner");
-    expect(authSummary(new Headers())).toBeNull();
+    expect(authSummary([])).toBeNull();
+  });
+
+  it("keeps each server's verdicts apart and in header order, so a sender's own header can't pass as the receiver's", () => {
+    expect(
+      authSummary([
+        {
+          key: "authentication-results",
+          value:
+            "mx.cloudflare.net; spf=softfail smtp.mailfrom=owner@gmail.com; dkim=pass header.d=attacker.example",
+        },
+        {
+          key: "arc-authentication-results",
+          value:
+            "i=1; mx.google.com; dkim=pass header.i=@stripe.com; spf=pass (google.com: domain of bounce@stripe.com designates 1.2.3.4) smtp.mailfrom=bounce@stripe.com",
+        },
+        {
+          key: "received-spf",
+          value:
+            "pass (google.com: domain of bounce@stripe.com designates 1.2.3.4) client-ip=1.2.3.4;",
+        },
+        // Written by the sender, below everything the receiving servers added.
+        {
+          key: "authentication-results",
+          value: "mx.cloudflare.net; spf=pass smtp.mailfrom=owner@gmail.com",
+        },
+      ]),
+    ).toBe(
+      "[mx.cloudflare.net] spf=softfail(gmail.com) dkim=pass(attacker.example) | " +
+        "[arc i=1 mx.google.com] dkim=pass(stripe.com) spf=pass(stripe.com) | " +
+        "[received-spf google.com] spf=pass(stripe.com) | " +
+        "[mx.cloudflare.net] spf=pass(gmail.com)",
+    );
   });
 });
 
