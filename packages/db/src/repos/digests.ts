@@ -370,13 +370,14 @@ export function getDigestApplyTargets(db: Db, digestId: number): Promise<DigestA
  * `digest_items` equal to what the user is actually SENT (the email render reads only the survivors).
  *
  * CAVEAT — shown-history coupling: `alreadyShownJobIds` derives the next run's dedup anti-join from
- * `digest_items`, so a DROPPED job is also removed from shown-history. For a 410 that is fine (the job is
- * also soft-closed, so retrieval excludes it anyway). For a 404 — dropped but NOT closed (it may be a CDN
- * blip) — the job stays retrieval-eligible AND loses its shown record, so it can re-surface and re-pay
- * synthesis on a later digest until its absence streak or recency clears it. Bounded (≤TOP_K, ~daily
- * cadence) and accepted for v1; if `probed404Dropped` trends high on the same jobs, switch to a tombstone
- * (keep the row with a `dropped` flag, exclude only at render) so the anti-join stays intact. Empty
- * `droppedJobIds` still records the counts; ranks are left with gaps (the email orders by rank — inert).
+ * `digest_items`, so a DROPPED job is also removed from shown-history. A 404 is dropped but NOT closed (it
+ * may be a CDN blip); a 410 is soft-closed, but the next ingest revives it while the ATS still lists it
+ * (markJobsPresent / sweepLifecycle). Either way the job stays retrieval-eligible AND loses its shown record,
+ * so it can re-surface and re-pay synthesis on a later digest until the ATS delists it or recency clears it.
+ * Bounded (≤TOP_K, ~daily cadence) and accepted for v1; if `probed404Dropped` or `probed410` trends high on
+ * the same jobs, switch to a tombstone (keep the row with a `dropped` flag, exclude only at render) so the
+ * anti-join stays intact. Empty `droppedJobIds` still records the counts; ranks are left with gaps (the
+ * email orders by rank — inert).
  */
 export async function dropDigestItemsAndRecount(
   db: Db,

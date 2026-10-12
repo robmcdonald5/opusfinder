@@ -118,11 +118,13 @@ export async function pruneStaleJobs(db: Db, opts: { apply?: boolean } = {}): Pr
 
   let deleted = 0;
   for (;;) {
+    // The gate repeats on the DELETE: under READ COMMITTED a row revived after the batch was read is
+    // re-checked against only this WHERE. A skipped row ends the loop early; the next run takes the rest.
     const res = await db.execute(sql`
       WITH batch AS (
         SELECT id FROM jobs WHERE ${prunablePredicate()} ORDER BY id LIMIT ${PRUNE_BATCH}
       )
-      DELETE FROM jobs WHERE id IN (SELECT id FROM batch) RETURNING id`);
+      DELETE FROM jobs WHERE id IN (SELECT id FROM batch) AND ${prunablePredicate()} RETURNING id`);
     const n = resultRows(res).length;
     deleted += n;
     if (n > 0) console.log(`deleted ${deleted} ...`);

@@ -19,7 +19,7 @@ import {
 // returns a canned aggregate row (bigint counts as STRINGS, exactly as neon-http returns them); the
 // emitted drizzle `sql` is rendered via PgDialect (render) so the branch shape / param binding is
 // asserted without a live table. The SQL *semantics* (the increment / close / revive transitions) are
-// the PGlite/live gate's job — here we lock the safety-critical JS logic (empty-set no-ops, the
+// lifecycle.integration.test.ts's job — here we lock the safety-critical JS logic (empty-set no-ops, the
 // shadow-suppresses-close-write structural gate, the closed_at-in-lockstep invariant, NUL stripping,
 // threshold/TTL binding, bigint-string → number mapping).
 

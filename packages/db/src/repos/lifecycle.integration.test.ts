@@ -9,10 +9,14 @@ import { createTestDb } from "@test/db/pglite";
 import { truncate } from "@test/db/truncate";
 
 import { upsertCompany, upsertJobs } from "./jobs";
-import { sweepLifecycle, sweepStaleJobs } from "./lifecycle";
+import {
+  ABSENCE_CLOSE_THRESHOLD,
+  markJobsPresent,
+  sweepLifecycle,
+  sweepStaleJobs,
+} from "./lifecycle";
 
-// The lifecycle writers' row semantics on real Postgres, where the clocks they set and read interact
-// (lifecycle.test.ts covers the emitted SQL shape only).
+// The lifecycle writers' row semantics on real Postgres (lifecycle.test.ts covers the emitted SQL shape only).
 
 function job(externalId: string): NormalizedJob {
   return {
@@ -28,7 +32,7 @@ function job(externalId: string): NormalizedJob {
   };
 }
 
-describe("lifecycle writers — clock semantics (integration: real PGlite Postgres)", () => {
+describe("lifecycle writers (integration: real PGlite Postgres)", () => {
   let db: Db;
   let close: (() => Promise<void>) | undefined;
 
@@ -64,7 +68,11 @@ describe("lifecycle writers — clock semantics (integration: real PGlite Postgr
     await db.update(jobs).set({ lastSeenAt: sql`now() - interval '30 days'` });
     await db
       .update(jobs)
-      .set({ lifecycleState: "closed", closedAt: sql`now() - interval '9 days'` })
+      .set({
+        lifecycleState: "closed",
+        closedAt: sql`now() - interval '9 days'`,
+        consecutiveAbsences: ABSENCE_CLOSE_THRESHOLD,
+      })
       .where(eq(jobs.externalId, jobId("back")));
     const goneSeenBefore = (await jobRow("gone")).lastSeenAt;
 
@@ -72,7 +80,11 @@ describe("lifecycle writers — clock semantics (integration: real PGlite Postgr
     const sweep = await sweepLifecycle(db, companyId, ["back"], { enforce: true });
     expect(sweep.revived).toBe(1);
     const back = await jobRow("back");
-    expect(back.lifecycleState).toBe("active");
+    expect(back).toMatchObject({
+      lifecycleState: "active",
+      closedAt: null,
+      consecutiveAbsences: 0,
+    });
     expect(back.lastSeenAt.getTime()).toBeGreaterThan(Date.now() - 60_000);
     // An absent row's clock is untouched — it keeps ageing toward the stale close.
     expect((await jobRow("gone")).lastSeenAt).toEqual(goneSeenBefore);
@@ -81,6 +93,94 @@ describe("lifecycle writers — clock semantics (integration: real PGlite Postgr
     expect(stale.closed).toBe(1);
     expect((await jobRow("back")).lifecycleState).toBe("active");
     expect((await jobRow("gone")).lifecycleState).toBe("closed");
+  });
+
+  describe("absence streak", () => {
+    it("enforce closes a job on its third consecutive absence, stamps closed_at, and leaves it alone after", async () => {
+      const companyId = await seedBoard(["stay", "gone"], sql`now()`);
+      const sweep = () => sweepLifecycle(db, companyId, ["stay"], { enforce: true });
+
+      expect(await sweep()).toEqual({ revived: 0, swept: 1, closed: 0, wouldClose: 0 });
+      expect(await sweep()).toEqual({ revived: 0, swept: 1, closed: 0, wouldClose: 0 });
+      expect((await jobRow("gone")).lifecycleState).toBe("active");
+      expect(await sweep()).toEqual({ revived: 0, swept: 0, closed: 1, wouldClose: 0 });
+
+      const gone = await jobRow("gone");
+      expect(gone.lifecycleState).toBe("closed");
+      expect(gone.closedAt).not.toBeNull();
+      expect((await jobRow("stay")).lifecycleState).toBe("active");
+      // A closed row is out of the sweep, so its prune clock is never re-stamped.
+      expect(await sweep()).toEqual({ revived: 0, swept: 0, closed: 0, wouldClose: 0 });
+      expect((await jobRow("gone")).closedAt).toEqual(gone.closedAt);
+    });
+
+    it("shadow caps the streak and only tallies the would-close; the first enforced sweep then closes it", async () => {
+      const companyId = await seedBoard(["stay", "gone"], sql`now()`);
+      const sweep = (enforce: boolean) => sweepLifecycle(db, companyId, ["stay"], { enforce });
+
+      await sweep(false);
+      await sweep(false);
+      expect(await sweep(false)).toEqual({ revived: 0, swept: 0, closed: 0, wouldClose: 1 });
+      expect(await sweep(false)).toEqual({ revived: 0, swept: 0, closed: 0, wouldClose: 1 });
+      expect(await jobRow("gone")).toMatchObject({
+        lifecycleState: "active",
+        closedAt: null,
+        consecutiveAbsences: ABSENCE_CLOSE_THRESHOLD,
+      });
+
+      expect(await sweep(true)).toEqual({ revived: 0, swept: 0, closed: 1, wouldClose: 0 });
+      const gone = await jobRow("gone");
+      expect(gone.lifecycleState).toBe("closed");
+      expect(gone.closedAt).not.toBeNull();
+    });
+
+    it("a posting listed on a visit that skipped the sweep starts its streak over", async () => {
+      const companyId = await seedBoard(["p", "q"], sql`now()`);
+      const absent = () => sweepLifecycle(db, companyId, ["q"], { enforce: true });
+
+      await absent();
+      await absent();
+      // Listed again, but a rate limit skipped this visit's sweep: only the presence stamp ran.
+      expect(await markJobsPresent(db, companyId, ["p", "q"])).toEqual({ revived: 1 });
+      await absent();
+
+      expect(await jobRow("p")).toMatchObject({ lifecycleState: "active", consecutiveAbsences: 1 });
+    });
+  });
+
+  describe("markJobsPresent", () => {
+    it("revives a listed closed job and clears its close clock and streak", async () => {
+      const companyId = await seedBoard(["back"], sql`now()`);
+      await db.update(jobs).set({
+        lifecycleState: "closed",
+        closedAt: sql`now() - interval '2 days'`,
+        consecutiveAbsences: ABSENCE_CLOSE_THRESHOLD,
+      });
+
+      expect(await markJobsPresent(db, companyId, ["back"])).toEqual({ revived: 1 });
+      expect(await jobRow("back")).toMatchObject({
+        lifecycleState: "active",
+        closedAt: null,
+        consecutiveAbsences: 0,
+      });
+    });
+
+    it("leaves a row stamped within the hour alone and re-stamps an older one", async () => {
+      const companyId = await seedBoard(["fresh", "aged"], sql`now()`);
+      await db
+        .update(jobs)
+        .set({ lastSeenAt: sql`now() - interval '30 minutes'` })
+        .where(eq(jobs.externalId, jobId("fresh")));
+      await db
+        .update(jobs)
+        .set({ lastSeenAt: sql`now() - interval '2 hours'` })
+        .where(eq(jobs.externalId, jobId("aged")));
+      const freshSeen = (await jobRow("fresh")).lastSeenAt;
+
+      expect(await markJobsPresent(db, companyId, ["fresh", "aged"])).toEqual({ revived: 0 });
+      expect((await jobRow("fresh")).lastSeenAt).toEqual(freshSeen);
+      expect((await jobRow("aged")).lastSeenAt.getTime()).toBeGreaterThan(Date.now() - 60_000);
+    });
   });
 
   describe("sweepStaleJobs board-health guard", () => {

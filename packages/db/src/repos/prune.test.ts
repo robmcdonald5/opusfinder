@@ -246,6 +246,10 @@ describe("pruneStaleJobs — TTL hard-delete of long-closed, history-unreference
     // The DELETE CTE must RE-APPLY the full prunable gate, not just the id keyset — the inner SELECT still
     // excludes digest-referenced jobs, so a dropped clause 3 would delete rows the breakdown never counted.
     expect(deleteSql).toContain("id NOT IN (SELECT job_id FROM digest_items)");
+    // ...and on the DELETE's own WHERE, the only clause re-checked against a row revived mid-statement.
+    expect(deleteSql).toMatch(
+      /WHERE id IN \(SELECT id FROM batch\) AND lifecycle_state = 'closed'/,
+    );
 
     expect(r.applied).toBe(true);
     expect(r.deleted).toBe(PRUNE_BATCH * 2 + 5);

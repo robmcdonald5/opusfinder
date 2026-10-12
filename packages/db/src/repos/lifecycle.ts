@@ -252,10 +252,11 @@ const PRESENT_STAMP_WINDOW = sql`interval '1 hour'`;
  * The completeness-INDEPENDENT positive "I saw this job live" writer, called per board from runIngestion
  * for the de-duplicated external_ids a fetch LISTED — including a `contentMissing` posting upsertJobs did
  * not write (a failed detail fetch is not an absence). It (1) refreshes last_seen_at (the staleness clock
- * {@link sweepStaleJobs} keys on) and (2) REVIVES any reappearing closed job (lifecycle_state→'active',
- * closed_at→NULL, streak→0). Runs for EVERY board, capped or not — UNLIKE the set-difference sweep
- * (sweepLifecycle), which is skipped on a capped/partial fetch; this is the path that lets a capped
- * mega-board's jobs both stay fresh AND revive on reappearance.
+ * {@link sweepStaleJobs} keys on), (2) REVIVES any reappearing closed job (lifecycle_state→'active',
+ * closed_at→NULL) and (3) resets the absence streak. Runs for EVERY board, capped or not — UNLIKE the
+ * set-difference sweep (sweepLifecycle), which is skipped on a capped/partial/rate-limited fetch; this is
+ * the path that lets a capped mega-board's jobs both stay fresh AND revive on reappearance, and that resets
+ * a listed job's streak on a visit whose sweep is skipped.
  *
  * Separate from upsertJobs (pure content persistence) and from its content-gated ON CONFLICT SET:
  * last_seen_at must advance on every re-fetch even when content is byte-unchanged, and reviving a closed
@@ -263,9 +264,9 @@ const PRESENT_STAMP_WINDOW = sql`interval '1 hour'`;
  * columns are UN-indexed ⇒ HOT-eligible. A NO-OP GUARD in the WHERE skips rows already fresh-and-active, so
  * an unchanged board does NOT rewrite every present row every tick (which would defeat upsertJobs'
  * idempotency + churn dead tuples): a row is touched only if its clock is stale (>1h — far inside the
- * ≥~daily re-fetch cadence and the multi-week TTL) OR it needs reviving. Returns `revived` = closed→active
- * revivals only; the streak-reset-only revivals of still-active rows stay sweepLifecycle's `revived`, so
- * runIngestion sums the two for the true total.
+ * ≥~daily re-fetch cadence and the multi-week TTL) OR it needs reviving or a streak reset. Returns
+ * `revived` = closed→active revivals plus streak resets, sweepLifecycle's meaning; runIngestion sums the two
+ * (the sweep's share is what this missed when it failed).
  *
  * The present set rides as ONE jsonb param, unnested to text[] (no array-literal escaping; NUL stripped,
  * jsonb rejects it). Empty set ⇒ skip the round-trip (no `<> ALL` trap here).
@@ -277,8 +278,8 @@ export async function markJobsPresent(
 ): Promise<{ revived: number }> {
   if (presentExternalIds.length === 0) return { revived: 0 };
   const presentJson = JSON.stringify(presentExternalIds.map((id) => id.replaceAll(NUL, "")));
-  // revived_set snapshots the to-be-revived (currently-closed) rows BEFORE upd runs — all CTEs see the
-  // statement-start snapshot, so the count is the pre-update closed population regardless of CTE exec order.
+  // revived_set snapshots the to-be-revived rows BEFORE upd runs — all CTEs see the statement-start
+  // snapshot, so the count is the pre-update population regardless of CTE exec order.
   const result: unknown = await db.execute(sql`
     WITH present_set AS (
       SELECT array_agg(value) AS ids
@@ -289,17 +290,14 @@ export async function markJobsPresent(
       FROM ${jobs}, present_set
       WHERE jobs.company_id = ${companyId}
         AND jobs.external_id = ANY(present_set.ids)
-        AND jobs.lifecycle_state <> 'active'
+        AND (jobs.lifecycle_state <> 'active' OR jobs.consecutive_absences <> 0)
     ),
     upd AS (
       UPDATE ${jobs} SET
         last_seen_at = now(),
         lifecycle_state = 'active',
         closed_at = NULL,
-        consecutive_absences = CASE
-          WHEN jobs.lifecycle_state <> 'active' THEN 0
-          ELSE jobs.consecutive_absences
-        END
+        consecutive_absences = 0
       FROM present_set
       WHERE jobs.company_id = ${companyId}
         AND jobs.external_id = ANY(present_set.ids)
@@ -307,6 +305,7 @@ export async function markJobsPresent(
           jobs.last_seen_at < now() - ${PRESENT_STAMP_WINDOW}
           OR jobs.lifecycle_state <> 'active'
           OR jobs.closed_at IS NOT NULL
+          OR jobs.consecutive_absences <> 0
         )
       RETURNING 1
     )

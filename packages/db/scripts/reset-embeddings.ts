@@ -4,56 +4,60 @@ import { runScript } from "@opusfinder/shared/script";
 
 import { createDb } from "../src/client";
 import { getDatabaseUrl } from "../src/env";
+import { resultRows } from "../src/repos/sql";
 
 /**
- * One-time reset of `jobs.embedding` ahead of an embedding-model swap (e.g. voyage-3-large →
- * voyage-4-large). The two models produce vectors in DIFFERENT embedding spaces, so an existing
- * voyage-3 vector cannot be cosine-compared against a new voyage-4 query vector — the whole corpus
- * must be re-embedded. This NULLs every embedding in id-keyset batches. Flushing leaves ZERO old-model
- * vectors, so the jobs corpus can safely refill with the CURRENT model (EMBED_MODEL in
- * @opusfinder/embeddings) gradually — `nearestJobs` skips NULL rows, so it only ever sees the refilled
- * (new-model) subset. Idempotent: a second run finds 0.
+ * Flush `jobs.embedding` ahead of an embedding-model swap (e.g. voyage-3-large → voyage-4-large). Two
+ * models embed into DIFFERENT spaces and no row records its model, so a mixed corpus silently returns
+ * garbage rankings: every old vector must go before the refill. `nearestJobs` skips NULL rows, so it only
+ * ever sees the refilled subset. Idempotent.
  *
- * Refill jobs over time on the next embedding run, OR `pnpm embeddings:backfill` to refill all now.
- * EITHER WAY, re-embed the QUERY side once first: the stored user-profile vector does NOT drift, so
- * re-embed each user with `pnpm profiles:restructure <email>` and run NO digest until they are on the
- * new model — else `nearestJobs` compares an old-model profile against new-model jobs (garbage scores).
+ * DRY RUN BY DEFAULT — prints how many vectors would be cleared. `--apply` clears them, in id-keyset batches.
  *
- *   pnpm --filter @opusfinder/db exec tsx scripts/reset-embeddings.ts
+ * Before --apply, pause `embed-backlog-drain` in the Inngest dashboard. The drain refills with whatever
+ * bundle is DEPLOYED, not this checkout: an Inngest "No change" sync ships no handler code, so a drain still
+ * on the previous Vercel deploy refills the whole corpus with the OLD model. Then refill with
+ * `pnpm embeddings:backfill` (runs this checkout's EMBED_MODEL), and un-pause the drain only once the live
+ * Vercel prod deploy is built from the commit that carries the new EMBED_MODEL.
+ *
+ * Re-embed the QUERY side too: a stored profile vector keeps the old model until
+ * `pnpm profiles:restructure <email>`, so run NO digest until every user is re-embedded.
+ *
+ *   pnpm --filter @opusfinder/db exec tsx scripts/reset-embeddings.ts           (dry run)
+ *   pnpm --filter @opusfinder/db exec tsx scripts/reset-embeddings.ts --apply   (clear every vector)
  */
 const BATCH = 2000;
 
 await runScript("ResetEmbeddings", async () => {
+  const apply = process.argv.includes("--apply");
   const db = createDb(getDatabaseUrl());
 
   const before = await db.execute(
     sql`SELECT count(*)::int AS n FROM jobs WHERE embedding IS NOT NULL`,
   );
-  const remaining = Number(rows(before)[0]?.n ?? 0);
+  const row = resultRows(before)[0] as Record<string, unknown> | undefined;
+  const remaining = Number(row?.n ?? 0);
   console.log(`jobs with an embedding to clear: ${remaining}`);
+  if (!apply) {
+    console.log(
+      "DRY RUN — nothing cleared. Re-run with `--apply` once embed-backlog-drain is paused.",
+    );
+    return;
+  }
 
   let total = 0;
   for (;;) {
     const res = await db.execute(sql`
       WITH batch AS (SELECT id FROM jobs WHERE embedding IS NOT NULL ORDER BY id LIMIT ${BATCH})
       UPDATE jobs SET embedding = NULL WHERE id IN (SELECT id FROM batch) RETURNING id`);
-    const n = rows(res).length;
+    const n = resultRows(res).length;
     total += n;
     if (n > 0) console.log(`cleared ${total} ...`);
     if (n < BATCH) break;
   }
 
   console.log(
-    `done — cleared ${total} embedding(s). Jobs refill with the current model on the next embedding ` +
-      `run (or \`pnpm embeddings:backfill\` to refill all now). REQUIRED before any digest: re-embed ` +
-      `each user profile (query side) — it does NOT drift — via \`pnpm profiles:restructure <email>\`.`,
+    `done — cleared ${total} embedding(s). Refill with \`pnpm embeddings:backfill\`, and re-embed each ` +
+      `user profile (\`pnpm profiles:restructure <email>\`) before any digest.`,
   );
 });
-
-function rows(res: unknown): Array<Record<string, unknown>> {
-  if (Array.isArray(res)) return res as Array<Record<string, unknown>>;
-  if (res && typeof res === "object" && "rows" in res) {
-    return (res as { rows: Array<Record<string, unknown>> }).rows;
-  }
-  return [res as Record<string, unknown>];
-}

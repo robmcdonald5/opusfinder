@@ -5,6 +5,7 @@ import { runScript } from "@opusfinder/shared/script";
 import { createDb } from "../src/client";
 import { getDatabaseUrl } from "../src/env";
 import { DEFAULT_STALE_TTL_DAYS, staleJobsWhere, sweepStaleJobs } from "../src/repos/lifecycle";
+import { resultRows } from "../src/repos/sql";
 import { digests, sourceRuns } from "../src/schema";
 
 /**
@@ -85,13 +86,13 @@ await runScript("ShowShadowCloses", async () => {
   if (digestRows.length === 0) console.log("(no digests yet)");
 
   // Sanity ceiling — read wouldClose as a fraction of the live corpus.
-  const ceilRows = rows(
+  const ceilRows = resultRows(
     await db.execute(sql`
       SELECT count(*) FILTER (WHERE lifecycle_state = 'active')::int AS active,
              count(*) FILTER (WHERE lifecycle_state = 'active' AND consecutive_absences > 0)::int AS pending_streak,
              count(*) FILTER (WHERE lifecycle_state = 'closed')::int AS closed
       FROM jobs`),
-  );
+  ) as Array<Record<string, unknown>>;
   const active = Number(ceilRows[0]?.active ?? 0);
   const pending = Number(ceilRows[0]?.pending_streak ?? 0);
   const closed = Number(ceilRows[0]?.closed ?? 0);
@@ -130,7 +131,7 @@ await runScript("ShowShadowCloses", async () => {
   // board-health-guarded predicate at the DEFAULT TTL (the deployed STALE_SWEEP_TTL_DAYS may differ). A
   // healthy capped mega-board topping this is EXPECTED (its aged-out tail); the guard already excludes any
   // board down > TTL, so a down board's jobs never appear.
-  const byBoard = rows(
+  const byBoard = resultRows(
     await db.execute(sql`
       SELECT c.source, c.slug, count(*)::int AS would_close, max(c.last_ingested_at) AS last_ingested
       FROM jobs JOIN companies c ON c.id = jobs.company_id
@@ -138,7 +139,7 @@ await runScript("ShowShadowCloses", async () => {
       GROUP BY c.source, c.slug
       ORDER BY would_close DESC
       LIMIT 10`),
-  );
+  ) as Array<Record<string, unknown>>;
   console.log(
     `\n=== Tier-1 stale by board (top ${byBoard.length}, TTL ${DEFAULT_STALE_TTL_DAYS}d, board-health-guarded) ===`,
   );
@@ -166,13 +167,4 @@ function pick(counts: Record<string, number>, keys: readonly string[]): string {
 function iso(value: Date | string | null): string {
   if (value === null) return "?";
   return value instanceof Date ? value.toISOString() : String(value);
-}
-
-/** Normalize a neon-http `db.execute` result to a row array (array, `{rows}`, or scalar). */
-function rows(res: unknown): Array<Record<string, unknown>> {
-  if (Array.isArray(res)) return res as Array<Record<string, unknown>>;
-  if (res && typeof res === "object" && "rows" in res) {
-    return (res as { rows: Array<Record<string, unknown>> }).rows;
-  }
-  return [res as Record<string, unknown>];
 }
