@@ -11,18 +11,16 @@
 import type { StructuredProfile } from "@opusfinder/shared";
 
 /**
- * Eval-time stand-in for a user profile. Mirrors the production `user_profiles` row shape
- * (`{ summary, skills, target roles, preferences }`) so the harness can score matching and the
- * two can't drift. Holds NO PII (no name / contact / employer) even when derived from a real CV —
- * see the package README.
+ * Eval-time stand-in for a user profile: the production `StructuredProfile` (summary, skills,
+ * target roles) plus a stable id. Holds NO PII (no name / contact / employer) even when derived
+ * from a real CV — see the package README.
  */
 export interface EvalProfile extends StructuredProfile {
   /** Stable, non-identifying handle for the example (e.g. "backend-ic-1"). */
   id: string;
-  // These fields mirror production `user_profiles.structured`, so the two can't drift.
   /**
-   * Hard-ish preferences. NOT enforced as filters yet; kept here so labeled examples carry them
-   * forward unchanged.
+   * Legacy field from the original seed examples, carried through verbatim. No ranker reads it, and
+   * it is not the production `user_preferences` shape.
    */
   preferences?: {
     remote?: boolean;

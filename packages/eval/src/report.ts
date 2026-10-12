@@ -117,15 +117,21 @@ export function ppDelta(a: number, b: number, bothUndefined = "n/a"): string {
   return cell.padStart(8);
 }
 
-/** Per-k delta of `next` vs `prev` in percentage points; `=` when both are undefined. */
+/** Per-k delta of `next` vs `prev` in percentage points; `=` when both are undefined. A different
+ * dataset moves every metric on its own, so that is called out rather than read as ranker movement. */
 export function diffReports(prev: EvalReport | null, next: EvalReport): string {
   if (!prev) return "  (no previous report — this run establishes the baseline)";
   const byK = new Map(prev.metrics.map((m) => [m.k, m]));
-  return next.metrics
-    .map((m) => {
-      const p = byK.get(m.k);
-      if (!p) return `  @${m.k}  (new k)`;
-      return `  @${String(m.k).padEnd(2)}  P ${ppDelta(p.precision, m.precision, "=")}  R ${ppDelta(p.recall, m.recall, "=")}  NDCG ${ppDelta(p.ndcg, m.ndcg, "=")}`;
-    })
-    .join("\n");
+  const rows = next.metrics.map((m) => {
+    const p = byK.get(m.k);
+    if (!p) return `  @${m.k}  (new k)`;
+    return `  @${String(m.k).padEnd(2)}  P ${ppDelta(p.precision, m.precision, "=")}  R ${ppDelta(p.recall, m.recall, "=")}  NDCG ${ppDelta(p.ndcg, m.ndcg, "=")}`;
+  });
+  if (prev.dataset !== next.dataset || prev.exampleCount !== next.exampleCount) {
+    rows.unshift(
+      `  dataset changed (${prev.dataset}, ${prev.exampleCount} examples → ${next.dataset}, ` +
+        `${next.exampleCount}) — these deltas are not comparable`,
+    );
+  }
+  return rows.join("\n");
 }

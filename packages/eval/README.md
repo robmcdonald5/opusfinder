@@ -65,7 +65,8 @@ Two example shapes coexist:
   frozen verbatim in `data/legacy-examples.jsonl` and passed through `build:dataset` untouched.
 - **Pooled (the scale shape)** — at the ~100k-job corpus a full board is unlabelable, so each
   example's `candidateJobs` is the union of three nomination arms (`scripts/build-pool.ts`):
-  production retrieval (Voyage query embedding through `retrieveCandidatesForProfile`), a
+  a Voyage arm (retrieval.ts's filters over a Voyage query embedding, run as an exact scan rather
+  than through `retrieveCandidatesForProfile`, so the pool can't inherit the HNSW under-fill), a
   Postgres full-text arm (target roles + skills), and a seeded random arm — multi-arm so the
   labels aren't circular in the production ranker's favor. **Labels are honest only WITHIN each
   example's pool**: unlabeled ≠ irrelevant, so never compute full-corpus labeled recall from
@@ -108,6 +109,8 @@ boards as adapters land.
 
 - Harness, metrics, random baseline, embedding ranker, `pnpm eval` + reports: **done**.
 - Voyage `voyage-3-large` retrieval validated on the real seed set (NDCG@10 ≈ 83% vs random ≈ 9%).
+  Not re-run since the `voyage-4-large` swap: `reports/embedding-voyage.dataset.json` is still the
+  3-large run, so the next Voyage run's delta includes the model change.
 - **Voyage-vs-OpenAI comparison: done → Voyage wins** (NDCG@10 83.2% vs OpenAI
   `text-embedding-3-small` 66.9% on the seed set), so Voyage is the chosen provider. The harness
   is provider-agnostic — `pnpm eval:compare` reproduces the head-to-head, and `--embedder` swaps
@@ -116,14 +119,14 @@ boards as adapters land.
 
 ## LLM rerank (Phase 10)
 
-`src/types.ts` defines `Ranker`. The Phase-10 LLM rerank landed here as the `llm-rerank` ranker
-(`src/rankers/llm-rerank.ts`): it runs the **shared** `rerankCandidates` from `@opusfinder/rerank` —
-the SAME core the digest pipeline runs — through a deterministic stub call (seeded RNG in `src/rng.ts`,
-so the report is reproducible). `pnpm eval -- --ranker llm-rerank` writes
-`reports/llm-rerank.dataset.json`, so eval scores exactly what production reranks. (The synthesis
-"why matched" contract is exercised in the pipeline, not scored here.)
+The `llm-rerank` ranker (`src/rankers/llm-rerank.ts`) runs the **shared** `rerankCandidates` from
+`@opusfinder/rerank` (the core the digest pipeline runs) through a deterministic stub call seeded per
+profile, and writes `reports/llm-rerank-stub.dataset.json`. The stub proves the core (chunking,
+merging, backfill) and the wiring only; its scores are random-equivalent, not rerank quality. The real
+Haiku call has never been scored here.
 
 ## Keys
 
 - `OPENAI_API_KEY` → `packages/eval/.env` (this package; for the comparison).
 - `VOYAGE_API_KEY` / `DATABASE_URL` are read from the embeddings/db packages (Phase 4/0).
+- `ANTHROPIC_API_KEY` → `packages/llm/.env` (for `draft-labels` and `extract-profile`).

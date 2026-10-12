@@ -24,7 +24,7 @@
  * uses) + a deterministic sample of stored job vectors as pseudo-queries (no embed cost, broadens
  * the estimate; document-side vectors, so labeled clearly). Needs DATABASE_URL + VOYAGE_API_KEY.
  *
- *   pnpm eval:hnsw                      # 2 profiles + 8 pseudo-queries -> reports/hnsw-recall.json
+ *   pnpm eval:hnsw                      # dataset profiles + 8 pseudo-queries
  *   pnpm eval:hnsw -- --sample-jobs 0   # profiles only
  */
 import { readFileSync, writeFileSync } from "node:fs";
@@ -194,9 +194,9 @@ interface VariantReport {
   means: { ef: number; k: number; recall: number; queries: number }[];
 }
 
-/** Persisted shape (reports/hnsw-recall.json). DELIBERATELY no timestamp — corpus stats are the
- *  "when" proxy, and a re-run against an unchanged corpus diffs clean. JSON.stringify writes NaN
- *  as null (JSON has no NaN literal), mirroring the report.ts convention. */
+/** Persisted shape (reports/hnsw-recall.dataset.json). DELIBERATELY no timestamp — corpus stats
+ *  are the "when" proxy, and a re-run against an unchanged corpus diffs clean. JSON.stringify
+ *  writes NaN as null (JSON has no NaN literal), mirroring the report.ts convention. */
 interface HnswRecallReport {
   dataset: string;
   corpus: CorpusStats;

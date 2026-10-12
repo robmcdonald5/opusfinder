@@ -13,36 +13,40 @@ import type { Ranker } from "../types";
 
 /**
  * A deterministic stand-in for the real LLM rerank call: scores each candidate from a stable hash of
- * (system, candidate id) → a 0.0–1.0 pseudo-score (the rubric's scale). Determinism keeps the committed
- * `llm-rerank` report from churning; profile-dependence (the `system` string embeds the profile) makes
- * different profiles produce different orderings, so it exercises the core like a real ranker would —
- * without a network call. NOT a quality signal: it proves the core (chunk → score → merge → backfill)
- * + the harness wiring.
+ * (seed, candidate id) → a 0.0–1.0 pseudo-score (the rubric's scale). Seeded from the profile, NOT
+ * the `system` string: that string carries RERANK_RUBRIC, so a rubric edit would reshuffle the stub
+ * and show up as a made-up quality delta. NOT a quality signal: it proves the core (chunk → score →
+ * merge → backfill) + the harness wiring.
  */
-export const stubRerankCall: RerankCall = (system, candidates) => {
-  const base = hashString(system);
-  return Promise.resolve(
-    candidates.map((c) => {
-      const rng = mulberry32((base ^ hashString(String(c.id))) >>> 0);
-      return { id: c.id, score: rng() };
-    }),
-  );
-};
+function stubRerankCall(seed: string): RerankCall {
+  const base = hashString(seed);
+  return (_system, candidates) =>
+    Promise.resolve(
+      candidates.map((c) => {
+        const rng = mulberry32((base ^ hashString(String(c.id))) >>> 0);
+        return { id: c.id, score: rng() };
+      }),
+    );
+}
 
 /**
  * Eval `Ranker` over the shared rerank core. The dataset's `candidateJobs` ARE the retrieved pool — the
  * digest retrieves the top-N from pgvector then reranks; in eval the labeled candidate set plays that
  * role — so this reranks them directly and returns the full ordering (`assertPermutation`-safe via the
- * core's backfill). `call` defaults to the deterministic stub.
+ * core's backfill). `call` defaults to the deterministic stub, seeded per profile.
  */
-export function llmRerankRanker(call: RerankCall = stubRerankCall): Ranker {
+export function llmRerankRanker(call?: RerankCall): Ranker {
   return async (profile, candidates) => {
     const input: RerankCandidate[] = candidates.map((j) => ({
       id: j.id,
       title: j.title,
       descriptionText: j.descriptionText,
     }));
-    const { orderedIds } = await rerankCandidates(profile, input, call);
+    const { orderedIds } = await rerankCandidates(
+      profile,
+      input,
+      call ?? stubRerankCall(profile.id),
+    );
     return orderedIds;
   };
 }

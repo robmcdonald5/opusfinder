@@ -76,7 +76,7 @@ async function resolveRanker(
     }
     // Dynamic import keeps @opusfinder/rerank off the plain `pnpm eval` path; uses the deterministic stub call (no API key).
     const { llmRerankRanker } = await import("../src/rankers/llm-rerank");
-    return { ranker: llmRerankRanker(), label: "llm-rerank", embedderLabel: null };
+    return { ranker: llmRerankRanker(), label: "llm-rerank-stub", embedderLabel: null };
   }
   throw new Error(`unknown ranker "${name}" (expected: random | embedding | llm-rerank).`);
 }

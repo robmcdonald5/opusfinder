@@ -229,14 +229,18 @@ async function buildPoolFor(db: AuthDb, profile: EvalProfile): Promise<PoolFile>
     }
   }
 
-  // Arm 2 — fts. ts_rank DESC with an id tiebreak so the arm is deterministic on rank ties.
+  // Arm 2 — fts, with an id tiebreak so the arm is deterministic on rank ties. 'simple', not
+  // 'english': 'english' drops "IT" as a stopword, turning "IT Manager" into the bare stem 'manag'
+  // that matches nearly every posting (the cost: no stemming). ts_rank_cd, not ts_rank: ts_rank
+  // ignores phrase adjacency, so it would score every stray "it" and "and" in a long posting;
+  // normalization 1 damps length (rank / (1 + log length)).
   const queryText = ftsQueryText(profile);
-  const tsv = sql`to_tsvector('english', title || ' ' || description_text)`;
-  const tsq = sql`websearch_to_tsquery('english', ${queryText})`;
+  const tsv = sql`to_tsvector('simple', title || ' ' || description_text)`;
+  const tsq = sql`websearch_to_tsquery('simple', ${queryText})`;
   const ftsRows = resultRows(
     await db.execute(sql`
       SELECT id, title, description_text, locations, remote, content_signature,
-             ts_rank(${tsv}, ${tsq}) AS rank
+             ts_rank_cd(${tsv}, ${tsq}, 1) AS rank
       FROM ${jobs}
       WHERE ${BASE_WHERE} AND ${tsv} @@ ${tsq}
       ORDER BY rank DESC, id

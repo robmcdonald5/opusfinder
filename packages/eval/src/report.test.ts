@@ -94,6 +94,11 @@ describe("diffReports", () => {
   it("null prev establishes a baseline instead of throwing", () => {
     expect(diffReports(null, REPORT)).toContain("establishes the baseline");
   });
+
+  it("flags a dataset change so its deltas don't read as ranker movement", () => {
+    const out = diffReports(REPORT, { ...REPORT, exampleCount: 3 });
+    expect(out.split("\n")[0]).toContain("dataset changed (d, 1 examples → d, 3)");
+  });
 });
 
 describe("formatReport", () => {
