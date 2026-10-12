@@ -51,7 +51,7 @@ Copy the shape of `0001-merge-case-variant-boards.sql`:
      from review), or reference `data_fixes` (only the runner writes it). These words are allowed in
      comments and string literals.
 4. Run `pnpm guard:fixes` locally, then open a PR containing only the fix (plus anything it depends on). A
-   fix can come with a PGlite test, `src/fix-NNNN.integration.test.ts` (see 0001's), which gates the apply.
+   fix can come with a PGlite test, `src/fix-NNNN.integration.test.ts`, which gates the apply.
 
 Never edit a fix that has been applied. Write a new fix instead. A merged fix that **failed** is different:
 it was rolled back and never recorded, and it blocks every later fix until it applies. Correct it in place
