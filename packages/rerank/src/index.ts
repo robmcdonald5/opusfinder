@@ -48,12 +48,13 @@ export interface RerankResult {
 export const DEFAULT_CHUNK_SIZE = 13;
 
 /**
- * The stable scoring rubric — the system-prompt prefix shared across every user and every chunk (so a
- * caching call reuses it). The per-user profile is appended by {@link buildRerankSystem}; the candidate
- * list is the variable tail the injected call renders, so it stays OUT of this cached prefix. Written
- * detailed on purpose: a richer rubric scores better AND helps the digest's real (cached) call clear
- * the model's minimum cacheable prefix size — verify `cache.readInputTokens > 0` in the live run and
- * extend this text if the cache does not engage.
+ * The stable scoring rubric — the start of the cached system prompt. {@link buildRerankSystem} appends
+ * the per-user profile to it in the same cache block, so the cache is reused across one user's chunks,
+ * not across users. The candidate list is the variable tail the injected call renders, so it stays OUT
+ * of this cached prefix. Written detailed on purpose: a richer rubric scores better AND helps the
+ * digest's real (cached) call clear the model's minimum cacheable prefix size — verify
+ * `cache.readInputTokens > 0` in the live run and extend this text if the cache does not engage.
+ * Its role families and calibration examples cover software roles only; the corpus is cross-functional.
  */
 export const RERANK_RUBRIC = `You are an expert technical recruiter scoring how well each job posting in a provided list matches one specific candidate. Your scores order a personalized job digest, so the candidate sees the best-fit roles first. Be a careful, calibrated judge: the value of the digest depends on your scores separating genuinely strong matches from superficially-similar ones.
 

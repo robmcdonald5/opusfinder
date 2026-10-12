@@ -72,8 +72,10 @@ export class ObjectGenerationError extends Error {
  * path: on the pinned major `generateObject` is not deprecated while `experimental_output` is
  * experimental, so the stable call is the safer choice. This wrapper isolates the SDK surface.
  *
- * Decoding is constrained to the schema (Anthropic structured outputs) on models that support it; the
- * provider's default is an unconstrained forced tool call, whose input can break the schema.
+ * Decoding is constrained to the schema (Anthropic structured outputs); the provider's default is an
+ * unconstrained forced tool call, whose input can break the schema. The mode is "outputFormat", not
+ * "auto": "auto" falls back to that forced tool on any model newer than the pinned provider version,
+ * and Sonnet 5.5 rejects forced tool use.
  *
  * TRUNCATION: the SDK's generateObject THROWS `NoObjectGeneratedError` when the output can't be
  * parsed/validated (the usual symptom of hitting `maxOutputTokens` mid-JSON, or a refusal) — it does NOT
@@ -99,7 +101,7 @@ export async function generateObject<T>(
     ...req.extra,
     maxOutputTokens: effectiveMax,
     ...(temperature === undefined ? {} : { temperature }),
-    providerOptions: { anthropic: { structuredOutputMode: "auto" } },
+    providerOptions: { anthropic: { structuredOutputMode: "outputFormat" } },
   }).catch((err: unknown) => {
     if (NoObjectGeneratedError.isInstance(err)) {
       const finishReason = err.finishReason;

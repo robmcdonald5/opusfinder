@@ -53,6 +53,37 @@ describe("generateObject — Anthropic Messages over MSW", () => {
     expect(body?.max_tokens).toBe(2048); // DEFAULT_MAX_OUTPUT_TOKENS for generateObject
   });
 
+  it("keeps the schema constraint on a model id the provider has no capability entry for", async () => {
+    vi.resetModules();
+    vi.doMock("./provider", async () => {
+      const { createAnthropic } = await import("@ai-sdk/anthropic");
+      return { resolveModel: () => createAnthropic({ apiKey: "sk-ant-test" })("claude-haiku-5-5") };
+    });
+    try {
+      const { generateObject: generateOnNewerModel } = await import("./generate-object");
+      let body: CapturedBody | undefined;
+      server.use(
+        http.post(MESSAGES_URL, async ({ request }) => {
+          body = (await request.json()) as CapturedBody;
+          return HttpResponse.json(
+            anthropicMessage({ text: JSON.stringify({ name: "Ada", age: 36 }) }),
+          );
+        }),
+      );
+
+      await generateOnNewerModel({
+        model: "haiku",
+        schema,
+        messages: [{ role: "user", content: "x" }],
+      });
+
+      expect(body?.output_config?.format?.type).toBe("json_schema");
+      expect(body?.tool_choice).toBeUndefined();
+    } finally {
+      vi.doUnmock("./provider");
+    }
+  });
+
   it("wraps a truncated (max_tokens) response as an actionable error, keeping the SDK error as cause", async () => {
     server.use(
       http.post(MESSAGES_URL, () =>

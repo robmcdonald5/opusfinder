@@ -33,9 +33,9 @@ export type RerankScores = z.infer<typeof RerankScoresSchema>;
 
 /**
  * Render a candidate chunk into the rerank user message — one `<job id="…">` block per candidate (title,
- * then description) for the system rubric to score. Each description is truncated (ranking needs the
- * title + a description excerpt, not full JD fidelity) to keep the variable tail small relative to the
- * cached system+profile prefix.
+ * then description) for the system rubric to score. Each description is cut to `descriptionChars` to
+ * keep the variable tail small relative to the cached system+profile prefix. Postings usually open with
+ * a company intro, so the default cut often ends before the requirements the rubric weighs most.
  */
 export function renderRerankCandidates(
   candidates: { id: number; title: string; descriptionText: string }[],
