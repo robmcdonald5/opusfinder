@@ -11,7 +11,8 @@
     "./env": "./src/env.ts",
     "./health": "./src/health.ts",
     "./errors": "./src/errors.ts",
-    "./fixes": "./src/fixes.ts"
+    "./fixes": "./src/fixes.ts",
+    "./roles": "./src/roles.ts"
   },
   "types": "./src/client.ts",
   "scripts": {
@@ -29,6 +30,7 @@
     "fixes:apply": "tsx scripts/apply-fixes.ts",
     "fixes:check": "tsx scripts/check-fixes.ts",
     "data-fixer:setup": "tsx scripts/data-fixer-setup.ts",
+    "worker-role:setup": "tsx scripts/worker-role-setup.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

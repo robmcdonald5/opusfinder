@@ -19,7 +19,7 @@ Schema changes stay in `packages/db/drizzle/` migrations. A fix can't run DDL.
   `DATA_FIX_DATABASE_URL`. No pull-request job can see that secret.
 - `data_fixer` can SELECT/INSERT/UPDATE/DELETE only `companies`, `jobs` and `source_runs`, plus SELECT/INSERT
   on `data_fixes`. It has nothing on user, auth, CV, profile, preference, digest or health tables, and it
-  can't run DDL. The grants are in `src/fixer-role.ts`. To widen them, change that list in a reviewed PR,
+  can't run DDL. The grants are in `src/roles.ts`. To widen them, change that list in a reviewed PR,
   then the owner re-runs the setup command.
 - The PR check `pnpm guard:fixes` (in `ci.yml`, no secrets) enforces the file rules below. It also fails if
   a PR edits, renames or deletes a fix that is already on `main`. The runner adds a backstop: it refuses to
@@ -103,7 +103,7 @@ The setup command does the following:
 - Creates or updates the `data-fixes` Environment so only `main` may deploy to it.
 - Creates `data_fixer` with plain SQL, or rotates its password if it exists. It does not use the Neon
   Console, because Console/API roles join `neon_superuser`. It then resets the role's grants, and aborts
-  (changing nothing) if the role still holds any privilege beyond the list, such as one granted by
+  (changing nothing) if the role still holds any table privilege beyond the list, such as one granted by
   another role.
 - Pipes the new connection string into `gh secret set DATA_FIX_DATABASE_URL --env data-fixes` on stdin.
 

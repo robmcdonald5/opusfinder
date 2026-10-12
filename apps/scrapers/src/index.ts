@@ -55,7 +55,8 @@ import {
  * target lives ONLY in `env.HEALTH_PING_URL` (a secret).
  */
 interface Env {
-  /** Neon connection string (a `wrangler secret`). */
+  /** Neon connection string as the limited `scrapers_worker` role (a `wrangler secret`, set by
+   *  `pnpm --filter @opusfinder/db run worker-role:setup`). */
   DATABASE_URL: string;
   /** Chunk-cursor store for the chunked-cron ingestion lane (a KV namespace binding). */
   INGEST_CURSOR: KVNamespace;
@@ -140,7 +141,7 @@ export default {
     // connection error on the first query deep inside the pipeline.
     if (!env.DATABASE_URL) {
       throw new Error(
-        "DATABASE_URL is not set — run `wrangler secret put DATABASE_URL` (or add it to .dev.vars).",
+        "DATABASE_URL is not set — run `pnpm --filter @opusfinder/db run worker-role:setup` (or add it to .dev.vars).",
       );
     }
     const db = createDb(env.DATABASE_URL);
