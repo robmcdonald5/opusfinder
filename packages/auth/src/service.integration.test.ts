@@ -26,7 +26,7 @@ import {
 // error contract (duplicate email = better-auth 1.6.14's phantom-uuid generic-duplicate response →
 // "already exists"; poisoned-Db step failures leave the half-created user and propagate),
 // getOrCreateUserByEmail's idempotency, and findUserIdByEmail's normalized exact-eq lookup. NOT this
-// file's job: the neon-serverless driver protocol (auth.integration.test.ts owns that live gate) and
+// file's job: the neon-serverless driver protocol (auth.live.test.ts owns that live gate) and
 // prefs flag parsing (prefs-flags.test.ts).
 //
 // NEVER import ./env here — it runs loadPackageEnv at module scope against the real packages/auth/.env
@@ -423,10 +423,8 @@ describe("auth service — createUserWithPreferences / getOrCreateUserByEmail / 
   });
 
   describe("getOrCreateUserByEmail — idempotency (case/space-insensitive, no duplicate)", () => {
-    it("creates a NEW verified user with the normalized email, opts.prefs applied, and a prefs row with a 64-hex token", async () => {
-      const { userId, created } = await getOrCreateUserByEmail(db, auth, " NewUser@Svc.Test ", {
-        prefs: { recencyDays: 7, digestCadence: "daily" },
-      });
+    it("creates a NEW verified user with the normalized email and a default prefs row with a 64-hex token", async () => {
+      const { userId, created } = await getOrCreateUserByEmail(db, auth, " NewUser@Svc.Test ");
       expect(created).toBe(true);
       const row = await userById(userId);
       // trim+lowercase happens BEFORE the create, so the stored email is fully normalized.
@@ -435,9 +433,7 @@ describe("auth service — createUserWithPreferences / getOrCreateUserByEmail / 
       expect(row.emailVerified).toBe(true);
       const prefs = await prefsRow(userId);
       expect(prefs.unsubscribeToken).toMatch(TOKEN_RE);
-      expect(prefs.recencyDays).toBe(7);
-      expect(prefs.digestCadence).toBe("daily");
-      expect(prefs.digestEnabled).toBe(true); // untouched default
+      expect(prefs.digestEnabled).toBe(true);
       // A real credential account exists (throwaway random password path, ≥ 8-char min).
       expect(await accountRows(userId)).toHaveLength(1);
     });
@@ -452,7 +448,7 @@ describe("auth service — createUserWithPreferences / getOrCreateUserByEmail / 
       expect(await allUserRows()).toHaveLength(1);
     });
 
-    it("existing user with a prefs row: token NOT rotated and prefs untouched even when opts.prefs is passed", async () => {
+    it("existing user with a prefs row: token NOT rotated and prefs untouched", async () => {
       const existing = await seedUser(10, { email: "kept@svc.test" });
       await seedPrefs(existing, {
         unsubscribeToken: "seed-token-kept",
@@ -461,30 +457,23 @@ describe("auth service — createUserWithPreferences / getOrCreateUserByEmail / 
       });
       const before = await prefsRow(existing);
 
-      const { userId } = await getOrCreateUserByEmail(db, auth, "kept@svc.test", {
-        prefs: { recencyDays: 3, digestCadence: "daily" },
-      });
+      const { userId } = await getOrCreateUserByEmail(db, auth, "kept@svc.test");
 
       expect(userId).toBe(existing);
-      // onConflictDoNothing: the FULL row is byte-identical — token unrotated AND opts.prefs NOT
-      // applied on the found path (recencyDays stays 30, not 3).
+      // onConflictDoNothing: the FULL row is byte-identical — token unrotated, non-default prefs kept.
       expect(await prefsRow(existing)).toEqual(before);
     });
 
-    it("existing user WITHOUT a prefs row: backfills with pure column DEFAULTS — opts.prefs deliberately ignored on the backfill branch (current behavior)", async () => {
+    it("existing user WITHOUT a prefs row: backfills a prefs row with column defaults", async () => {
       const existing = await seedUser(11, { email: "backfill@svc.test" });
 
       // MANGLED variant on purpose: this is the only found-path call with a non-normalized email, so
       // the lookup normalization is load-bearing HERE — a raw-email lookup would miss and fall into the
       // create path, which rejects the existing email as a duplicate.
-      const { userId } = await getOrCreateUserByEmail(db, auth, " BACKFILL@SVC.TEST ", {
-        prefs: { recencyDays: 3, digestCadence: "daily", locationMode: "onsite_only" },
-      });
+      const { userId } = await getOrCreateUserByEmail(db, auth, " BACKFILL@SVC.TEST ");
 
       expect(userId).toBe(existing);
       const prefs = await prefsRow(existing);
-      // PINS CURRENT BEHAVIOR: service.ts's found-path backfill omits `prefs:` entirely, so the
-      // passed opts land NOWHERE — column defaults win. Flagged in the PR, not changed here.
       expect(prefs.recencyDays).toBe(14);
       expect(prefs.digestCadence).toBe("weekly");
       expect(prefs.locationMode).toBe("any");

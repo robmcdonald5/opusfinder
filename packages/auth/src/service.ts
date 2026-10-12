@@ -41,7 +41,7 @@ export async function createUserWithPreferences(
   auth: Auth,
   input: CreateUserInput,
 ): Promise<{ userId: UserId }> {
-  // 1. user + account, in a transaction.
+  // 1. user + account (sequential, not atomic — see the docstring).
   const signUpResult = await auth.api.signUpEmail({
     body: {
       email: input.email,
@@ -85,7 +85,6 @@ export async function getOrCreateUserByEmail(
   db: Db,
   auth: Auth,
   email: string,
-  opts?: { prefs?: Partial<UserPreferences> },
 ): Promise<{ userId: UserId; created: boolean }> {
   const normalized = email.trim().toLowerCase();
   const found = await findUserIdByNormalizedEmail(db, normalized);
@@ -103,7 +102,6 @@ export async function getOrCreateUserByEmail(
     // users can't log in until they reset it; identity here is the email, not a credential.
     password: generateUnsubscribeToken(),
     markVerified: true,
-    prefs: opts?.prefs,
   });
   return { userId, created: true };
 }

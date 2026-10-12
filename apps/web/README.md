@@ -6,14 +6,15 @@ The SvelteKit app — the production runtime host (Phase 12). No React/JSX; this
 
 A minimal SvelteKit skeleton with two routes: the **Inngest serve endpoint**
 (`src/routes/api/inngest/+server.ts`, `inngest/sveltekit`) and a **`/api/health` endpoint** (over the
-pure `checkHealth` core). The serve endpoint hosts the Phase-10 digest functions, the daily
-cadence cron (`10 12 * * *` — 12:10 UTC, riding the 12:00 ingestion tick; `0 13 * * *` until 2026-10 —
-`makeCadenceOrchestrator`), and the F8 embedding backfill drain
-(`0 4 * * *`) on Inngest Cloud — **deployed live on Vercel + Inngest Cloud**. There are **no
-user-facing pages yet** — friends are onboarded via the CLIs (`pnpm user:create` → `pnpm ingest-cv` → `pnpm user:set-prefs`).
+pure `checkHealth` core). The serve endpoint hosts every function in `createAllFunctions`
+(`@opusfinder/inngest`): the digest functions and their daily cadence cron, the embedding backfill drain,
+and the 2-hourly health-check alerter — **deployed live on Vercel + Inngest Cloud**. There are **no
+user-facing pages yet** — friends are onboarded via the CLIs (`pnpm user:create` → `pnpm ingest-cv` →
+`pnpm user:set-prefs` → `pnpm user:approve`; without the last step no digest is ever sent).
 
 - **Serverless Node, not edge** (`svelte.config.js`, adapter-vercel): the deps reach `@anthropic-ai/sdk` +
-  `@neondatabase/serverless`. `maxDuration` 300s. Set the Vercel project's Node version to **22.x**.
+  `@neondatabase/serverless`. `maxDuration` 300s. Node **24.x**, pinned by `engines.node` in
+  `package.json` (it overrides the Vercel project setting).
 - **Vite bundles the `@opusfinder/*` workspace packages** (`vite.config.ts` `ssr.noExternal`) because they
   publish raw TS source.
 - **Deploy notes (owner):** the Inngest Vercel integration auto-provisions `INNGEST_SIGNING_KEY` /
