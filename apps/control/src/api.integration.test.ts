@@ -1259,6 +1259,15 @@ describe("status: last run and due times (review fixes)", () => {
     expect(Date.parse(resumed.nextDueAt)).toBeGreaterThan(Date.now());
   });
 
+  it("still flags a missed tick while off when the runtime doesn't obey the switch yet", async () => {
+    await run({ stage: "ingest", outcome: "ok", startedAt: hoursAgo(5) });
+    await h.request("/v1/changes", {
+      as: "owner",
+      json: { target: "ingest", value: "off", reason: "pause" },
+    });
+    expect(await ingest()).toMatchObject({ effective: "off", gate: "shadow", overdue: true });
+  });
+
   it("pages exactly: a full last page says there is no more", async () => {
     await run({ stage: "ingest", outcome: "ok", startedAt: hoursAgo(2) });
     await run({ stage: "ingest", outcome: "ok", startedAt: hoursAgo(1) });

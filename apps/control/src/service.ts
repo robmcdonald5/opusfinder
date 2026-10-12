@@ -254,10 +254,13 @@ export async function status(db: D1Database, caller: Caller, now: string) {
         .filter((t) => t !== undefined)
         .sort()
         .at(-1);
+      // Off pauses a stage only once its runtime obeys the switch; until then the stage keeps running, so it
+      // can still miss a tick.
+      const paused = v.gate === "enforced" && v.effective === "off";
       return {
         ...v,
         lastRun: last,
-        ...cadence(v.expect, v.effective, last?.started_at, resumed, nowMs),
+        ...cadence(v.expect, paused ? "off" : "on", last?.started_at, resumed, nowMs),
       };
     }),
     policies: views.policies,

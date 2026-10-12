@@ -176,8 +176,8 @@ function relatedRows(view: StatusView, s: StageRow): string[] {
       .map((p) =>
         item({
           title: `<a href="${esc(targetHref(p.id) ?? "/stages")}" title="${esc(p.id)}">${esc(p.label)}</a>`,
-          lines: ["policy it reads"],
-          end: mode(p.effective, "policy"),
+          lines: [isHealthCheck(p.id) ? "health check it runs" : "policy it reads"],
+          end: mode(p.effective, isHealthCheck(p.id) ? "check" : "policy"),
         }),
       ),
     ...view.policies
