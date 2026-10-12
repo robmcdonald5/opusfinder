@@ -15,9 +15,9 @@ import { companySlug, jobId, type SourceName } from "@opusfinder/shared";
 import {
   adapters,
   runIngestion,
+  type IngestBoardResult,
   type IngestEmbedFn,
   type IngestionCounts,
-  type IngestionOptions,
 } from "@opusfinder/sources";
 
 import { createTestDb } from "@test/db/pglite";
@@ -73,10 +73,6 @@ const repoSpies = [upsertCompany, upsertJobs, listCompanies, markJobsPresent, sw
 
 // Adapter tuning that removes real waits: no retries (a 5xx fails the board on the first attempt, no
 // `backoff` setTimeout) — paired with paceMs:0 (the stubbed sleep is a no-op anyway).
-// IngestBoardResult isn't re-exported from the sources barrel; derive it from the onBoard param so the
-// test needs no production surface change.
-type IngestBoardResult = Parameters<NonNullable<IngestionOptions["onBoard"]>>[0];
-
 const NO_RETRY = { maxRetries: 0 } as const;
 const DAY_MS = 86_400_000;
 function daysAgo(n: number): Date {

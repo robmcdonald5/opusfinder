@@ -86,9 +86,9 @@ export function adapterFor(source: string): SourceAdapter {
 }
 
 /**
- * Fetch + normalize all live postings for one board on `source`. The single public entry
- * point: `runAdapter` drives the descriptor (slug normalization → pagination → fetch →
- * map → hydrate). An unknown source rejects with {@link adapterFor}'s error.
+ * Fetch + normalize all live postings for one board on `source`, outside a run (the single-board
+ * CLI's slug check); ingestion fetches through `fetchBoard`. An unknown source rejects with
+ * {@link adapterFor}'s error.
  */
 export async function fetchJobs(
   source: SourceName,

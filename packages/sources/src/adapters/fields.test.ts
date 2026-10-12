@@ -7,7 +7,7 @@ const NBSP = String.fromCharCode(0xa0);
 
 // Leaf pure-unit (no workspace deps). These two helpers encode the location/remote INVARIANTS
 // every ATS adapter shares, so a regression here silently corrupts `locations` + the `remote`
-// flag across all five sources. Locks: joinParts drops non-string/blank parts and trims survivors
+// flag across every source. Locks: joinParts drops non-string/blank parts and trims survivors
 // (but does NOT dedupe), and inferRemoteFromText matches only the whole word "remote"
 // (word-boundary, case-insensitive) so "remotely" and the empty case stay false, and never a
 // negated or hybrid-qualified "remote" (Hybrid resolves to false per the NormalizedJob contract).

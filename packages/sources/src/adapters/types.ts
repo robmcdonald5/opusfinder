@@ -87,7 +87,6 @@ export interface SourceAdapter {
    * then patches. That is what lets a hydrate failure degrade gracefully: runAdapter keeps the
    * listed job (so ingestion still counts it present) but flags it `contentMissing`, and upsertJobs
    * never writes a flagged job's placeholder content over the stored posting.
-   * Never put the raw item on the job — it is not stored (see `hydrate` for the one consumer).
    */
   mapItem(raw: unknown, ctx: SourceContext): NormalizedJob | null;
 
@@ -107,8 +106,8 @@ export interface SourceAdapter {
 
   /**
    * OPTIONAL per-item enrichment via a SECOND fetch (the N+1 case — SmartRecruiters).
-   * Given an already-mapped job + its raw list item (handed over directly — the job carries no
-   * raw), fetch extra data through the injected resilient `fetchJson` and return a PATCH to merge.
+   * Given an already-mapped job, fetch extra data through the injected resilient `fetchJson` and
+   * return a PATCH to merge.
    * OMIT ⇒ no second fetch (Greenhouse, Lever, Ashby; Workable hydrates inline via a `jobsRequest`
    * query param instead). runAdapter runs these through a bounded-concurrency pool and tolerates
    * per-item failure: a THROW keeps the listed job flagged `contentMissing` (still present). So a
@@ -117,7 +116,6 @@ export interface SourceAdapter {
    */
   hydrate?(
     job: NormalizedJob,
-    raw: unknown,
     ctx: SourceContext,
     fetchJson: FetchJson,
   ): Promise<Partial<NormalizedJob>>;
@@ -141,7 +139,7 @@ export interface JobsRequest {
 export type FetchJson = (req: JobsRequest) => Promise<unknown>;
 
 /**
- * Pagination cursor. Only OFFSET is currently used (Lever defensively, SmartRecruiters always).
+ * Pagination cursor. Only OFFSET is currently used (SmartRecruiters and Trakstar).
  * A `page` kind can be added as another union member when a page-number ATS lands; the loop and
  * `jobsRequest` already accept any Cursor shape, so no plumbing changes.
  */

@@ -111,8 +111,8 @@ describe("runAdapter — invariant ATS plumbing over MSW", () => {
       expect(ids(jobs)).toEqual(["1", "2"]);
       // runAdapter canonicalizes location order (keeps the persisted jsonb stable) — ["Zeta","Alpha"] → sorted.
       expect(jobs[0]?.locations).toEqual(["Alpha", "Zeta"]);
-      // The sort must COPY: mkJob aliases job.locations to the raw item's array, and that raw item is what a
-      // hydrate is handed. An in-place `.sort()` would reorder the raw item too — assert it didn't.
+      // The sort must COPY: mkJob aliases job.locations to the raw item's array, which an in-place `.sort()`
+      // would reorder too (or throw on, were it frozen) — assert it didn't.
       expect(items[0]?.locations).toEqual(["Zeta", "Alpha"]);
     });
 
@@ -918,26 +918,6 @@ describe("runAdapter — invariant ATS plumbing over MSW", () => {
       expect(warn).toHaveBeenCalledWith(expect.stringMatching(/1 un-hydrated/));
     });
 
-    it("hands each hydrate ITS OWN raw list item, and returns jobs that carry no raw", async () => {
-      const items = [raw(1, { title: "one" }), raw(2, { title: "two" })];
-      server.use(http.get(LIST, () => HttpResponse.json({ jobs: items })));
-      const seen: unknown[] = [];
-      const adapter = makeAdapter({
-        hydrate: (job, item) => {
-          seen.push(item);
-          return Promise.resolve({ descriptionText: `desc-${job.externalId}` });
-        },
-      });
-
-      const jobs = await runAdapter(adapter, "acme", { hydrateConcurrency: 1 });
-
-      // The list item rides to hydrate as its own argument (the job has no raw to read it from) — the
-      // parsed item for THAT posting, not another posting's, not undefined.
-      expect(seen).toEqual(items);
-      // jobs.raw is not stored, so the returned jobs don't carry the source object either.
-      for (const job of jobs) expect(job).not.toHaveProperty("raw");
-    });
-
     it("bounds concurrent hydrate calls to hydrateConcurrency", async () => {
       server.use(
         http.get(LIST, () =>
@@ -948,7 +928,7 @@ describe("runAdapter — invariant ATS plumbing over MSW", () => {
       let inFlight = 0;
       let peak = 0;
       const adapter = makeAdapter({
-        hydrate: async (job, _item, _ctx, fetchJson) => {
+        hydrate: async (job, _ctx, fetchJson) => {
           inFlight += 1;
           peak = Math.max(peak, inFlight);
           await fetchJson({ url: `${DETAIL}/${job.externalId}` }); // suspends so peak is observable
@@ -976,7 +956,7 @@ describe("runAdapter — invariant ATS plumbing over MSW", () => {
         }),
       );
       const adapter = makeAdapter({
-        hydrate: async (job, _item, _ctx, fetchJson) => {
+        hydrate: async (job, _ctx, fetchJson) => {
           const detail = (await fetchJson({ url: `${DETAIL}/${job.externalId}` })) as {
             title: string;
           };
@@ -1006,7 +986,7 @@ describe("runAdapter — invariant ATS plumbing over MSW", () => {
       );
       vi.spyOn(console, "warn").mockImplementation(() => {});
       const adapter = makeAdapter({
-        hydrate: async (job, _item, _ctx, fetchJson) => {
+        hydrate: async (job, _ctx, fetchJson) => {
           const detail = (await fetchJson({ url: `${DETAIL}/${job.externalId}` })) as { title: string };
           return { title: detail.title };
         },
@@ -1043,7 +1023,7 @@ describe("runAdapter — invariant ATS plumbing over MSW", () => {
       };
       const hydrating = () =>
         makeAdapter({
-          hydrate: async (job, _item, _ctx, fetchJson) => {
+          hydrate: async (job, _ctx, fetchJson) => {
             await fetchJson({ url: `${DETAIL}/${job.externalId}` });
             return {};
           },
@@ -1161,7 +1141,7 @@ describe("runAdapter — invariant ATS plumbing over MSW", () => {
       });
       const adapter = () =>
         makeAdapter({
-          hydrate: async (job, _item, _ctx, fetchJson) => {
+          hydrate: async (job, _ctx, fetchJson) => {
             await fetchJson({ url: `${DETAIL}/${job.externalId}` });
             return {};
           },

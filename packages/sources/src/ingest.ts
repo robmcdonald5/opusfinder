@@ -36,8 +36,8 @@ import {
 /**
  * The injected embedder — the structural MINIMUM that `backfillJobEmbeddings` accepts. The real
  * `embed()` returns a superset, so it satisfies this via structural subtyping. Omit `embed` to
- * skip inline embedding (the default on the Voyage free tier, whose 3 RPM a frequent tick would
- * exhaust): jobs are still upserted; the idempotent backfill fills the still-NULL vectors later.
+ * skip inline embedding (the Worker does: `@opusfinder/embeddings` can't enter its bundle): jobs are
+ * still upserted; the idempotent backfill fills the still-NULL vectors later.
  */
 export type IngestEmbedFn = (
   texts: string[],
@@ -108,7 +108,7 @@ export interface IngestionOptions {
   /** Clock (epoch ms) for the `maxRunMs` budget and the per-key pacing. Defaults to `Date.now`; a test
    *  injects one to drive both deterministically. */
   clock?: () => number;
-  /** Forwarded to `fetchJobs`/`runAdapter` — a Worker may LOWER `hydrateConcurrency` for subrequests, and
+  /** Forwarded to each board's `fetchBoard` — a Worker may LOWER `hydrateConcurrency` for subrequests, and
    *  passes `maxRetryWaitMs` to fail fast on rate limits (see the cooldown in the board loop). */
   adapter?: RunAdapterOptions;
   /**
@@ -129,7 +129,7 @@ export interface IngestionOptions {
   /**
    * Lifecycle-close enforcement. Default false = SHADOW (the sweep increments the absence streak +
    * revives, but writes no `'closed'`, tallying `wouldClose`). The Worker passes
-   * `parseEnforceFlag(env.LIFECYCLE_CLOSE_ENFORCE)`; flip enforce on once the shadow counters are reviewed.
+   * `parseEnforceFlag(env.LIFECYCLE_CLOSE_ENFORCE)`.
    */
   enforceLifecycle?: boolean;
   /**
