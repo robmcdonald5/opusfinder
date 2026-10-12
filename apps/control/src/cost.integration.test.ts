@@ -361,6 +361,30 @@ describe("statements by hand", () => {
     expect((await rows()).map((r) => r.status)).toEqual(["review", "duplicate"]);
   });
 
+  it("still names the agent who entered a charge once the owner has counted or excluded it", async () => {
+    const enter = async (vendor: string, note: string) => {
+      const res = await add("agent", { vendor, amount: "4.00", chargedOn: "2026-10-01", note });
+      return ((await res.json()) as Json).statement.id;
+    };
+    const counted = await enter("Neon", "from the console");
+    const excluded = await enter("Voyage AI", "from the dashboard");
+    await h.request(`/ui/statements/${counted}`, {
+      as: "owner",
+      form: {
+        action: "count",
+        vendor: "Neon",
+        amount: "4.00",
+        chargedOn: "2026-10-01",
+        kind: "other",
+      },
+    });
+    await h.request(`/ui/statements/${excluded}`, { as: "owner", form: { action: "exclude" } });
+    const page = await (await h.request("/cost?month=2026-10", { as: "owner" })).text();
+    expect(page.match(/entered by <span title="agent:observer">/g)).toHaveLength(2);
+    expect(page).toContain("from the dashboard");
+    expect(page).not.toContain("Added by agent:observer");
+  });
+
   it.each([
     [{ amount: "1", chargedOn: "2026-10-01" }, "invalid_vendor"],
     [{ vendor: "Neon", amount: "-1", chargedOn: "2026-10-01" }, "invalid_amount"],
@@ -535,6 +559,27 @@ describe("the Cost page", () => {
     expect(await (await h.request("/", { as: "owner" })).text()).toContain("55 to review");
   });
 
+  it("counts every charge not counted, and lists the ones filed in the period asked for", async () => {
+    const now = new Date().toISOString();
+    await h.db.batch(
+      Array.from({ length: 22 }, (_, i) =>
+        h.db
+          .prepare(
+            "INSERT INTO statement (received_at, source, message_id, month, status, updated_at, updated_by) VALUES (?, 'manual', ?, ?, 'excluded', ?, 'test')",
+          )
+          .bind(now, `<excluded-${i}@test>`, i === 0 ? "2025-01" : null, now),
+      ),
+    );
+    const c = await costJson();
+    expect(c.notCounted).toHaveLength(20);
+    expect(c.notCountedCount).toBe(21);
+    expect(await (await h.request("/cost", { as: "owner" })).text()).toContain("Not counted (21)");
+    // The oldest is out of this month's list, but still there to count from its own month; the rows with
+    // no month are listed under the month they arrived.
+    const older = await costJson("owner", "2025-01");
+    expect(older.notCounted.map((r: Json) => r.message_id)).toEqual(["<excluded-0@test>"]);
+  });
+
   it("offers Count it on every uncounted row except Gmail's confirmation", async () => {
     await h.email(email({ answer: bill({ reference: "D-1" }) }));
     await h.email(email({ answer: bill({ reference: "D-1" }), subject: "Your receipt" })); // duplicate
@@ -559,7 +604,7 @@ describe("the Cost page", () => {
     expect(page).not.toContain(`action="/ui/statements/${confirmation?.id}"`);
   });
 
-  it("keeps a counted statement's note when it's edited, and never pre-fills a non-USD amount as USD", async () => {
+  it("keeps a counted statement's note when it's edited, and never shows or pre-fills a non-USD or unknown-currency amount as USD", async () => {
     await add("owner", {
       vendor: "Neon",
       amount: "8.42",
@@ -567,13 +612,25 @@ describe("the Cost page", () => {
       note: "Q3 back-fill",
     });
     await h.email(email({ answer: bill({ currency: "EUR", total: "8.42", reference: "EU-1" }) }));
+    // No currency stated and no "$" in the email: unknown, never taken for USD.
+    await h.email(
+      email({
+        body: "Amount due: 19.99",
+        answer: bill({ currency: "", total: "19.99", reference: "X-1" }),
+      }),
+    );
     const page = await (await h.request("/cost", { as: "owner" })).text();
     expect(page).toContain('value="Q3 back-fill"');
-    const eur = (await rows()).find((r) => r.currency === "EUR");
-    const form = page.slice(page.indexOf(`action="/ui/statements/${eur?.id}"`));
-    expect(form.slice(0, form.indexOf("</form>"))).toContain(
-      'name="amount" type="number" inputmode="decimal" min="0" step="0.01" required value=""',
-    );
+    const read = (await rows()).filter((r) => r.source === "email");
+    expect(read.map((r) => r.currency)).toEqual(["EUR", null]);
+    for (const r of read) {
+      const form = page.slice(page.indexOf(`action="/ui/statements/${r.id}"`));
+      expect(form.slice(0, form.indexOf("</form>"))).toContain(
+        'name="amount" type="number" inputmode="decimal" min="0" step="0.01" required value=""',
+      );
+    }
+    expect(page).toContain("<strong>8.42</strong> EUR");
+    expect(page).not.toContain("$19.99");
   });
 
   it("refuses an impossible month", async () => {

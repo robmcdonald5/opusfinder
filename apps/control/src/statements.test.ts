@@ -12,6 +12,7 @@ import {
   readEmail,
   validDay,
   vendorKey,
+  vendorLabel,
   type InvoiceAi,
 } from "./statements";
 
@@ -364,8 +365,19 @@ describe("vendorKey / authSummary", () => {
   it("compares vendors without case, punctuation or legal suffixes", () => {
     expect(vendorKey("Neon, LLC")).toBe("neon");
     expect(vendorKey("NEON Inc.")).toBe("neon");
+    expect(vendorKey("Neon, L.L.C.")).toBe("neon");
+    expect(vendorKey("Acme Co")).toBe("acme");
     expect(vendorKey("Voyage AI, Inc.")).toBe("voyage ai");
+    expect(vendorKey("voyage.ai")).toBe("voyage ai");
     expect(vendorKey(null)).toBe("");
+  });
+
+  it("shows a vendor without the legal suffixes it is grouped without", () => {
+    expect(vendorLabel("Neon, L.L.C.")).toBe("Neon");
+    expect(vendorLabel("Acme Co")).toBe("Acme");
+    expect(vendorLabel("Voyage AI, Inc.")).toBe("Voyage AI");
+    expect(vendorLabel("voyage.ai")).toBe("voyage.ai");
+    expect(vendorLabel(null)).toBe("Unknown vendor");
   });
 
   it("keeps the verdicts and domains, never a full address", () => {

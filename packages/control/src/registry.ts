@@ -483,10 +483,16 @@ export type PolicyId = keyof typeof policies;
 
 /** B3: vendor ceilings, shown in the view. Probed where a read-only credential exists, else by hand. */
 export const ceilings = {
-  neonMaxCu: { value: 8, where: "Neon console", probe: "manual" },
-  voyageAutoRecharge: { value: "unknown", where: "Voyage dashboard", probe: "manual" },
+  neonMaxCu: { label: "Neon max compute (CU)", value: 8, where: "Neon console", probe: "manual" },
+  voyageAutoRecharge: {
+    label: "Voyage auto-recharge",
+    value: "unknown",
+    where: "Voyage dashboard",
+    probe: "manual",
+  },
   // Owner decision 2026-10-10: the product's LLM calls go through OpenRouter (prepaid credits).
   openrouterCredits: {
+    label: "OpenRouter credit limit",
     value: "unknown",
     where: "OpenRouter > Settings > Credits (auto top-up) and per-key credit limits",
     probe: "manual",

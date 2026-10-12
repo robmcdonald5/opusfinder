@@ -909,7 +909,9 @@ export async function cost(
       sameAs: c.counted.find((x) => sameCharge(r, x))?.id ?? null,
     })),
     reviewCount: c.reviewCount,
+    /** The newest 20 not counted in the period; `notCountedCount` is how many. */
     notCounted: c.notCounted.map(view),
+    notCountedCount: c.notCountedCount,
     ceilings,
   };
 }
@@ -981,7 +983,8 @@ export async function addStatement(db: D1Database, caller: Caller, body: unknown
     received_at: now,
     source: "manual",
     message_id: null,
-    sender: null,
+    // Who entered it: updated_by changes when the owner counts or excludes it.
+    sender: actorLabel(caller),
     subject: null,
     ...f,
     currency: "USD",

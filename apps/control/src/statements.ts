@@ -206,15 +206,25 @@ export function isConfirmationRow(row: { sender: string | null }): boolean {
 
 /**
  * A vendor name for comparing and grouping: case, punctuation and legal suffixes ignored, so "Neon, LLC",
- * "Neon Inc." and "neon" are one vendor.
+ * "Neon L.L.C." and "neon" are one vendor. Dotted initials ("s.a.") join into one word first; a lone dot
+ * ("voyage.ai") is punctuation.
  */
 export function vendorKey(vendor: string | null | undefined): string {
   return (vendor ?? "")
     .toLowerCase()
+    .replace(/\b(?:[a-z]\.){2,}/g, (m) => m.replace(/\./g, ""))
     .replace(/[.,'’"()&]/g, " ")
     .replace(/\b(llc|inc|incorporated|ltd|limited|corp|corporation|co|gmbh|plc|pbc|sa|bv)\b/g, " ")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+/** A vendor name to show: as written, less the trailing legal suffixes vendorKey ignores. */
+export function vendorLabel(vendor: string | null | undefined): string {
+  let name = (vendor ?? "").trim();
+  let m: RegExpExecArray | null;
+  while ((m = /^(.*?)[\s,]+([^\s,]+)$/.exec(name)) && m[1] && vendorKey(m[2]) === "") name = m[1];
+  return name || "Unknown vendor";
 }
 
 /** An invoice number for comparing: case, spaces, "#" and punctuation ignored, so "#inv-7" is "INV7". */

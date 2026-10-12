@@ -159,6 +159,9 @@ row per email:
   can add these headers, so a gate must read only the topmost entry Cloudflare wrote, never match a
   substring of the column. UNVERIFIED until the first filter forward (Cloudflare's, ~23rd): whether
   Cloudflare writes such a header where the Worker sees it at all; if not, the gate needs another basis.
+  Either way the gate proves only who forwarded the mail, not who wrote it: anyone can send mail a broad
+  filter forwards (e.g. another merchant's Stripe invoice), so a filter forward should count by itself only
+  when its From is also a known in-scope vendor sender.
 
 - **Read by a model.** Workers AI (`[ai]` binding, `@cf/meta/llama-3.3-70b-instruct-fp8-fast` in JSON
   mode) reads vendor, kind, total, currency, charge date, service period and invoice number (the invoice's,

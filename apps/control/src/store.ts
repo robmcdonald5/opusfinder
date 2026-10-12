@@ -496,6 +496,7 @@ export interface StatementRow {
   received_at: string;
   source: "email" | "manual";
   message_id: string | null;
+  /** The email's From address; for a hand entry, the actor who entered it. */
   sender: string | null;
   subject: string | null;
   vendor: string | null;
@@ -667,9 +668,13 @@ export async function readCost(
   review: StatementRow[];
   reviewCount: number;
   notCounted: StatementRow[];
+  notCountedCount: number;
   counted: (ChargeFacts & { id: number })[];
 }> {
-  const [totals, rows, review, reviewCount, notCounted, counted] = await db.batch([
+  // A row with no month (no charge date, or Gmail's confirmation) is listed under the month it arrived.
+  const notCountedWhere =
+    "status IN ('duplicate', 'ignored', 'excluded') AND COALESCE(month, substr(received_at, 1, 7)) BETWEEN ?1 AND ?2";
+  const [totals, rows, review, reviewCount, notCounted, notCountedCount, counted] = await db.batch([
     db.prepare(
       `SELECT month, vendor, SUM(amount_cents) AS cents, COUNT(*) AS n FROM statement
        WHERE status = 'recorded' AND month IS NOT NULL GROUP BY month, vendor ORDER BY month DESC, cents DESC`,
@@ -681,9 +686,12 @@ export async function readCost(
       .bind(fromMonth, toMonth),
     db.prepare("SELECT * FROM statement WHERE status = 'review' ORDER BY id DESC LIMIT 50"),
     db.prepare("SELECT COUNT(*) AS n FROM statement WHERE status = 'review'"),
-    db.prepare(
-      "SELECT * FROM statement WHERE status IN ('duplicate', 'ignored', 'excluded') ORDER BY id DESC LIMIT 20",
-    ),
+    db
+      .prepare(`SELECT * FROM statement WHERE ${notCountedWhere} ORDER BY id DESC LIMIT 20`)
+      .bind(fromMonth, toMonth),
+    db
+      .prepare(`SELECT COUNT(*) AS n FROM statement WHERE ${notCountedWhere}`)
+      .bind(fromMonth, toMonth),
     chargesToMatch(db, false),
   ]);
   return {
@@ -692,6 +700,7 @@ export async function readCost(
     review: (review?.results ?? []) as StatementRow[],
     reviewCount: ((reviewCount?.results ?? [])[0] as { n: number } | undefined)?.n ?? 0,
     notCounted: (notCounted?.results ?? []) as StatementRow[],
+    notCountedCount: ((notCountedCount?.results ?? [])[0] as { n: number } | undefined)?.n ?? 0,
     counted: (counted?.results ?? []) as (ChargeFacts & { id: number })[],
   };
 }
