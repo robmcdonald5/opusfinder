@@ -98,6 +98,8 @@ const DETAIL_MAX = 500;
 const TRIP_ATTEMPTS = 3;
 /** The longest run a ledger row may describe. Longer = a unit bug (e.g. seconds sent as ms·1000). */
 const MAX_RUN_DURATION_MS = 7 * 24 * 60 * 60 * 1000;
+/** How far past this Worker's clock a run's times may be: a runtime's clock may run slightly ahead. */
+const CLOCK_SKEW_MS = 5 * 60 * 1000;
 
 /**
  * An error as one safe line: its name and the first line of its message, capped. A D1 error can quote SQL
@@ -701,16 +703,19 @@ export function proposalNote(raw: unknown): string | null {
 
 // ---------- runtime: ledger + trip ----------
 
-function isoTime(raw: unknown, name: string, required: boolean): string | null {
+function isoTime(raw: unknown, name: string, required: boolean, nowMs: number): string | null {
   if (raw === undefined || raw === null) {
     if (required) throw new ApiError(400, "invalid_run", `${name} is required (ISO-8601)`);
     return null;
   }
   const ms = typeof raw === "string" && raw.length <= 40 ? Date.parse(raw) : Number.NaN;
-  // Years 2000–9999: Date#toISOString() of anything outside a 4-digit year isn't the sortable shape
-  // every other timestamp in the store has.
-  if (!Number.isFinite(ms) || ms < Date.UTC(2000, 0, 1) || ms >= Date.UTC(10000, 0, 1))
+  // From 2000: Date#toISOString() of anything outside a 4-digit year isn't the sortable shape every other
+  // timestamp in the store has.
+  if (!Number.isFinite(ms) || ms < Date.UTC(2000, 0, 1))
     throw new ApiError(400, "invalid_run", `${name} must be an ISO-8601 time`);
+  // A future start would stay its stage's latest run, so the stage could never read as overdue.
+  if (ms > nowMs + CLOCK_SKEW_MS)
+    throw new ApiError(400, "invalid_run", `${name} is in the future`);
   return new Date(ms).toISOString();
 }
 
@@ -773,8 +778,9 @@ export async function recordRun(db: D1Database, caller: Caller, body: unknown, n
     }
     units[unit] = n;
   }
-  const startedAt = isoTime(field(body, "startedAt"), "startedAt", true) as string;
-  const finishedAt = isoTime(field(body, "finishedAt"), "finishedAt", false);
+  const nowMs = Date.parse(now);
+  const startedAt = isoTime(field(body, "startedAt"), "startedAt", true, nowMs) as string;
+  const finishedAt = isoTime(field(body, "finishedAt"), "finishedAt", false, nowMs);
   if (finishedAt !== null && finishedAt < startedAt) {
     throw new ApiError(400, "invalid_run", "finishedAt is before startedAt");
   }

@@ -185,9 +185,7 @@ function relatedRows(view: StatusView, s: StageRow): string[] {
       .map((p) =>
         item({
           title: `<a href="/health" title="${esc(p.id)}">${esc(p.label)}</a>`,
-          lines: [
-            `health check watching it${p.watchedStageOff ? " · skipped while this stage is off" : ""}`,
-          ],
+          lines: ["health check watching it"],
           end: mode(p.effective, "check"),
         }),
       ),

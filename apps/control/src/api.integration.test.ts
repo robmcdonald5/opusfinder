@@ -870,6 +870,7 @@ describe("runtime: ledger + trip", () => {
       },
     ],
     ["a year-0 start time", { stage: "ingest", outcome: "ok", startedAt: "0000-01-01T00:00:00Z" }],
+    ["a future start time", { stage: "ingest", outcome: "ok", startedAt: "2099-01-01T00:00:00Z" }],
     [
       "a finish before the start",
       {

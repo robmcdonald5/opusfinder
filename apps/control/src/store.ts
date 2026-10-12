@@ -431,10 +431,13 @@ export interface RunFilter extends TimeRange {
  * everything that sorts after it on (started_at, id). Every filter is a bound parameter (NULL = no filter).
  */
 export async function listRuns(db: D1Database, f: RunFilter): Promise<LedgerRow[]> {
+  // The stage filter stands alone: inside `?1 IS NULL OR …` SQLite can't seek (stage, started_at, id), and
+  // walks the whole ledger for a stage with few or no runs.
+  const stage = f.stage === undefined ? "?1 IS NULL" : "stage = ?1";
   const { results } = await db
     .prepare(
       `SELECT * FROM ledger
-       WHERE (?1 IS NULL OR stage = ?1) AND (?2 IS NULL OR outcome = ?2)
+       WHERE ${stage} AND (?2 IS NULL OR outcome = ?2)
          AND (?3 IS NULL OR (started_at, id) < (SELECT started_at, id FROM ledger WHERE id = ?3))
          AND (?5 IS NULL OR started_at >= ?5) AND (?6 IS NULL OR started_at < ?6)
        ORDER BY started_at DESC, id DESC LIMIT ?4`,
