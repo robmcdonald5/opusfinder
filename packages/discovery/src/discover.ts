@@ -27,9 +27,9 @@ export interface DiscoveryOptions {
   source?: SourceName;
   /**
    * Cap the NEW/INACTIVE-candidate probe worklist (omit = no cap — probe every resolved candidate).
-   * A fixed seed-ordered PREFIX slice, NOT a cursor: repeated capped runs re-probe the same head
-   * (live candidates reactivate and drop out, so progress is throttled, not zero). For ad-hoc/test
-   * runs — the broad pass is uncapped.
+   * A fixed lane-ordered PREFIX slice, NOT a cursor: repeated capped runs re-probe the same head (live
+   * candidates reactivate and drop out, never-live ones stay). The weekly Worker run is capped, which is
+   * why SEED_LANES lists fresh-supply lanes first.
    */
   limit?: number;
   /** Preview only: probe + classify + tally, but write NOTHING (no upsert, reprobe, sweep, or run row). */
@@ -88,9 +88,13 @@ export interface DiscoveryCounts {
   reprobeInconclusive: number;
   deactivated: number;
   budgetSkipped: number; // candidates of either pass left unprobed once opts.maxRunMs ran out
+  // BOTH passes: probes whose final attempt was a 429 / 5xx. They already sit in indeterminate /
+  // reprobeInconclusive; broken out so vendor throttling can't hide among SmartRecruiters' routine 200-empty.
+  rateLimited: number;
+  serverError: number;
   // Board-death close: count-only/shadow → wouldCloseOnDeactivation; enforce writes closed.
-  jobsClosedOnDeactivation: number; // active jobs of deactivated boards flipped to 'closed' (enforce; 0 in shadow)
-  wouldCloseOnDeactivation: number; // active jobs of deactivated boards that WOULD close (shadow; 0 in enforce)
+  jobsClosedOnDeactivation: number; // active jobs of inactive boards flipped to 'closed' (enforce; 0 in shadow)
+  wouldCloseOnDeactivation: number; // active jobs of inactive boards that WOULD close (shadow; 0 in enforce)
 }
 
 /**
@@ -104,10 +108,10 @@ export interface DiscoveryCounts {
  */
 export async function runDiscovery(db: Db, opts: DiscoveryOptions = {}): Promise<DiscoveryCounts> {
   const dryRun = opts.dryRun ?? false;
-  // Coerce a non-positive window to the default: a 0/negative `olderThanDays` makes deactivateStale
-  // sweep EVERY failing row (COALESCE(...) < now() - 0), which a plain `?? DEFAULT` would not catch.
+  // Coerce a window under one day to the default: deactivateStale truncates to whole days, and a 0-day
+  // window sweeps EVERY failing row (COALESCE(...) < now() - 0), which a plain `?? DEFAULT` would not catch.
   const olderThanDays =
-    opts.olderThanDays !== undefined && opts.olderThanDays > 0
+    opts.olderThanDays !== undefined && opts.olderThanDays >= 1
       ? opts.olderThanDays
       : DEFAULT_OLDER_THAN_DAYS;
   const counts = emptyCounts();
@@ -172,10 +176,16 @@ export async function runDiscovery(db: Db, opts: DiscoveryOptions = {}): Promise
     if (!dryRun) {
       const deactivatedIds = await deactivateStale(db, olderThanDays, { source: opts.source });
       counts.deactivated = deactivatedIds.length;
-      // Soft-close every still-active job of a just-deactivated (board-death) company — the reprobe path
-      // can't see them (activeOnly:true never re-fetches a dead board). Default count-only/shadow (tally
-      // wouldCloseOnDeactivation, write no 'closed'); enforcement rides opts.enforceLifecycle.
-      const boardClose = await closeJobsForCompanies(db, deactivatedIds, {
+      // Soft-close every still-active job of an INACTIVE (board-death) company in scope — activeOnly:true
+      // ingestion never re-fetches a dead board, so nothing else reaches them. All of them, not just the rows
+      // deactivateStale flipped now: it never returns a row twice, so a close skipped in shadow (the CLI never
+      // enforces) or lost after the deactivation committed would orphan those jobs for good. Read after the
+      // sweep so this run's reactivations and deactivations both count. Count-only (wouldCloseOnDeactivation)
+      // unless opts.enforceLifecycle.
+      const inactiveIds = (await listCompanyStates(db, { source: opts.source }))
+        .filter((s) => !s.active)
+        .map((s) => s.id);
+      const boardClose = await closeJobsForCompanies(db, inactiveIds, {
         enforce: opts.enforceLifecycle ?? false,
       });
       counts.jobsClosedOnDeactivation = boardClose.closed;
@@ -217,7 +227,7 @@ async function probeAndUpsert(
     if (r.outcome === "live" || r.outcome === "live-empty") {
       if (!dryRun) {
         const id = await upsertCompany(db, c.slug, c.source);
-        await markProbeResult(db, id, true); // insert-or-reactivate; stamps last_live_at
+        await markProbeResult(db, [id], true); // insert-or-reactivate; stamps last_live_at
       }
       counts.upserted += 1; // upsert is get-or-create + reactivate, so this is "live-and-written", not strictly new
     }
@@ -247,6 +257,10 @@ async function reprobeActive(
     sourceUrl: "",
   }));
   const results = await probeCandidates(candidates, probeOpts);
+  // One UPDATE per outcome, not per row: each write is a neon-http round trip.
+  const live: number[] = [];
+  const absent: number[] = [];
+  const inconclusive: number[] = [];
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i];
     const r = results[i];
@@ -256,17 +270,17 @@ async function reprobeActive(
       continue;
     }
     counts.reprobed += 1;
-    if (r.outcome === "live" || r.outcome === "live-empty") {
-      await markProbeResult(db, row.id, true);
-      counts.refreshedLive += 1;
-    } else if (r.outcome === "absent") {
-      await markProbeResult(db, row.id, false);
-      counts.markedFailed += 1;
-    } else {
-      await markProbed(db, row.id); // inconclusive: advance the probe cursor, don't drift the streak
-      counts.reprobeInconclusive += 1;
-    }
+    tallyStatus(counts, r.status);
+    if (r.outcome === "live" || r.outcome === "live-empty") live.push(row.id);
+    else if (r.outcome === "absent") absent.push(row.id);
+    else inconclusive.push(row.id);
   }
+  await markProbeResult(db, live, true);
+  counts.refreshedLive = live.length;
+  await markProbeResult(db, absent, false);
+  counts.markedFailed = absent.length;
+  await markProbed(db, inconclusive); // inconclusive: advance the probe cursor, don't drift the streak
+  counts.reprobeInconclusive = inconclusive.length;
 }
 
 /** Tally one probe outcome. status 0 (network-exhausted) is `transientFailed`, NOT a real outcome. */
@@ -275,10 +289,16 @@ function tally(counts: DiscoveryCounts, r: ProbeResult): void {
     counts.transientFailed += 1;
     return;
   }
+  tallyStatus(counts, r.status);
   if (r.outcome === "live") counts.live += 1;
   else if (r.outcome === "live-empty") counts.liveEmpty += 1;
   else if (r.outcome === "absent") counts.absent += 1;
   else counts.indeterminate += 1;
+}
+
+function tallyStatus(counts: DiscoveryCounts, status: number): void {
+  if (status === 429) counts.rateLimited += 1;
+  else if (status >= 500) counts.serverError += 1;
 }
 
 /**
@@ -385,6 +405,8 @@ export function emptyCounts(): DiscoveryCounts {
     reprobeInconclusive: 0,
     deactivated: 0,
     budgetSkipped: 0,
+    rateLimited: 0,
+    serverError: 0,
     jobsClosedOnDeactivation: 0,
     wouldCloseOnDeactivation: 0,
   };
@@ -401,6 +423,7 @@ function logSummary(counts: DiscoveryCounts, dryRun: boolean): void {
       `indet ${counts.indeterminate}, transient ${counts.transientFailed}; upserted ${counts.upserted}, ` +
       `reprobed ${counts.reprobed}, refreshed ${counts.refreshedLive}, marked-failed ${counts.markedFailed}, ` +
       `inconclusive ${counts.reprobeInconclusive}, deactivated ${counts.deactivated} ` +
-      `(board-close: ${counts.jobsClosedOnDeactivation} closed, ${counts.wouldCloseOnDeactivation} would-close).`,
+      `(board-close: ${counts.jobsClosedOnDeactivation} closed, ${counts.wouldCloseOnDeactivation} would-close). ` +
+      `Final 429 ${counts.rateLimited}, 5xx ${counts.serverError}.`,
   );
 }

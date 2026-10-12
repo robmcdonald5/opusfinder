@@ -214,7 +214,7 @@ async function closeActiveJobsBy(
 }
 
 /**
- * Bulk soft-close every still-active job of the given (just-deactivated) companies — the board-death path
+ * Bulk soft-close every still-active job of the given (inactive) companies — the board-death path
  * the feed-absence sweep is structurally blind to (a deactivated board runs activeOnly:true and is never
  * re-fetched, so its jobs never enter that sweep). NOT streak-gated: deactivateStale only deactivates a
  * board that failed a probe and has had no live probe or successful ingest for ~30 days. Reversal needs a

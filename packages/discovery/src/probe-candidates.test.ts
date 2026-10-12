@@ -4,20 +4,19 @@ import { companySlug } from "@opusfinder/shared";
 import type { SourceName } from "@opusfinder/shared";
 
 import { fakeResponse } from "../test/http-stubs";
-import { probeCandidate, probeCandidates } from "./probe";
+import { probeCandidates } from "./probe";
 import type { Candidate } from "./types";
 
-// Leaf pure-unit for the candidate-level probe entry points, driven through the REAL adapter
-// registry (no adapter stubs): `probeCandidate` builds a candidate's `jobsRequest`, fetches, and
+// Leaf pure-unit for the candidate-level probe entry point, driven through the REAL adapter
+// registry (no adapter stubs): `probeCandidates` builds each candidate's request, fetches, and
 // classifies — via greenhouse's DEFAULT classifier (live / live-empty / absent) and via
 // smartrecruiters' `classifyProbe` override (its ambiguous 200 + totalFound:0 is indeterminate).
-// `probeCandidates` runs a batch through the bounded, polite pool: results preserve INPUT order
-// index-for-index, and a non-zero `hostMinIntervalMs` serializes same-host STARTS. `fetch` is
-// stubbed and matched by URL substring (the greenhouse jobsRequest URL carries the rawSlug). The
-// pool's per-host sleeps run on a REAL setTimeout → FAKE timers + the ASYNC advance api. Ports
-// scripts/test-probe.ts (the probeCandidate/probeCandidates half).
+// It runs a batch through the bounded, polite pool: results preserve INPUT order index-for-index,
+// and a non-zero `hostMinIntervalMs` serializes same-host STARTS. `fetch` is stubbed and matched by
+// URL substring (the greenhouse request URL carries the rawSlug). The pool's per-host sleeps run on a
+// REAL setTimeout → FAKE timers + the ASYNC advance api.
 
-// candidate() factory from the smoke: `slug` is branded via companySlug (Candidate.slug is a
+// candidate() factory: `slug` is branded via companySlug (Candidate.slug is a
 // branded CompanySlug — a plain string would not typecheck).
 const candidate = (source: SourceName, slug: string, host: string): Candidate => ({
   source,
@@ -51,7 +50,10 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("probeCandidate", () => {
+// One candidate through the pool: the first start to a host never waits on the throttle.
+const probeOne = async (c: Candidate) => (await probeCandidates([c]))[0]!;
+
+describe("probeCandidates — classification", () => {
   // greenhouse uses the DEFAULT classifier (no classifyProbe override).
   describe("greenhouse (default classifier)", () => {
     const gh = candidate("greenhouse", "acme", "boards.greenhouse.io");
@@ -59,19 +61,19 @@ describe("probeCandidate", () => {
     it("200 + non-empty jobs → live", async () => {
       handler = () => fakeResponse(200, JSON.stringify({ jobs: [{ id: 1, title: "x" }] }));
 
-      expect((await probeCandidate(gh)).outcome).toBe("live");
+      expect((await probeOne(gh)).outcome).toBe("live");
     });
 
     it("200 + empty jobs → live-empty", async () => {
       handler = () => fakeResponse(200, JSON.stringify({ jobs: [] }));
 
-      expect((await probeCandidate(gh)).outcome).toBe("live-empty");
+      expect((await probeOne(gh)).outcome).toBe("live-empty");
     });
 
     it("404 → absent", async () => {
       handler = () => fakeResponse(404, "not found");
 
-      expect((await probeCandidate(gh)).outcome).toBe("absent");
+      expect((await probeOne(gh)).outcome).toBe("absent");
     });
   });
 
@@ -82,14 +84,26 @@ describe("probeCandidate", () => {
     it("200 + totalFound:0 → indeterminate (unassertable, never absent)", async () => {
       handler = () => fakeResponse(200, JSON.stringify({ content: [], totalFound: 0 }));
 
-      expect((await probeCandidate(sr)).outcome).toBe("indeterminate");
+      expect((await probeOne(sr)).outcome).toBe("indeterminate");
     });
 
     it("200 + totalFound:1 → live", async () => {
       handler = () => fakeResponse(200, JSON.stringify({ content: [{}], totalFound: 1 }));
 
-      expect((await probeCandidate(sr)).outcome).toBe("live");
+      expect((await probeOne(sr)).outcome).toBe("live");
     });
+  });
+
+  it("sends the adapter's probeRequest — the board listing without the descriptions ingestion fetches", async () => {
+    handler = () => fakeResponse(200, JSON.stringify({ jobs: [] }));
+
+    await probeOne(candidate("greenhouse", "acme", "boards.greenhouse.io"));
+    await probeOne(candidate("workable", "acme", "apply.workable.com"));
+
+    expect(fetchCalls).toEqual([
+      "https://boards-api.greenhouse.io/v1/boards/acme/jobs",
+      "https://apply.workable.com/api/v1/widget/accounts/acme",
+    ]);
   });
 });
 

@@ -41,6 +41,7 @@ export const greenhouseAdapter: SourceAdapter = {
   },
 
   jobsRequest: (ctx) => ({ url: `${BOARDS_API}/${ctx.slug}/jobs?content=true` }),
+  probeRequest: (ctx) => ({ url: `${BOARDS_API}/${ctx.slug}/jobs` }),
 
   locate: (body, ctx) => {
     if (!isRecord(body) || !Array.isArray(body.jobs)) {

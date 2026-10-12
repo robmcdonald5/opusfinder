@@ -47,6 +47,7 @@ export const workableAdapter: SourceAdapter = {
   },
 
   jobsRequest: (ctx) => ({ url: `${WIDGET_API}/${ctx.slug}?details=true` }),
+  probeRequest: (ctx) => ({ url: `${WIDGET_API}/${ctx.slug}` }),
 
   locate: (body, ctx) => {
     // body.name / body.description are the COMPANY blurb, not job data — only body.jobs[].

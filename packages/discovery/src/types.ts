@@ -1,8 +1,6 @@
 import type { CompanySlug, SourceName } from "@opusfinder/shared";
 import type { ProbeOutcome } from "@opusfinder/sources";
 
-export type { ProbeOutcome };
-
 /**
  * A resolved discovery candidate — a (source, slug) pair the prober can validate, plus provenance.
  * The seed resolver produces these: `slug` is the canonical post-`normalizeSlug` form, `rawSlug` is the

@@ -41,19 +41,21 @@ isolate (`runDiscovery` is argv-free for that).
 4. **Reprobe** — `listCompaniesForReprobe` re-checks the oldest-probed ACTIVE companies; live refreshes
    them, a confirmed `absent` increments the failure streak (`markProbeResult(live=false)`). It runs
    before the worklist, so when the Worker's run budget runs out it is new supply that waits, not upkeep.
-5. **Probe + classify** (`probe.ts`) — `probeCandidates` reuses `adapters[source].jobsRequest(ctx,
-null)` through a NON-throwing, per-host-throttled fetcher (a 404/400/200-empty is the signal, not an
-   error). Each response is classified by `adapters[source].classifyProbe?` or the status-first
+5. **Probe + classify** (`probe.ts`) — `probeCandidates` sends `adapters[source].probeRequest?(ctx)`
+   (the first page without posting content), else `jobsRequest(ctx, null)`, through a NON-throwing,
+   per-host-throttled fetcher (a 404/400/200-empty is the signal, not an error). Each response is
+   classified by `adapters[source].classifyProbe?` or the status-first
    `defaultClassify` → `live` / `live-empty` / `absent` / `indeterminate`.
 6. **Act** — `live`/`live-empty` ⇒ `upsertCompany` + `markProbeResult(live=true)`; `absent` ⇒ dropped;
    `indeterminate` / transient (network-exhausted) ⇒ left for a later run.
-7. **Sweep** — `deactivateStale(30)` flips `active=false` for any row failing past the window, and (Phase F2,
-   Arm B) bulk-closes those just-deactivated boards' still-active jobs via `closeJobsForCompanies` — the orphan
-   class the ingest-time feed-absence sweep is blind to, since a deactivated board is never re-fetched.
-   `deactivateStale` was widened to RETURN the deactivated company ids; the close is tallied onto the run's
-   `source_runs.counts` (`jobsClosedOnDeactivation` / `wouldCloseOnDeactivation`). Shipped SHADOW (count-only);
-   enforcement rides the single `LIFECYCLE_CLOSE_ENFORCE` switch via `runDiscovery`'s `enforceLifecycle` option (the Worker
-   sets it from `parseEnforceFlag(env.LIFECYCLE_CLOSE_ENFORCE)`, the same flag that flips Arm A + Arm C).
+7. **Sweep** — `deactivateStale(30)` flips `active=false` for any row failing past the window, then (Phase F2,
+   Arm B) `closeJobsForCompanies` soft-closes the still-active jobs of EVERY inactive board in scope — the orphan
+   class the ingest-time feed-absence sweep is blind to, since a deactivated board is never re-fetched. Closing
+   all of them (not just this run's deactivations) means a close that a shadow run skipped or a failure lost is
+   picked up by the next enforcing run. Tallied onto `source_runs.counts` (`jobsClosedOnDeactivation` /
+   `wouldCloseOnDeactivation`). Count-only unless `runDiscovery`'s `enforceLifecycle` is set: the Worker sets it
+   from `parseEnforceFlag(env.LIFECYCLE_CLOSE_ENFORCE)` (the same flag as Arm A + Arm C); `pnpm discover` never
+   does, so a local run only counts.
 
 ## Usage
 
@@ -105,19 +107,15 @@ lane re-emits its slug, so a deactivated board no lane emits again stays inactiv
 ## Deferred (**F5-LANES-2** / later passes)
 
 Passive DNS (RapidDNS) for subdomain tenants and Common Crawl URL mining are deferred to
-**F5-LANES-2** (both Node-only — `workerSafe: false`), along with the Wave-B seed and an optional
-`probeRequest?` descriptor member to drop hydration params on the bulk pass. (HN "Who is hiring?" /
-Algolia shipped in Phase F5 as the `hn` lane.)
+**F5-LANES-2** (both Node-only — `workerSafe: false`), along with the Wave-B seed. (HN "Who is
+hiring?" / Algolia shipped in Phase F5 as the `hn` lane.)
 
 ## Tests
 
-All suites are co-located `*.test.ts` (Vitest `unit` project), run from the repo root:
+Run from the repo root:
 
 ```bash
-pnpm exec vitest run packages/discovery     # this package: selectLanes/resolveLanes, resolveUrl/resolveSeed,
-                                            # probeFetch/probeCandidate(s), HostThrottle, parseHnThread (all offline)
-
-# Opt-in live gates (real network, skipped unless the flag is set):
-$env:HN_LIVE_TEST="1";      pnpm exec vitest run packages/discovery/src/lanes/hn.test.ts   # hits real HN Algolia
-$env:OUTSCAL_SEED_LIVE="1"; pnpm exec vitest run packages/discovery/src/resolve.test.ts    # resolves the real pinned seed
+pnpm test packages/discovery                              # unit + integration, offline
+HN_LIVE_TEST=1 pnpm test:live packages/discovery          # live gate: the real HN Algolia lane
+OUTSCAL_SEED_LIVE=1 pnpm test:live packages/discovery     # live gate: resolves the real pinned seed
 ```

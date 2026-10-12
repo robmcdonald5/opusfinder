@@ -125,10 +125,9 @@ Run from the repo root via the workspace filter so the cwd is `packages/db`:
   already filtered on it). The lifecycle writers live in `repos/lifecycle.ts`: `sweepLifecycle` (Arm A —
   per-board feed-absence sweep, one race-safe SQL-side-increment UPDATE) + `closeJobsForCompanies` /
   `closeJobsByIds` (Arm B/C — bulk-close a dead board's still-active jobs / the explicit-410 digest items).
-  `repos/discovery.ts`'s `deactivateStale` was widened to RETURN the deactivated ids (was a bare count) so
-  Arm B can close their jobs. The lifecycle only soft-closes; deleting closed rows is the prune's job (see
-  Migrations 0018-0024). Suite: `pnpm exec vitest run packages/db/src/repos/lifecycle.test.ts` (no
-  creds). **Ships SHADOW / count-only by DEFAULT** — the `'closed'` flip is suppressed and tallied as
+  The lifecycle only soft-closes; deleting closed rows is the prune's job (see Migrations 0018-0024).
+  Suite: `pnpm exec vitest run packages/db/src/repos/lifecycle.test.ts` (no creds).
+  **Ships SHADOW / count-only by DEFAULT** — the `'closed'` flip is suppressed and tallied as
   `wouldClose` unless a SINGLE `LIFECYCLE_CLOSE_ENFORCE` switch (`parseEnforceFlag` in `@opusfinder/shared`) is on; it's
   threaded through all three arms with no multi-site code edit — the scrapers Worker reads `env.LIFECYCLE_CLOSE_ENFORCE`
   (wrangler `[vars]`) for Arms A/B, and the digest runtime reads `process.env.LIFECYCLE_CLOSE_ENFORCE` for Arm C.

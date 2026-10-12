@@ -3,13 +3,13 @@ import { describe, expect, it } from "vitest";
 import { resolveSeed, resolveUrl, type ResolveCounts } from "./resolve";
 import type { CompanyRecord } from "./seed";
 
-// Leaf pure-unit for the seed resolver (offline, deterministic — no timers, no network). Ports
-// scripts/test-resolve.ts. `resolveUrl` is URL → (source, rawSlug) by first-matching adapter;
+// Leaf pure-unit for the seed resolver (offline, deterministic — no timers, no network).
+// `resolveUrl` is URL → (source, rawSlug) by first-matching adapter;
 // `resolveSeed` folds seed records into a deduped Candidate[] while tallying every drop (badUrl /
-// deferredNoAdapter / invalidSlug). The synthetic fixture is copied VERBATIM from the smoke.
+// deferredNoAdapter / invalidSlug).
 
 /**
- * The smoke's synthetic records, frozen so a test can't mutate shared fixture state. `resolveSeed`
+ * Synthetic seed records, frozen so a test can't mutate shared fixture state. `resolveSeed`
  * only reads these, so an in-place freeze is safe and keeps the declared `CompanyRecord[]` type.
  */
 const SYNTHETIC_RECORDS: CompanyRecord[] = [

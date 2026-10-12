@@ -99,7 +99,7 @@ function atsUrlsFromComment(text: string): string[] {
 /**
  * Pure parse of a fetched HN thread tree → CompanyRecord[] (one record per hiring comment that carries
  * ≥1 covered board URL). Split out from the fetch so it is unit-testable from a captured payload with no
- * network (scripts/test-lane-hn.ts).
+ * network.
  */
 export function parseHnThread(thread: HnItem): CompanyRecord[] {
   const texts: string[] = [];

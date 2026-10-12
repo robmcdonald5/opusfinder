@@ -103,7 +103,7 @@ describe("discovery repo — companies lifecycle field semantics (integration: r
         lastProbedAt: SENTINEL_2020,
         updatedAt: SENTINEL_2020,
       });
-      // Bystander with identical sentinels: the eq(id) scope must leave it byte-identical.
+      // Bystander with identical sentinels: the id scope must leave it byte-identical.
       const bystander = await seedCompany({
         slug: "bystander",
         active: false,
@@ -114,7 +114,7 @@ describe("discovery repo — companies lifecycle field semantics (integration: r
       });
       const bystanderBefore = await readCompany(bystander);
 
-      await markProbeResult(db, id, true);
+      await markProbeResult(db, [id], true);
 
       const row = await readCompany(id);
       expect(row.active).toBe(true); // dropping `active: true` from the live spread leaves it false
@@ -123,7 +123,7 @@ describe("discovery repo — companies lifecycle field semantics (integration: r
       expect(row.lastLiveAt!.getTime()).toBeGreaterThan(SENTINEL_2020.getTime());
       expect(row.lastProbedAt!.getTime()).toBeGreaterThan(SENTINEL_2020.getTime());
       expect(row.updatedAt.getTime()).toBeGreaterThan(SENTINEL_2020.getTime());
-      // Scope: any write landing on the bystander means the eq(id) predicate was dropped.
+      // Scope: any write landing on the bystander means the id predicate was dropped.
       expect(await readCompany(bystander)).toEqual(bystanderBefore);
     });
 
@@ -146,7 +146,7 @@ describe("discovery repo — companies lifecycle field semantics (integration: r
       });
       const bystanderBefore = await readCompany(bystander);
 
-      await markProbeResult(db, id, false);
+      await markProbeResult(db, [id], false);
 
       const row = await readCompany(id);
       expect(row.consecutiveProbeFailures).toBe(2); // SQL-side `failures + 1`: a reset-to-0 mutation flips this
@@ -185,7 +185,7 @@ describe("discovery repo — companies lifecycle field semantics (integration: r
       });
       const bystanderBefore = await readCompany(bystander);
 
-      await markProbed(db, id);
+      await markProbed(db, [id]);
 
       const row = await readCompany(id);
       expect(row.lastProbedAt!.getTime()).toBeGreaterThan(SENTINEL_2020.getTime());

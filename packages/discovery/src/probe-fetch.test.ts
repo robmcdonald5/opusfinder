@@ -11,7 +11,7 @@ import { probeFetch } from "./probe";
 // transient retry: a 429/5xx is retried through the shared `backoff`, and a `Retry-After` header
 // wins over the default exponential wait. `fetch` is stubbed (no network) and the backoff sleeps
 // are driven with FAKE timers via the ASYNC advance api — the sync advance would not flush the
-// awaited fetch/backoff promises. Ports scripts/test-probe.ts (the probeFetch half).
+// awaited fetch/backoff promises.
 
 const req = (url: string): JobsRequest => ({ url });
 
@@ -153,15 +153,19 @@ describe("probeFetch", () => {
     }
   });
 
-  it("a 2xx whose body read fails (e.g. the timeout firing mid-stream) → status 0, never a throw", async () => {
+  it("a 2xx whose body read fails (cut stream, or the timeout mid-stream) is retried, then status 0 — never a throw", async () => {
     handler = () =>
       ({
         status: 200,
         headers: { get: () => null },
-        text: () => Promise.reject(new Error("aborted")),
+        text: () => Promise.reject(new TypeError("terminated")),
       }) as unknown as Response;
 
-    expect(await probeFetch(req("https://x/y"), 0)).toEqual({ status: 0, body: undefined });
+    const promise = probeFetch(req("https://x/y"), 1);
+    await vi.runAllTimersAsync();
+
+    expect(await promise).toEqual({ status: 0, body: undefined });
+    expect(fetchCalls).toHaveLength(2);
   });
 
   it("a network throw with maxRetries 0 → status 0 (network-exhausted)", async () => {
