@@ -2,7 +2,8 @@
 
 Cross-package types and validators, plus a few small cross-cutting runtime helpers.
 Exports the raw `src/index.ts` barrel (types + validators, dependency-free), a
-`@opusfinder/shared/script` subpath for the CLI runner (dependency-free), a
+`@opusfinder/shared/script` subpath for the CLI runner and a `@opusfinder/shared/errors` subpath for
+log-safe error text (both dependency-free), a
 `@opusfinder/shared/env` subpath for env loading (depends on `dotenv`), a
 `@opusfinder/shared/async` subpath for the shared retry/backoff (dependency-free, Worker-forward),
 and a `@opusfinder/shared/userid` subpath for deterministic user-id minting (depends on
@@ -100,7 +101,8 @@ part of the vector (it comes from the Phase-12 form, feeds the deterministic fil
 
 `runScript(label, main)` (from `@opusfinder/shared/script`) is the shared failure
 tail for every tsx CLI entry point. It runs `main`, and on a thrown error logs
-`` `${label} failed: <message>` `` and sets `process.exitCode = 1`.
+`` `${label} failed: <describeDbError text>` `` (a failed query reads as its Postgres cause, never
+drizzle's params) and sets `process.exitCode = 1`.
 
 It deliberately never calls `process.exit()`: an abrupt exit while an undici /
 neon-http socket handle is still closing trips a libuv assertion on Windows
