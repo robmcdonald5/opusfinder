@@ -65,7 +65,7 @@ describe("generateObject — Anthropic Messages over MSW", () => {
     );
 
     expect(err.message).toBe(
-      "generateObject(): output was truncated at maxOutputTokens=2048; raise maxOutputTokens (set by the caller, e.g. scripts/seams.ts).",
+      "generateObject(): output was truncated at maxOutputTokens=2048; raise the caller's maxOutputTokens.",
     );
     expect(err.cause).toBeDefined(); // the SDK's NoObjectGeneratedError is preserved
   });

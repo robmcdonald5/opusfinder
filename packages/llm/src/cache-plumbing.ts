@@ -39,8 +39,8 @@ export interface CacheableRequest {
 /**
  * Build the request fields for an optionally-cached system prompt. A plain `system: string` can't
  * carry a cacheControl breakpoint, so when caching is requested we promote it to a leading
- * cache-marked system message + `allowSystemInMessages` (the flag is a no-op on ai@5, which allows
- * system-in-messages by default; kept for ai@7 forward-compat). Otherwise the plain `system` passes through.
+ * cache-marked system message + `allowSystemInMessages` (left unset, ai@5 logs a prompt-injection
+ * warning on every such call). Otherwise the plain `system` passes through.
  */
 export function buildCacheableRequest(opts: {
   system?: string;

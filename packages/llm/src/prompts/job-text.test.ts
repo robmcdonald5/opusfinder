@@ -41,6 +41,13 @@ describe("job text in the rerank and synthesis prompts", () => {
     expect(digest.match(/<\/?job/gi)).toHaveLength(2);
   });
 
+  it("tags each rerank candidate with its id, keeping text at the cap whole and cutting past it", () => {
+    const render = (descriptionText: string) =>
+      renderRerankCandidates([{ id: 7, title: "Engineer", descriptionText }], { descriptionChars: 5 });
+    expect(render("abcde")).toContain('<job id="7">\nEngineer\nabcde\n</job>');
+    expect(render("abcdef")).toContain('<job id="7">\nEngineer\nabcde…\n</job>');
+  });
+
   it("caps a huge title", () => {
     const out = renderRerankCandidates([
       { id: 1, title: "t".repeat(10_000), descriptionText: "d" },

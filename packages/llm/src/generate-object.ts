@@ -105,7 +105,7 @@ export async function generateObject<T>(
       const finishReason = err.finishReason;
       const why =
         finishReason === "length"
-          ? `output was truncated at maxOutputTokens=${effectiveMax}; raise maxOutputTokens (set by the caller, e.g. scripts/seams.ts)`
+          ? `output was truncated at maxOutputTokens=${effectiveMax}; raise the caller's maxOutputTokens`
           : `the model did not return schema-valid JSON (finishReason=${finishReason ?? "unknown"})`;
       throw new ObjectGenerationError(`generateObject(): ${why}.`, { cause: err });
     }

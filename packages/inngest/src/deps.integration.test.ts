@@ -22,6 +22,13 @@ const CANDIDATES = Array.from({ length: 14 }, (_, i) => ({
 }));
 const FIRST_CHUNK_SCORES = CANDIDATES.slice(0, 13).map((c) => ({ id: c.id, score: 0.8 }));
 
+/** Answer the Nth Messages call with the Nth reply; returns a call counter. */
+function replyInOrder(...replies: object[]): () => number {
+  let calls = 0;
+  server.use(http.post(MESSAGES_URL, () => HttpResponse.json(replies[calls++])));
+  return () => calls;
+}
+
 describe("buildDigestDeps().rerank — real generateObject over MSW", () => {
   beforeAll(() => {
     vi.stubEnv("ANTHROPIC_API_KEY", "sk-ant-test");
@@ -30,24 +37,52 @@ describe("buildDigestDeps().rerank — real generateObject over MSW", () => {
   afterAll(() => vi.unstubAllEnvs());
 
   it("leaves a chunk with an unusable reply unscored and keeps the chunks already scored", async () => {
-    let calls = 0;
-    server.use(
-      http.post(MESSAGES_URL, () => {
-        calls++;
-        return HttpResponse.json(
-          calls === 1
-            ? anthropicMessage({ text: JSON.stringify({ scores: FIRST_CHUNK_SCORES }) })
-            : anthropicMessage({ text: "I can't score these postings." }),
-        );
+    const calls = replyInOrder(
+      anthropicMessage({ text: JSON.stringify({ scores: FIRST_CHUNK_SCORES }) }),
+      anthropicMessage({ text: "I can't score these postings." }),
+    );
+
+    const outcome = await buildDigestDeps().rerank(PROFILE, CANDIDATES);
+
+    expect(calls()).toBe(2);
+    expect(outcome.scores.size).toBe(13);
+    expect(outcome.scores.has(14)).toBe(false);
+    expect(outcome.orderedIds).toHaveLength(14); // the unscored candidate is backfilled last
+  });
+
+  it("leaves a chunk scored on the wrong scale unscored instead of clamping it to 1.0", async () => {
+    const zeroToTen = CANDIDATES.slice(0, 13).map((c, i) => ({ id: c.id, score: (i % 3) + 1 }));
+    replyInOrder(
+      anthropicMessage({ text: JSON.stringify({ scores: zeroToTen }) }),
+      anthropicMessage({ text: JSON.stringify({ scores: [{ id: 14, score: 0.9 }] }) }),
+    );
+
+    const outcome = await buildDigestDeps().rerank(PROFILE, CANDIDATES);
+
+    expect([...outcome.scores]).toEqual([[14, 0.9]]);
+  });
+
+  it("sums token and prompt-cache counters across chunks", async () => {
+    replyInOrder(
+      anthropicMessage({
+        text: JSON.stringify({ scores: FIRST_CHUNK_SCORES }),
+        usage: {
+          input_tokens: 100,
+          output_tokens: 20,
+          cache_creation_input_tokens: 4000,
+          cache_read_input_tokens: 1000,
+        },
+      }),
+      anthropicMessage({
+        text: JSON.stringify({ scores: [{ id: 14, score: 0.6 }] }),
+        usage: { input_tokens: 30, output_tokens: 5, cache_read_input_tokens: 4000 },
       }),
     );
 
     const outcome = await buildDigestDeps().rerank(PROFILE, CANDIDATES);
 
-    expect(calls).toBe(2);
-    expect(outcome.scores.size).toBe(13);
-    expect(outcome.scores.has(14)).toBe(false);
-    expect(outcome.orderedIds).toHaveLength(14); // the unscored candidate is backfilled last
+    expect(outcome.usage).toEqual({ inputTokens: 130, outputTokens: 25 });
+    expect(outcome.cache).toEqual({ creationInputTokens: 4000, readInputTokens: 5000 });
   });
 
   it("still fails the rerank on a provider error", async () => {

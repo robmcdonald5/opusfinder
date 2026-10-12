@@ -7,7 +7,7 @@ import { buildRerankSystem, rerankCandidates, type RerankCall, type RerankCandid
 // of (profile, prefs) — equal inputs (even fresh-but-equal objects) MUST yield the identical string — and
 // rerankCandidates must build it ONCE and hand the same string to every chunk, so a caching call hits the
 // cache on chunks 2..N. A regression that re-derives the system per chunk, or makes it object-identity
-// dependent, silently busts the cache on every request. Ports the cache-stability half of the old script.
+// dependent, silently busts the cache on every request.
 const PROFILE: StructuredProfile = {
   summary: "Software engineer with a few internships; recent CS grad looking for a first full-time role.",
   skills: ["TypeScript", "Node.js", "PostgreSQL"],

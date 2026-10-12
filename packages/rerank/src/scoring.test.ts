@@ -14,8 +14,7 @@ import {
 // depend on: scores clamp into [0,1] and non-finite scores are DROPPED (a NaN would make the sort
 // comparator non-transitive and land junk in digest_items.score); chunking respects DEFAULT_CHUNK_SIZE;
 // the result is ALWAYS a full permutation (scored desc with stable ties, omissions backfilled in original
-// order — eval's assertPermutation requires it); and an error from the call propagates. Ports the scoring
-// half of scripts/test-rerank-prefs.ts plus net-new edge coverage.
+// order — eval's assertPermutation requires it); and an error from the call propagates.
 const PROFILE: StructuredProfile = {
   summary: "Software engineer with a few internships; recent CS grad looking for a first full-time role.",
   skills: ["TypeScript", "Node.js", "PostgreSQL"],

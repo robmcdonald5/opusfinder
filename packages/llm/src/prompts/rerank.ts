@@ -11,13 +11,19 @@ import { jobText, TITLE_CHARS } from "./job-text";
  */
 
 /** Structured output for the rerank call: one 0.0–1.0 relevance score per candidate id (the scale the
- *  `@opusfinder/rerank` rubric defines). The core merges these across chunks and backfills omissions. */
+ *  `@opusfinder/rerank` rubric defines). The core merges these across chunks and backfills omissions.
+ *  The bounds fail a chunk answered on another scale (0–10, 0–100), which the caller leaves unscored;
+ *  without them the core's clamp would turn every score in it into 1.0. */
 export const RerankScoresSchema = z.object({
   scores: z
     .array(
       z.object({
         id: z.number().describe("The candidate job id, exactly as given in the list."),
-        score: z.number().describe("Relevance from 0.0 to 1.0 (higher = better), per the system rubric."),
+        score: z
+          .number()
+          .min(0)
+          .max(1)
+          .describe("Relevance from 0.0 to 1.0 (higher = better), per the system rubric."),
       }),
     )
     .describe("One entry per job in the provided candidate list."),

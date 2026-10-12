@@ -166,7 +166,7 @@ export function buildRerankSystem(profile: StructuredProfile, prefs?: PromptPref
  * cache on chunks 2..N), then returns a global best-first ordering. Scored candidates come first
  * (score desc, ties broken by original order); any candidate the call omitted is BACKFILLED in original
  * order at the end, so the result is ALWAYS a full permutation of the input ids — eval's
- * `assertPermutation` requires this, and the digest simply takes the top-K.
+ * `assertPermutation` requires this. Backfilled ids carry no score, so the digest's score floor drops them.
  */
 export async function rerankCandidates(
   profile: StructuredProfile,
