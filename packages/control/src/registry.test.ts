@@ -74,10 +74,6 @@ describe("registry: modes", () => {
     for (const id of STAGE_IDS) expect(stageDef(id).modes[0]).toBe("off");
   });
 
-  it("every stage fails closed when the store can't be read", () => {
-    for (const id of STAGE_IDS) expect(stageDef(id).onUnreadable).toBe("skip");
-  });
-
   it("seeds today's reality (§12.1) as the registry defaults", () => {
     const initial = Object.fromEntries([
       ["global", globalSwitch.initial],

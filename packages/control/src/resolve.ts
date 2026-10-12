@@ -13,8 +13,6 @@
 // nothing can be more on than its stage, and nothing is on while the master switch is off.
 import {
   MODE_RANK,
-  POLICY_IDS,
-  STAGE_IDS,
   globalSwitch,
   policyDef,
   stageDef,
@@ -27,7 +25,7 @@ import {
   type StageId,
   type StageMode,
 } from "./registry";
-import { entryKnobs, entryModes, formatTarget, type EntryRef, type Target } from "./targets";
+import { entryModes, formatTarget, knobDef, type EntryRef, type Target } from "./targets";
 
 /** Raw `state` rows: target address → stored value. */
 export type StateMap = ReadonlyMap<string, string>;
@@ -100,8 +98,7 @@ export function knobValue(
   state: StateMap,
   target: Extract<Target, { kind: "knob" }>,
 ): Resolved<number> {
-  const knob = entryKnobs(target.entry)[target.knob];
-  if (!knob) throw new Error(`unknown knob ${formatTarget(target)}`);
+  const knob = knobDef(target);
   const raw = state.get(formatTarget(target));
   if (raw === undefined) return { value: knob.default, source: "default" };
   const n = raw.trim() === "" ? Number.NaN : Number(raw);
@@ -162,19 +159,6 @@ export function effectiveMode(
     }
   }
   return { mode, desired, cappedBy };
-}
-
-/** Every stage's and policy's effective mode — handy for the "all off" view and tests. */
-export function effectiveAll(state: StateMap): {
-  global: GlobalMode;
-  stages: Record<StageId, StageMode>;
-  policies: Record<PolicyId, PolicyMode>;
-} {
-  const stagesOut = {} as Record<StageId, StageMode>;
-  for (const id of STAGE_IDS) stagesOut[id] = effectiveMode(state, { stage: id }).mode;
-  const policiesOut = {} as Record<PolicyId, PolicyMode>;
-  for (const id of POLICY_IDS) policiesOut[id] = effectiveMode(state, { policy: id }).mode;
-  return { global: effectiveMode(state, "global").mode, stages: stagesOut, policies: policiesOut };
 }
 
 /** The stored-or-default value of any target, as the canonical string the change log records. */

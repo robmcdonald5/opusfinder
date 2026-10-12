@@ -4,7 +4,6 @@ import { POLICY_IDS, STAGE_IDS, policies, stages } from "./registry";
 import {
   desiredMode,
   desiredValue,
-  effectiveAll,
   effectiveMode,
   knobValue,
   overrideMode,
@@ -88,10 +87,10 @@ describe("fail-closed layer 2: an unrecognised value is off", () => {
   });
 
   it("reads an unrecognised GLOBAL value as off — which turns everything off", () => {
-    const all = effectiveAll(state({ global: "yes" }));
-    expect(all.global).toBe("off");
-    expect(new Set(Object.values(all.stages))).toEqual(new Set(["off"]));
-    expect(new Set(Object.values(all.policies))).toEqual(new Set(["off"]));
+    const s = state({ global: "yes" });
+    expect(effectiveMode(s, "global").mode).toBe("off");
+    for (const id of STAGE_IDS) expect(effectiveMode(s, { stage: id }).mode, id).toBe("off");
+    for (const id of POLICY_IDS) expect(effectiveMode(s, { policy: id }).mode, id).toBe("off");
   });
 
   it("reads an unrecognised override as an 'off' override (narrows, never widens)", () => {

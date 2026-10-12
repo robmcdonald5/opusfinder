@@ -1,6 +1,6 @@
 // classify(change, role) — the ONE policy function deciding whether a caller may apply a change itself,
-// must propose it to the owner, or may not touch it at all (§11.2, T2). The API, the page and `pnpm ctl`
-// all call this; nothing else re-derives the rule.
+// must propose it to the owner, or may not touch it at all (§11.2, T2). The control Worker calls it for
+// every change, from the API (`pnpm ctl` included), the page or RPC; nothing else re-derives the rule.
 //
 // The safe-direction rule (a RATCHET): order every value from less spend/risk to more. A move toward LESS
 // is safe, so an agent may make it on its own; a move toward MORE needs the owner. Worst case under this
@@ -30,7 +30,6 @@ import {
 import { formatTarget, knobDef, type Target } from "./targets";
 
 export type Role = "owner" | "agent" | "runtime";
-export const ROLES: readonly Role[] = ["owner", "agent", "runtime"];
 
 /**
  * A proposed change. `from`/`to` are the RESOLVED desired values (resolve.desiredValue), canonical

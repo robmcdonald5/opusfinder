@@ -585,7 +585,7 @@ interface BindingProps {
  * The runtime RPC surface for Workers in this account (today the scrapers Worker, via its CONTROL service
  * binding, in shadow). Same rules as the HTTP routes with role "runtime": read a gate, write a ledger row,
  * trip a stage off. Errors surface to the caller as thrown exceptions; a caller that can't reach this — or gets
- * an error from gate() — must SKIP its tick (fail-closed layer 3, `onUnreadable: "skip"`).
+ * an error from gate() — must SKIP its tick (fail-closed layer 3).
  */
 export class ControlRpc extends WorkerEntrypoint<Env, BindingProps> {
   private caller(): Caller {

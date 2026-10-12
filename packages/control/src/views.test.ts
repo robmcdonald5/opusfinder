@@ -23,7 +23,6 @@ describe("gateView", () => {
         stale_sweep: { mode: "shadow", knobs: { ttlDays: 21 } },
       },
       overrides: {},
-      onUnreadable: "skip",
     });
   });
 

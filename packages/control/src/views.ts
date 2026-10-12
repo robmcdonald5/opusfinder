@@ -78,7 +78,6 @@ export interface StageView extends Pick<
   effective: StageMode;
   cappedBy: CappedBy;
   agent: AgentRule;
-  onUnreadable: "skip";
   knobs: KnobView[];
   /** The dimensions this stage can be narrowed by, with every known value (for forms). */
   dims: Partial<Record<DimKey, readonly string[]>>;
@@ -171,7 +170,6 @@ export function stageView(state: StateMap, id: StageId): StageView {
     effective: eff.mode,
     cappedBy: eff.cappedBy,
     agent: agentRule({ kind: "mode", entry }),
-    onUnreadable: def.onUnreadable,
     knobs: knobViews(entry, state),
     dims,
     overrides,
@@ -236,7 +234,6 @@ export interface GateView {
   >;
   /** Effective mode for every slice that has an override set, per dimension. */
   overrides: Partial<Record<DimKey, Record<string, StageMode>>>;
-  onUnreadable: "skip";
 }
 
 /** What the control Worker answers (`GET /v1/gate`, `ControlRpc.gate()`): the view plus its provenance. */
@@ -279,6 +276,5 @@ export function gateView(
     knobs,
     policies: policiesOut,
     overrides,
-    onUnreadable: view.onUnreadable,
   };
 }
