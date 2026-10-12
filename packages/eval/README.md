@@ -23,7 +23,6 @@ pnpm eval:compare                               # Voyage vs OpenAI, side-by-side
 pnpm eval:hnsw                                  # HNSW-vs-exact recall on real Neon (read-only)
 
 pnpm exec vitest run packages/eval/src              # self-tests: metrics/cosine/dataset/report (Vitest)
-pnpm --filter @opusfinder/eval export:candidates    # dump real jobs from Neon (labeling aid)
 pnpm --filter @opusfinder/eval build:pool           # per-profile candidate pools from Neon (3 arms)
 pnpm --filter @opusfinder/eval draft-labels         # draft each pool's labels + an owner review sheet
 pnpm --filter @opusfinder/eval build:dataset        # regenerate dataset.jsonl (legacy + pooled)
@@ -88,7 +87,7 @@ derived from a real CV — the 2 seed profiles from the owners' own CVs, the poo
 the CC0 Kaggle "Resume Dataset" (snehaanbhawal; source-anonymized LiveCareer resumes, pulled via
 the `opensporks/resumes` HF mirror) — and is **anonymized** — no names, contact info, employers,
 schools, or URLs; only summary / skills / target roles. Raw CVs live in `data/cvs/` and are
-**gitignored** (never committed), as are the `candidates-export.json` working artifact and `.env`.
+**gitignored** (never committed).
 
 Labels are agent-drafted; the labeling authority (the CV owner for the seed profiles, the repo
 owner for the dataset-derived ones) refines `goodIds` in `data/profiles/<id>.json` and re-runs

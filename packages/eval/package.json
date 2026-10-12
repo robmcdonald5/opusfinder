@@ -11,7 +11,6 @@
     "eval": "tsx scripts/eval.ts",
     "eval:compare": "tsx scripts/compare.ts",
     "eval:hnsw": "tsx scripts/hnsw-recall.ts",
-    "export:candidates": "tsx scripts/export-candidates.ts",
     "extract-profile": "tsx scripts/extract-profile.ts",
     "build:pool": "tsx scripts/build-pool.ts",
     "draft-labels": "tsx scripts/draft-labels.ts",
@@ -24,6 +23,7 @@
     "@opusfinder/llm": "workspace:*",
     "@opusfinder/rerank": "workspace:*",
     "@opusfinder/shared": "workspace:*",
+    "drizzle-orm": "^0.45.2",
     "zod": "^4"
   },
   "devDependencies": {
