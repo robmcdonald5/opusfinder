@@ -8,7 +8,7 @@ import { getAuthBaseURL, getAuthSecret } from "./env";
 import { createAuth } from "./index";
 
 // The one live-DB `skipIf` gate. Ports the retired scripts/test-auth-db.ts. It proves the seam that
-// PGlite CANNOT fake: neon-serverless interactive transactions (auth signUpEmail wrapping). neon-http
+// PGlite CANNOT fake: neon-serverless interactive transactions (why `createAuthDb` exists). neon-http
 // throws "No transactions support"; only a real Neon branch over neon-serverless runs `tx.execute`.
 //
 // LIVES IN THE `live` VITEST PROJECT (`*.live.test.ts`, no MSW) — NOT `integration`. MSW 2.x's

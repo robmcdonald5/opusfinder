@@ -18,37 +18,47 @@ export const DATA_FIXER_TABLES: readonly string[] = [companies, jobs, sourceRuns
   getTableName(t),
 );
 
-/** A fresh 256-bit password, base64url (so it needs no quoting in SQL or a URL). Neon requires ≥ 60 bits. */
+/** A fresh 256-bit password, base64url (so it needs no escaping in a URL). Neon requires ≥ 60 bits. */
 export function generateDataFixerPassword(): string {
   return randomBytes(32).toString("base64url");
 }
 
 /**
- * The setup SQL, run by the owner's role in ONE transaction. Idempotent: it creates the role or rotates its
- * password, then resets its table privileges to the allowlist (revoke all, grant the list), so a re-run
- * converges even if the list shrank. Aborts if `data_fixes` is missing (run the migration first), if the role
- * has elevated attributes or any role membership (e.g. it was created in the Neon Console), or if the role still
- * holds any privilege on a public table beyond the allowlist afterwards. That last check matters because the
- * owner's REVOKE only removes the owner's own grants, so a grant made by another role would survive it.
+ * The setting the setup SQL reads the password from. The script binds the password into it as a query
+ * parameter instead of splicing it into the SQL, because statement text is kept in pg_stat_activity and, when
+ * that extension is installed, pg_stat_statements: readable by the role that ran it, even from a read-only
+ * session, and by pg_read_all_stats members.
  */
-export function buildDataFixerSetupSql(password: string): string {
-  // The password is spliced into the SQL (CREATE/ALTER ROLE take no bind parameters), so pin its alphabet.
-  if (!/^[A-Za-z0-9_-]{32,}$/.test(password)) {
-    throw new Error("data_fixer password must be at least 32 base64url characters");
-  }
+export const DATA_FIXER_PASSWORD_SETTING = "opusfinder.data_fixer_password";
+
+/**
+ * The setup SQL, run by the owner's role in ONE transaction after binding the password into
+ * {@link DATA_FIXER_PASSWORD_SETTING}. Idempotent: it creates the role or rotates its password, then resets its
+ * table privileges to the allowlist (revoke all, grant the list), so a re-run converges even if the list shrank.
+ * Aborts if `data_fixes` is missing (run the migration first), if the role has elevated attributes or any role
+ * membership (e.g. it was created in the Neon Console), or if the role still holds any privilege on a public
+ * table beyond the allowlist afterwards. That last check matters because the owner's REVOKE only removes the
+ * owner's own grants, so a grant made by another role would survive it.
+ */
+export function buildDataFixerSetupSql(): string {
   const role = DATA_FIXER_ROLE;
   const tables = DATA_FIXER_TABLES.join(", ");
   const tableLiterals = DATA_FIXER_TABLES.map((t) => `'${t}'`).join(", ");
   const sequences = DATA_FIXER_TABLES.map((t) => `${t}_id_seq`).join(", ");
   return `DO $$
+DECLARE
+  new_password text := current_setting('${DATA_FIXER_PASSWORD_SETTING}');
 BEGIN
+  IF length(new_password) < 32 THEN
+    RAISE EXCEPTION 'bind a password of at least 32 characters into ${DATA_FIXER_PASSWORD_SETTING} first';
+  END IF;
   IF to_regclass('public.${getTableName(dataFixes)}') IS NULL THEN
     RAISE EXCEPTION 'the ${getTableName(dataFixes)} table is missing: run pnpm db:migrate first';
   END IF;
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '${role}') THEN
-    ALTER ROLE ${role} WITH LOGIN PASSWORD '${password}';
+    EXECUTE format('ALTER ROLE ${role} WITH LOGIN PASSWORD %L', new_password);
   ELSE
-    CREATE ROLE ${role} WITH LOGIN PASSWORD '${password}';
+    EXECUTE format('CREATE ROLE ${role} WITH LOGIN PASSWORD %L', new_password);
   END IF;
   IF EXISTS (
     SELECT 1 FROM pg_roles r

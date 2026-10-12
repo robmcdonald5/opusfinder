@@ -108,4 +108,4 @@ The setup command does the following:
 - Pipes the new connection string into `gh secret set DATA_FIX_DATABASE_URL --env data-fixes` on stdin.
 
 It never prints the password or the connection string. Re-run it any time to rotate the password. Add
-`-- --dry-run` to print the SQL (password redacted) without touching anything.
+`-- --dry-run` to print the SQL without touching anything.

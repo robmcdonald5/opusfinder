@@ -557,9 +557,9 @@ export const userPreferences = pgTable(
 // Three tables: a run-level dispatch record mirroring {@link sourceRuns}, a per-user header, and the
 // ranked items. The items table doubles as the already-shown dedup source (the (user_id, job_id)
 // anti-join feeds the next run's excludeJobIds). Status/trigger/feedback are TS unions on plain `text`
-// columns (no pgEnum — same idempotent-migration rule as everything above). `user_id`/`digest_id`/
-// `digest_run_id` FKs cascade on parent delete; the `digest_items.job_id` FK deliberately does NOT (see
-// its inline note). FKs are declared as named `foreignKey({...})` so the migration can guard each
+// columns (no pgEnum — same idempotent-migration rule as everything above). `user_id`/`digest_id` FKs
+// cascade on parent delete; `digest_run_id` is NO ACTION and `digest_items.job_id` has no FK (see their
+// inline notes). FKs are declared as named `foreignKey({...})` so the migration can guard each
 // `ADD CONSTRAINT` in a DO/EXCEPTION block (neon-http migrations aren't transactional). The digest
 // pipeline reads Neon via the neon-http `Db` (no transactions needed).
 
@@ -656,8 +656,8 @@ export const digestItems = pgTable(
     feedback: text("feedback").$type<DigestFeedback>(),
     // --- display snapshot: the render fields copied from the LIVE jobs/companies row at persist time
     // (insertDigestItems), so a digest renders — and the history view reads — WITHOUT a live jobs join,
-    // and the record SURVIVES the job's prune (the prune may delete a closed+stale job EVEN when a
-    // digest_items row references it). All nullable: NULL on pre-snapshot rows until the one-time keyset
+    // and the record can outlive the job row (see the job_id note below). All nullable: NULL on
+    // pre-snapshot rows until the one-time keyset
     // backfill, then every new row is populated at insert. `getDigestEmailPayload` reads these FIRST,
     // COALESCE-falling-back to the live jobs/companies row during the backfill gap. DELIBERATELY NOT
     // `content_signature` (a durable signature snapshot would suppress a relisted role FOREVER, breaking
@@ -686,9 +686,11 @@ export const digestItems = pgTable(
       foreignColumns: [user.id],
       name: "digest_items_user_id_user_id_fk",
     }).onDelete("cascade"),
-    // job_id is a PLAIN historical reference — NO FK to jobs (the constraint was dropped). This lets the
-    // prune hard-DELETE a closed+stale job EVEN when a digest_items row still references it; an ON DELETE
-    // NO ACTION FK would REJECT that delete. A post-prune job_id may dangle — harmless by design:
+    // job_id is a PLAIN historical reference — NO FK to jobs (the constraint was dropped), so the prune
+    // CAN hard-DELETE a closed+stale job a digest_items row still references (an ON DELETE NO ACTION FK
+    // would reject it). It doesn't yet: prunablePredicate (repos/prune.ts) still keeps every referenced
+    // job, so for now a shown job's signature suppresses its relist indefinitely. Once that clause is
+    // dropped, a post-prune job_id may dangle — harmless by design:
     // `alreadyShownJobIds` matches it by id (a dangling id never collides with a live job's id) and
     // `alreadyShownSignatures` INNER-JOINs the LIVE jobs row, so a pruned row's signature self-drops from
     // the exclude set (the relist becomes re-recommendable; the retention window IS the cooldown). The
@@ -704,7 +706,7 @@ export const digestItems = pgTable(
  * panel READS it for incident history. Shape-only — `check_id` (a `HealthCheckId`) + numeric
  * metric/threshold mirror {@link HealthCheck}; never job/user text (the no-secrets/PII invariant).
  * `check_id`/`mode` are plain `text` (not `.$type<HealthCheckId>()`) to avoid a schema→health→client
- * import cycle — the writer casts. Append-only: no updates, no deletes.
+ * import cycle — the writer casts. Append-only: no updates; pruneOplog deletes rows past 90 days.
  */
 export const healthAlerts = pgTable(
   "health_alerts",

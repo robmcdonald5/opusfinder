@@ -21,9 +21,9 @@ describe("DATA_FIXER_TABLES", () => {
 
 describe("buildDataFixerSetupSql", () => {
   it("creates or rotates the role, then resets its grants to the allowlist", () => {
-    const sql = buildDataFixerSetupSql(PASSWORD);
-    expect(sql).toContain(`ALTER ROLE data_fixer WITH LOGIN PASSWORD '${PASSWORD}';`);
-    expect(sql).toContain(`CREATE ROLE data_fixer WITH LOGIN PASSWORD '${PASSWORD}';`);
+    const sql = buildDataFixerSetupSql();
+    expect(sql).toContain("ALTER ROLE data_fixer WITH LOGIN PASSWORD %L");
+    expect(sql).toContain("CREATE ROLE data_fixer WITH LOGIN PASSWORD %L");
     expect(sql).toContain("REVOKE ALL ON ALL TABLES IN SCHEMA public FROM data_fixer;");
     expect(sql).toContain(
       "GRANT SELECT, INSERT, UPDATE, DELETE ON companies, jobs, source_runs TO data_fixer;",
@@ -33,22 +33,13 @@ describe("buildDataFixerSetupSql", () => {
     );
     expect(sql).toContain("GRANT SELECT, INSERT ON data_fixes TO data_fixer;");
   });
-
-  it.each([
-    ["a quote", `${PASSWORD}'`],
-    ["a dollar sign", `${PASSWORD}$$`],
-    ["fewer than 32 characters", "abc"],
-  ])("refuses a password with %s (it is spliced into the SQL)", (_label, password) => {
-    expect(() => buildDataFixerSetupSql(password)).toThrow(/at least 32 base64url characters/);
-  });
 });
 
 describe("generateDataFixerPassword", () => {
-  it("returns a fresh 256-bit base64url password the SQL builder accepts", () => {
+  it("returns a fresh 256-bit base64url password", () => {
     const a = generateDataFixerPassword();
     expect(a).toMatch(/^[A-Za-z0-9_-]{43}$/);
     expect(a).not.toBe(generateDataFixerPassword());
-    expect(() => buildDataFixerSetupSql(a)).not.toThrow();
   });
 });
 

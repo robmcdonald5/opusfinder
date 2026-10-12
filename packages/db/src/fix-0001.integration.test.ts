@@ -8,7 +8,7 @@ import { pgliteFixClient } from "@test/db/fix-client";
 import { createTestDb } from "@test/db/pglite";
 import { truncate } from "@test/db/truncate";
 
-import { buildDataFixerSetupSql, DATA_FIXER_ROLE } from "./fixer-role";
+import { buildDataFixerSetupSql, DATA_FIXER_PASSWORD_SETTING, DATA_FIXER_ROLE } from "./fixer-role";
 import { applyPendingFixes, fixSha256, readFixes, type FixClient, type FixFile } from "./fixes";
 
 // The committed fix 0001 (merge the 7 case-variant duplicate boards) applied through the real runner AS the
@@ -61,7 +61,11 @@ describe("fix 0001: merge the case-variant duplicate boards (integration: real P
     // The fix ran BEFORE migration 0025, whose case-folded unique index forbids the duplicate pairs seeded
     // below: drop it to reproduce the database the fix was written for.
     await pg.exec(`DROP INDEX "${COMPANIES_LOWER_SLUG_UQ}"`);
-    await pg.exec(buildDataFixerSetupSql("p".repeat(32)));
+    await pg.query("SELECT set_config($1, $2, false)", [
+      DATA_FIXER_PASSWORD_SETTING,
+      "p".repeat(32),
+    ]);
+    await pg.exec(buildDataFixerSetupSql());
     fixer = pgliteFixClient(pg);
     fix0001 = readFixes().fixes.find((f) => f.id === 1)!;
   });

@@ -7,6 +7,7 @@ import { getDatabaseUrl } from "../src/env";
 import {
   buildDataFixerSetupSql,
   buildDataFixerUrl,
+  DATA_FIXER_PASSWORD_SETTING,
   DATA_FIXER_ROLE,
   generateDataFixerPassword,
   redact,
@@ -76,7 +77,8 @@ async function setUpRole(ownerUrl: string, password: string): Promise<boolean> {
       DATA_FIXER_ROLE,
     ]);
     await client.query("BEGIN");
-    await client.query(buildDataFixerSetupSql(password));
+    await client.query("SELECT set_config($1, $2, true)", [DATA_FIXER_PASSWORD_SETTING, password]);
+    await client.query(buildDataFixerSetupSql());
     await client.query("COMMIT");
     return rows.length > 0;
   } catch (err) {
@@ -95,9 +97,9 @@ await runScript("data-fixer setup", async () => {
 
   if (process.argv.includes("--dry-run")) {
     console.log(
-      "Dry run: nothing is changed. The role SQL (one transaction, password redacted):\n",
+      "Dry run: nothing is changed. The role SQL (one transaction; the password is bound separately):\n",
     );
-    console.log(redact(buildDataFixerSetupSql(password), password));
+    console.log(buildDataFixerSetupSql());
     console.log(
       `Then: GitHub Environment "${ENVIRONMENT}" with deployments from main only, and its ${SECRET} secret ` +
         `set from stdin to DATABASE_URL with the user and password replaced by ${DATA_FIXER_ROLE}'s.`,

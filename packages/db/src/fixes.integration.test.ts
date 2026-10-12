@@ -8,7 +8,12 @@ import { pgliteFixClient } from "@test/db/fix-client";
 import { createTestDb } from "@test/db/pglite";
 import { truncate } from "@test/db/truncate";
 
-import { buildDataFixerSetupSql, DATA_FIXER_ROLE, DATA_FIXER_TABLES } from "./fixer-role";
+import {
+  buildDataFixerSetupSql,
+  DATA_FIXER_PASSWORD_SETTING,
+  DATA_FIXER_ROLE,
+  DATA_FIXER_TABLES,
+} from "./fixer-role";
 import { applyPendingFixes, fixSha256, type FixClient, type FixFile } from "./fixes";
 
 // The data-fix runner and the data_fixer role under REAL Postgres semantics, run AS that role (what the GitHub
@@ -63,9 +68,15 @@ describe("data fixes: applied once, atomically, as the data_fixer role (integrat
     );
   }
 
+  // What data-fixer:setup sends: the password bound into its setting, then the setup SQL.
+  async function setUpRole(password: string): Promise<void> {
+    await pg.query("SELECT set_config($1, $2, false)", [DATA_FIXER_PASSWORD_SETTING, password]);
+    await pg.exec(buildDataFixerSetupSql());
+  }
+
   beforeAll(async () => {
     ({ db, client: pg, close } = await createTestDb());
-    await pg.exec(buildDataFixerSetupSql("p".repeat(32)));
+    await setUpRole("p".repeat(32));
     fixer = pgliteFixClient(pg);
   });
 
@@ -131,13 +142,19 @@ describe("data fixes: applied once, atomically, as the data_fixer role (integrat
   });
 
   it("re-running the setup rotates the password and converges on the same grants", async () => {
-    await pg.exec(
-      `RESET ROLE; ${buildDataFixerSetupSql("q".repeat(32))} SET ROLE ${DATA_FIXER_ROLE};`,
-    );
+    await pg.exec("RESET ROLE");
+    await setUpRole("q".repeat(32));
+    await pg.exec(`SET ROLE ${DATA_FIXER_ROLE}`);
     await expect(pg.query("SELECT count(*) FROM jobs")).resolves.toBeDefined();
     await expect(pg.query("SELECT count(*) FROM user_profiles")).rejects.toThrow(
       /permission denied/,
     );
+  });
+
+  // A setting already defined in the session reads back as '' once reverted; that must not clear the password.
+  it("setup aborts when no password was bound", async () => {
+    await pg.exec("RESET ROLE");
+    await expect(setUpRole("")).rejects.toThrow(/bind a password of at least 32 characters/);
   });
 
   it.each(["SELECT", "SELECT (email)"])(
@@ -153,7 +170,7 @@ describe("data fixes: applied once, atomically, as the data_fixer role (integrat
         RESET ROLE;
       `);
       try {
-        await expect(pg.exec(buildDataFixerSetupSql("q".repeat(32)))).rejects.toThrow(
+        await expect(setUpRole("q".repeat(32))).rejects.toThrow(
           /data_fixer holds privileges beyond its allowlist \(on: user;/,
         );
       } finally {

@@ -214,8 +214,8 @@ alongside a typed **`user_preferences`** table (filter + digest/delivery setting
 `createUserWithPreferences` / `getOrCreateUserByEmail` — the one creation path the CLI now and the Phase-12
 signup form will both call — plus `pnpm user:create` / `user:set-prefs` / `user:list`. The throwaway
 email-derived `mintUserId` placeholder is retired from the live path (`ingest-cv` now resolves a real
-`user.id`), and a latent IDOR in the cv-file repo is closed. Better Auth needs a transaction-capable
-driver, so the auth adapter uses a neon-serverless client (`createAuthDb`) kept behind a subpath and
+`user.id`), and a latent IDOR in the cv-file repo is closed. The auth adapter uses a transaction-capable
+neon-serverless client (`createAuthDb`) kept behind a subpath and
 **out of the scrapers Worker** (Better Auth crashes under `nodejs_compat`, #6665) — `pnpm guard:worker`
 enforces that invariant. Shipped on branch `feat/phase-9.5-user-identity`.
 

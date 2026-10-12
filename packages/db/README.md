@@ -30,10 +30,9 @@ impure `gatherHealthSignals` + the pure `evaluateHealth`; plus `healthOptionsFro
 predicate — callable verbatim from the `pnpm health` CLI and a future Phase-12 dev panel).
 
 **Phase 9.5** added a second client behind `@opusfinder/db/auth-client`: `createAuthDb(connectionString)`,
-a **transaction-capable neon-serverless** (WebSocket) Drizzle client. Better Auth's `signUpEmail` wraps
-its `user`+`account` inserts in an interactive transaction the fetch-only neon-http `createDb` can't run
-(#4747), so the auth adapter uses this handle — kept on its own subpath so the default neon-http client
-is unaffected and the scrapers Worker never pulls neon-serverless/WebSocket into its bundle.
+a **transaction-capable neon-serverless** (WebSocket) Drizzle client for the Better Auth adapter (why:
+`packages/auth/README.md`) — kept on its own subpath so the default neon-http client is unaffected and the
+scrapers Worker never pulls neon-serverless/WebSocket into its bundle.
 
 ## Environment
 
@@ -105,11 +104,8 @@ Run from the repo root via the workspace filter so the cwd is `packages/db`:
   Phase-12 `feedback` column). The composite `digest_items (user_id, job_id)` index backs the
   already-shown anti-join (`alreadyShownJobIds`) that feeds the next run's `excludeJobIds`. `status` /
   `trigger` / `feedback` are TS unions on plain `text` (same idempotent-migration rule as
-  `lifecycle_state`). FKs cascade onto `user.id` / `digests.id` / `digest_runs.id`, but
-  `digest_items.job_id` deliberately does **not** cascade — it's append-only dedup history, so a deleted
-  job must not erase the record. **CASCADE HAZARD:** deleting a `digest_runs` row cascades
-  run → digests → digest_items and erases that dedup history (no code deletes runs today; see the inline
-  note in `schema.ts`).
+  `lifecycle_state`). FKs cascade onto `user.id` / `digests.id`; `drizzle/0019` made
+  `digests.digest_run_id` NO ACTION and dropped the `digest_items.job_id` FK (see Migrations 0018-0024).
 - **Schema (Phase 11).** `drizzle/0009_aspiring_chameleon.sql` adds per-send delivery state ON
   `digests`: `email_id` (Resend id, NULL until accepted), `delivery_status`
   (`none|sent|delivered|bounced|failed` — a TS union, `DigestDeliveryStatus`), `sent_at`. Written only
@@ -130,8 +126,8 @@ Run from the repo root via the workspace filter so the cwd is `packages/db`:
   per-board feed-absence sweep, one race-safe SQL-side-increment UPDATE) + `closeJobsForCompanies` /
   `closeJobsByIds` (Arm B/C — bulk-close a dead board's still-active jobs / the explicit-410 digest items).
   `repos/discovery.ts`'s `deactivateStale` was widened to RETURN the deactivated ids (was a bare count) so
-  Arm B can close their jobs. Soft-close only — never a row DELETE (F1 reads the closed row's signature;
-  `digest_items.job_id` is `ON DELETE NO ACTION`). Suite: `pnpm exec vitest run packages/db/src/repos/lifecycle.test.ts` (no
+  Arm B can close their jobs. The lifecycle only soft-closes; deleting closed rows is the prune's job (see
+  Migrations 0018-0024). Suite: `pnpm exec vitest run packages/db/src/repos/lifecycle.test.ts` (no
   creds). **Ships SHADOW / count-only by DEFAULT** — the `'closed'` flip is suppressed and tallied as
   `wouldClose` unless a SINGLE `LIFECYCLE_CLOSE_ENFORCE` switch (`parseEnforceFlag` in `@opusfinder/shared`) is on; it's
   threaded through all three arms with no multi-site code edit — the scrapers Worker reads `env.LIFECYCLE_CLOSE_ENFORCE`
@@ -215,14 +211,27 @@ Run from the repo root via the workspace filter so the cwd is `packages/db`:
   seq-scanning the whole table: the F6 `embedding_backlog` health count, `jobsNeedingEmbedding`, and the F8
   `embed-backlog-drain`'s `ORDER BY id LIMIT` paging. Self-prunes to ~0 entries as rows embed. **APPLIED to
   prod.**
-- **neon-http migrations are NOT transactional.** The neon-http migrator applies
-  a migration's statements without a wrapping transaction, so a multi-statement
-  migration that fails partway leaves a partial apply with no rollback (and a
-  re-run starts from the top). **Keep every migration idempotent/guarded**
-  (`CREATE EXTENSION IF NOT EXISTS`, `CREATE TABLE IF NOT EXISTS`,
-  `CREATE INDEX IF NOT EXISTS`, …). For an unavoidably non-idempotent
-  multi-statement migration, run it through the websocket `neon-serverless`
-  migrator instead. (See Phase 2 notes in the implementation plan.)
+- **Migrations 0018-0024.** Each file's header has the detail; what an operator needs:
+  - `0018` adds `jobs.closed_at`, the clock of the jobs prune (`pnpm db:prune` is a dry run; the script
+    header has the `--apply` command). It deletes only jobs closed for 30+ days that no `digest_items` row
+    references.
+  - `0019` snapshots the render fields onto `digest_items` and drops its `job_id` FK, so the prune can later
+    reclaim recommended jobs too; until its `digest_items` clause is dropped, a shown job's signature keeps
+    suppressing its relist. It also makes `digests.digest_run_id` NO ACTION, so the oplog prune
+    (`pnpm db:prune-oplog`, 90-day retention for `source_runs` / `health_alerts` / `digest_runs`) deletes
+    only runs no digest references.
+  - `0020` / `0021` add `jobs.last_seen_at` and `companies.last_ingested_at`, the clocks of the
+    `STALE_SWEEP` stale-close.
+  - `0022` / `0023` add the send permit `user_preferences.digest_approved_at`: NULL means no digest is sent
+    (fail-closed); grant it with `pnpm user:approve --email …`.
+  - `0024` adds `data_fixes`, the record of applied data fixes (see `fixes/README.md`).
+- **neon-http migrations are NOT transactional.** `pnpm db:migrate` (drizzle's neon-http migrator) runs
+  each statement on its own and records the applied migrations only after all of them succeed, so a migrate
+  that fails partway leaves a partial apply, and the next one re-runs every pending migration from its
+  first statement. **Keep every statement re-runnable** (`IF NOT EXISTS` / `IF EXISTS` / a DO/EXCEPTION
+  block); `src/migrations.integration.test.ts` enforces it. For an unavoidably non-idempotent migration,
+  apply it with `drizzle-orm/neon-serverless/migrator`, which wraps the run in one transaction (no script
+  wires it today).
 - **Embeddings repo (Phase 4).** `src/repos/embeddings.ts` adds `backfillJobEmbeddings()`
   (idempotent embed → write loop over NULL-embedding rows), `nearestJobs()` (cosine
   `<=>` over the HNSW index), `jobsNeedingEmbedding()`, `writeJobEmbeddings()`, and
