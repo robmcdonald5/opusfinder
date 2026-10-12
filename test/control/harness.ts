@@ -451,11 +451,17 @@ export async function startControl(
       return res as unknown as Response;
     },
     async reset() {
-      await db.batch(
-        ["change_log", "ledger", "proposal", "state", "statement"].map((t) =>
-          db.prepare(`DROP TABLE IF EXISTS ${t}`),
-        ),
-      );
+      // Every table the migrations made, so a new one replays too. D1 enforces foreign keys, so defer
+      // them: this order can drop a parent (proposal) before the child that references it (change_log).
+      const { results } = await db
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT GLOB 'sqlite_*' AND name NOT GLOB '_cf_*'",
+        )
+        .all<{ name: string }>();
+      await db.batch([
+        db.prepare("PRAGMA defer_foreign_keys = on"),
+        ...results.map(({ name }) => db.prepare(`DROP TABLE "${name}"`)),
+      ]);
       await db.batch(migrationStatements().map((s) => db.prepare(s)));
     },
     dispose: () => mf.dispose(),

@@ -2,22 +2,24 @@
 // Phase 3's blocker resolution made "a mock suite can never silently hit the real network" STRUCTURAL:
 // every real-network gate lives in a no-MSW `live` Vitest project (`*.live.test.ts`) that the default
 // `pnpm test` excludes, while mock suites stay in the always-`onUnhandledRequest:"error"` `integration`
-// project. Phase 5a wires this guard into CI so that invariant cannot silently regress.
+// project or the fetch/WebSocket-locked `unit` project. Phase 5a wires this guard into CI so that
+// invariant cannot silently regress.
 //
 // TWO checks (each fails the run, exit 1):
 //   (a) Live-gate marker — every `*.live.test.ts` must carry an EXPLICIT opt-in gate: a `.skipIf(`/`.runIf(`
-//       call AND a `process.env.<*LIVE*>` flag read (dot OR bracket access). A bare cred-only gate (e.g.
+//       call, a `process.env.<X>_LIVE[_TEST]` flag compared to "1" (dot OR bracket access), and no
+//       top-level `describe`/`it`/`test` outside a skipIf/runIf. A bare cred-only gate (e.g.
 //       `skipIf(!process.env.DATABASE_URL)`) would fire against REAL infra for anyone with creds in their
-//       package `.env`; it has no `*LIVE*` flag, so it fails here — the exact hole the Phase-3 resolution
-//       called out. Comments are STRIPPED before the scan, so a documentation comment that quotes the
-//       pattern can't satisfy the check on behalf of missing real code.
+//       package `.env`; it has no flag, so it fails here — the exact hole the Phase-3 resolution called
+//       out. Comments are STRIPPED before the scan, so a documentation comment that quotes the pattern
+//       can't satisfy the check on behalf of missing real code.
 //   (b) One-project collection (AUTHORITATIVE) — `vitest list --filesOnly` tags every collected file with its
 //       project as `[project] path`. A file whose project disagrees with its filename suffix is MISROUTED
 //       (this also catches double-collection: e.g. dropping the unit `exclude: **/*.live.test.ts` re-collects
-//       a live file MSW-free, so it shows up under `[unit]` too). A `*.test.ts` under a package's `src/` that
-//       is collected by NO project is an ORPHAN that silently never runs. This reflects Vitest's REAL
-//       include/exclude resolution — a textual config scan is blind to it (mirrors the worker guard's
-//       authoritative real-esbuild-graph scan).
+//       a live file MSW-free, so it shows up under `[unit]` too). A `*.test.ts` anywhere in a package that
+//       is collected by NO project (every project collects from `src/` only) is an ORPHAN that silently
+//       never runs. This reflects Vitest's REAL include/exclude resolution — a textual config scan is blind
+//       to it (mirrors the worker guard's authoritative real-esbuild-graph scan).
 // Run: pnpm guard:tests
 import { execSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
@@ -30,13 +32,16 @@ const PRUNE_DIRS = new Set(["node_modules", "dist", ".svelte-kit", "coverage"]);
 // The vitest projects this guard models. A project reported by `vitest list` that isn't here means the guard
 // is stale relative to vitest.config.ts — flagged loudly (see below) rather than mis-classified silently.
 const KNOWN_PROJECTS = new Set(["unit", "integration", "live"]);
-// The opt-in flag convention: an env var whose name contains LIVE (AUTH_LIVE_TEST, PREFS_LIVE_TEST,
-// HN_LIVE_TEST, OUTSCAL_SEED_LIVE), read by dot OR bracket access. Requiring the FLAG — not mere cred
-// presence — forces an intentional opt-in on top of any creds a dev's package `.env` might define. Both
-// patterns match an actual code construct, and comments are stripped first, so prose can't satisfy them.
+// The opt-in flag convention: an env var NAMED `<X>_LIVE` or `<X>_LIVE_TEST` (AUTH_LIVE_TEST, HN_LIVE_TEST,
+// OUTSCAL_SEED_LIVE), read by dot OR bracket access and compared to "1". Requiring the FLAG — not mere cred
+// presence — forces an intentional opt-in on top of any creds a dev's package `.env` might define. The
+// suffix anchor and the comparison keep an unrelated read (PREFS_LIVE_USER, RESEND_DELIVERY_POLL_MS) from
+// passing for the flag, and comments are stripped first, so prose can't satisfy it either.
 const LIVE_FLAG_RE =
-  /process\.env(?:\.[A-Z0-9_]*LIVE[A-Z0-9_]*|\[\s*['"][A-Z0-9_]*LIVE[A-Z0-9_]*['"]\s*\])/;
+  /process\.env(?:\.|\[\s*['"])[A-Z0-9_]*_LIVE(?:_TEST)?\b['"]?\s*\]?\s*(?:===|!==)\s*['"]1['"]/;
 const GATE_RE = /\.(?:skipIf|runIf)\s*\(/;
+// A top-level suite or test that isn't itself skipIf/runIf-gated runs whenever the file does, flag or not.
+const UNGATED_TOP_LEVEL_RE = /^(?:describe|it|test)\s*(?:\(|\.(?!(?:skipIf|runIf|skip)\b))/m;
 
 // The project each suffix MUST route to (see vitest.config.ts project include/exclude).
 function expectedProject(path) {
@@ -54,7 +59,8 @@ let failures = 0;
 function walkTestFiles(dir, out = []) {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     if (entry.isDirectory()) {
-      if (!PRUNE_DIRS.has(entry.name)) walkTestFiles(join(dir, entry.name), out);
+      if (!PRUNE_DIRS.has(entry.name) && !entry.name.startsWith("."))
+        walkTestFiles(join(dir, entry.name), out);
     } else if (entry.name.endsWith(".test.ts")) {
       out.push(join(dir, entry.name).replace(/\\/g, "/"));
     }
@@ -62,30 +68,28 @@ function walkTestFiles(dir, out = []) {
   return out;
 }
 
-// Scope the disk walk to each package/app `src/` — where 100% of the repo's tests live and where the unit
-// include glob (`{packages,apps}/*/src/**`) points — so a helper file or a nested layout vitest legitimately
-// ignores is never a false orphan.
-function packageSrcDirs() {
+// Walk each WHOLE package/app dir, not just `src/`: the project globs collect from `src/` only, so a test
+// placed elsewhere is reported as an orphan, and a live file there is still scanned by check (a).
+function packageDirs() {
   const dirs = [];
   for (const root of TEST_ROOTS) {
     if (!existsSync(root)) continue;
     for (const entry of readdirSync(root, { withFileTypes: true })) {
-      if (!entry.isDirectory() || PRUNE_DIRS.has(entry.name)) continue;
-      const src = join(root, entry.name, "src");
-      if (existsSync(src)) dirs.push(src);
+      if (entry.isDirectory() && !PRUNE_DIRS.has(entry.name)) dirs.push(join(root, entry.name));
     }
   }
   return dirs;
 }
 
-const allTestFiles = packageSrcDirs().flatMap((d) => walkTestFiles(d));
+const allTestFiles = packageDirs().flatMap((d) => walkTestFiles(d));
 
 // ---- Check (a): every *.live.test.ts carries an explicit flag-gated skipIf/runIf marker. ----
 for (const file of allTestFiles.filter((f) => f.endsWith(".live.test.ts"))) {
   const code = stripComments(readFileSync(file, "utf8"));
   const missing = [
     !GATE_RE.test(code) && "a skipIf(...)/runIf(...) gate",
-    !LIVE_FLAG_RE.test(code) && "a process.env.<*LIVE*> opt-in flag",
+    !LIVE_FLAG_RE.test(code) && 'a process.env.<X>_LIVE[_TEST] === "1" opt-in flag',
+    UNGATED_TOP_LEVEL_RE.test(code) && "a gate on every top-level describe/it/test",
   ].filter(Boolean);
   if (missing.length > 0) {
     console.error(
@@ -132,7 +136,7 @@ for (const line of listOutput.split(/\r?\n/)) {
 if (listOk && collectedBy.size === 0 && allTestFiles.length > 0) {
   console.error(
     `FORBIDDEN: \`vitest list\` collected NO files, but ${allTestFiles.length} *.test.ts file(s) exist under ` +
-      `packages/apps src/ — the project include globs are matching nothing (a vitest.config.ts regression).`,
+      `packages/apps — the project include globs are matching nothing (a vitest.config.ts regression).`,
   );
   failures++;
 }
@@ -166,14 +170,15 @@ for (const [path, projects] of collectedBy) {
   }
 }
 
-// Orphan: a src `*.test.ts` on disk collected by no project (silently never runs). Only meaningful when
+// Orphan: a package `*.test.ts` on disk collected by no project (silently never runs). Only meaningful when
 // collection succeeded AND returned files (the empty case is handled above).
 if (listOk && collectedBy.size > 0) {
   for (const file of allTestFiles) {
     if (!collectedBy.has(file)) {
       console.error(
         `FORBIDDEN orphan test: ${file} is collected by NO vitest project — it would silently never run. ` +
-          `Give it a recognized suffix (.test / .integration.test / .live.test) or fix the include/exclude globs.`,
+          `Put it under its package's src/ with a recognized suffix (.test / .integration.test / ` +
+          `.live.test), or fix the include/exclude globs.`,
       );
       failures++;
     }

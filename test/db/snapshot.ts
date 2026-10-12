@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { PGlite } from "@electric-sql/pglite";
+import { PGlite, types } from "@electric-sql/pglite";
 import { vector } from "@electric-sql/pglite-pgvector";
 import { drizzle } from "drizzle-orm/pglite";
 import { migrate } from "drizzle-orm/pglite/migrator";
@@ -20,6 +20,10 @@ const MIGRATIONS = fileURLToPath(new URL("../../packages/db/drizzle", import.met
 // processes) via a fixed path. A filesystem file is the cross-process channel: env vars set in globalSetup
 // don't reach workers, and inject() is test-only, but every process shares this path + cwd.
 const CACHE_DIR = join(tmpdir(), "opusfinder-vitest-pglite");
+
+// Prod's neon drivers return int8 (count(*), bigint) as a STRING; PGlite would parse it to a number, so a
+// missing Number() would pass here and break in prod. Keep the raw text, like neon.
+const parsers = { [types.INT8]: (value: string) => value };
 
 /**
  * Fingerprint the migration SET — every `*.sql` body AND `meta/_journal.json` — so a snapshot is reused only
@@ -111,7 +115,11 @@ export async function openMigratedClient(): Promise<PGlite> {
   const path = snapshotPath();
   if (existsSync(path)) {
     try {
-      const client = new PGlite({ loadDataDir: new Blob([await readFile(path)]), extensions: { vector } });
+      const client = new PGlite({
+        loadDataDir: new Blob([await readFile(path)]),
+        extensions: { vector },
+        parsers,
+      });
       await client.waitReady;
       return client;
     } catch {
@@ -121,7 +129,7 @@ export async function openMigratedClient(): Promise<PGlite> {
       rmSync(path, { force: true });
     }
   }
-  const client = new PGlite({ extensions: { vector } });
+  const client = new PGlite({ extensions: { vector }, parsers });
   await migrate(drizzle(client), { migrationsFolder: MIGRATIONS });
   return client;
 }

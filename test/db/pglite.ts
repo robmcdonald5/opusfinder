@@ -24,11 +24,15 @@ import { openMigratedClient } from "./snapshot";
  * `truncate(db, ...tables)` (see ./truncate) in `beforeEach`; ALWAYS `await close()` in `afterAll` to
  * drain the WASM handle (Windows teardown).
  *
+ * Driver parity with neon-http: `db.transaction()` rejects as it does in prod (pass `transactions: true`
+ * only where the handle stands in for the neon-serverless AuthDb), and int8 comes back as a string (see
+ * ./snapshot).
+ *
  * CAVEATS: PGlite is single-user WASM — correct `<=>` ordering on small sets but NOT production HNSW
- * recall, and it cannot represent neon-serverless interactive transactions (those stay real-Neon live
+ * recall, and its transactions are not neon-serverless's (concurrency and isolation stay real-Neon live
  * gates). See VITEST_MIGRATION_PLAN §2.4 / §8.
  */
-export async function createTestDb(): Promise<{
+export async function createTestDb({ transactions = false } = {}): Promise<{
   db: Db;
   client: PGlite;
   close: () => Promise<void>;
@@ -37,5 +41,10 @@ export async function createTestDb(): Promise<{
   // Wrap the properly-typed PGlite client, then cast only the value handed back to the repos — the raw
   // `PgliteDatabase` type is preserved through migration/loading; `as unknown as Db` happens here alone.
   const pglite = drizzle(client, { schema });
+  if (!transactions) {
+    pglite.transaction = async () => {
+      throw new Error("No transactions support in neon-http driver");
+    };
+  }
   return { db: pglite as unknown as Db, client, close: () => client.close() };
 }
