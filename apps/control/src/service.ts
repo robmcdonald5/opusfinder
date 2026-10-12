@@ -368,7 +368,8 @@ export async function gate(
   return {
     ...gateView(state, stage, narrowed),
     since: last?.at ?? null,
-    by: last ? `${last.actor_role}:${last.actor_name}` : null,
+    // Runtimes log `by` every tick, and an owner's name is their login email: give them only the role.
+    by: last && (last.actor_role === "owner" ? "owner" : `${last.actor_role}:${last.actor_name}`),
     because: last?.reason ?? null,
   };
 }

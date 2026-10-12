@@ -190,6 +190,8 @@ describe("POST /v1/changes", () => {
     expect(res.status).toBe(200);
     expect(await stateValue("embed")).toBe("on");
     expect(await lastLog()).toMatchObject({ actor_role: "owner", actor_name: "owner@example.com" });
+    const gate = await body(await h.request("/v1/gate/embed", { as: "runtime" }));
+    expect(gate.by).toBe("owner");
   });
 
   it("narrows one source with an override (agent-safe) and refuses removing it (needs approval)", async () => {
