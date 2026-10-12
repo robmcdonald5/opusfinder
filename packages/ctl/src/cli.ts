@@ -180,9 +180,13 @@ const WIRING: Record<StageView["gate"], string> = {
   enforced: "wired",
 };
 
-/** A stored value that can't be read resolves to its safe value; without this it reads as deliberate. */
-const unreadable = (source: ValueSource) =>
-  source === "invalid" ? " (unreadable, so the safe value is used)" : "";
+/** A stored value that isn't used as stored; without this the substitute reads as deliberate. */
+const sourceNote = (source: ValueSource) =>
+  source === "invalid"
+    ? " (unreadable, so the safe value is used)"
+    : source === "clamped"
+      ? " (out of range, so the nearest allowed value is used)"
+      : "";
 
 /** The stages whose runtimes read a target. */
 function readers(t: Target): readonly StageId[] {
@@ -216,7 +220,7 @@ function formatStatus(s: Json): string {
   const out: string[] = [];
   out.push(`opusfinder control — ${short(s.generatedAt)} (you: ${caller.role}:${caller.name})`);
   out.push(
-    `master switch: ${global.desired}${unreadable(global.source)}${global.desired === "off" ? " (everything is capped at off)" : ""}`,
+    `master switch: ${global.desired}${sourceNote(global.source)}${global.desired === "off" ? " (everything is capped at off)" : ""}`,
     "",
   );
   out.push(
@@ -226,7 +230,7 @@ function formatStatus(s: Json): string {
         const errors = byStage?.[st.id]?.error ?? 0;
         return [
           st.id,
-          st.desired + unreadable(st.source),
+          st.desired + sourceNote(st.source),
           st.effective + (st.cappedBy ? ` (capped: ${st.cappedBy})` : ""),
           WIRING[st.gate],
           (st.lastRun ? `${String(st.lastRun.outcome)} ${short(st.lastRun.started_at)}` : "-") +
@@ -240,14 +244,14 @@ function formatStatus(s: Json): string {
   if (overrides.length > 0)
     out.push(
       "",
-      `overrides: ${overrides.map((o) => `${o.target}=${o.override}${unreadable(o.source)}`).join(", ")}`,
+      `overrides: ${overrides.map((o) => `${o.target}=${o.override}${sourceNote(o.source)}`).join(", ")}`,
     );
   const knobs = [...stages.flatMap((st) => st.knobs), ...policies.flatMap((p) => p.knobs)].filter(
     (k) => k.source !== "default",
   );
   if (knobs.length > 0)
     out.push(
-      `knobs (non-default): ${knobs.map((k) => `${k.target}=${k.value}${unreadable(k.source)}`).join(", ")}`,
+      `knobs (non-default): ${knobs.map((k) => `${k.target}=${k.value}${sourceNote(k.source)}`).join(", ")}`,
     );
   out.push(
     "",
@@ -255,7 +259,7 @@ function formatStatus(s: Json): string {
       ["POLICY", "DESIRED", "EFFECTIVE", "AGENT"],
       ...policies.map((p) => [
         p.id,
-        p.desired + unreadable(p.source),
+        p.desired + sourceNote(p.source),
         p.effective,
         p.agent === "approval" ? "approval" : "safe-direction",
       ]),

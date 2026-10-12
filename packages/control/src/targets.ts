@@ -137,7 +137,7 @@ const DECIMAL = /^-?(0|[1-9]\d*)(\.\d+)?$/;
 /**
  * Validate + canonicalize a proposed value for a target. Returns the string stored in `state.value`
  * (null = clear a dimension override). Out-of-range or wrong-kind values are REJECTED here, at the edge —
- * resolve.ts separately fails closed on anything invalid that reaches the store some other way.
+ * resolve.ts separately handles anything invalid that reaches the store some other way.
  */
 export function parseValue(target: Target, raw: string): ParseResult<string | null> {
   const value = raw.trim();

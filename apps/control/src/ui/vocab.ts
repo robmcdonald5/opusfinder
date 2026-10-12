@@ -84,6 +84,8 @@ export function outcome(value: string): string {
 export function sourceNote(source: ValueSource): string {
   if (source === "invalid")
     return ` <span class="muted">(unreadable, so the safe value is used)</span>`;
+  if (source === "clamped")
+    return ` <span class="muted">(out of range, so the nearest allowed value is used)</span>`;
   return "";
 }
 

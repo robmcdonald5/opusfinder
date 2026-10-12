@@ -116,8 +116,9 @@ against — so a concurrent trip can't turn an agent's safe "on → shadow" into
 "off → shadow".
 
 Fail-closed (owner decision, ingest included): a **missing row** reads as the registry default; an
-**unrecognised value** reads as `off` (a knob: its least risky bound); an **unreachable store** means
-the caller skips its tick (the gate clients of later slices; this Worker answers 5xx).
+**unrecognised value** reads as `off` (a knob: its least risky bound, but a number outside its range
+takes the nearest bound); an **unreachable store** means the caller skips its tick (the gate clients
+of later slices; this Worker answers 5xx).
 
 ## Local development
 
