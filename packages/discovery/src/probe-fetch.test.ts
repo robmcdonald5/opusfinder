@@ -116,6 +116,54 @@ describe("probeFetch", () => {
     expect(fetchCalls).toHaveLength(2);
   });
 
+  it("fails fast: a 429 whose Retry-After exceeds maxRetryWaitMs returns at once, unretried", async () => {
+    handler = () => fakeResponse(429, "slow down", "30");
+
+    // No timer is advanced: a sleep on the 30 s Retry-After would never settle.
+    const result = await probeFetch(req("https://x/y"), 3, 5_000);
+
+    expect(result).toEqual({ status: 429, body: undefined });
+    expect(fetchCalls).toHaveLength(1);
+  });
+
+  it("aborts a request that never answers via its timeout → status 0, so a hung host can't hold the probe", async () => {
+    // Only the request's abort signal can settle this fetch.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        (_url: string, init?: RequestInit) =>
+          new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener("abort", () => reject(new Error("aborted")));
+          }),
+      ),
+    );
+    // AbortSignal.timeout runs on Node's internal (real) timers; route it through the fake clock.
+    const timeout = vi.spyOn(AbortSignal, "timeout").mockImplementation((ms) => {
+      const controller = new AbortController();
+      setTimeout(() => controller.abort(), ms);
+      return controller.signal;
+    });
+    try {
+      const promise = probeFetch(req("https://x/y"), 0);
+      await vi.runAllTimersAsync();
+
+      expect(await promise).toEqual({ status: 0, body: undefined });
+    } finally {
+      timeout.mockRestore();
+    }
+  });
+
+  it("a 2xx whose body read fails (e.g. the timeout firing mid-stream) → status 0, never a throw", async () => {
+    handler = () =>
+      ({
+        status: 200,
+        headers: { get: () => null },
+        text: () => Promise.reject(new Error("aborted")),
+      }) as unknown as Response;
+
+    expect(await probeFetch(req("https://x/y"), 0)).toEqual({ status: 0, body: undefined });
+  });
+
   it("a network throw with maxRetries 0 → status 0 (network-exhausted)", async () => {
     handler = () => {
       throw new Error("ECONNRESET");

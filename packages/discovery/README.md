@@ -38,14 +38,15 @@ isolate (`runDiscovery` is argv-free for that).
    migration 0025's partial unique index `companies_source_lower_slug_uq` on `(source, lower(slug))` for
    these sources. `upsertCompany` catches that index's violation and returns the stored row, so a
    case-variant upsert (e.g. `pnpm ingest` with another casing) resolves to the board's one row.
-4. **Probe + classify** (`probe.ts`) — `probeCandidates` reuses `adapters[source].jobsRequest(ctx,
+4. **Reprobe** — `listCompaniesForReprobe` re-checks the oldest-probed ACTIVE companies; live refreshes
+   them, a confirmed `absent` increments the failure streak (`markProbeResult(live=false)`). It runs
+   before the worklist, so when the Worker's run budget runs out it is new supply that waits, not upkeep.
+5. **Probe + classify** (`probe.ts`) — `probeCandidates` reuses `adapters[source].jobsRequest(ctx,
 null)` through a NON-throwing, per-host-throttled fetcher (a 404/400/200-empty is the signal, not an
    error). Each response is classified by `adapters[source].classifyProbe?` or the status-first
    `defaultClassify` → `live` / `live-empty` / `absent` / `indeterminate`.
-5. **Act** — `live`/`live-empty` ⇒ `upsertCompany` + `markProbeResult(live=true)`; `absent` ⇒ dropped;
+6. **Act** — `live`/`live-empty` ⇒ `upsertCompany` + `markProbeResult(live=true)`; `absent` ⇒ dropped;
    `indeterminate` / transient (network-exhausted) ⇒ left for a later run.
-6. **Reprobe** — `listCompaniesForReprobe` re-checks the oldest-probed ACTIVE companies; live refreshes
-   them, a confirmed `absent` increments the failure streak (`markProbeResult(live=false)`).
 7. **Sweep** — `deactivateStale(30)` flips `active=false` for any row failing past the window, and (Phase F2,
    Arm B) bulk-closes those just-deactivated boards' still-active jobs via `closeJobsForCompanies` — the orphan
    class the ingest-time feed-absence sweep is blind to, since a deactivated board is never re-fetched.

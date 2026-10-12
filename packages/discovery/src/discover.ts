@@ -40,6 +40,12 @@ export interface DiscoveryOptions {
   reprobeLimit?: number;
   /** Prober tuning (concurrency / spacing / retries) — passed through to probeCandidates. */
   probe?: ProbeOptions;
+  /**
+   * Wall-clock budget (ms) from the start of the run (Worker-only). Once spent no new probe starts; a
+   * candidate never probed gets no write (counted in `budgetSkipped`), and the sweep and `finishRun` still
+   * run. Omit ⇒ no budget (the CLI).
+   */
+  maxRunMs?: number;
   /** Restrict to these lane names (omit = every registered lane). CLI: `--lanes=hn,outscal`. */
   lanes?: string[];
   /** Worker filter: when true, run only `workerSafe` (fetch-only, bundle-safe) lanes. */
@@ -81,14 +87,15 @@ export interface DiscoveryCounts {
   markedFailed: number;
   reprobeInconclusive: number;
   deactivated: number;
+  budgetSkipped: number; // candidates of either pass left unprobed once opts.maxRunMs ran out
   // Board-death close: count-only/shadow → wouldCloseOnDeactivation; enforce writes closed.
   jobsClosedOnDeactivation: number; // active jobs of deactivated boards flipped to 'closed' (enforce; 0 in shadow)
   wouldCloseOnDeactivation: number; // active jobs of deactivated boards that WOULD close (shadow; 0 in enforce)
 }
 
 /**
- * The slug-discovery pipeline: seed → resolve → partition → probe NEW/INACTIVE → upsert the live subset
- * → reprobe ACTIVE companies → deactivate the stale ones, all under one `source_runs` row. `db` is
+ * The slug-discovery pipeline: seed → resolve → partition → reprobe ACTIVE companies → probe NEW/INACTIVE
+ * → upsert the live subset → deactivate the stale ones, all under one `source_runs` row. `db` is
  * injected and there is no argv read, so the Worker calls this directly. The PARTITION fixes the
  * reactivation lock-out: a candidate that is KNOWN-but-INACTIVE joins the probe path (not skipped as
  * "already seen"), so a live probe reactivates it via markProbeResult; only KNOWN-and-ACTIVE rows are
@@ -104,6 +111,8 @@ export async function runDiscovery(db: Db, opts: DiscoveryOptions = {}): Promise
       ? opts.olderThanDays
       : DEFAULT_OLDER_THAN_DAYS;
   const counts = emptyCounts();
+  const probeOpts: ProbeOptions = { ...opts.probe };
+  if (opts.maxRunMs !== undefined) probeOpts.deadline = Date.now() + opts.maxRunMs;
 
   const runId = dryRun ? null : await startRun(db, "discovery", { source: opts.source });
   try {
@@ -142,20 +151,25 @@ export async function runDiscovery(db: Db, opts: DiscoveryOptions = {}): Promise
     const scoped = opts.limit !== undefined ? worklist.slice(0, opts.limit) : worklist;
     counts.probeWorklist = scoped.length;
 
-    // PROBE the worklist + ACT; returns the upserted ids so the reprobe pass can skip them.
-    const upsertedIds = await probeAndUpsert(db, scoped, counts, dryRun, opts.probe);
-
-    // 7. REPROBE ACTIVE companies + 8. STALENESS SWEEP (writes — skipped on dry-run). The sweep is
-    // scoped to opts.source so a --source run can't deactivate rows of a source it never re-probed.
+    // REPROBE ACTIVE companies (writes — skipped on dry-run) BEFORE the worklist, so a run that spends
+    // its budget still keeps the known boards' liveness — what the sweep acts on — current. Running first
+    // also means it never re-probes a row the worklist pass is about to reactivate.
     if (!dryRun) {
       await reprobeActive(
         db,
         opts.source,
         opts.reprobeLimit ?? DEFAULT_REPROBE_LIMIT,
         counts,
-        opts.probe,
-        upsertedIds,
+        probeOpts,
       );
+    }
+
+    // PROBE the worklist + ACT.
+    await probeAndUpsert(db, scoped, counts, dryRun, probeOpts);
+
+    // STALENESS SWEEP (writes — skipped on dry-run). Scoped to opts.source so a --source run can't
+    // deactivate rows of a source it never re-probed.
+    if (!dryRun) {
       const deactivatedIds = await deactivateStale(db, olderThanDays, { source: opts.source });
       counts.deactivated = deactivatedIds.length;
       // Soft-close every still-active job of a just-deactivated (board-death) company — the reprobe path
@@ -180,58 +194,51 @@ export async function runDiscovery(db: Db, opts: DiscoveryOptions = {}): Promise
   }
 }
 
-/**
- * Probe the NEW/INACTIVE worklist; a live/live-empty result upserts the company + marks it live.
- * Returns the company ids it wrote, so the reprobe pass can skip the rows this run just stamped
- * (avoiding a same-run double probe on a bootstrap where every active row was just confirmed live).
- */
+/** Probe the NEW/INACTIVE worklist; a live/live-empty result upserts the company + marks it live. */
 async function probeAndUpsert(
   db: Db,
   worklist: Candidate[],
   counts: DiscoveryCounts,
   dryRun: boolean,
-  probeOpts: ProbeOptions | undefined,
-): Promise<Set<number>> {
-  const upsertedIds = new Set<number>();
-  if (worklist.length === 0) return upsertedIds;
+  probeOpts: ProbeOptions,
+): Promise<void> {
+  if (worklist.length === 0) return;
   const results = await probeCandidates(worklist, probeOpts);
   for (let i = 0; i < worklist.length; i++) {
     const c = worklist[i];
     const r = results[i];
-    if (!c || !r) continue;
+    if (!c) continue;
+    if (!r) {
+      counts.budgetSkipped += 1;
+      continue;
+    }
     counts.probed += 1;
     tally(counts, r);
     if (r.outcome === "live" || r.outcome === "live-empty") {
       if (!dryRun) {
         const id = await upsertCompany(db, c.slug, c.source);
         await markProbeResult(db, id, true); // insert-or-reactivate; stamps last_live_at
-        upsertedIds.add(id);
       }
       counts.upserted += 1; // upsert is get-or-create + reactivate, so this is "live-and-written", not strictly new
     }
     // absent ⇒ dropped (a never-seen dead slug never enters companies; an inactive one stays inactive);
     // indeterminate / transient ⇒ no write, left for a later run.
   }
-  return upsertedIds;
 }
 
 /**
- * Re-probe the oldest-probed ACTIVE companies (minus any this run just upserted): refresh the live
- * ones, age the confirmed-absent ones, and on an inconclusive (indeterminate / transient) probe still
- * advance last_probed_at via markProbed so the row moves DOWN the oldest-first queue instead of
- * staying at its head and starving every row behind it.
+ * Re-probe the oldest-probed ACTIVE companies: refresh the live ones, age the confirmed-absent ones, and
+ * on an inconclusive (indeterminate / transient) probe still advance last_probed_at via markProbed so the
+ * row moves DOWN the oldest-first queue instead of staying at its head and starving every row behind it.
  */
 async function reprobeActive(
   db: Db,
   source: SourceName | undefined,
   limit: number,
   counts: DiscoveryCounts,
-  probeOpts: ProbeOptions | undefined,
-  exclude: Set<number>,
+  probeOpts: ProbeOptions,
 ): Promise<void> {
-  const rows = (await listCompaniesForReprobe(db, { source, limit })).filter(
-    (row) => !exclude.has(row.id),
-  );
+  const rows = await listCompaniesForReprobe(db, { source, limit });
   if (rows.length === 0) return;
   const candidates: Candidate[] = rows.map((row) => ({
     source: row.source,
@@ -243,7 +250,11 @@ async function reprobeActive(
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i];
     const r = results[i];
-    if (!row || !r) continue;
+    if (!row) continue;
+    if (!r) {
+      counts.budgetSkipped += 1; // left unstamped, so it heads the next run's queue
+      continue;
+    }
     counts.reprobed += 1;
     if (r.outcome === "live" || r.outcome === "live-empty") {
       await markProbeResult(db, row.id, true);
@@ -373,6 +384,7 @@ export function emptyCounts(): DiscoveryCounts {
     markedFailed: 0,
     reprobeInconclusive: 0,
     deactivated: 0,
+    budgetSkipped: 0,
     jobsClosedOnDeactivation: 0,
     wouldCloseOnDeactivation: 0,
   };

@@ -105,11 +105,14 @@ const MAX_INGEST_LIMIT = 500;
 const MAX_JOBS_PER_BOARD = 1500;
 // Whole-run wall-clock budget, well under Cloudflare's 15-min scheduled-Worker per-invocation limit:
 // runIngestion stops starting new boards past this and finishes cleanly, so even a chunk of many medium
-// boards can't be killed mid-run. Belt-and-suspenders behind the per-board cap.
+// boards can't be killed mid-run. Belt-and-suspenders behind the per-board cap. Discovery gets the same
+// budget: no probe starts past it, and one in flight ends within a minute (10 s fetch timeout, retries
+// capped by MAX_RETRY_WAIT_MS), leaving minutes for its writes, the sweep and finishRun.
 const MAX_RUN_MS = 10 * 60_000;
 // Fail fast on rate limits: a retry the host wants us to wait longer than this for throws instead of
 // sleeping, and runIngestion skips that ATS's boards until its Retry-After passes. Patient retries spent
-// ~90 s per Workable board (3 × the 30 s Retry-After cap) and stalled whole ticks on 2026-10-06.
+// ~90 s per Workable board (3 × the 30 s Retry-After cap) and stalled whole ticks on 2026-10-06. A
+// discovery probe ends instead, as indeterminate.
 const MAX_RETRY_WAIT_MS = 5_000;
 // Per-board time limit: past it no new request starts for that board (a 503 storm on one board's detail
 // fetches could otherwise run it past Cloudflare's 15-min limit, killing the tick before finishRun and
@@ -170,6 +173,8 @@ export default {
             reprobeLimit: DISCOVERY_REPROBE_LIMIT,
             workerOnly: true,
             enforceLifecycle: parseEnforceFlag(env.LIFECYCLE_CLOSE_ENFORCE),
+            maxRunMs: MAX_RUN_MS,
+            probe: { maxRetryWaitMs: MAX_RETRY_WAIT_MS },
           });
           recordRun(env.CONTROL, ctx, (end) => discoverRun(tick, end, counts));
           break;

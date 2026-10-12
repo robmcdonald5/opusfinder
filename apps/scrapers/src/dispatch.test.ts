@@ -135,6 +135,8 @@ describe("scheduled() dispatch", () => {
       reprobeLimit: 500,
       workerOnly: true,
       enforceLifecycle: false,
+      maxRunMs: MAX_RUN_MS,
+      probe: { maxRetryWaitMs: MAX_RETRY_WAIT_MS },
     });
     expect(mocks.runIngestion).not.toHaveBeenCalled();
   });
@@ -637,6 +639,23 @@ describe("control plane — one ledger row per tick, which can never fail it", (
       detail: "1,234 candidates · 40 probed · 6 upserted · 500 re-probed · 2 deactivated",
     });
     expect(run.units).toEqual({ "cf.wall_ms": run.durationMs });
+  });
+
+  it("records a budget-stopped discovery run as partial", async () => {
+    mocks.runDiscovery.mockResolvedValue({ ...DISCOVERY_COUNTS, budgetSkipped: 120 });
+    const control = makeControl();
+    const ctx = makeCtx();
+    await scheduled(
+      { cron: DISCOVERY_CRON },
+      { DATABASE_URL: "postgres://stub", INGEST_CURSOR: makeKv(null), CONTROL: control },
+      ctx,
+    );
+    await settle(ctx);
+    expect(recorded(control)[0]).toMatchObject({
+      outcome: "partial",
+      detail:
+        "1,234 candidates · 40 probed · 6 upserted · 500 re-probed · 2 deactivated · 120 unprobed (budget stop)",
+    });
   });
 
   it.each<[string, () => Error, string]>([

@@ -207,10 +207,11 @@ export function discoverRun(
   finishedMs: number,
   counts: DiscoveryCounts,
 ): RunRecord<"discover"> {
+  const budgetStop = counts.budgetSkipped > 0;
   const time = timing(tick, finishedMs);
   return {
     stage: "discover",
-    outcome: "ok",
+    outcome: budgetStop ? "partial" : "ok",
     ...time,
     units: { "cf.wall_ms": time.durationMs },
     detail: [
@@ -219,6 +220,7 @@ export function discoverRun(
       `${n(counts.upserted)} upserted`,
       `${n(counts.reprobed)} re-probed`,
       `${n(counts.deactivated)} deactivated`,
+      ...(budgetStop ? [`${n(counts.budgetSkipped)} unprobed (budget stop)`] : []),
     ].join(" · "),
   };
 }
