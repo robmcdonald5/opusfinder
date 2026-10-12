@@ -41,10 +41,9 @@ export function createS3StorageClient(config: R2Config): StorageClient {
         const res = await client.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
         return res.Body ? await res.Body.transformToByteArray() : null;
       } catch (err) {
-        // Only a genuinely-missing object returns null. R2 reliably raises the typed NoSuchKey for
-        // that; any other error — e.g. a 404 NoSuchBucket from a mistyped R2_BUCKET_NAME — must throw
-        // loudly rather than masquerade as "object absent", or a misconfig would read as a
-        // permanently-empty cache and the pipeline would silently re-transcribe forever.
+        // Only a genuinely-missing object returns null; R2 raises the typed NoSuchKey for that. Any
+        // other error — e.g. a 404 NoSuchBucket from a mistyped R2_BUCKET_NAME — throws as itself, so
+        // a misconfig doesn't read as restructure's "transcript object missing" for every user.
         if (err instanceof NoSuchKey) return null;
         throw err;
       }

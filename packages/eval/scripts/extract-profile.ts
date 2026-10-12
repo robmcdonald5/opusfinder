@@ -1,13 +1,6 @@
 import { readFile } from "node:fs/promises";
 
-import {
-  CV_STRUCTURE_SYSTEM,
-  CV_TRANSCRIBE_SYSTEM,
-  CvProfileSchema,
-  generate,
-  generateObject,
-  pdfPart,
-} from "@opusfinder/llm";
+import { structureCv, transcribeCv } from "@opusfinder/llm";
 import { composeProfileText, MIN_TRANSCRIPT_CHARS, profileWarnings, scrubProfilePii } from "@opusfinder/shared";
 import { runScript } from "@opusfinder/shared/script";
 
@@ -20,10 +13,8 @@ import type { LabeledProfileFile } from "./pooling";
  * label file to stdout: save it as data/profiles/<profile-id>.json, then run build:pool,
  * draft-labels and build:dataset.
  *
- * The LLM wiring + guards mirror packages/profiles (scripts/seams.ts + ingestCv's gates) — kept
- * separate because those seams are script-local and the @opusfinder/profiles index stays
- * Worker-portable (it can't export the llm-pulling wiring). It is NOT a full ingestCv: it prints a
- * profile, it does not persist to R2/DB.
+ * The LLM calls are the ones packages/profiles wires (transcribeCv/structureCv from @opusfinder/llm);
+ * the quality gates below mirror ingestCv's. It is NOT a full ingestCv: it does not persist to R2/DB.
  *
  *   pnpm --filter @opusfinder/eval extract-profile <cv.pdf> <profile-id>
  */
@@ -39,37 +30,15 @@ async function main(): Promise<void> {
 
   const bytes = await readFile(pdfPath);
 
-  // Layer 1: transcribe. Fail loud on truncation (like the ingest seam) AND on a too-short transcript
+  // Layer 1: transcribe (throws on a truncated or refused transcript). Also fail on a too-short one
   // (like ingestCv's MIN_TRANSCRIPT_CHARS gate) — a degraded PDF must not become a hollow profile.
-  const transcript = await generate({
-    model: "haiku",
-    system: CV_TRANSCRIBE_SYSTEM,
-    temperature: 0,
-    maxOutputTokens: 8192,
-    messages: [
-      {
-        role: "user",
-        content: [pdfPart(bytes), { type: "text", text: "Transcribe this CV to clean plain text per the rules." }],
-      },
-    ],
-  });
-  if (transcript.finishReason === "length") {
-    throw new Error("transcription hit the maxOutputTokens cap (truncated). Raise the limit or split the document.");
-  }
-  if (transcript.text.trim().length < MIN_TRANSCRIPT_CHARS) {
+  const transcript = await transcribeCv(bytes);
+  if (transcript.trim().length < MIN_TRANSCRIPT_CHARS) {
     throw new Error("transcription returned too little text — corrupt, encrypted, or image-only PDF?");
   }
 
   // Layer 2: structure → scrub PII (exactly what the production pipeline persists + embeds).
-  const { object } = await generateObject({
-    model: "haiku",
-    schema: CvProfileSchema,
-    system: CV_STRUCTURE_SYSTEM,
-    temperature: 0,
-    maxOutputTokens: 4096,
-    messages: [{ role: "user", content: transcript.text }],
-  });
-  const profile: EvalProfile = { id, ...scrubProfilePii(object) };
+  const profile: EvalProfile = { id, ...scrubProfilePii(await structureCv(transcript)) };
 
   // Empty-content gate (like ingestCv + the dataset validator) — fail at the source, not later at
   // build:dataset load time.

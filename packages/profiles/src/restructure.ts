@@ -1,10 +1,23 @@
 import type { Db } from "@opusfinder/db";
 import { getProfileTextKey, upsertUserProfile } from "@opusfinder/db/repos";
-import { composeProfileText, scrubProfilePii, type UserId } from "@opusfinder/shared";
+import {
+  composeProfileText,
+  profileWarnings,
+  scrubProfilePii,
+  type UserId,
+} from "@opusfinder/shared";
 import type { StorageClient } from "@opusfinder/storage";
 
 import { embedQuery } from "./embed";
 import type { ProfileEmbedFn, StructureFn } from "./types";
+
+export interface RestructureProfileResult {
+  /** The cv_file whose cached transcript was re-structured. */
+  sourceCvFileId: number;
+  embedTokens: number;
+  /** Non-fatal flags (e.g. empty skills) for the caller to surface. */
+  warnings: string[];
+}
 
 /**
  * Re-structure a user's profile from the CACHED transcript in R2 (skips the expensive transcribe
@@ -15,7 +28,7 @@ export async function restructureProfile(
   db: Db,
   deps: { structure: StructureFn; embed: ProfileEmbedFn; storage: StorageClient },
   userId: UserId,
-): Promise<void> {
+): Promise<RestructureProfileResult> {
   const ref = await getProfileTextKey(db, userId);
   if (!ref) throw new Error(`restructureProfile: no cached transcript for user ${userId}`);
 
@@ -30,7 +43,7 @@ export async function restructureProfile(
     throw new Error("restructureProfile: re-structured profile had no embeddable content");
   }
 
-  const { vector } = await embedQuery(deps.embed, embedText);
+  const { vector, usage } = await embedQuery(deps.embed, embedText);
 
   await upsertUserProfile(db, {
     userId,
@@ -38,4 +51,9 @@ export async function restructureProfile(
     embedding: vector,
     sourceCvFileId: ref.sourceCvFileId,
   });
+  return {
+    sourceCvFileId: ref.sourceCvFileId,
+    embedTokens: usage.totalTokens,
+    warnings: profileWarnings(structured),
+  };
 }

@@ -64,11 +64,10 @@ export interface VoyageEmbedResponse {
  * items and the per-request token budget) — chunking is embed()'s job, not this layer's.
  * Returns vectors aligned to input order plus usage for cost accounting.
  *
- * `apiKey` is the injection seam: a caller without `process.env` (the Cloudflare
- * Worker) passes the key explicitly; omit it (or pass an empty string) and we fall back to
- * `getVoyageApiKey()` (the local-script / env path). An empty injected key is treated as
- * absent — not sent as `Bearer ` — so a misconfigured secret surfaces the env path's
- * friendly error instead of a silent 401. The key is never logged (no-secrets-in-logs rule).
+ * `apiKey` overrides the env key (tests, or a caller holding its own key); omit it (or pass an
+ * empty string) to use `getVoyageApiKey()`. An empty key is treated as absent — not sent as
+ * `Bearer ` — so a blank secret surfaces the env path's friendly error instead of a silent 401.
+ * The key is never logged. Not a Worker seam: this module imports ./env, which loads dotenv.
  */
 export async function embedRequest(
   input: string[],

@@ -344,7 +344,7 @@ describe("restructureProfile — cached-transcript re-run seam: lookup, scrub, e
         { structure: stubStructure(CLEAN_PROFILE), embed: stubEmbed(vector), storage },
         a,
       ),
-    ).resolves.toBeUndefined(); // void return — usage tokens are deliberately discarded
+    ).resolves.toStrictEqual({ sourceCvFileId: cvId, embedTokens: 42, warnings: [] });
 
     const rows = await readProfiles(a);
     expect(rows).toHaveLength(1);
@@ -352,6 +352,22 @@ describe("restructureProfile — cached-transcript re-run seam: lookup, scrub, e
     // Drizzle's typed vector column round-trips the stored pgvector back to number[].
     expect(rows[0]!.embedding).toEqual(vector);
     expect(rows[0]!.sourceCvFileId).toBe(cvId);
+  });
+
+  it("returns profileWarnings for a thin re-structured profile and still writes it", async () => {
+    const a = await seedUser(1);
+    await seedCvFile(a, { status: "extracted", r2TextKey: "cv/text/a.txt" });
+    const { storage } = fakeStorage(transcriptMap({ "cv/text/a.txt": "transcript body" }));
+    const thin: StructuredProfile = { summary: "Backend engineer.", skills: [], targetRoles: [] };
+
+    const result = await restructureProfile(
+      db,
+      { structure: stubStructure(thin), embed: stubEmbed(), storage },
+      a,
+    );
+
+    expect(result.warnings).toEqual(["no skills extracted", "no target roles extracted"]);
+    expect((await readProfiles(a))[0]!.structured).toStrictEqual(thin);
   });
 
   it("UPDATEs the one existing row on re-run — structured/embedding/sourceCvFileId replaced, planted past updatedAt sentinel moves, exactly one row remains", async () => {
