@@ -538,10 +538,7 @@ export async function statementExists(db: D1Database, messageId: string): Promis
   );
 }
 
-/**
- * Statements `by` entered by hand since `since`. One the owner has since counted or excluded carries the
- * owner's name instead, so this can undercount; it is a runaway guard, not a quota.
- */
+/** Statements `by` entered by hand since `since` (a hand entry's sender is who entered it). */
 export async function manualStatementsSince(
   db: D1Database,
   by: string,
@@ -549,7 +546,7 @@ export async function manualStatementsSince(
 ): Promise<number> {
   const row = await db
     .prepare(
-      "SELECT COUNT(*) AS n FROM statement WHERE source = 'manual' AND updated_by = ? AND received_at >= ?",
+      "SELECT COUNT(*) AS n FROM statement WHERE source = 'manual' AND sender = ? AND received_at >= ?",
     )
     .bind(by, since)
     .first<{ n: number }>();

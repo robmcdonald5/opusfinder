@@ -416,8 +416,14 @@ describe("statements by hand", () => {
       amount: String(i + 1),
       chargedOn: today(),
     });
-    for (let i = 0; i < DAILY_AGENT_STATEMENTS; i++)
-      expect((await add("agent", entry(i))).status).toBe(201);
+    const ids: number[] = [];
+    for (let i = 0; i < DAILY_AGENT_STATEMENTS; i++) {
+      const res = await add("agent", entry(i));
+      expect(res.status).toBe(201);
+      ids.push(((await res.json()) as Json).statement.id);
+    }
+    // One the owner has since dealt with still counts against the agent.
+    await h.request(`/ui/statements/${ids[0]}`, { as: "owner", form: { action: "exclude" } });
     const over = await add("agent", entry(DAILY_AGENT_STATEMENTS));
     expect(over.status).toBe(429);
     expect(((await over.json()) as Json).error.code).toBe("too_many_statements");
