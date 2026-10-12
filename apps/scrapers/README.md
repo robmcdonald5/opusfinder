@@ -26,8 +26,8 @@ and the library it calls owns its own `source_runs` row (`startRun`/`finishRun`)
 
 > **Worker-isolation invariant (Phase 9.5 + 10 + 11).** `@opusfinder/auth` (Better Auth) and the neon-serverless
 > `createAuthDb` (`@opusfinder/db/auth-client`) crash at import under `nodejs_compat` (#6665) and must
-> **never** enter this bundle — the Worker reads Neon directly as a trusted process and iterates the
-> `user` / `user_preferences` tables as data, never importing the auth lib. `pnpm guard:worker`
+> **never** enter this bundle — the Worker reads and writes only `companies`, `jobs` and `source_runs`,
+> never a user, auth or digest table. `pnpm guard:worker`
 > (`scripts/check-worker-isolation.mjs`) asserts it (source scan + dependency scan) and fails CI on a leak.
 > As of **Phase 10** the deny list also covers the digest pipeline's server-only stack —
 > `@opusfinder/inngest` / `inngest` / `@opusfinder/llm` / `@opusfinder/rerank` / `@anthropic-ai/sdk` —
@@ -39,12 +39,11 @@ and the library it calls owns its own `source_runs` row (`startRun`/`finishRun`)
   using an id-keyset cursor stored in the `INGEST_CURSOR` KV namespace; the corpus drains across ticks.
   Boards run one at a time; politeness starts a board ≥ 500 ms after the previous board of its source
   (its adapter's `pacingKey`) finished, sleeping only the remainder, so alternating sources can't burst
-  one host. A posting
-  whose detail fetch failed is kept as stored, never overwritten (`hydrateSkipped` in `pnpm runs`).
-  Inline embedding is **not wired** — the Voyage free tier throttles to 3 RPM, and importing the
-  embeddings package would pull a Node env-module into the Worker (and require `nodejs_compat`). Jobs
-  are upserted regardless; the still-NULL vectors are filled by `pnpm embeddings:backfill`. See the
-  enable steps in `src/index.ts`.
+  one host. A posting whose detail fetch failed is kept as stored, never overwritten (`hydrateSkipped`
+  in `pnpm runs`). Inline embedding is **not wired**, and no flag turns it on: the embeddings package
+  loads its env from disk at import, which crashes a Worker at module load and which `pnpm guard:worker`
+  keeps out of this bundle. Jobs are upserted regardless; the still-NULL vectors are filled by
+  `pnpm embeddings:backfill`.
 - **Discovery** runs `runDiscovery({ ..., workerOnly: true })` bounded by `limit`/`reprobeLimit` to stay
   under the subrequest budget. `workerOnly` restricts the run to fetch-only `workerSafe` lanes (the
   F5-LANES-2 guard that keeps a future Node-only lane out of the isolate).
@@ -52,7 +51,11 @@ and the library it calls owns its own `source_runs` row (`startRun`/`finishRun`)
 > **Health & liveness (Phase F6).** On each successful ingestion tick the Worker fires a content-free
 > heartbeat to an external watchdog (`env.HEALTH_PING_URL`, an optional `wrangler secret`); the watchdog
 > emails the owner if the pings STOP — the only way to catch the cron's own death (a dead cron emits
-> nothing). The rich in-DB signals (staleness, backlogs, digest/bounce health, cost) are computed
+> nothing). A tick that throws, or that ingests no board while at least one fails, posts its cause to the
+> check's `/fail` instead, which alerts at once. Discovery heartbeats only to its own weekly check
+> (`HEALTH_PING_URL_DISCOVER`, optional); without one, a failed discovery tick posts to the ingest check's
+> `/fail`. A ping the watchdog doesn't answer with `OK` logs a `watchdog … not taken` / `not sent` warning.
+> The rich in-DB signals (staleness, backlogs, digest/bounce health, cost) are computed
 > separately by `pnpm health` (the `@opusfinder/db` checker). See `research/specs/PHASE_F6_PLAN.md`.
 
 > **Control plane, in shadow.** Each tick reads its stage's gate from the `opusfinder-control` Worker
@@ -63,12 +66,12 @@ and the library it calls owns its own `source_runs` row (`startRun`/`finishRun`)
 
 > **Cron weekday footgun:** Cloudflare numbers weekdays `1=Sun…7=Sat` (Quartz-style), so Sunday is
 > `SUN` (or `1`), **never `0`**. The cron strings in `wrangler.toml` and the `case` literals in
-> `src/index.ts` must match character-for-character or the branch silently never fires.
+> `src/index.ts` must match character-for-character: otherwise that lane never runs, and the string
+> Cloudflare fires instead fails every tick with `Unhandled cron`.
 
 ## Local development (no deploy)
 
 ```bash
-pnpm --filter @opusfinder/scrapers types:generate   # emits worker-configuration.d.ts (run before typecheck)
 pnpm --filter @opusfinder/scrapers typecheck
 pnpm --filter @opusfinder/scrapers exec wrangler deploy --dry-run --outdir dist   # bundle-only gate
 
@@ -85,9 +88,9 @@ mode), so a local trigger writes a real `source_runs` row to Neon.
 ### Secrets / config
 
 Copy `.dev.vars.example` → `.dev.vars` (gitignored) and fill in `DATABASE_URL` — that is all the Worker
-needs. `VOYAGE_API_KEY` is required only if you enable inline embedding (see `src/index.ts`).
-`worker-configuration.d.ts` is generated by `wrangler types`; regenerate it whenever `wrangler.toml`
-changes (it is committed so `typecheck` works without a generate step first).
+needs. `worker-configuration.d.ts` holds only the Workers runtime types; regenerate it with
+`pnpm --filter @opusfinder/scrapers types:generate` when `compatibility_date` changes. Bindings and vars
+are typed by the `Env` interface in `src/index.ts`: update it whenever `wrangler.toml` adds or changes one.
 
 ## Deploy (USER actions — the agent cannot do these)
 
@@ -95,17 +98,15 @@ These require the Cloudflare account / real secrets / billing:
 
 ```bash
 wrangler login
-wrangler kv namespace create INGEST_CURSOR   # then uncomment the `id` line in wrangler.toml + paste it
 wrangler secret put DATABASE_URL
 wrangler secret put HEALTH_PING_URL           # Phase F6 liveness heartbeat — the watchdog ping URL (optional)
-# wrangler secret put VOYAGE_API_KEY          # ONLY if you enable inline embedding (see src/index.ts)
+wrangler secret put HEALTH_PING_URL_DISCOVER  # discovery's own weekly check: period 7 d, grace ~6 h (optional)
 pnpm --filter @opusfinder/scrapers deploy     # registers/updates the Worker + applies the current [triggers]
 wrangler tail opusfinder-scrapers             # stream live cron invocations
 ```
 
-- **Workers Paid is required for the weekly discovery cron** (now **active** as of Phase F5) — the Free
-  plan caps at 50 subrequests per invocation, which the seed fetch + a handful of probes exhaust.
-  Ingestion's `INGEST_LIMIT` keeps a tick under budget either way.
+- **Workers Paid is required** (active): the Free plan caps an invocation at 50 subrequests, far below
+  an ingestion tick (~1,500; see `[limits]` in `wrangler.toml`) or a discovery run.
 - **When the ingestion cadence changes, retune the external watchdog in the SAME deploy window.** The
   heartbeat (`HEALTH_PING_URL`) pings once per successful ingestion tick, so the watchdog check's period
   must equal the cron period. For the current `0 */2 * * *`, set the healthchecks.io check to **period
@@ -113,6 +114,12 @@ wrangler tail opusfinder-scrapers             # stream live cron invocations
   period, so a single missed tick alerts within ~3 h. Do it BEFORE `pnpm --filter @opusfinder/scrapers
   deploy`: an hourly-period check would page on every healthy 2-hour gap. (If `HEALTH_INGEST_MAX_AGE_H` is
   set anywhere — `packages/db/.env`, Vercel — make it 5 or unset it; the code default is 5.)
+- **After any `[triggers]` change (a new cron string, a pause or a resume), confirm what actually fires.**
+  The deploy output and the deployed schedules (`wrangler deployments list`, the dashboard Triggers page)
+  are not proof: on 2026-10-05 they showed the new `0 */2 * * *` while Cloudflare kept firing the replaced
+  `0 * * * *` for ~18 h, and every tick failed with `Unhandled cron`. Check the cron string of the next
+  runs (the Worker's Cron Events, or `workersInvocationsScheduled` analytics). If the old string still
+  fires, run `pnpm --filter @opusfinder/scrapers exec wrangler triggers deploy` and check again.
 
 ## Pause / resume the schedule
 
@@ -125,12 +132,13 @@ change to the toggle takes effect on the **next deploy**:
   `pnpm --filter @opusfinder/scrapers deploy`. Deploying with `crons = []` is the documented way to
   _remove_ the deployed triggers. (Omitting `[triggers]` entirely would instead _leave_ them untouched,
   so always set the empty array — don't just delete the block.)
-- **Resume**: uncomment the cron array in `wrangler.toml` (and delete `crons = []`), then
+- **Resume**: restore the cron array in `wrangler.toml` in place of `crons = []`, then
   `pnpm --filter @opusfinder/scrapers deploy`.
 
 The Worker code, secret, and KV binding are untouched by the toggle, so resuming is a one-step redeploy.
-Verify either way with `pnpm --filter @opusfinder/scrapers exec wrangler deployments list`, or the
-Cloudflare dashboard (Workers → opusfinder-scrapers → Settings → Triggers).
+Verify either way by what fires, not by the deployed schedules (see "Deploy" above). Pause the watchdog
+checks in the same window as a pause, and resume them with the crons: with no ticks, the ingest check
+pages within ~3 h.
 
 ## Scaling note
 

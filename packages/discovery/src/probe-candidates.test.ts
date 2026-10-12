@@ -135,4 +135,22 @@ describe("probeCandidates", () => {
     expect(results.map((r) => r.candidate.rawSlug)).toEqual(["alpha", "bravo", "charlie"]);
     expect(results.map((r) => r.outcome)).toEqual(["live", "live", "live"]);
   });
+
+  it("starts no probe past the deadline — a candidate it never reached has no result", async () => {
+    handler = () => fakeResponse(200, JSON.stringify({ jobs: [{ id: 1, title: "x" }] }));
+
+    // Same-host starts 500ms apart: alpha at 0, bravo at 500, charlie at 1000 — past the 700ms deadline.
+    const promise = probeCandidates(batch(), {
+      hostMinIntervalMs: 500,
+      deadline: Date.now() + 700,
+    });
+    await vi.runAllTimersAsync();
+    const results = await promise;
+
+    expect(results).toHaveLength(3);
+    expect(results[0]?.outcome).toBe("live");
+    expect(results[1]?.outcome).toBe("live");
+    expect(results[2]).toBeUndefined();
+    expect(fetchCalls).toHaveLength(2);
+  });
 });

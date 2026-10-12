@@ -93,9 +93,6 @@ importers:
       '@opusfinder/discovery':
         specifier: workspace:*
         version: link:../../packages/discovery
-      '@opusfinder/embeddings':
-        specifier: workspace:*
-        version: link:../../packages/embeddings
       '@opusfinder/shared':
         specifier: workspace:*
         version: link:../../packages/shared

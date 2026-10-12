@@ -2,9 +2,12 @@ name = "opusfinder-scrapers"
 main = "src/index.ts"
 compatibility_date = "2026-06-03"
 # No compatibility_flags: the Worker imports only fetch-based libraries (neon-http, the ATS adapters,
-# discovery) — no Node-targeted package enters the bundle, so nodejs_compat is not needed. Enabling
-# inline embedding later re-introduces @opusfinder/embeddings' dotenv env-module and would need
-# `compatibility_flags = ["nodejs_compat"]` — see src/index.ts.
+# discovery) — no Node-targeted package enters the bundle, so nodejs_compat is not needed.
+
+# Cron-only (no fetch handler), so no public hostname: a request to one could only throw. Crons and the
+# outbound CONTROL binding need none, and local `wrangler dev` triggers are unaffected.
+workers_dev = false
+preview_urls = false
 
 [observability]
 enabled = true
@@ -49,8 +52,9 @@ subrequests = 100000
 # runDiscovery({ workerOnly: true }).
 # (UTC; CF weekdays are 1=Sun..7=Sat — Sunday is "SUN", never "0"; the strings MUST match the `case`
 # literals in src/index.ts character-for-character — src/dispatch.test.ts reads this array and fails on
-# drift. USER: `wrangler deploy` to register the trigger, and set the external watchdog's expected period
-# to 2 h — an hourly-period check would page on every healthy gap.)
+# drift. USER: `wrangler deploy` to register the trigger, then confirm the NEW string fires and the old one
+# stops (README "Deploy": the deployed schedules are not proof), and set the external watchdog's expected
+# period to 2 h — an hourly-period check would page on every healthy gap.)
 crons = [
   "0 */2 * * *", # ingestion — every 2 h, at :00 of even UTC hours
   "0 3 * * SUN", # discovery — Sunday 03:00 (Workers Paid; F5f resumed) — workerSafe lanes via workerOnly:true
@@ -131,10 +135,9 @@ service = "opusfinder-control"
 entrypoint = "ControlRpc"
 props = { name = "cf:opusfinder-scrapers" }
 
-# Chunk-cursor store for the Option-A chunked-cron ingestion lane. The binding is DECLARED so
-# `wrangler dev` simulates a local KV for it (no id needed) and the ingestion tick can read/write the
-# cursor locally. A real `wrangler deploy` needs the id — USER step (PHASE_8_PLAN.md §9):
-#   wrangler kv namespace create INGEST_CURSOR   # then uncomment `id` below and paste the value
+# Chunk-cursor store for the chunked ingestion tick. `wrangler dev` simulates it locally, so a local run
+# never moves the deployed cursor. The namespace exists; a new account creates its own with
+# `wrangler kv namespace create INGEST_CURSOR` and replaces the id.
 [[kv_namespaces]]
 binding = "INGEST_CURSOR"
 id = "512214e0882d4816bc397cf092956a66"

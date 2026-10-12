@@ -1,4 +1,4 @@
-import { backoff, sleep } from "@opusfinder/shared/async";
+import { backoff, backoffDelayMs, sleep } from "@opusfinder/shared/async";
 import {
   adapters,
   type JobsRequest,
@@ -14,6 +14,9 @@ const DEFAULT_GLOBAL_CONCURRENCY = 12;
 const DEFAULT_HOST_CONCURRENCY = 3;
 const DEFAULT_HOST_MIN_INTERVAL_MS = 400;
 const THROTTLE_POLL_MS = 25;
+// Per-attempt fetch timeout: global `fetch` has none, so a host that accepts the connection and never
+// answers would hold its probe — and the run — until the Worker is killed.
+const PROBE_FETCH_TIMEOUT_MS = 10_000;
 
 export interface ProbeFetchResult {
   /** HTTP status of the final attempt, or 0 when the network attempt was exhausted (retries spent). */
@@ -26,30 +29,38 @@ export interface ProbeFetchResult {
  * Fetch one probe request, NON-throwing — the inverse of run-adapter's `fetchJsonResilient` (which
  * throws on `!ok`). For discovery a 404 / 400 / 200-empty IS the signal, so every response resolves
  * to `{ status, body }`. Retries only the genuinely-transient 429 / 5xx / network error (shared
- * `backoff` + `Retry-After`); a definitive 4xx returns immediately, and a non-JSON 2xx returns
- * `{ status, body: undefined }` (the classifier reads the status; `locate(undefined)` ⇒ indeterminate).
- * Worker-forward: global `fetch` + `setTimeout` only.
+ * `backoff` + `Retry-After`) — never one that would wait longer than `maxRetryWaitMs`; a definitive 4xx
+ * returns immediately, and a non-JSON 2xx returns `{ status, body: undefined }` (the classifier reads the
+ * status; `locate(undefined)` ⇒ indeterminate). Worker-forward: global `fetch` + `setTimeout` only.
  */
 export async function probeFetch(
   req: JobsRequest,
   maxRetries = DEFAULT_MAX_RETRIES,
+  maxRetryWaitMs = Infinity,
 ): Promise<ProbeFetchResult> {
+  const canRetry = (attempt: number, retryAfter?: string | null): boolean =>
+    attempt < maxRetries && backoffDelayMs(attempt, retryAfter) <= maxRetryWaitMs;
   for (let attempt = 0; ; ) {
     let res: Response;
     try {
-      res = await fetch(req.url, req.init);
+      const timeout = AbortSignal.timeout(PROBE_FETCH_TIMEOUT_MS);
+      const signal = req.init?.signal ? AbortSignal.any([req.init.signal, timeout]) : timeout;
+      res = await fetch(req.url, { ...req.init, signal });
     } catch {
-      if (attempt < maxRetries) {
+      if (canRetry(attempt)) {
         await backoff(attempt++);
         continue;
       }
       return { status: 0, body: undefined };
     }
 
-    if ((res.status === 429 || res.status >= 500) && attempt < maxRetries) {
-      await res.body?.cancel().catch(() => {});
-      await backoff(attempt++, res.headers.get("retry-after"));
-      continue;
+    if (res.status === 429 || res.status >= 500) {
+      const retryAfter = res.headers.get("retry-after");
+      if (canRetry(attempt, retryAfter)) {
+        await res.body?.cancel().catch(() => {});
+        await backoff(attempt++, retryAfter);
+        continue;
+      }
     }
 
     // Only a 2xx body is meaningful to the classifiers (locate / classifyProbe read it); a final
@@ -59,7 +70,17 @@ export async function probeFetch(
       await res.body?.cancel().catch(() => {});
       return { status: res.status, body: undefined };
     }
-    const text = await res.text();
+    // The timeout covers the body too: a stalled or reset stream fails like a network throw.
+    let text: string;
+    try {
+      text = await res.text();
+    } catch {
+      if (canRetry(attempt)) {
+        await backoff(attempt++);
+        continue;
+      }
+      return { status: 0, body: undefined };
+    }
     let body: unknown;
     try {
       body = JSON.parse(text);
@@ -112,10 +133,15 @@ function hostOf(req: JobsRequest): string {
   }
 }
 
-async function probeWith(c: Candidate, req: JobsRequest, maxRetries: number): Promise<ProbeResult> {
+async function probeWith(
+  c: Candidate,
+  req: JobsRequest,
+  maxRetries: number,
+  maxRetryWaitMs?: number,
+): Promise<ProbeResult> {
   const adapter = adapters[c.source];
   const ctx = contextOf(c);
-  const { status, body } = await probeFetch(req, maxRetries);
+  const { status, body } = await probeFetch(req, maxRetries, maxRetryWaitMs);
   const outcome =
     adapter.classifyProbe?.(status, body) ?? defaultClassify(adapter, status, body, ctx);
   return { candidate: c, status, outcome };
@@ -172,6 +198,14 @@ export class HostThrottle {
 
 export interface ProbeOptions {
   maxRetries?: number;
+  /**
+   * Fail fast (Worker): a retry that would wait longer than this — a 429's Retry-After or the backoff — is
+   * not made, and the probe ends with its last status (never a live/absent verdict). Omit ⇒ wait it out
+   * (≤ 30 s a retry): the CLI.
+   */
+  maxRetryWaitMs?: number;
+  /** Epoch ms past which no new probe starts; a candidate not started by then gets no result. */
+  deadline?: number;
   /** Total concurrent probes across all hosts. */
   globalConcurrency?: number;
   /** Max concurrent probes to ONE host (path-based sources share a host; subdomain sources don't). */
@@ -184,7 +218,8 @@ export interface ProbeOptions {
  * Probe many candidates through a bounded, polite pool: a global concurrency cap PLUS a per-host gate
  * (≤ `hostConcurrency` in flight AND ≥ `hostMinIntervalMs` between starts), so a shared API host (all
  * greenhouse boards hit boards-api.greenhouse.io) isn't hammered while unique subdomain hosts still
- * run in parallel. Results preserve input order.
+ * run in parallel. Results preserve input order; past `opts.deadline` the unstarted candidates are left
+ * as holes (`results[i]` undefined).
  */
 export async function probeCandidates(
   candidates: Candidate[],
@@ -209,7 +244,9 @@ export async function probeCandidates(
       const host = hostOf(req);
       await throttle.acquire(host);
       try {
-        results[i] = await probeWith(c, req, maxRetries);
+        // Checked after the host slot, which can take a while: this worker stops, leaving `i` a hole.
+        if (opts.deadline !== undefined && Date.now() >= opts.deadline) return;
+        results[i] = await probeWith(c, req, maxRetries, opts.maxRetryWaitMs);
       } finally {
         throttle.release(host);
       }

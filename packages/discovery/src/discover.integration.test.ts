@@ -18,8 +18,8 @@ import { jsonResponse, routedFetch, textResponse, type Route } from "@test/http/
 // Focus is the DB-observable wiring NO other suite owns: the partition (already-active excluded,
 // KNOWN-INACTIVE re-probed → reactivated, case-folded for case-insensitive sources), the worklist `limit` slice, which probe outcomes WRITE (live/
 // live-empty upsert; absent/indeterminate/transient never), the dryRun write-suppression, the reprobe pass
-// (refresh/mark-failed/inconclusive + the exclude-just-upserted skip), the board-death close (shadow vs
-// enforce), the olderThanDays≤0 coercion, and the source_runs row (ok + error). NOT this file's job: the
+// (refresh/mark-failed/inconclusive, run before the worklist), the run budget, the board-death close (shadow
+// vs enforce), the olderThanDays≤0 coercion, and the source_runs row (ok + error). NOT this file's job: the
 // probe fetch/classify/throttle internals (probe-*.test.ts), the seed resolve tallies (resolve/lanes unit
 // suites), and the per-column companies-lifecycle SET matrix (db repos/discovery.integration.test.ts).
 
@@ -211,7 +211,7 @@ describe("runDiscovery — orchestration over real PGlite (fetch stubbed)", () =
         indeterminate: 1,
         transientFailed: 1,
         upserted: 2, // live + live-empty both write
-        reprobed: 0, // the 2 upserted rows are excluded; no other active rows exist
+        reprobed: 0, // the reprobe pass ran first, before the 2 rows existed
         deactivated: 0,
         jobsClosedOnDeactivation: 0,
         wouldCloseOnDeactivation: 0,
@@ -240,7 +240,7 @@ describe("runDiscovery — orchestration over real PGlite (fetch stubbed)", () =
       expect(runs[0]!.finishedAt).toBeInstanceOf(Date);
       expect(runs[0]!.counts).toEqual(counts);
 
-      // No reprobe fired (both live rows excluded): seed + 5 probes only.
+      // No reprobe fired (no active rows when it ran): seed + 5 probes only.
       expect(fx.calls.filter((u) => u.includes("/v1/boards/")).length).toBe(5);
     });
 
@@ -305,7 +305,7 @@ describe("runDiscovery — orchestration over real PGlite (fetch stubbed)", () =
       expect(fx.calls.some((u) => probeMatch("other")(u))).toBe(false);
     });
 
-    it("re-probes a KNOWN-INACTIVE candidate live → reactivates it, excludes it from reprobe, and leaves an un-re-emitted dead row untouched", async () => {
+    it("re-probes a KNOWN-INACTIVE candidate live → reactivates it, probes it once, and leaves an un-re-emitted dead row untouched", async () => {
       await seedCompany({
         slug: "zombie",
         active: false,
@@ -338,8 +338,8 @@ describe("runDiscovery — orchestration over real PGlite (fetch stubbed)", () =
       expect(dead!.active).toBe(false);
       expect(dead!.consecutiveProbeFailures).toBe(3);
       expect(dead!.lastLiveAt).toEqual(SENTINEL_2020);
-      // EXCLUDE-just-upserted: zombie is probed exactly ONCE (worklist). Dropping the exclude filter would
-      // re-probe the now-active zombie in the reprobe pass → a second probe + reprobed:1.
+      // zombie is probed exactly ONCE (worklist): the reprobe pass runs first, while it is still inactive.
+      // Moving reprobe after the worklist would re-probe the now-active zombie → a second probe + reprobed:1.
       expect(fx.calls.filter((u) => probeMatch("zombie")(u)).length).toBe(1);
     });
 
@@ -554,6 +554,64 @@ describe("runDiscovery — orchestration over real PGlite (fetch stubbed)", () =
       );
       // The newest row was never reached by the limit — its cursor is frozen (a dropped limit reprobes it).
       expect((await companyBySlug("newest"))!.lastProbedAt).toEqual(newestProbed);
+    });
+  });
+
+  describe("run budget (maxRunMs)", () => {
+    it("re-probes known boards first; past the budget nothing new starts or is written, and the run still finishes ok", async () => {
+      await seedCompany({
+        slug: "oldco",
+        active: true,
+        lastLiveAt: daysAgo(1),
+        lastProbedAt: SENTINEL_2020,
+      });
+      const laterProbed = daysAgo(1);
+      await seedCompany({
+        slug: "laterco",
+        active: true,
+        lastLiveAt: daysAgo(1),
+        lastProbedAt: laterProbed,
+      });
+      // The clock moves only when oldco is probed: that first probe spends the whole 1 s budget.
+      let now = Date.now();
+      const clock = vi.spyOn(Date, "now").mockImplementation(() => now);
+      try {
+        const fx = installFetch([
+          seedRoute(["newco"]),
+          {
+            match: probeMatch("oldco"),
+            respond: (url) => {
+              now += 1_000;
+              return liveRoute("oldco").respond(url);
+            },
+          },
+          liveRoute("laterco"),
+          liveRoute("newco"),
+        ]);
+
+        const counts = await runDiscovery(db, {
+          lanes: ["outscal"],
+          maxRunMs: 1_000,
+          probe: { ...PROBE_OPTS, globalConcurrency: 1 },
+        });
+
+        expect(counts).toMatchObject({
+          reprobed: 1,
+          refreshedLive: 1,
+          probeWorklist: 1,
+          probed: 0,
+          upserted: 0,
+          budgetSkipped: 2, // laterco (reprobe) + newco (worklist)
+        });
+        expect(fx.calls.some((u) => probeMatch("laterco")(u))).toBe(false);
+        expect(fx.calls.some((u) => probeMatch("newco")(u))).toBe(false);
+        // An unreached row keeps its place at the head of next run's queue (no markProbed).
+        expect((await companyBySlug("laterco"))!.lastProbedAt).toEqual(laterProbed);
+        expect(await companyBySlug("newco")).toBeUndefined();
+        expect((await allSourceRuns())[0]!.status).toBe("ok");
+      } finally {
+        clock.mockRestore();
+      }
     });
   });
 

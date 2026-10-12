@@ -326,6 +326,7 @@ describe("emptyCounts", () => {
       markedFailed: 0,
       reprobeInconclusive: 0,
       deactivated: 0,
+      budgetSkipped: 0,
       jobsClosedOnDeactivation: 0,
       wouldCloseOnDeactivation: 0,
     });

@@ -371,12 +371,12 @@ row at the end, in `ctx.waitUntil`:
   the gate's knobs or policies differ from what the tick runs with: `boardsPerTick` vs the resolved
   `INGEST_LIMIT`; `limit` / `reprobeLimit` vs the Worker's constants; `close` / `stale_sweep` vs
   `LIFECYCLE_CLOSE_ENFORCE` / `STALE_SWEEP`; `stale_sweep.ttlDays` vs `STALE_SWEEP_TTL_DAYS`.
-- **Ledger row:** `ok`, `partial` (the run budget stopped ingest early) or `error` (the tick threw;
-  recorded before the re-throw); the gate mode it read (null when unreadable); the Worker's own
-  start/finish clock; `cf.wall_ms`; a one-line `detail` (for an error, the watchdog's `describeDbError`
-  text: a failed query's Postgres reason first, never its params); and for ingest the work counts
-  `ingest.boards` (rate-limit-skipped boards included), `ingest.boards_failed`,
-  `ingest.boards_rate_limited` and `ingest.jobs_changed`.
+- **Ledger row:** `ok`, `partial` (the run budget stopped the run early) or `error` (the tick threw,
+  recorded before the re-throw, or no ingest board succeeded and at least one failed); the gate mode it
+  read (null when unreadable); the Worker's own start/finish clock; `cf.wall_ms`; a one-line `detail` (for
+  a thrown tick, the watchdog's `describeDbError` text: a failed query's Postgres reason first, never its
+  params); and for ingest the work counts `ingest.boards` (rate-limit-skipped boards included),
+  `ingest.boards_failed`, `ingest.boards_rate_limited` and `ingest.jobs_changed`.
 
 A control-plane failure (slow, unbound, refusing the row) is logged and never fails a tick, changes its
 outcome or skips a watchdog ping. `cf.subrequests` and `neon.awake_s` stay declared but unsent: the

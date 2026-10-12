@@ -44,6 +44,9 @@ const FORBIDDEN_IMPORTS = [
   "inngest",
   "neon-serverless",
   "auth-client",
+  // Env modules that read .env from disk at import (loadPackageEnv): they throw at module load in workerd.
+  "@opusfinder/embeddings",
+  "@opusfinder/db/env",
 ];
 const FORBIDDEN_DEPS = [
   "@opusfinder/auth",
@@ -52,6 +55,7 @@ const FORBIDDEN_DEPS = [
   "@opusfinder/llm",
   "@opusfinder/rerank",
   "@opusfinder/email",
+  "@opusfinder/embeddings",
   "@anthropic-ai/sdk",
   "resend",
   "better-auth",
@@ -70,7 +74,11 @@ const FORBIDDEN_BUNDLE_PATHS = [
   "packages/llm/",
   "packages/rerank/",
   "packages/email/",
+  "packages/db/src/auth-client",
+  "/drizzle-orm/neon-serverless/",
   "/@anthropic-ai/",
+  "/@ai-sdk/",
+  "/node_modules/ai/",
   "/resend/",
   "/better-auth/",
   "/inngest/",
