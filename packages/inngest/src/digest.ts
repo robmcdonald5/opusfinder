@@ -8,6 +8,7 @@ import {
   getJobSnapshots,
   getPreferences,
   getProfileForDigest,
+  hasSentDigestForRun,
   insertDigest,
   insertDigestItems,
   listDigestRecipients,
@@ -218,7 +219,9 @@ export async function runOrchestrator(
             `digest: event userId is not a uuid (${userId.length} chars) — refusing to run.`,
           );
         }
-        return [userId]; // single-user (the per-user fn skips if ineligible)
+        // Lowercased: the per-user singleton keys on the raw string, so an uppercase id from the CLI
+        // would get its own lock and could overlap the cron's run for the same user.
+        return [userId.toLowerCase()]; // single-user (the per-user fn skips if ineligible)
       }
       // The cadence cron (trigger='cron') filters to recipients whose cadence window has elapsed; a
       // manual run (trigger='manual', e.g. `pnpm digest --all`) sends to ALL eligible (cadence-agnostic).
@@ -318,12 +321,15 @@ export async function runPerUser(deps: DigestDeps, event: PerUserEvent, step: Pe
   //    pollute the already-shown history of, a user the sweep would skip. The profile EMBEDDING and the
   //    shown-history are deliberately not returned: both are consumed once, in retrieve, and memoized
   //    step state is re-shipped on every poll-loop replay (the vector is 1024 floats; the history grows
-  //    with every digest the user receives).
+  //    with every digest the user receives). A digest this run already emailed means a dashboard
+  //    Rerun/Replay of a run that failed after its send — stop before any spend.
   const loaded = await step.run("load", async () => {
-    const [profile, prefs] = await Promise.all([
+    const [profile, prefs, alreadySent] = await Promise.all([
       getProfileForDigest(deps.db, userId),
       getPreferences(deps.db, userId),
+      hasSentDigestForRun(deps.db, userId, digestRunId),
     ]);
+    if (alreadySent) return { skip: "already-sent" as const };
     if (!profile || !profile.embedding) return { skip: "no-profile-or-embedding" as const };
     if (
       !profile.emailVerified ||
@@ -431,7 +437,7 @@ export async function runPerUser(deps: DigestDeps, event: PerUserEvent, step: Pe
       if (!job) {
         // Invariant: reranked ids are a permutation of the retrieved candidates. A miss means a
         // broken rerank — fail loudly rather than synthesize a blank job into a fabricated reason.
-        throw new Error(
+        throw new NonRetriableError(
           `digest: reranked job ${it.jobId} is not in the candidate set (user ${userId}).`,
         );
       }
@@ -501,8 +507,14 @@ export async function runPerUser(deps: DigestDeps, event: PerUserEvent, step: Pe
 
   // 7. Persist (retry-idempotent: delete any prior digest for this (user, run) — the FK cascade
   //    clears its items — then insert fresh). Drop items whose synthesis produced no usable reason
-  //    (the gate requires non-empty reasons) and re-rank the survivors 1..N.
+  //    (the gate requires non-empty reasons) and re-rank the survivors 1..N. Never replaces an emailed
+  //    digest: a "Rerun from step" past load restores load's memoized result, so load's check never ran.
   const persisted = await step.run("persist", async () => {
+    if (await hasSentDigestForRun(deps.db, userId, digestRunId)) {
+      throw new NonRetriableError(
+        `digest: user ${userId} was already emailed run ${digestRunId}'s digest — refusing to rebuild it.`,
+      );
+    }
     await deleteUserDigestForRun(deps.db, userId, digestRunId);
     const kept: { jobId: number; score: number; reason: string }[] = [];
     const dropped: Record<string, number> = {};
@@ -518,8 +530,9 @@ export async function runPerUser(deps: DigestDeps, event: PerUserEvent, step: Pe
     if (kept.length === 0) {
       // Nothing usable out of an ATTEMPTED synthesis (every request errored/expired, was cut off or
       // refused, or trimmed to empty) is a failure, not an empty digest — throw so Inngest surfaces
-      // it, instead of returning "ok" with no digests row and no error trace anywhere in the DB.
-      throw new Error(
+      // it, instead of returning "ok" with no digests row and no error trace anywhere in the DB. Its
+      // inputs are memoized, so a retry could only fail the same way.
+      throw new NonRetriableError(
         `digest: synthesis batch ${batchId} yielded no usable reason for any of ` +
           `${reranked.items.length} item(s) (user ${userId}, run ${digestRunId}): ${droppedSummary}.`,
       );
@@ -563,7 +576,7 @@ export async function runPerUser(deps: DigestDeps, event: PerUserEvent, step: Pe
       kept.map((it, i) => {
         const snap = snapshots.get(it.jobId);
         if (!snap) {
-          throw new Error(
+          throw new NonRetriableError(
             `digest: no job snapshot for kept job ${it.jobId} (user ${userId}, run ${digestRunId}).`,
           );
         }

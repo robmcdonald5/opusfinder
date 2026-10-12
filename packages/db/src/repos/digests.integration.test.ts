@@ -11,6 +11,7 @@ import {
   getDigestEmailPayload,
   getJobSnapshots,
   getLatestDigestForUser,
+  hasSentDigestForRun,
   insertDigest,
   insertDigestItems,
   listDigestRecipients,
@@ -466,6 +467,22 @@ describe("digests repo — recipient gates, shown-history anti-joins, persist/re
       expect(await db.select().from(digestItems).where(eq(digestItems.digestId, dB1.id))).toHaveLength(1);
       // No-op path: a second delete for the same (user, run) must not throw.
       await expect(deleteUserDigestForRun(db, a, r1)).resolves.toBeUndefined();
+    });
+
+    it("hasSentDigestForRun is true only once Resend accepted this (user, run)'s digest", async () => {
+      const a = await seedRecipient(1);
+      const b = await seedRecipient(2);
+      const { runId, digestId } = await seedDigestForUser(a);
+      expect(await hasSentDigestForRun(db, a, runId)).toBe(false);
+      // A failed send leaves email_id NULL, so a rerun may still rebuild and send it.
+      await recordDigestSendFailure(db, digestId);
+      expect(await hasSentDigestForRun(db, a, runId)).toBe(false);
+
+      await recordDigestSent(db, digestId, "resend-email-1");
+
+      expect(await hasSentDigestForRun(db, a, runId)).toBe(true);
+      expect(await hasSentDigestForRun(db, b, runId)).toBe(false);
+      expect(await hasSentDigestForRun(db, a, await startDigestRun(db, "manual"))).toBe(false);
     });
 
     it("insertDigestItems strips NUL from reason + every snapshot text field, denormalizes userId; empty list is a no-op", async () => {

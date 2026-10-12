@@ -71,6 +71,7 @@ export {
   insertDigestItems,
   getJobSnapshots,
   deleteUserDigestForRun,
+  hasSentDigestForRun,
   getLatestDigestForUser,
   markDigestConsidered,
 } from "./digests";

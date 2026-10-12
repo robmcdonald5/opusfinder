@@ -60,7 +60,8 @@ integration (email ships in Phase 11 on the local dev runtime — locked at Phas
   - **Per-user** (`digest-user`, `singleton` keyed on `userId`, mode `skip` — `concurrency` would
     release its slot during the batch-wait sleeps and let runs overlap): load + **eligibility gate**
     (skip if no profile/embedding, unverified email, `!digestEnabled`, or suppressed — so even a manual
-    single-user trigger respects an opt-out and matches the `--all` sweep's gate) → retrieve (geo +
+    single-user trigger respects an opt-out and matches the `--all` sweep's gate — or if this run already
+    emailed the user, so a dashboard Rerun/Replay never re-sends) → retrieve (geo +
     exclusion keywords applied inside retrieval's post-filter — Phase-F3 merges `dealbreakers` into that
     exclusions filter, and `locationMode` replaces the old `remoteOk` boolean — plus the Phase-F1 repost
     anti-join — `excludeSignatures` from `alreadyShownSignatures`, threaded alongside the id anti-join — and a
@@ -73,8 +74,8 @@ integration (email ships in Phase 11 on the local dev runtime — locked at Phas
     on a fast→slow schedule (2m for the first hour, then 10m) that spans the API's 24h batch SLA in one
     attempt — step ids depend only on the loop index, never `ctx.attempt` (which also increments on
     STEP retries) → collect → persist (retry-idempotent: delete this `(user, run)` digest, then insert
-    fresh; drop items with no usable reason, and **throw** if none survive — an all-errored synthesis
-    is a failure, not an empty digest) → the Phase-F2 pre-send liveness probe (Arm C, below) → the Phase-11 email tail (below).
+    fresh — never an emailed one; drop items with no usable reason, and **throw** if none survive — an
+    all-errored synthesis is a failure, not an empty digest) → the Phase-F2 pre-send liveness probe (Arm C, below) → the Phase-11 email tail (below).
 - `src/probe.ts` (Phase F2, Arm C) — the **pre-send liveness probe**: HEAD (GET-fallback on 405/501) the
   ≤`TOP_K` persisted items' apply URLs with a short timeout, then split DROP from CLOSE (locked decision 7) —
   a `404` or `410` DROPs the dead link from this digest (`dropDigestItemsAndRecount`), but only an explicit
@@ -87,9 +88,10 @@ integration (email ships in Phase 11 on the local dev runtime — locked at Phas
   `LIFECYCLE_CLOSE_ENFORCE` switch — `buildDigestDeps` sets `DigestDeps.enforceLifecycle` from
   `parseEnforceFlag(process.env.LIFECYCLE_CLOSE_ENFORCE)` (the same flag that flips Arm A + Arm B in the Worker).
 - `src/delivery.ts` (Phase 11) — `deliverDigestEmail(step, db, email, digestId)`, the post-persist
-  step block: ONE `send-email` step (payload read → permit-gated Resend send with
-  `Idempotency-Key: digest/<digestId>` → `recordDigestSent`) wrapped in the fail-run discipline (retry
-  exhaustion → `delivery_status='failed'` → rethrow). G1b: `getDigestEmailPayload` filters items to
+  step block: a `send-email` step (payload read → permit-gated Resend send with
+  `Idempotency-Key: digest/<digestId>`) wrapped in the fail-run discipline (retry exhaustion →
+  `delivery_status='failed'` → rethrow), then a separate `record-sent` step, so a DB blip after an accepted
+  send retries only the write and never records 'failed'. G1b: `getDigestEmailPayload` filters items to
   `lifecycle_state='active'`, so a job closed between retrieval and send (an Arm A/B Worker tick during
   the synthesis wait — the probe checks only the apply URL, never lifecycle) never renders; if that
   empties the payload the step returns `"skipped-empty"` (no send, the orchestrator backs the user off
@@ -98,7 +100,8 @@ integration (email ships in Phase 11 on the local dev runtime — locked at Phas
   `mapDeliveryEvent` encodes the pipeline policy: `delivered`/`opened`/`clicked` → `delivered`;
   `bounced` → `bounced` + **hard**-suppress (the poll's `last_event` carries no bounce subtype —
   Phase 12 webhooks refine this); `complained` → `delivered` + suppress WITHOUT touching bounce
-  status; anything in flight stays `sent`. At-least-once safe end-to-end: the render is
+  status; `suppressed` (Resend refused the address) → `failed` + suppress, likewise; anything in flight
+  stays `sent`. At-least-once safe end-to-end: the render is
   byte-deterministic, Resend replays the same email id for the key, and every write is idempotent.
   Split into its own file so the stub smoke drives the failure/skip/happy paths with a fake `step`.
 - `src/deps.ts` — `buildDigestDeps()`: the production wiring — a neon-http `createDb` + the real Haiku
