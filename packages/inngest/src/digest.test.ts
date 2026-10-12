@@ -6,12 +6,13 @@
  * skip-reason matrix, fan-out, and the invariant throws — from their internals (covered in probe/delivery).
  */
 import { DrizzleQueryError } from "drizzle-orm";
-import { serializeError, StepError } from "inngest";
+import { NonRetriableError, serializeError, StepError } from "inngest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { DigestTrigger } from "@opusfinder/shared";
 
 import { recordingStep } from "@test/inngest/stubs";
+import { rejectionOf } from "@test/rejection";
 
 const repos = vi.hoisted(() => ({
   // per-user
@@ -21,6 +22,7 @@ const repos = vi.hoisted(() => ({
   alreadyShownSignatures: vi.fn(),
   retrieveCandidatesForProfile: vi.fn(),
   markDigestConsidered: vi.fn(),
+  hasSentDigestForRun: vi.fn(),
   deleteUserDigestForRun: vi.fn(),
   insertDigest: vi.fn(),
   getJobSnapshots: vi.fn(),
@@ -94,6 +96,7 @@ beforeEach(() => {
     { id: 2, title: "Eng2", descriptionText: "d2" },
   ]);
   repos.markDigestConsidered.mockResolvedValue(undefined);
+  repos.hasSentDigestForRun.mockResolvedValue(false);
   repos.deleteUserDigestForRun.mockResolvedValue(undefined);
   repos.insertDigest.mockResolvedValue({ id: 500 });
   repos.getJobSnapshots.mockResolvedValue(new Map([[1, {}], [2, {}]]));
@@ -162,6 +165,17 @@ describe("runOrchestrator", () => {
     });
     expect(out).toEqual({ runId: 42, recipients: 1 });
     expect(runs).toEqual(["start-run", "fetch-recipients", "finish-run"]);
+  });
+
+  it("lowercases an uppercase single-user UUID, so the per-user singleton key matches the cron's", async () => {
+    const lower = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+    const { sentEvents, tools } = recordingStep();
+
+    await runOrchestrator(makeDeps(), event({ trigger: "manual", userId: lower.toUpperCase() }), tools);
+
+    expect(sentEvents[0]!.events).toEqual([
+      { name: "digest/user.requested", data: { userId: lower, digestRunId: 42 } },
+    ]);
   });
 
   it("malformed single-user payload (empty string) → NonRetriableError, no fan-out, run terminalized", async () => {
@@ -462,6 +476,32 @@ describe("runPerUser", () => {
     expect(rerank).not.toHaveBeenCalled();
   });
 
+  it("skips already-sent when this run already emailed the user — a full Rerun spends and deletes nothing", async () => {
+    repos.hasSentDigestForRun.mockResolvedValue(true);
+    const { runs, tools } = recordingStep();
+
+    const out = await runPerUser(makeDeps(), event(), tools);
+
+    expect(out).toEqual({ userId: USER, skipped: "already-sent" });
+    expect(runs).toEqual(["load"]);
+    expect(rerank).not.toHaveBeenCalled();
+    expect(repos.deleteUserDigestForRun).not.toHaveBeenCalled();
+  });
+
+  it("persist refuses to replace an emailed digest when a rerun starts past load", async () => {
+    // A "Rerun from step" restores load's memoized result, so only persist's own check sees the sent row.
+    repos.hasSentDigestForRun.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+    const { tools } = recordingStep();
+
+    const err = await rejectionOf(runPerUser(makeDeps(), event(), tools));
+
+    expect(err).toBeInstanceOf(NonRetriableError);
+    expect(err.message).toMatch(/already emailed/);
+    expect(repos.deleteUserDigestForRun).not.toHaveBeenCalled();
+    expect(repos.insertDigest).not.toHaveBeenCalled();
+    expect(deliveryMod.deliverDigestEmail).not.toHaveBeenCalled();
+  });
+
   it("throws when the profile embedding disappears between the load and retrieve reads", async () => {
     // Load reads a valid embedding-bearing profile (passes the gate); the retrieve step RE-READS and finds the
     // embedding gone (a mid-run delete/re-embed race) → the disappeared-mid-run invariant must fire. Needs two
@@ -565,20 +605,58 @@ describe("runPerUser", () => {
     });
     const { tools } = recordingStep();
 
-    await expect(runPerUser(makeDeps(), event(), tools)).rejects.toThrow(
-      /reranked job 999 is not in the candidate set/,
-    );
+    const err = await rejectionOf(runPerUser(makeDeps(), event(), tools));
+
+    expect(err).toBeInstanceOf(NonRetriableError);
+    expect(err.message).toMatch(/reranked job 999 is not in the candidate set/);
     expect(batchSubmit).not.toHaveBeenCalled();
   });
 
-  it("throws when the synthesis batch never ends within the poll window", async () => {
+  it("polls past the 24h batch expiry before giving up on a batch that never ends", async () => {
     batchPoll.mockResolvedValue({ status: "in_progress" }); // never 'ended'
+    const { sleepCalls, tools } = recordingStep();
+
+    const err = await rejectionOf(runPerUser(makeDeps(), event(), tools));
+
+    expect(err).toBeInstanceOf(NonRetriableError);
+    expect(err.message).toMatch(/had not ended after 171 polls/);
+    expect(batchPoll).toHaveBeenCalledTimes(171); // SYNTH_MAX_POLLS (30 fast + 141 slow)
+    // The API ends an expired batch at 24h, so the last poll must land after that to collect it.
+    const minutes = (d = "") => (d.endsWith("s") ? parseInt(d) / 60 : parseInt(d));
+    const lastPollAt = sleepCalls.reduce((sum, s) => sum + minutes(s.duration), 0);
+    expect(lastPollAt).toBeGreaterThan(24 * 60);
+  });
+
+  it("rides out failed synthesis polls and collects once the batch ends", async () => {
+    const outage = new Error("overloaded");
+    batchPoll
+      .mockRejectedValueOnce(outage)
+      .mockRejectedValueOnce(outage)
+      .mockRejectedValueOnce(outage)
+      .mockRejectedValueOnce(outage)
+      .mockRejectedValueOnce(outage) // five in a row: one short of giving up
+      .mockResolvedValueOnce({ status: "in_progress" }) // a success resets the run
+      .mockRejectedValueOnce(outage)
+      .mockResolvedValueOnce({ status: "ended" });
+    const { runs, tools } = recordingStep();
+
+    const out = await runPerUser(makeDeps(), event(), tools);
+
+    expect(out).toEqual({ userId: USER, digestId: 500, itemCount: 2, delivery: "delivered" });
+    expect(batchPoll).toHaveBeenCalledTimes(8);
+    expect(runs).toContain("collect-synthesis");
+  });
+
+  it("gives up after six consecutive failed polls", async () => {
+    const outage = new Error("unauthorized");
+    batchPoll.mockRejectedValue(outage);
     const { tools } = recordingStep();
 
-    await expect(runPerUser(makeDeps(), event(), tools)).rejects.toThrow(
-      /did not end within the ~24h poll window/,
-    );
-    expect(batchPoll).toHaveBeenCalledTimes(168); // SYNTH_MAX_POLLS (30 fast + 138 slow)
+    const err = await rejectionOf(runPerUser(makeDeps(), event(), tools));
+
+    expect(err).toBe(outage);
+    expect(batchPoll).toHaveBeenCalledTimes(6);
+    expect(batchCollect).not.toHaveBeenCalled();
   });
 
   it("polls on the fast (2m) schedule for the first hour, then the slow (10m) tail", async () => {
@@ -609,7 +687,10 @@ describe("runPerUser", () => {
     );
     const { tools } = recordingStep();
 
-    await expect(runPerUser(makeDeps(), event(), tools)).rejects.toThrow(
+    const err = await rejectionOf(runPerUser(makeDeps(), event(), tools));
+
+    expect(err).toBeInstanceOf(NonRetriableError);
+    expect(err.message).toMatch(
       /no usable reason for any of 2 item\(s\) .*: empty=1, overloaded_error=1\.$/,
     );
     expect(repos.insertDigest).not.toHaveBeenCalled();
@@ -658,12 +739,40 @@ describe("runPerUser", () => {
     expect(items[0]).toMatchObject({ jobId: 2, rank: 1 }); // renumbered from its pre-filter index of 1
   });
 
+  it.each([
+    "You should confirm your fit at https://evil.example/verify before applying.",
+    "Your Go work fits; see www.evil.example for the next step.",
+    "Your Go work fits; send your CV to jobs@evil.example to be fast-tracked.",
+  ])("drops a note carrying a link or email address: %s", async (injected) => {
+    batchCollect.mockResolvedValue(
+      new Map([
+        [`d${RUN_ID}-1`, { text: injected, status: "succeeded", stopReason: "end_turn" }],
+        [
+          `d${RUN_ID}-2`,
+          {
+            text: "Your Node.js and ASP.NET work at Acme fits.",
+            status: "succeeded",
+            stopReason: "end_turn",
+          },
+        ],
+      ]),
+    );
+    const { tools } = recordingStep();
+
+    const out = await runPerUser(makeDeps(), event(), tools);
+
+    expect(out).toMatchObject({ itemCount: 1 });
+    const items = repos.insertDigestItems.mock.calls.at(-1)![3] as Array<{ jobId: number }>;
+    expect(items.map((it) => it.jobId)).toEqual([2]);
+  });
+
   it("throws the snapshot invariant when a kept job has no snapshot", async () => {
     repos.getJobSnapshots.mockResolvedValue(new Map([[1, {}]])); // missing job 2
     const { tools } = recordingStep();
 
-    await expect(runPerUser(makeDeps(), event(), tools)).rejects.toThrow(
-      /no job snapshot for kept job 2/,
-    );
+    const err = await rejectionOf(runPerUser(makeDeps(), event(), tools));
+
+    expect(err).toBeInstanceOf(NonRetriableError);
+    expect(err.message).toMatch(/no job snapshot for kept job 2/);
   });
 });

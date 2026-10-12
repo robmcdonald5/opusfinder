@@ -8,6 +8,7 @@ import {
   getJobSnapshots,
   getPreferences,
   getProfileForDigest,
+  hasSentDigestForRun,
   insertDigest,
   insertDigestItems,
   listDigestRecipients,
@@ -20,7 +21,6 @@ import { buildDigestSystem, renderDigestJob } from "@opusfinder/llm";
 import type { BatchPoll, BatchRequest, BatchResult } from "@opusfinder/llm";
 import type { RerankCandidate } from "@opusfinder/rerank";
 import type {
-  DigestTrigger,
   LocationMode,
   PromptPreferences,
   StructuredProfile,
@@ -29,7 +29,7 @@ import type {
 import { NonRetriableError } from "inngest";
 
 import { deliverDigestEmail, type EmailSeam } from "./delivery";
-import { inngest } from "./inngest";
+import { inngest, type DigestEvents } from "./inngest";
 import { probeDigestLiveness, type LivenessProbe } from "./probe";
 
 // Tunables (per-digest knobs)
@@ -50,16 +50,23 @@ const SYNTH_INITIAL_WAIT = "30s"; // first sleep before polling the synthesis ba
 // per-run step budget, and every sleep suspends at zero compute. Step ids depend ONLY on the loop
 // index, never on ctx.attempt: `attempt` also increments on STEP retries (and resets when a step
 // completes), so an attempt-scoped id would re-derive mid-request and orphan a retried step's target.
-// Past 24h the batch is expired server-side — retries can't recover it — so exhaustion fails the run.
+// The last poll lands at 30s + 30×2m + 140×10m ≈ 24h20m (no sleep follows it), past the API's 24h
+// expiry, so an expired batch is still seen `ended` and its succeeded results are kept.
 const SYNTH_FAST_POLLS = 30; // 2m apart — the first hour
 const SYNTH_FAST_INTERVAL = "2m";
-const SYNTH_SLOW_POLLS = 138; // 10m apart — the tail out to the 24h batch expiry
+const SYNTH_SLOW_POLLS = 141; // 10m apart — the tail, out past the 24h batch expiry
 const SYNTH_SLOW_INTERVAL = "10m";
 const SYNTH_MAX_POLLS = SYNTH_FAST_POLLS + SYNTH_SLOW_POLLS;
+/** Consecutive failed polls (each after its own step retries) before the run gives up on the batch. */
+const SYNTH_MAX_FAILED_POLLS = 6;
 
-/** Matches the CLI's gate — the event schema is compile-time only, so the orchestrator re-checks at
+/** Shared with the CLI's gate — the event schema is compile-time only, so the orchestrator re-checks at
  *  runtime (an empty string is falsy-shaped junk that must not widen into an all-recipients run). */
-const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+export const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** A synthesis note is written from posting text anyone can author, and its prompt forbids saying how to
+ *  apply, so a link or email address in one was injected — and would be emailed in opusfinder's voice. */
+const LINK_OR_EMAIL = /https?:\/\/|www\.|[\w.+-]+@[\w-]+\.\w/i;
 
 /** The rerank result the per-user function consumes: a global ordering, the score map (only the
  *  candidates the model actually scored), and the token and prompt-cache counters summed across the
@@ -92,7 +99,7 @@ export interface DigestDeps {
   };
   email: EmailSeam;
   /** The pre-send apply-URL liveness probe (one URL → verdict); the per-digest fan-out lives in
-   *  `probeDigestLiveness`. Injected so the stub smoke drives it with a fake. */
+   *  `probeDigestLiveness`. Injected so the tests drive it with a fake. */
   probe: LivenessProbe;
   /** Lifecycle-close enforcement. Default false = SHADOW: the dead-link (404/410) DROP is always live, but
    *  the explicit-410 soft-CLOSE is suppressed and tallied. buildDigestDeps sets this from
@@ -101,21 +108,14 @@ export interface DigestDeps {
 }
 
 /** The `digest/run.requested` payload the orchestrator reads (structural — so a test drives it without the
- *  Inngest event machinery). Mirrors DigestEvents["digest/run.requested"]. */
-export interface OrchestratorEvent {
-  data: { trigger: DigestTrigger; userId?: string };
-}
+ *  Inngest event machinery). */
+export type OrchestratorEvent = DigestEvents["digest/run.requested"];
 
-/** The `digest/user.requested` payload the per-user fn reads. Mirrors DigestEvents["digest/user.requested"]. */
-export interface PerUserEvent {
-  data: { userId: string; digestRunId: number };
-}
+/** The `digest/user.requested` payload the per-user fn reads. */
+export type PerUserEvent = DigestEvents["digest/user.requested"];
 
 /** The fan-out event the orchestrator emits (one per recipient). */
-interface UserRequestedEvent {
-  name: "digest/user.requested";
-  data: { userId: string; digestRunId: number };
-}
+type UserRequestedEvent = PerUserEvent & { name: "digest/user.requested" };
 
 /**
  * Structural step tools — a test drives these with the recording fake step; Inngest's real StepTools pass
@@ -172,8 +172,8 @@ function toPromptPrefs(prefs: UserPreferencesRow): PromptPreferences {
 /** One synthesis result as carried across the collect → persist step boundary. */
 type SynthesisResult = Pick<BatchResult, "text" | "status" | "stopReason" | "error">;
 
-/** A synthesis result's note, or why it has none (an error type or stop reason, never a body). A note
- *  cut off at max_tokens or refused still arrives as `succeeded`, so only a natural stop counts. */
+/** A synthesis result's note, or why it has none (an error type, stop reason or `link`, never a body). A
+ *  note cut off at max_tokens or refused still arrives as `succeeded`, so only a natural stop counts. */
 function synthesisNote(result: SynthesisResult | undefined): { note: string } | { drop: string } {
   if (!result) return { drop: "missing" };
   if (result.status !== "succeeded") return { drop: result.error ?? result.status };
@@ -181,7 +181,8 @@ function synthesisNote(result: SynthesisResult | undefined): { note: string } | 
     return { drop: result.stopReason ?? "no-stop-reason" };
   }
   const note = result.text.trim();
-  return note ? { note } : { drop: "empty" };
+  if (!note) return { drop: "empty" };
+  return LINK_OR_EMAIL.test(note) ? { drop: "link" } : { note };
 }
 
 /**
@@ -190,9 +191,11 @@ function synthesisNote(result: SynthesisResult | undefined): { note: string } | 
  * out one `digest/user.requested` per recipient, and finalizes the run to the dispatch count. Because
  * Inngest fan-out is fire-and-forget, the run row records DISPATCH, not per-user completion (those land
  * on `digests`). A step that exhausts its retries is caught and terminalized onto the run row
- * (`status: 'error'` + `error_sample`) before the failure is rethrown to Inngest — so a dead run never
- * sits `running` forever. The cadence cron (`makeCadenceOrchestrator`) emits this with `trigger: 'cron'`;
- * the orchestrator then filters the recipient sweep by cadence (`listDigestRecipients`' `cadenceDue`).
+ * (`status: 'error'` + `error_sample`) before the failure is rethrown to Inngest. Some dead runs still
+ * stay `running` (that write fails when the DB is what's down; a retried start-run or a dashboard cancel
+ * leaves a row nothing closes), so digest_health counts a row `running` past an hour as an error. The
+ * cadence cron (`makeCadenceOrchestrator`) emits this with `trigger: 'cron'`; the orchestrator then
+ * filters the recipient sweep by cadence (`listDigestRecipients`' `cadenceDue`).
  *
  * Extracted from the Inngest handler so its UUID gate / cadence sweep / fan-out / error-terminalize
  * branches are unit-testable with a recording fake `step` (makeOrchestrator wraps it).
@@ -216,7 +219,9 @@ export async function runOrchestrator(
             `digest: event userId is not a uuid (${userId.length} chars) — refusing to run.`,
           );
         }
-        return [userId]; // single-user (the per-user fn skips if ineligible)
+        // Lowercased: the per-user singleton keys on the raw string, so an uppercase id from the CLI
+        // would get its own lock and could overlap the cron's run for the same user.
+        return [userId.toLowerCase()]; // single-user (the per-user fn skips if ineligible)
       }
       // The cadence cron (trigger='cron') filters to recipients whose cadence window has elapsed; a
       // manual run (trigger='manual', e.g. `pnpm digest --all`) sends to ALL eligible (cadence-agnostic).
@@ -295,12 +300,12 @@ function makeOrchestrator(deps: DigestDeps) {
  * `singleton` keyed on userId (mode `skip`) prevents overlapping runs for one user — `concurrency`
  * cannot: a run sleeping through the batch wait holds no concurrency slot, so a second run could read
  * the already-shown ids before the first persists. `skip` (not `cancel`) so an in-flight paid batch is
- * never abandoned. Lock retention across `step.sleep` is undocumented but held on the dev server
- * (re-verify on Inngest Cloud). The held window extends PAST persist, through the delivery sleeps
- * (~2–12 min): a same-user re-trigger inside that tail is SKIPPED — the intended dedup, but a
- * `pnpm digest --user` retry fired inside it will time out waiting for a digest that never starts;
- * re-trigger after the run finishes in the dashboard. Returns a small JSON summary; per-user failures
- * surface to Inngest (orchestrator failures additionally land on the run row's `error_sample`).
+ * never abandoned. Per Inngest's singleton docs the lock is held for the whole run, sleeps and retries
+ * included. The held window extends PAST persist, through the delivery sleeps (~2–12 min): a same-user
+ * re-trigger inside that tail is SKIPPED — the intended dedup, but a `pnpm digest --user` retry fired
+ * inside it will time out waiting for a digest that never starts; re-trigger after the run finishes in
+ * the dashboard. Returns a small JSON summary; per-user failures surface to Inngest (orchestrator
+ * failures additionally land on the run row's `error_sample`).
  *
  * Extracted from the Inngest handler so its 9-step skip matrix + invariant throws are unit-testable with
  * a recording fake `step` + stubbed repos (makePerUser wraps it).
@@ -309,20 +314,22 @@ export async function runPerUser(deps: DigestDeps, event: PerUserEvent, step: Pe
   const userId = event.data.userId as UserId;
   const digestRunId = event.data.digestRunId;
 
-  // 1. Load + gate eligibility (four independent userId-keyed reads → one Promise.all round).
+  // 1. Load + gate eligibility (two independent userId-keyed reads → one Promise.all round).
   //    The gate runs HERE so BOTH the --all sweep (already filtered by listDigestRecipients) and
   //    the single-user/manual path skip a user who is unverified, NOT approved, has disabled digests,
   //    or is suppressed (bounce/unsubscribe) — otherwise a manual trigger would spend tokens on, and
-  //    pollute the already-shown history of, a user the sweep would skip. The profile EMBEDDING is
-  //    deliberately not returned: it is consumed once, in retrieve — a 1024-dim vector is dead
-  //    weight in memoized step state that every poll-loop replay re-ships.
+  //    pollute the already-shown history of, a user the sweep would skip. The profile EMBEDDING and the
+  //    shown-history are deliberately not returned: both are consumed once, in retrieve, and memoized
+  //    step state is re-shipped on every poll-loop replay (the vector is 1024 floats; the history grows
+  //    with every digest the user receives). A digest this run already emailed means a dashboard
+  //    Rerun/Replay of a run that failed after its send — stop before any spend.
   const loaded = await step.run("load", async () => {
-    const [profile, prefs, excludeJobIds, excludeSignatures] = await Promise.all([
+    const [profile, prefs, alreadySent] = await Promise.all([
       getProfileForDigest(deps.db, userId),
       getPreferences(deps.db, userId),
-      alreadyShownJobIds(deps.db, userId),
-      alreadyShownSignatures(deps.db, userId),
+      hasSentDigestForRun(deps.db, userId, digestRunId),
     ]);
+    if (alreadySent) return { skip: "already-sent" as const };
     if (!profile || !profile.embedding) return { skip: "no-profile-or-embedding" as const };
     if (
       !profile.emailVerified ||
@@ -342,19 +349,21 @@ export async function runPerUser(deps: DigestDeps, event: PerUserEvent, step: Pe
       structured: profile.structured,
       prefs: toFilterPrefs(prefs),
       promptPrefs: toPromptPrefs(prefs),
-      excludeJobIds,
-      excludeSignatures,
     };
   });
   if ("skip" in loaded) return { userId, skipped: loaded.skip };
 
   // 2. Deterministic filter + vector retrieval. Geo AND exclusion keywords are applied inside
   //    retrieval's post-filter (before its over-fetch trim — so exclusions can't empty the
-  //    returned set while fetched non-excluded rows are thrown away). Re-reads the embedding here
-  //    (one cheap row select) and returns only the fields + description length the rerank/synthesis
+  //    returned set while fetched non-excluded rows are thrown away). Re-reads the embedding and reads
+  //    the shown-history here, and returns only the fields + description length the rerank/synthesis
   //    prompts consume, keeping the memoized step output slim.
   const candidates = await step.run("retrieve", async (): Promise<RerankCandidate[]> => {
-    const profile = await getProfileForDigest(deps.db, userId);
+    const [profile, excludeJobIds, excludeSignatures] = await Promise.all([
+      getProfileForDigest(deps.db, userId),
+      alreadyShownJobIds(deps.db, userId),
+      alreadyShownSignatures(deps.db, userId),
+    ]);
     if (!profile?.embedding) {
       throw new Error(`digest: profile embedding disappeared mid-run (user ${userId}).`);
     }
@@ -364,8 +373,8 @@ export async function runPerUser(deps: DigestDeps, event: PerUserEvent, step: Pe
       locations: loaded.prefs.locations,
       recencyDays: loaded.prefs.recencyDays,
       exclusions: loaded.prefs.exclusions,
-      excludeJobIds: loaded.excludeJobIds,
-      excludeSignatures: loaded.excludeSignatures,
+      excludeJobIds,
+      excludeSignatures,
     });
     return rawCandidates.map((c) => ({
       id: c.id,
@@ -428,7 +437,7 @@ export async function runPerUser(deps: DigestDeps, event: PerUserEvent, step: Pe
       if (!job) {
         // Invariant: reranked ids are a permutation of the retrieved candidates. A miss means a
         // broken rerank — fail loudly rather than synthesize a blank job into a fabricated reason.
-        throw new Error(
+        throw new NonRetriableError(
           `digest: reranked job ${it.jobId} is not in the candidate set (user ${userId}).`,
         );
       }
@@ -455,11 +464,19 @@ export async function runPerUser(deps: DigestDeps, event: PerUserEvent, step: Pe
   //    is what lets the wait span the SLA.
   await step.sleep("synthesis-initial-wait", SYNTH_INITIAL_WAIT);
   let ended = false;
+  let failedPolls = 0;
   for (let i = 0; i < SYNTH_MAX_POLLS; i++) {
-    const poll = await step.run(`poll-synthesis-${i}`, () => deps.batch.poll(batchId));
-    if (poll.status === "ended") {
-      ended = true;
-      break;
+    try {
+      const poll = await step.run(`poll-synthesis-${i}`, () => deps.batch.poll(batchId));
+      if (poll.status === "ended") {
+        ended = true;
+        break;
+      }
+      failedPolls = 0;
+    } catch (err) {
+      // A poll is a read and the paid batch keeps running server-side: an outage that outlasts one
+      // step's retries waits for the next scheduled poll instead of abandoning the batch.
+      if (++failedPolls >= SYNTH_MAX_FAILED_POLLS) throw err;
     }
     if (i < SYNTH_MAX_POLLS - 1) {
       await step.sleep(
@@ -469,9 +486,10 @@ export async function runPerUser(deps: DigestDeps, event: PerUserEvent, step: Pe
     }
   }
   if (!ended) {
-    throw new Error(
-      `synthesis batch ${batchId} did not end within the ~24h poll window (${SYNTH_MAX_POLLS} polls) — ` +
-        `it has expired server-side.`,
+    // A retry would only replay the memoized polls.
+    throw new NonRetriableError(
+      `synthesis batch ${batchId} had not ended after ${SYNTH_MAX_POLLS} polls (~24h20m, past its ` +
+        `24h expiry) — giving up.`,
     );
   }
 
@@ -498,8 +516,14 @@ export async function runPerUser(deps: DigestDeps, event: PerUserEvent, step: Pe
 
   // 7. Persist (retry-idempotent: delete any prior digest for this (user, run) — the FK cascade
   //    clears its items — then insert fresh). Drop items whose synthesis produced no usable reason
-  //    (the gate requires non-empty reasons) and re-rank the survivors 1..N.
+  //    (the gate requires non-empty reasons) and re-rank the survivors 1..N. Never replaces an emailed
+  //    digest: a "Rerun from step" past load restores load's memoized result, so load's check never ran.
   const persisted = await step.run("persist", async () => {
+    if (await hasSentDigestForRun(deps.db, userId, digestRunId)) {
+      throw new NonRetriableError(
+        `digest: user ${userId} was already emailed run ${digestRunId}'s digest — refusing to rebuild it.`,
+      );
+    }
     await deleteUserDigestForRun(deps.db, userId, digestRunId);
     const kept: { jobId: number; score: number; reason: string }[] = [];
     const dropped: Record<string, number> = {};
@@ -514,9 +538,10 @@ export async function runPerUser(deps: DigestDeps, event: PerUserEvent, step: Pe
 
     if (kept.length === 0) {
       // Nothing usable out of an ATTEMPTED synthesis (every request errored/expired, was cut off or
-      // refused, or trimmed to empty) is a failure, not an empty digest — throw so Inngest surfaces
-      // it, instead of returning "ok" with no digests row and no error trace anywhere in the DB.
-      throw new Error(
+      // refused, trimmed to empty or carried a link) is a failure, not an empty digest — throw so
+      // Inngest surfaces it, instead of returning "ok" with no digests row and no error trace anywhere
+      // in the DB. Its inputs are memoized, so a retry could only fail the same way.
+      throw new NonRetriableError(
         `digest: synthesis batch ${batchId} yielded no usable reason for any of ` +
           `${reranked.items.length} item(s) (user ${userId}, run ${digestRunId}): ${droppedSummary}.`,
       );
@@ -560,7 +585,7 @@ export async function runPerUser(deps: DigestDeps, event: PerUserEvent, step: Pe
       kept.map((it, i) => {
         const snap = snapshots.get(it.jobId);
         if (!snap) {
-          throw new Error(
+          throw new NonRetriableError(
             `digest: no job snapshot for kept job ${it.jobId} (user ${userId}, run ${digestRunId}).`,
           );
         }

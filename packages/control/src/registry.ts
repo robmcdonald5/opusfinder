@@ -263,7 +263,7 @@ export const stages = {
     label: "Embed new and changed jobs",
     runtime: "inngest:opusfinder",
     platformId: "embed-backlog-drain",
-    trigger: { cron: "0 4 * * *" },
+    trigger: { cron: "10 10 * * *" }, // 10 min after the 10:00 ingest tick, ahead of the 12:10 digest
     modes: ["off", "shadow", "on"],
     shadowMeans: "count the backlog and estimate tokens; no Voyage calls",
     initial: "off",

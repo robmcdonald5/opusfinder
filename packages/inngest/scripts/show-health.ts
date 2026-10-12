@@ -7,12 +7,8 @@ import { checkHealth, healthOptionsFromEnv } from "@opusfinder/db/health";
 import { sendHealthAlert } from "@opusfinder/email";
 import { runScript } from "@opusfinder/shared/script";
 
-import {
-  alertOnHealth,
-  formatMetric,
-  getHealthAlertCooldownH,
-  thresholdSuffix,
-} from "../src/health-alert.ts";
+import { alertOnHealth, getHealthAlertCooldownH } from "../src/health-alert.ts";
+import { formatMetric, thresholdSuffix } from "../src/health-alert-helpers.ts";
 
 /**
  * Health verdict — the verdict layer over the human-dump readers (`pnpm runs` / `delivery`). Runs

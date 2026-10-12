@@ -21,7 +21,7 @@ describe("formatMetric", () => {
     ["board_fail_ratio", 0.25, "25% boards failed or rate-limit-skipped"],
     ["hydrate_skip_ratio", 0.35, "35% of hydrated postings' detail fetches failed"],
     ["embedding_backlog", 128, "128 rows"],
-    ["digest_health", 3, "3 errored run(s)"],
+    ["digest_health", 3, "3 failed run(s)"],
     ["bounce_suppression", 5, "5 affected user(s)"],
     ["discovery_lane_errors", 2, "2 lane error(s)"],
   ])("renders %s shape-only", (id, metric, expected) => {
@@ -60,7 +60,7 @@ describe("checkDetail", () => {
   it("omits the threshold suffix for a boolean check", () => {
     expect(
       checkDetail(check({ id: "digest_health", label: "Digest health", metric: 2, threshold: null })),
-    ).toBe("Digest health (digest_health): 2 errored run(s)");
+    ).toBe("Digest health (digest_health): 2 failed run(s)");
   });
 
   it("renders 'no data' for a null metric and keeps the numeric suffix", () => {

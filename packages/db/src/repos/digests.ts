@@ -300,6 +300,31 @@ export async function deleteUserDigestForRun(
     .where(and(eq(digests.userId, userId), eq(digests.digestRunId, digestRunId)));
 }
 
+/**
+ * Whether this (user, run) already has a digest Resend accepted (`email_id` set). The per-user fn checks it
+ * before any spend and again before persist's delete, so a dashboard Rerun/Replay of a run that failed after
+ * its send can't wipe the sent digest and email the user again under a new idempotency key. A failed send
+ * (`email_id` NULL) stays rebuildable.
+ */
+export async function hasSentDigestForRun(
+  db: Db,
+  userId: UserId,
+  digestRunId: number,
+): Promise<boolean> {
+  const rows = await db
+    .select({ id: digests.id })
+    .from(digests)
+    .where(
+      and(
+        eq(digests.userId, userId),
+        eq(digests.digestRunId, digestRunId),
+        isNotNull(digests.emailId),
+      ),
+    )
+    .limit(1);
+  return rows.length > 0;
+}
+
 /** A user's most-recent digest header + its ranked items — read by the trigger CLI (and the history
  *  view). Newest by created_at then id. `null` if the user has no digest yet. */
 export interface DigestView {
@@ -541,7 +566,7 @@ export async function getDigestEmailPayload(
  * Send accepted by Resend: `digests.email_id` + `delivery_status='sent'` + `sent_at=now()`, THEN the
  * user-level `last_digest_sent_at`/`last_digest_email_id`. Two writes, digests first — neon-http is
  * non-transactional, but both are idempotent, so a crash between them is healed by the Inngest step
- * retry re-running both (with the SAME emailId, via the Resend idempotency replay).
+ * retry re-running both with the same (memoized) emailId.
  */
 export async function recordDigestSent(db: Db, digestId: number, emailId: string): Promise<void> {
   const rows = await db

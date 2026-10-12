@@ -25,10 +25,10 @@ import { sleep } from "@opusfinder/shared/async";
 import { runScript } from "@opusfinder/shared/script";
 import type { UserId } from "@opusfinder/shared";
 
+import { UUID_PATTERN } from "../src/digest.ts";
 import { inngest } from "../src/index.ts";
 
 const USAGE = "Usage: pnpm digest [--all | --user <uuid>] [--timeout-ms <n>] [--poll-ms <n>]";
-const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /** How many recipients this CLI watches in --all mode. The ORCHESTRATOR keyset-sweeps the full list
  *  regardless — past this cap the CLI's report is partial, and says so. */
 const WATCH_LIMIT = 100;

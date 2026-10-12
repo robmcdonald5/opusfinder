@@ -20,12 +20,6 @@ import { type HealthCheck, type HealthReport, isEnforceFiring } from "@opusfinde
 
 import { checkDetail } from "./health-alert-helpers";
 
-export { DEFAULT_HEALTH_ALERT_COOLDOWN_H };
-
-// Re-exported so existing consumers (the `pnpm health` CLI + tests) keep importing the render helpers from
-// here; the definitions moved to ./health-alert-helpers for isolated unit testing (case §3-4c).
-export { checkDetail, formatMetric, thresholdSuffix } from "./health-alert-helpers";
-
 /** The injected email seam — `sendHealthAlert(subject, text)` from `@opusfinder/email` is assignable. */
 export type AlertSend = (subject: string, text: string) => Promise<{ emailId: string }>;
 

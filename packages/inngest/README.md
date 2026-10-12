@@ -59,8 +59,10 @@ integration (email ships in Phase 11 on the local dev runtime — locked at Phas
     `pnpm digest --all` is unaffected (no `cadenceDue`).
   - **Per-user** (`digest-user`, `singleton` keyed on `userId`, mode `skip` — `concurrency` would
     release its slot during the batch-wait sleeps and let runs overlap): load + **eligibility gate**
-    (skip if no profile/embedding, unverified email, `!digestEnabled`, or suppressed — so even a manual
-    single-user trigger respects an opt-out and matches the `--all` sweep's gate) → retrieve (geo +
+    (skip if no profile/embedding, unverified email, `!digestEnabled`, suppressed, or no send permit
+    (`digest_approved_at` unset) — so even a manual single-user trigger respects an opt-out and matches
+    the `--all` sweep's gate — or if this run already emailed the user, so a dashboard Rerun/Replay never
+    re-sends) → retrieve (geo +
     exclusion keywords applied inside retrieval's post-filter — Phase-F3 merges `dealbreakers` into that
     exclusions filter, and `locationMode` replaces the old `remoteOk` boolean — plus the Phase-F1 repost
     anti-join — `excludeSignatures` from `alreadyShownSignatures`, threaded alongside the id anti-join — and a
@@ -73,8 +75,8 @@ integration (email ships in Phase 11 on the local dev runtime — locked at Phas
     on a fast→slow schedule (2m for the first hour, then 10m) that spans the API's 24h batch SLA in one
     attempt — step ids depend only on the loop index, never `ctx.attempt` (which also increments on
     STEP retries) → collect → persist (retry-idempotent: delete this `(user, run)` digest, then insert
-    fresh; drop items with no usable reason, and **throw** if none survive — an all-errored synthesis
-    is a failure, not an empty digest) → the Phase-F2 pre-send liveness probe (Arm C, below) → the Phase-11 email tail (below).
+    fresh — never an emailed one; drop items with no usable reason, and **throw** if none survive — an
+    all-errored synthesis is a failure, not an empty digest) → the Phase-F2 pre-send liveness probe (Arm C, below) → the Phase-11 email tail (below).
 - `src/probe.ts` (Phase F2, Arm C) — the **pre-send liveness probe**: HEAD (GET-fallback on 405/501) the
   ≤`TOP_K` persisted items' apply URLs with a short timeout, then split DROP from CLOSE (locked decision 7) —
   a `404` or `410` DROPs the dead link from this digest (`dropDigestItemsAndRecount`), but only an explicit
@@ -82,14 +84,16 @@ integration (email ships in Phase 11 on the local dev runtime — locked at Phas
   and 2xx/3xx/5xx/timeout/network are KEPT (ambiguous — never lose a possibly-live match over a blip, never
   close). ONE memoized step (no synthesis-poll re-probe), over an injected probe seam (`DigestDeps.probe`,
   `deps.ts`); tallies onto `digests.counts` (`probedOk` / `probed404Dropped` / `probed410` / `probedErrorKept`
-  …). An all-dropped set → 0 survivors → the caller keeps the 0-item audit row and sends no email. Shipped
-  SHADOW: the `410` close is tallied as `probed410WouldClose`, not yet written. Enforcement is the single
-  `LIFECYCLE_CLOSE_ENFORCE` switch — `buildDigestDeps` sets `DigestDeps.enforceLifecycle` from
-  `parseEnforceFlag(process.env.LIFECYCLE_CLOSE_ENFORCE)` (the same flag that flips Arm A + Arm B in the Worker).
+  …). An all-dropped set → 0 survivors → the caller keeps the 0-item audit row and sends no email. The `410`
+  close defaults to shadow (tallied as `probed410WouldClose`, not written): `buildDigestDeps` sets
+  `DigestDeps.enforceLifecycle` from `parseEnforceFlag(process.env.LIFECYCLE_CLOSE_ENFORCE)`, the flag that
+  flips Arm A + Arm B in the Worker. Prod has enforced since G1 (2026-06-18), which takes `enforce` in BOTH
+  the Worker's `wrangler.toml` `[vars]` and the Vercel env, or the arms half-flip.
 - `src/delivery.ts` (Phase 11) — `deliverDigestEmail(step, db, email, digestId)`, the post-persist
-  step block: ONE `send-email` step (payload read → permit-gated Resend send with
-  `Idempotency-Key: digest/<digestId>` → `recordDigestSent`) wrapped in the fail-run discipline (retry
-  exhaustion → `delivery_status='failed'` → rethrow). G1b: `getDigestEmailPayload` filters items to
+  step block: a `send-email` step (payload read → eligibility- and permit-gated Resend send with
+  `Idempotency-Key: digest/<digestId>`) wrapped in the fail-run discipline (retry exhaustion →
+  `delivery_status='failed'` → rethrow), then a separate `record-sent` step, so a DB blip after an accepted
+  send retries only the write and never records 'failed'. G1b: `getDigestEmailPayload` filters items to
   `lifecycle_state='active'`, so a job closed between retrieval and send (an Arm A/B Worker tick during
   the synthesis wait — the probe checks only the apply URL, never lifecycle) never renders; if that
   empties the payload the step returns `"skipped-empty"` (no send, the orchestrator backs the user off
@@ -98,21 +102,21 @@ integration (email ships in Phase 11 on the local dev runtime — locked at Phas
   `mapDeliveryEvent` encodes the pipeline policy: `delivered`/`opened`/`clicked` → `delivered`;
   `bounced` → `bounced` + **hard**-suppress (the poll's `last_event` carries no bounce subtype —
   Phase 12 webhooks refine this); `complained` → `delivered` + suppress WITHOUT touching bounce
-  status; anything in flight stays `sent`. At-least-once safe end-to-end: the render is
+  status; `suppressed` (Resend refused the address) → `failed` + suppress, likewise; anything in flight
+  stays `sent`. At-least-once safe end-to-end: the render is
   byte-deterministic, Resend replays the same email id for the key, and every write is idempotent.
-  Split into its own file so the stub smoke drives the failure/skip/happy paths with a fake `step`.
 - `src/deps.ts` — `buildDigestDeps()`: the production wiring — a neon-http `createDb` + the real Haiku
   rerank (the shared `@opusfinder/rerank` core wired to `generateObject` with `cacheSystem`, summing
   the cache counters across chunks) + the Anthropic batch primitives from `@opusfinder/llm` + the
   `@opusfinder/email` send/lastEvent pair (the serve process still boots without Resend creds — the
   email getters throw at call time, and an unconfigured send terminalizes to `'failed'`). Phase F2 added the `probe` seam (`DigestDeps.probe`) — the
-  real `probeLiveness` (HEAD/GET apply-URL check) in production, a fake in the stub smoke. Phase F3
+  real `probeLiveness` (HEAD/GET apply-URL check) in production, a fake in the tests. Phase F3
   threads the judgment-context prefs (`PromptPreferences` via `toPromptPrefs`) into rerank + synthesis —
   `DigestDeps.rerank` gained a `prefs?` arg and `deps.ts` forwards it.
 - `src/backfill.ts` (Phase F8) — `createBackfillFunctions(deps)` → the scheduled drain that keeps the
   embedding backlog from accumulating on the deployed runtime (F8 rides the 12a runtime; the
   original GitHub Actions bridge was dropped):
-  - **`embed-backlog-drain`** (`{ cron: "0 4 * * *", singleton: { mode: "skip" } }`): a **cursorless**
+  - **`embed-backlog-drain`** (`{ cron: "10 10 * * *", singleton: { mode: "skip" } }`): a **cursorless**
     re-query — each page re-selects `embedding IS NULL` (the just-written rows fall out of the predicate),
     so it self-advances with no cursor to thread.
   - It caps at `MAX_PAGES_PER_RUN = 200` PAGED per `step.run` (an uncapped drain would exceed the
@@ -120,20 +124,13 @@ integration (email ships in Phase 11 on the local dev runtime — locked at Phas
     daily tick. The injection seam is `BackfillDeps` (`./backfill-deps` → `buildBackfillDeps()`: the
     neon-http `createDb` + the real Voyage embed from the new `@opusfinder/embeddings` dep),
     mirroring `DigestDeps`/`buildDigestDeps`.
-- `scripts/test-digest-email.ts` (`pnpm --filter @opusfinder/inngest test:digest-email`) — the
-  stub-seam smoke for the email tail: render determinism + escaping, the idempotency-key shape, the
-  full event→status mapping, the DB-native send-permit skip, and the failure/skip/happy/slow-poll step
-  sequences. NO creds, NO network, NO real DB.
-- `scripts/test-digest-probe.ts` (`pnpm --filter @opusfinder/inngest test:probe`) — the stub-seam smoke for
-  Arm C: `410` drops + closes, a single `404` drops but does NOT close, timeout/5xx/2xx keep, and an
-  all-dropped set takes the empty-digest path. NO creds, NO network. Shares `scripts/_stub.ts` (the fake
-  `step`/db/email harness deduped from the email smoke).
 - `scripts/serve.ts` (`pnpm inngest:serve`) — the local serve endpoint over a bare Node `http` server
   (`inngest/node`) on port 3000 (pinned — the root `inngest:dev` registers exactly that URL), so the
   dev server can discover + invoke the functions. It serves `createAllFunctions({ digest, backfill, health })`
   (`src/functions.ts`: digest + F8 backfill + H1b health-check alerter — the ONE list of served functions,
   which `control-registry.test.ts` checks against the control registry; add a new function group there,
-  never at a serve route). Dev-only —
+  never at a serve route) minus the crons, which the dev server would fire on schedule against your local
+  creds. Dev-only —
   the Phase-12a **production** serve home is `apps/web/src/routes/api/inngest/+server.ts`
   (`inngest/sveltekit` on Vercel), which serves the same `createAllFunctions` list; the Inngest SDK reads
   `INNGEST_SIGNING_KEY`/`INNGEST_EVENT_KEY` from the environment itself (auto-provisioned by the
@@ -154,9 +151,10 @@ integration (email ships in Phase 11 on the local dev runtime — locked at Phas
   so its reads ride that Neon wake; it was `*/30` until 2026-10 — `singleton: skip`): `checkHealth` → dedup via
   `health_alerts` → `sendHealthAlert` a named-subsystem operator alert, page-once-per-`HEALTH_ALERT_COOLDOWN_H`
   (default 24h). Served alongside the digest + F8 functions in prod (`apps/web`). The CLI and the fn share
-  `src/health-alert.ts` (`alertOnHealth` + the shape-only `formatMetric`/`checkDetail`) so they cannot drift on
+  `src/health-alert.ts` (`alertOnHealth`) and `src/health-alert-helpers.ts` (the shape-only
+  `formatMetric`/`checkDetail`) so they cannot drift on
   which checks page, the body shape, or the cooldown. Enforcing checks is env-only (`HEALTH_ENFORCE`); every
-  check (eight since `hydrate_skip_ratio`) still defaults `shadow`. No-creds smoke: `pnpm --filter @opusfinder/inngest test:health-alert`.
+  check (eight since `hydrate_skip_ratio`) still defaults `shadow`.
 
 The `digest_runs` / `digests` / `digest_items` tables live in the unified `@opusfinder/db` schema +
 migrations (`0007`/`0008`; `0009` adds the per-send `email_id`/`delivery_status`/`sent_at` columns);
@@ -177,6 +175,15 @@ A few impl-time calls landed leaner/safer than the plan's defaults — recorded 
   sleeps suspend at zero cost and the batchId is memoized so a function-level retry re-polls the same
   batch.
 
+## Tests
+
+Co-located Vitest suites (the shared fake `step` + stub db are `test/inngest/stubs.ts`), run from the repo root:
+
+```bash
+pnpm test packages/inngest                            # unit + integration, offline
+PREFS_LIVE_TEST=1 pnpm test:live packages/inngest     # live gate: real Neon + Haiku rerank (needs creds)
+```
+
 ## Local end-to-end (three terminals)
 
 ```bash
@@ -184,10 +191,10 @@ A few impl-time calls landed leaner/safer than the plan's defaults — recorded 
 pnpm inngest:dev
 
 # Terminal B — the serve endpoint (functions the dev server invokes):
-$env:INNGEST_DEV=1; pnpm inngest:serve
+INNGEST_DEV=1 pnpm inngest:serve
 
 # Terminal C — fire a manual run + poll for the result:
-$env:INNGEST_DEV=1; pnpm digest --user <uuid>     # or: pnpm digest --all
+INNGEST_DEV=1 pnpm digest --user <uuid>     # or: INNGEST_DEV=1 pnpm digest --all
 ```
 
 Needs `DATABASE_URL` + `ANTHROPIC_API_KEY` (packages/llm/.env) and a CV-ingested,

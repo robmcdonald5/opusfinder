@@ -15,11 +15,11 @@ places —
 
 - the **digest pipeline** (`@opusfinder/inngest`) wires `call` to a real Haiku `generateObject` with
   `cacheSystem`, so the cached rubric+profile prefix is reused across chunks;
-- the **eval harness** (`@opusfinder/eval`) wires a deterministic stub (and can wire the real Haiku
-  call too),
+- the **eval harness** (`@opusfinder/eval`) wires a deterministic stub,
 
-so eval scores **exactly** what production runs. It mirrors the `embeddingRanker(embed)` injection
-blueprint already used in `packages/eval`.
+so eval runs the same core as production. The real call (model, output cap, temperature, prefs) is wired
+only in the digest, so eval does not score the real rerank yet. It mirrors the `embeddingRanker(embed)`
+injection blueprint already used in `packages/eval`.
 
 ## Public surface (`src/index.ts`)
 

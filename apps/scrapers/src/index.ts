@@ -128,6 +128,9 @@ const MAX_RETRY_WAIT_MS = 5_000;
 // clock starts (≤ 2 s, GATE_TIMEOUT_MS in ./control): ≈ 2 + 600 + 120 + 5 + 10 + 1 ≈ 738 s ≈ 12.3 min,
 // leaving ~2.7 min for that board's DB writes, the stale sweep and finishRun.
 const BOARD_TIME_LIMIT_MS = 120_000;
+// Floor for STALE_SWEEP_TTL_DAYS, the registry's stale_sweep.ttlDays min: a typo like "1" must not put an
+// enforcing stale sweep on a one-day close horizon.
+const MIN_STALE_TTL_DAYS = 7;
 const DISCOVERY_LIMIT = 400;
 const DISCOVERY_REPROBE_LIMIT = 500;
 
@@ -327,11 +330,11 @@ function ingestLimit(env: Env): number {
 /**
  * Staleness-close TTL in days, from STALE_SWEEP_TTL_DAYS truncated to an integer. A non-numeric value or
  * one under 1 is undefined: sweepStaleJobs then uses its default (DEFAULT_STALE_TTL_DAYS) rather than
- * closing on a NaN/0 horizon.
+ * closing on a NaN/0 horizon. A value below MIN_STALE_TTL_DAYS is raised to it.
  */
 function staleTtlDays(env: Env): number | undefined {
   const ttl = Math.trunc(Number(env.STALE_SWEEP_TTL_DAYS));
-  return Number.isFinite(ttl) && ttl >= 1 ? ttl : undefined;
+  return Number.isFinite(ttl) && ttl >= 1 ? Math.max(ttl, MIN_STALE_TTL_DAYS) : undefined;
 }
 
 /** A close switch's mode as the control registry names it (`close` / `stale_sweep`: shadow | enforce). */

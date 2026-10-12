@@ -87,8 +87,12 @@ describe("mapDeliveryEvent", () => {
     expect(mapDeliveryEvent("failed")).toEqual({ status: "failed" });
   });
 
+  it("maps suppressed (Resend refused the address) to failed + suppress WITHOUT touching bounce status", () => {
+    expect(mapDeliveryEvent("suppressed")).toEqual({ status: "failed", suppress: {} });
+  });
+
   it("keeps every non-terminal / unknown event as sent with NO suppression", () => {
-    for (const event of ["queued", "scheduled", "sent", "delivery_delayed", "suppressed", "garbage"]) {
+    for (const event of ["queued", "scheduled", "sent", "delivery_delayed", "garbage"]) {
       expect(mapDeliveryEvent(event)).toEqual({ status: "sent" });
     }
   });
@@ -96,13 +100,21 @@ describe("mapDeliveryEvent", () => {
 
 describe("isTerminalEvent", () => {
   it("is true for the terminal set", () => {
-    for (const event of ["delivered", "opened", "clicked", "bounced", "complained", "failed"]) {
+    for (const event of [
+      "delivered",
+      "opened",
+      "clicked",
+      "bounced",
+      "complained",
+      "failed",
+      "suppressed",
+    ]) {
       expect(isTerminalEvent(event)).toBe(true);
     }
   });
 
   it("is false for in-flight / unknown events", () => {
-    for (const event of ["queued", "scheduled", "sent", "delivery_delayed", "suppressed", "received"]) {
+    for (const event of ["queued", "scheduled", "sent", "delivery_delayed", "received"]) {
       expect(isTerminalEvent(event)).toBe(false);
     }
   });
@@ -212,8 +224,33 @@ describe("deliverDigestEmail", () => {
     );
 
     expect(result).toBe("delivered");
-    expect(runs).toEqual(["send-email", "delivery-poll-0", "record-delivery"]);
+    expect(runs).toEqual(["send-email", "record-sent", "delivery-poll-0", "record-delivery"]);
     expect(sleeps).toEqual(["delivery-wait-0"]);
+  });
+
+  it("a failed record-sent after an accepted send never records a send failure", async () => {
+    const { runs, sleeps, tools } = recordingStep();
+    const db = stubDb([joinedPayloadRows()]); // payload read only — recordDigestSent's write then rejects
+    let sends = 0;
+
+    await expect(
+      deliverDigestEmail(
+        tools,
+        db,
+        {
+          send: async () => {
+            sends++;
+            return { emailId: "re_x" };
+          },
+          lastEvent: async () => "delivered",
+        },
+        7,
+      ),
+    ).rejects.toThrow(/no queued result/);
+
+    expect(sends).toBe(1);
+    expect(runs).toEqual(["send-email", "record-sent"]);
+    expect(sleeps).toEqual([]);
   });
 
   it("slow poll + bounce: first poll in-flight → second sleep/poll → bounced → suppression write", async () => {
@@ -235,7 +272,13 @@ describe("deliverDigestEmail", () => {
     );
 
     expect(result).toBe("bounced");
-    expect(runs).toEqual(["send-email", "delivery-poll-0", "delivery-poll-1", "record-delivery"]);
+    expect(runs).toEqual([
+      "send-email",
+      "record-sent",
+      "delivery-poll-0",
+      "delivery-poll-1",
+      "record-delivery",
+    ]);
     expect(sleeps).toEqual(["delivery-wait-0", "delivery-wait-1"]);
   });
 
@@ -288,7 +331,7 @@ describe("deliverDigestEmail", () => {
 
     expect(result).toBe("delivered");
     expect(sentItemCount).toBe(1); // closed item filtered out of the render
-    expect(runs).toEqual(["send-email", "delivery-poll-0", "record-delivery"]);
+    expect(runs).toEqual(["send-email", "record-sent", "delivery-poll-0", "record-delivery"]);
     expect(sleeps).toEqual(["delivery-wait-0"]);
   });
 });

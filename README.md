@@ -142,8 +142,8 @@ Cloud. Three new pieces ride this runtime: a **cadence cron** (`makeCadenceOrche
 `singleton:skip`) that emits `digest/run.requested {trigger:'cron'}` so `listDigestRecipients`'s opt-in
 `cadenceDue` predicate picks the daily/weekly/monthly-due users (manual `pnpm digest --all` unchanged) —
 with a new `markDigestConsidered` repo fn stamping the no-send skip paths for cadence backoff; the **F8
-backfill drain** (`embed-backlog-drain` `0 4 * * *` cursorless, `singleton:skip`,
-`MAX_PAGES_PER_RUN=200`, paged per `step.run`), replacing the dropped
+backfill drain** (`embed-backlog-drain` `0 4 * * *` — `10 10 * * *` since 2026-10 — cursorless,
+`singleton:skip`, `MAX_PAGES_PER_RUN=200`, paged per `step.run`), replacing the dropped
 GitHub Actions bridge; and the new `health_alerts` append-only incident table (migration
 `0014_slow_red_hulk`, additive; since Phase H1 the health alerter records each page there). 12b (auth +
 prefs/CV forms + history + the interactive dev panel) is deferred. **Deployed live on Vercel + Inngest

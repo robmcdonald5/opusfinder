@@ -30,7 +30,7 @@ export type HealthCheckId =
   | "hydrate_skip_ratio" // latest ingestion run: detail fetches that failed / postings on hydrating boards
   | "discovery_window" // discovery last-run age
   | "embedding_backlog" // active jobs still owed a vector (the embed drain's remaining work)
-  | "digest_health" // errored digest runs + failed digest sends in the recent window
+  | "digest_health" // errored or dead (still-`running`) runs + failed sends in the recent window
   | "bounce_suppression" // users suppressed (hard bounce / complaint) in the recent window
   | "discovery_lane_errors"; // lane_<name>_error tallies on the latest discovery run
 
@@ -62,7 +62,7 @@ export interface HealthThresholds {
   discoveryMaxAgeD: number;
   /** (d) un-embedded backlog (active jobs still owed a vector) watermark. */
   backlogMax: number;
-  /** (e) how many most-recent digest runs (of the last {@link RECENT_DAYS} days) to scan for errors
+  /** (e) how many most-recent digest runs (of the last {@link RECENT_DAYS} days) to scan for a failed run
    *  (clamped to >=1). */
   digestWindowN: number;
   /** Cost rollup window: how many most-recent `digests` rows to sum rerank-cache tokens over. */
@@ -144,9 +144,10 @@ export interface HealthSignals {
   discoveryLaneErrors: number;
   /** (d) un-embedded backlog. */
   embeddingBacklog: number;
-  /** (e) errored runs in the recent window plus failed sends (`digests.delivery_status='failed'`) from those
-   *  runs. A run row finishes 'ok' at fan-out, so a per-user failure shows only on its `digests` row; one
-   *  that throws before persist leaves no row and is visible only in Inngest. */
+  /** (e) errored runs in the recent window, runs still `running` an hour after they started, plus failed
+   *  sends (`digests.delivery_status='failed'`) from those runs. A run row finishes 'ok' at fan-out, so a
+   *  per-user failure shows only on its `digests` row; one that throws before persist leaves no row and is
+   *  visible only in Inngest. */
   digestErrors: number;
   /** (f) users suppressed in the last {@link RECENT_DAYS} days. A hard bounce and a spam complaint both stamp
    *  `digest_suppressed_at`, so each user counts once. */
@@ -260,14 +261,19 @@ export async function gatherHealthSignals(
       `),
     // (d) un-embedded backlog — the drain's own predicate, served by the partial jobs_unembedded_idx.
     db.execute(sql`SELECT count(*) AS embedding_backlog FROM jobs WHERE ${needsEmbeddingSql}`),
-    // (e) digest health — errored runs in the recent window, plus the failed sends of those runs.
+    // (e) digest health — errored runs in the recent window, plus runs still `running` after an hour (the
+    //     orchestrator has no sleeps and finishes in minutes, so such a row's run died without terminalizing
+    //     it: its fail-run write hit the same dead DB, a retried start-run, a cancel), plus the failed sends
+    //     of those runs.
     db.execute(sql`
         WITH recent AS (
-          SELECT id, status FROM digest_runs
+          SELECT id, status, started_at FROM digest_runs
           WHERE started_at > now() - ${RECENT_DAYS} * interval '1 day'
           ORDER BY started_at DESC LIMIT ${digestWindowN}
         )
-        SELECT ((SELECT count(*) FROM recent WHERE status = 'error')
+        SELECT ((SELECT count(*) FROM recent
+                 WHERE status = 'error'
+                    OR (status = 'running' AND started_at < now() - interval '1 hour'))
               + (SELECT count(*) FROM digests
                  WHERE delivery_status = 'failed' AND digest_run_id IN (SELECT id FROM recent)))::int AS errors
       `),
