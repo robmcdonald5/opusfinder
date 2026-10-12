@@ -19,7 +19,7 @@ import {
 // returns a canned aggregate row (bigint counts as STRINGS, exactly as neon-http returns them); the
 // emitted drizzle `sql` is rendered via PgDialect (render) so the branch shape / param binding is
 // asserted without a live table. The SQL *semantics* (the increment / close / revive transitions) are
-// the PGlite/live gate's job — here we lock the safety-critical JS logic (empty-set no-ops, the
+// lifecycle.integration.test.ts's job — here we lock the safety-critical JS logic (empty-set no-ops, the
 // shadow-suppresses-close-write structural gate, the closed_at-in-lockstep invariant, NUL stripping,
 // threshold/TTL binding, bigint-string → number mapping).
 
@@ -55,7 +55,8 @@ describe("sweepLifecycle — per-board feed-absence sweep (shadow suppresses clo
     // closed_at clock: the revive-clear (present → NULL) is emitted in shadow too, but no close-stamp.
     expect(sql).toContain("closed_at = CASE");
     expect(sql).toContain("THEN NULL");
-    expect(sql).not.toContain("THEN now()"); // no close → no closed_at stamp in shadow
+    // no close → no closed_at stamp in shadow
+    expect(sql).not.toMatch(/consecutive_absences \+ 1 >= \$\d+ THEN now\(\)/);
     expect(params).toContain(7); // companyId bound
     expect(params).toContain(ABSENCE_CLOSE_THRESHOLD); // default threshold (3) bound
   });

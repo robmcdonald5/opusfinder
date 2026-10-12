@@ -14,9 +14,11 @@ import { applyPendingFixes, fixSha256, type FixClient, type FixFile } from "./fi
 // The data-fix runner and the data_fixer role under REAL Postgres semantics, run AS that role (what the GitHub
 // Action uses): the setup SQL confines the role to the ingestion tables; the runner applies pending fixes in
 // order, each in one transaction with its data_fixes record, exactly once, and stops at the first failure.
-// Uses small synthetic fixes; each committed fix gets its own suite (e.g. fix-0001.integration.test.ts). NOT
-// this file's job: the lint / numbering rules (fixes.test.ts) or the neon-serverless wire adapter
-// (scripts/apply-fixes.ts, a thin shim over the same FixClient surface as @test/db/fix-client).
+// Uses small synthetic fixes. A fix's own suite (fix-NNNN.integration.test.ts) validates it before it
+// applies: once the fix is recorded in data_fixes it guards nothing, so when a later migration breaks it,
+// delete it rather than patch it. NOT this file's job: the lint / numbering rules (fixes.test.ts) or the
+// neon-serverless wire adapter (scripts/apply-fixes.ts, a thin shim over the same FixClient surface as
+// @test/db/fix-client).
 
 const PREVIEW = "/* preview\nSELECT 1;\n*/\n";
 

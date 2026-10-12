@@ -5,8 +5,8 @@ being hand-seeded. It pulls company/ATS pairs from a registry of **seed lanes** 
 SHA-pinned outscal/OpenJobs list (`outscal`) plus the monthly Hacker News "Who is hiring?" thread via
 Algolia (`hn`, Phase F5) — cross-lane-deduped, then runs the existing spine: HTTP-probe each candidate
 against its ATS endpoint **by reusing the Phase-6 `SourceAdapter` request-builders** in
-`@opusfinder/sources`, idempotently upsert the live subset into `companies`, and deactivate slugs after
-30 days of consecutive failed probes. Every run is tracked in `source_runs`. `pnpm discover` runs it
+`@opusfinder/sources`, idempotently upsert the live subset into `companies`, and deactivate dead slugs
+(see Staleness model). Every run is tracked in `source_runs`. `pnpm discover` runs it
 locally; the Phase-8 Worker's weekly cron (`0 3 * * SUN`, resumed Phase F5) calls the same
 `runDiscovery(db, opts)` directly with `{ workerOnly: true }` so only `workerSafe` lanes run in the
 isolate (`runDiscovery` is argv-free for that).
@@ -74,13 +74,13 @@ sources**; the `hn` lane adds the current month's covered boards on top (a recen
 
 ## Staleness model
 
-`active` flips false after ~30 days of CONSECUTIVE failed probes. The clock is
-`COALESCE(last_live_at, created_at)`: a row decays from its last confirmed-live probe, or — for a
-company seeded by ingestion that a discovery LIVE probe has never refreshed — from when it was created,
-so it gets the full window instead of dying on its first failed probe. Deactivation is gated on a
-non-zero failure streak, so a never-failed row is never swept and SmartRecruiters' unassertable `200`
-(which never increments the streak) can't drift a healthy company. One LIVE probe resets the streak,
-refreshes `last_live_at`, and re-activates — so a revived slug un-deactivates itself.
+`active` flips false once a board has failed a probe and has had neither a LIVE probe nor a
+successful non-empty ingest for 30 days: the clock is
+`COALESCE(GREATEST(last_live_at, last_ingested_at), created_at)`. Deactivation is gated on a non-zero
+failure streak, so a never-failed row is never swept and SmartRecruiters' unassertable `200` (which
+never increments the streak) can't drift a healthy company. One LIVE probe resets the streak,
+refreshes `last_live_at`, and re-activates — but discovery probes an inactive row only when a seed
+lane re-emits its slug, so a deactivated board no lane emits again stays inactive.
 
 > The staleness sweep follows the run's scope: a `--source=X` run only deactivates stale rows of X
 > (it won't touch a source it never re-probed this run), and the broader default pass (no `--source`)

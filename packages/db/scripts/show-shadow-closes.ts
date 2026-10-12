@@ -4,7 +4,8 @@ import { runScript } from "@opusfinder/shared/script";
 
 import { createDb } from "../src/client";
 import { getDatabaseUrl } from "../src/env";
-import { DEFAULT_STALE_TTL_DAYS } from "../src/repos/lifecycle";
+import { DEFAULT_STALE_TTL_DAYS, staleJobsWhere, sweepStaleJobs } from "../src/repos/lifecycle";
+import { resultRows } from "../src/repos/sql";
 import { digests, sourceRuns } from "../src/schema";
 
 /**
@@ -59,12 +60,10 @@ await runScript("ShowShadowCloses", async () => {
   console.log(`=== Arm A/B + Tier-1 stale — last ${runs.length} ingestion/discovery run(s) ===`);
   let wouldCloseTotal = 0;
   let closedTotal = 0;
-  let staleWouldCloseTotal = 0;
   let staleClosedTotal = 0;
   for (const r of runs) {
     wouldCloseTotal += num(r.counts, "wouldClose") + num(r.counts, "wouldCloseOnDeactivation");
     closedTotal += num(r.counts, "closed") + num(r.counts, "jobsClosedOnDeactivation");
-    staleWouldCloseTotal += num(r.counts, "staleWouldClose");
     staleClosedTotal += num(r.counts, "staleClosed");
     console.log(
       `#${r.id} ${r.pipeline} started=${iso(r.startedAt)} ${pick(r.counts, CLOSE_COUNTER_KEYS)} | ` +
@@ -87,13 +86,13 @@ await runScript("ShowShadowCloses", async () => {
   if (digestRows.length === 0) console.log("(no digests yet)");
 
   // Sanity ceiling — read wouldClose as a fraction of the live corpus.
-  const ceilRows = rows(
+  const ceilRows = resultRows(
     await db.execute(sql`
       SELECT count(*) FILTER (WHERE lifecycle_state = 'active')::int AS active,
              count(*) FILTER (WHERE lifecycle_state = 'active' AND consecutive_absences > 0)::int AS pending_streak,
              count(*) FILTER (WHERE lifecycle_state = 'closed')::int AS closed
       FROM jobs`),
-  );
+  ) as Array<Record<string, unknown>>;
   const active = Number(ceilRows[0]?.active ?? 0);
   const pending = Number(ceilRows[0]?.pending_streak ?? 0);
   const closed = Number(ceilRows[0]?.closed ?? 0);
@@ -112,34 +111,35 @@ await runScript("ShowShadowCloses", async () => {
   );
 
   // Universal staleness timer (sweepStaleJobs) — its OWN STALE_SWEEP switch, read BEFORE flipping it.
-  const stalePct = active > 0 ? `${((staleWouldCloseTotal / active) * 100).toFixed(2)}%` : "n/a";
+  // Each run's staleWouldClose is the whole standing population, so summing runs would multiply it:
+  // count it once, live, with the sweep's own count-only mode (default TTL).
+  const { wouldClose: staleStanding } = await sweepStaleJobs(db);
+  const stalePct = active > 0 ? `${((staleStanding / active) * 100).toFixed(2)}%` : "n/a";
   console.log(
     `\n=== Tier-1 stale timer ===\n` +
-      `staleWouldClose across shown runs=${staleWouldCloseTotal} (${stalePct} of active); ` +
-      `staleClosed=${staleClosedTotal}`,
+      `staleWouldClose (standing, live)=${staleStanding} (${stalePct} of active); ` +
+      `staleClosed across shown runs=${staleClosedTotal}`,
   );
   console.log(
     staleClosedTotal > 0
       ? "NOTE: staleClosed > 0 — STALE_SWEEP may ALREADY be 'enforce' (shadow never closes)."
-      : "Gate: staleWouldClose is the STANDING stale-active population each tick. The FIRST enforce clears a " +
+      : "Gate: staleWouldClose is the STANDING stale-active population. The FIRST enforce clears a " +
           "one-time backlog (healthy capped mega-boards' aged-out tails — EXPECTED). Read the per-board breakdown below.",
   );
 
-  // Per-board attribution for the stale timer — the gate's key calibration aid. Replicates sweepStaleJobs'
+  // Per-board attribution for the stale timer — the gate's key calibration aid. sweepStaleJobs' own
   // board-health-guarded predicate at the DEFAULT TTL (the deployed STALE_SWEEP_TTL_DAYS may differ). A
-  // healthy capped mega-board topping this is EXPECTED (its aged-out tail); the guard
-  // (c.last_ingested_at >= cutoff) already excludes any board down > TTL, so a down board's jobs never appear.
-  const byBoard = rows(
+  // healthy capped mega-board topping this is EXPECTED (its aged-out tail); the guard already excludes any
+  // board down > TTL, so a down board's jobs never appear.
+  const byBoard = resultRows(
     await db.execute(sql`
       SELECT c.source, c.slug, count(*)::int AS would_close, max(c.last_ingested_at) AS last_ingested
-      FROM jobs j JOIN companies c ON c.id = j.company_id
-      WHERE j.lifecycle_state = 'active'
-        AND COALESCE(j.last_seen_at, j.created_at) < now() - ${DEFAULT_STALE_TTL_DAYS}::int * interval '1 day'
-        AND c.last_ingested_at >= now() - ${DEFAULT_STALE_TTL_DAYS}::int * interval '1 day'
+      FROM jobs JOIN companies c ON c.id = jobs.company_id
+      WHERE ${staleJobsWhere(DEFAULT_STALE_TTL_DAYS)}
       GROUP BY c.source, c.slug
       ORDER BY would_close DESC
       LIMIT 10`),
-  );
+  ) as Array<Record<string, unknown>>;
   console.log(
     `\n=== Tier-1 stale by board (top ${byBoard.length}, TTL ${DEFAULT_STALE_TTL_DAYS}d, board-health-guarded) ===`,
   );
@@ -167,13 +167,4 @@ function pick(counts: Record<string, number>, keys: readonly string[]): string {
 function iso(value: Date | string | null): string {
   if (value === null) return "?";
   return value instanceof Date ? value.toISOString() : String(value);
-}
-
-/** Normalize a neon-http `db.execute` result to a row array (array, `{rows}`, or scalar). */
-function rows(res: unknown): Array<Record<string, unknown>> {
-  if (Array.isArray(res)) return res as Array<Record<string, unknown>>;
-  if (res && typeof res === "object" && "rows" in res) {
-    return (res as { rows: Array<Record<string, unknown>> }).rows;
-  }
-  return [res as Record<string, unknown>];
 }

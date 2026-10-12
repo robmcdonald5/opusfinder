@@ -2,6 +2,9 @@ import { describe, expect, it } from "vitest";
 
 import { companySlug, jobId, safeJobId } from "./index";
 
+// U+0000 built at runtime — this source file never contains an actual NUL byte.
+const NUL = String.fromCharCode(0);
+
 // Leaf pure-unit for the id/slug branding floor. `jobId` is the STRICT constructor (throws on a bad id);
 // `safeJobId` is its non-throwing sibling that a `SourceAdapter.mapItem` uses to honor the "skip + count,
 // never throw on bad data" contract. The load-bearing invariant: safeJobId accepts EXACTLY what jobId
@@ -25,6 +28,7 @@ describe("jobId — strict branded constructor", () => {
     ["a b", "interior space"],
     ["a\tb", "interior tab"],
     ["a\nb", "interior newline"],
+    [`a${NUL}b`, "interior NUL"],
   ])("throws on %j (%s)", (input) => {
     // The message echoes the ORIGINAL (untrimmed) input verbatim via JSON.stringify — a trimmed-echo
     // regression (reporting "" for "   ") would fail this, unlike a bare /Invalid JobId/ prefix match.
@@ -46,6 +50,7 @@ describe("safeJobId — non-throwing jobId (skip on bad data)", () => {
     ["job 123", "interior space"],
     ["a\tb", "interior tab"],
     ["line\nbreak", "interior newline"],
+    [`a${NUL}b`, "interior NUL"],
     ["", "empty"],
     ["   ", "whitespace-only"],
   ])("returns null for %j (%s) — never throws", (input) => {

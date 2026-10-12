@@ -320,7 +320,7 @@ export async function runIngestion(db: Db, opts: IngestionOptions = {}): Promise
         if (listed) {
           try {
             const present = await markJobsPresent(db, company.id, listedIds);
-            counts.revived += present.revived; // closed→active revivals (works for capped boards too)
+            counts.revived += present.revived; // revivals + streak resets (works for capped boards too)
             await markCompanyIngested(db, company.id);
           } catch (err) {
             counts.markFailed += 1;
@@ -336,8 +336,8 @@ export async function runIngestion(db: Db, opts: IngestionOptions = {}): Promise
         // count-only/shadow or enforce per opts.enforceLifecycle. SKIPPED on a capped/partial fetch — a
         // partial present-set would false-close the un-fetched tail (`<> ALL` over an incomplete set);
         // those boards rely on the staleness timer (sweepStaleJobs) instead. Enforcement rides
-        // parseEnforceFlag(LIFECYCLE_CLOSE_ENFORCE). Isolated like the stamp/embed steps. Closed→active revivals are
-        // owned by markJobsPresent above; sweepLifecycle.revived here counts only still-active streak resets.
+        // parseEnforceFlag(LIFECYCLE_CLOSE_ENFORCE). Isolated like the stamp/embed steps. Revivals and streak resets
+        // are owned by markJobsPresent above; sweepLifecycle.revived here counts only what a failed stamp missed.
         // Also SKIPPED when a rate limit stopped its detail fetches: the second pass re-runs the board and sweeps
         // it then (or, if it can't this tick, next tick — sparing its jobs). Two sweeps in one tick would count
         // its absent postings twice.

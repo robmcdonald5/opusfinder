@@ -13,7 +13,7 @@ import { OPLOG_PRUNE_BATCH, OPLOG_RETENTION_DAYS, pruneOplog } from "./prune-opl
 // (count / breakdown / size / DELETE) to hand back canned rows. `resultRows()` passes a plain rows array
 // through unchanged, so a count returns `[{ n }]`, a breakdown returns the string-count row, and a DELETE
 // returns its batch's `{ id }[]` (length = the RETURNING count). The row SEMANTICS (which rows actually
-// match the gate) are the owner's live dry-run gate; here we lock the query SHAPE + param binding.
+// match the gate) are prune.integration.test.ts's job; here we lock the query SHAPE + param binding.
 
 /** render() is typed `(SQL)`; the stub hands `respond`/`calls` the query as `unknown`, so cast at the seam. */
 const renderQ = (query: unknown): { sql: string; params: unknown[] } => render(query as SQL);
@@ -246,6 +246,10 @@ describe("pruneStaleJobs — TTL hard-delete of long-closed, history-unreference
     // The DELETE CTE must RE-APPLY the full prunable gate, not just the id keyset — the inner SELECT still
     // excludes digest-referenced jobs, so a dropped clause 3 would delete rows the breakdown never counted.
     expect(deleteSql).toContain("id NOT IN (SELECT job_id FROM digest_items)");
+    // ...and on the DELETE's own WHERE, the only clause re-checked against a row revived mid-statement.
+    expect(deleteSql).toMatch(
+      /WHERE id IN \(SELECT id FROM batch\) AND lifecycle_state = 'closed'/,
+    );
 
     expect(r.applied).toBe(true);
     expect(r.deleted).toBe(PRUNE_BATCH * 2 + 5);
