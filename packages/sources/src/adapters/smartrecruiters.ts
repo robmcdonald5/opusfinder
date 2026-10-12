@@ -1,9 +1,9 @@
 import { companySlug, isRecord, safeJobId } from "@opusfinder/shared";
 import type { NormalizedJob } from "@opusfinder/shared";
 
-import { joinParts } from "./fields";
+import { joinParts, nextOffset } from "./fields";
 import { htmlToText } from "./text";
-import type { Cursor, FetchJson, ProbeOutcome, SourceAdapter, SourceContext } from "./types";
+import type { FetchJson, ProbeOutcome, SourceAdapter, SourceContext } from "./types";
 import { firstPathSegment, segmentAfter } from "./url-match";
 
 const API = "https://api.smartrecruiters.com/v1/companies";
@@ -73,28 +73,21 @@ export const smartRecruitersAdapter: SourceAdapter = {
     return body.content;
   },
 
-  // Advance by the actual page size (robust to the server's limit clamp). An empty page
-  // always terminates. With a usable `totalFound`, stop once the window covers it; without
-  // one (API drift), do NOT stop early and silently truncate — keep going while pages are
-  // full and let the short/empty page be the terminator (the server respects offset, so it
-  // arrives), which also can't loop forever.
-  nextCursor: (body, prevCursor, pageItemCount): Cursor | null => {
-    if (pageItemCount === 0) return null;
-    const offset = (prevCursor ? prevCursor.offset : 0) + pageItemCount;
-    const totalFound =
-      isRecord(body) && typeof body.totalFound === "number" && Number.isFinite(body.totalFound)
-        ? body.totalFound
-        : undefined;
-    if (totalFound !== undefined) {
-      return offset >= totalFound ? null : { kind: "offset", offset };
-    }
-    return pageItemCount < PAGE_LIMIT ? null : { kind: "offset", offset };
-  },
+  reportedTotal: (body) => totalFound(body),
+
+  nextCursor: (body, prevCursor, pageItemCount) =>
+    nextOffset(totalFound(body), prevCursor, pageItemCount, PAGE_LIMIT),
 
   mapItem: (raw, ctx) => toNormalizedJob(raw, ctx),
 
   hydrate: (job, _raw, ctx, fetchJson) => hydratePosting(job, ctx, fetchJson),
 };
+
+function totalFound(body: unknown): number | undefined {
+  return isRecord(body) && typeof body.totalFound === "number" && Number.isFinite(body.totalFound)
+    ? body.totalFound
+    : undefined;
+}
 
 /**
  * Map ONE raw list item to a fully-valid job (apply URL reconstructed from the public

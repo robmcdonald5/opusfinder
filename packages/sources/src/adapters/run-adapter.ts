@@ -94,13 +94,16 @@ export async function runAdapter(
 
 /**
  * {@link runAdapter}, plus `rateLimited`: the RateLimitedError a hydrate (detail) fetch hit, if any. The
- * board itself still succeeds, so this is how runIngestion learns to cool that host down. Package-internal.
+ * board itself still succeeds, so this is how runIngestion learns to cool that host down. And `partial`:
+ * the listing came back incomplete though no cap stopped it — a page repeated earlier ones (the server
+ * ignoring the offset; the loop stops there), or it ended well short of the adapter's `reportedTotal`.
+ * Package-internal.
  */
 export async function fetchBoard(
   adapter: SourceAdapter,
   rawSlug: string,
   opts: RunAdapterOptions = {},
-): Promise<{ jobs: NormalizedJob[]; rateLimited?: RateLimitedError }> {
+): Promise<{ jobs: NormalizedJob[]; rateLimited?: RateLimitedError; partial: boolean }> {
   const hydrateConcurrency = opts.hydrateConcurrency ?? DEFAULT_HYDRATE_CONCURRENCY;
   const maxRetries = opts.maxRetries ?? DEFAULT_MAX_RETRIES;
   const fetchTimeoutMs = opts.fetchTimeoutMs ?? DEFAULT_FETCH_TIMEOUT_MS;
@@ -119,9 +122,18 @@ export async function fetchBoard(
   const mapped: { raw: unknown; job: NormalizedJob }[] = [];
   let skipped = 0;
   let cursor: Cursor | null = null;
+  const seenIds = new Set<string>();
+  let listed = 0; // raw items over all pages, malformed ones included
+  let total: number | undefined;
+  let capped = false;
+  let partial = false;
   for (;;) {
     const body = await fetchJson(adapter.jobsRequest(ctx, cursor));
     const items = adapter.locate(body, ctx); // fail LOUD: a bad envelope is a real regression
+    listed += items.length;
+    total = adapter.reportedTotal?.(body) ?? total;
+    const mappedBefore = mapped.length;
+    const seenBefore = seenIds.size;
     for (const raw of items) {
       // fail SOFT: a null return OR a thrown error (e.g. a branding-floor violation such as
       // an id with internal whitespace) skips + counts one posting, never aborts the board.
@@ -136,6 +148,7 @@ export async function fetchBoard(
         // persists, and keeps its order-sensitive jsonb compare from churning on a reorder.
         job.locations = [...job.locations].sort();
         mapped.push({ raw: hydrate ? raw : undefined, job });
+        seenIds.add(job.externalId);
       } else {
         skipped++;
       }
@@ -143,13 +156,23 @@ export async function fetchBoard(
     // Per-board cap — see RunAdapterOptions.maxItems.
     if (maxItems !== undefined && mapped.length >= maxItems) {
       mapped.length = maxItems;
+      capped = true;
       break;
     }
     if (!adapter.nextCursor) break; // omitted ⇒ single unpaginated fetch
+    // A later page whose postings all repeat earlier ones: the server is ignoring the offset, and paging
+    // on could never end. A page of only malformed items proves nothing either way.
+    if (cursor && mapped.length > mappedBefore && seenIds.size === seenBefore) {
+      partial = true;
+      break;
+    }
     const next = adapter.nextCursor(body, cursor, items.length);
     if (!next) break;
     cursor = next;
   }
+  // Ended well short of the reported total (an early empty page, say). The slack keeps a slightly
+  // overcounting total from marking the board partial on every visit.
+  if (!capped && total !== undefined && total - listed > Math.max(5, total * 0.02)) partial = true;
 
   // Optional hydrate (N+1 second fetch) through a bounded-concurrency pool, each call handed its own
   // list item. A per-item failure — ANY failed or empty detail fetch (retries exhausted, a timeout, a
@@ -186,7 +209,7 @@ export async function fetchBoard(
         (unhydrated > 0 ? `, ${unhydrated} un-hydrated (content missing, not written)` : ""),
     );
   }
-  return { jobs, rateLimited };
+  return { jobs, rateLimited, partial };
 }
 
 /**

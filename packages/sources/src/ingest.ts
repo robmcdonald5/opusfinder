@@ -170,6 +170,7 @@ export interface IngestionCounts {
   // Observability + universal staleness sweep (run-level, post-loop).
   markFailed: number; // boards whose markJobsPresent/markCompanyIngested liveness stamp threw (jobs still persisted)
   cappedBoards: number; // boards whose fetch hit adapter.maxItems (partial → Arm A sweep skipped → covered by the stale timer)
+  partialBoards: number; // uncapped boards whose listing came back incomplete (see fetchBoard): Arm A sweep skipped, as for capped
   staleClosed: number; // jobs closed by the staleness timer this run (STALE_SWEEP enforce only; always 0 in shadow)
   staleWouldClose: number; // active jobs past the TTL the timer WOULD close (shadow standing population; 0 in enforce)
   staleSweepFailed: number; // 1 if the post-loop stale sweep threw (jobs untouched; self-heals next tick), else 0
@@ -280,6 +281,9 @@ export async function runIngestion(db: Db, opts: IngestionOptions = {}): Promise
         // source_runs.counts. These boards aren't exempt overall: the post-loop staleness timer
         // (sweepStaleJobs) is their close path.
         if (capped) counts.cappedBoards += 1;
+        // Likewise an uncapped listing that came back incomplete (see fetchBoard): no sweep, the timer covers it.
+        const partial = board.partial;
+        if (partial) counts.partialBoards += 1;
         // The company id comes straight from listCompanies (`company.id`) — no per-board upsertCompany,
         // which was a no-op `ON CONFLICT DO UPDATE SET slug = excluded.slug` returning that same id (a
         // wasted neon-http round-trip plus a dead tuple per board per tick).
@@ -341,7 +345,7 @@ export async function runIngestion(db: Db, opts: IngestionOptions = {}): Promise
         // Also SKIPPED when a rate limit stopped its detail fetches: the second pass re-runs the board and sweeps
         // it then (or, if it can't this tick, next tick — sparing its jobs). Two sweeps in one tick would count
         // its absent postings twice.
-        if (listed && !capped && !rateLimit) {
+        if (listed && !capped && !partial && !rateLimit) {
           try {
             const sweep = await sweepLifecycle(db, company.id, listedIds, {
               enforce: opts.enforceLifecycle ?? false,
@@ -511,6 +515,7 @@ function emptyCounts(): IngestionCounts {
     sweepFailed: 0,
     markFailed: 0,
     cappedBoards: 0,
+    partialBoards: 0,
     staleClosed: 0,
     staleWouldClose: 0,
     staleSweepFailed: 0,
@@ -538,6 +543,7 @@ function logSummary(counts: IngestionCounts, embedEnabled: boolean): void {
       (counts.sweepFailed > 0 ? `, ${counts.sweepFailed} sweep-failed` : "") +
       (counts.markFailed > 0 ? `, ${counts.markFailed} mark-failed` : "") +
       (counts.cappedBoards > 0 ? `; ${counts.cappedBoards} capped board(s)` : "") +
+      (counts.partialBoards > 0 ? `; ${counts.partialBoards} partial board(s)` : "") +
       (counts.hydrateSkipped > 0
         ? `; ${counts.hydrateSkipped} posting(s) not written (detail fetch failed; stored content kept)`
         : "") +

@@ -2,7 +2,14 @@ import { DrizzleQueryError, eq, sql } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Db } from "@opusfinder/db";
-import { upsertCompany, upsertJobs } from "@opusfinder/db/repos";
+import {
+  listCompanies,
+  markJobsPresent,
+  sweepLifecycle,
+  sweepStaleJobs,
+  upsertCompany,
+  upsertJobs,
+} from "@opusfinder/db/repos";
 import { companies, jobs, sourceRuns } from "@opusfinder/db/schema";
 import { companySlug, jobId, type SourceName } from "@opusfinder/shared";
 import {
@@ -14,6 +21,7 @@ import {
 } from "@opusfinder/sources";
 
 import { createTestDb } from "@test/db/pglite";
+import { rejectionOf } from "@test/rejection";
 import { truncate } from "@test/db/truncate";
 import { oneHot } from "@test/db/vectors";
 import { jsonResponse, routedFetch, textResponse, type Route } from "@test/http/fetch-router";
@@ -47,16 +55,21 @@ vi.mock("@opusfinder/shared/async", async (importOriginal) => {
     },
   };
 });
-// Pass-through spies on the two writers runIngestion could call per board: upsertCompany must never be
-// (the id comes from listCompanies), and upsertJobs can be made to throw once (a failed write).
+// Pass-through spies on the repo calls runIngestion makes: upsertCompany must never be called (the id comes
+// from listCompanies), and the rest can be made to throw once (a failed listing, write, stamp or sweep).
 vi.mock("@opusfinder/db/repos", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@opusfinder/db/repos")>();
   return {
     ...actual,
     upsertCompany: vi.fn(actual.upsertCompany),
     upsertJobs: vi.fn(actual.upsertJobs),
+    listCompanies: vi.fn(actual.listCompanies),
+    markJobsPresent: vi.fn(actual.markJobsPresent),
+    sweepLifecycle: vi.fn(actual.sweepLifecycle),
+    sweepStaleJobs: vi.fn(actual.sweepStaleJobs),
   };
 });
+const repoSpies = [upsertCompany, upsertJobs, listCompanies, markJobsPresent, sweepLifecycle, sweepStaleJobs];
 
 // Adapter tuning that removes real waits: no retries (a 5xx fails the board on the first attempt, no
 // `backoff` setTimeout) — paired with paceMs:0 (the stubbed sleep is a no-op anyway).
@@ -155,8 +168,7 @@ describe("runIngestion — orchestration over real PGlite (fetch stubbed)", () =
     paced.events.length = 0;
     paced.now = 0;
     // mockReset (not mockClear) also drops an unconsumed mockRejectedValueOnce, restoring the pass-through.
-    vi.mocked(upsertCompany).mockReset();
-    vi.mocked(upsertJobs).mockReset();
+    for (const spy of repoSpies) vi.mocked(spy).mockReset();
   });
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -414,6 +426,31 @@ describe("runIngestion — orchestration over real PGlite (fetch stubbed)", () =
       expect(tail!.consecutiveAbsences).toBe(0);
       // (That markJobsPresent still RUNS on a capped board is proven by the capped-revival test below —
       // a `toBeDefined()` on the fetched row here would only prove upsertJobs ran, not markJobsPresent.)
+    });
+  });
+
+  describe("partial listing (a Trakstar board ending well short of its meta.total)", () => {
+    it("skips the sweep but still stamps and certifies the board, as for a capped one", async () => {
+      const partco = await seedCompany({ slug: "partco", source: "trakstar", active: true, lastIngestedAt: null });
+      // gone-1 is not listed: a sweep would count it absent.
+      await seedJob(partco, { externalId: "gone-1", source: "trakstar", consecutiveAbsences: 0 });
+      // meta.total says 40, but the second page (offset 2) comes back empty.
+      installFetch([
+        {
+          match: (url) => url.includes("client_name=partco&"),
+          respond: (url) =>
+            jsonResponse({
+              meta: { total: 40 },
+              objects: url.endsWith("offset=0") ? [{ id: "t-1", title: "T 1" }, { id: "t-2", title: "T 2" }] : [],
+            }),
+        },
+      ]);
+
+      const counts = await runIngestion(db, { paceMs: 0, adapter: NO_RETRY });
+
+      expect(counts).toMatchObject({ ok: 1, jobs: 2, partialBoards: 1, swept: 0, wouldClose: 0 });
+      expect((await jobByExt("gone-1"))!.consecutiveAbsences).toBe(0);
+      expect((await companyById(partco)).lastIngestedAt).not.toBeNull();
     });
   });
 
@@ -1270,6 +1307,56 @@ describe("runIngestion — orchestration over real PGlite (fetch stubbed)", () =
 
       expect(paced.events).toEqual(["fetch:wa", "fetch:g1"]);
       expect(counts).toMatchObject({ processed: 3, ok: 1, failed: 1, rateLimitSkipped: 1 });
+    });
+  });
+
+  describe("a failed stamp, sweep or listing", () => {
+    it("a failed presence stamp leaves the board uncertified — counted, and the board still ok", async () => {
+      const stampco = await seedCompany({ slug: "stampco", active: true, lastIngestedAt: null });
+      installFetch([boardRoute("stampco", [ghJob(1)])]);
+      vi.mocked(markJobsPresent).mockRejectedValueOnce(new Error("stamp down"));
+
+      const boards: IngestBoardResult[] = [];
+      const counts = await runIngestion(db, { paceMs: 0, adapter: NO_RETRY, onBoard: (b) => boards.push(b) });
+
+      expect(counts).toMatchObject({ ok: 1, failed: 0, jobs: 1, markFailed: 1 });
+      expect(boards[0]).toMatchObject({ ok: true });
+      // Stamp BEFORE certify: certified with its jobs unstamped, the staleness timer could close live jobs.
+      expect((await companyById(stampco)).lastIngestedAt).toBeNull();
+    });
+
+    it("a failed per-board sweep is counted and the run stays 'ok'", async () => {
+      await seedCompany({ slug: "sweepco", active: true });
+      installFetch([boardRoute("sweepco", [ghJob(1)])]);
+      vi.mocked(sweepLifecycle).mockRejectedValueOnce(new Error("sweep down"));
+
+      const counts = await runIngestion(db, { paceMs: 0, adapter: NO_RETRY });
+
+      expect(counts).toMatchObject({ ok: 1, failed: 0, jobs: 1, sweepFailed: 1 });
+      expect((await allSourceRuns())[0]!.status).toBe("ok");
+    });
+
+    it("a failed staleness sweep is counted and the run stays 'ok'", async () => {
+      await seedCompany({ slug: "ghco", active: true });
+      installFetch([boardRoute("ghco", [ghJob(1)])]);
+      vi.mocked(sweepStaleJobs).mockRejectedValueOnce(new Error("stale down"));
+
+      const counts = await runIngestion(db, { paceMs: 0, adapter: NO_RETRY, staleSweep: { enforce: true } });
+
+      expect(counts).toMatchObject({ ok: 1, staleSweepFailed: 1, staleClosed: 0 });
+      expect((await allSourceRuns())[0]!.status).toBe("ok");
+    });
+
+    it("a failed listing errors the run: the row is 'error' with a sample, and runIngestion rethrows", async () => {
+      vi.mocked(listCompanies).mockRejectedValueOnce(new Error("db unreachable"));
+
+      const err = await rejectionOf(runIngestion(db, { paceMs: 0, adapter: NO_RETRY }));
+
+      expect(err.message).toBe("db unreachable");
+      const runs = await allSourceRuns();
+      expect(runs).toHaveLength(1);
+      expect(runs[0]!.status).toBe("error");
+      expect(runs[0]!.errorSample).toBe("db unreachable");
     });
   });
 

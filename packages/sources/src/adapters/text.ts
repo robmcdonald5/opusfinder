@@ -21,7 +21,8 @@ export function cleanHtml(input: string, steps: readonly CleanStep[]): string {
   let s = input;
   for (const step of steps) {
     if (step === "decode") s = decodeEntities(s);
-    else if (step === "strip") s = s.replace(/<[^>]*>/g, " ");
+    // `[^<>]`, not `[^>]`: the latter rescans the rest of the input for every unclosed "<" (quadratic).
+    else if (step === "strip") s = s.replace(/<[^<>]*>/g, " ");
     else s = s.replace(/\s+/g, " ").trim();
   }
   return s;
@@ -39,14 +40,14 @@ export function htmlToText(value: unknown): string {
   return cleanHtml(typeof value === "string" ? value : "", ["strip", "decode", "collapse"]);
 }
 
-const NAMED_ENTITIES: Record<string, string> = {
-  amp: "&",
-  lt: "<",
-  gt: ">",
-  quot: '"',
-  apos: "'",
-  nbsp: " ",
-};
+const NAMED_ENTITIES = new Map([
+  ["amp", "&"],
+  ["lt", "<"],
+  ["gt", ">"],
+  ["quot", '"'],
+  ["apos", "'"],
+  ["nbsp", " "],
+]);
 
 /** Decode ONE layer of HTML entities: the common named set + numeric dec/hex. */
 function decodeEntities(input: string): string {
@@ -58,7 +59,7 @@ function decodeEntities(input: string): string {
           : Number.parseInt(ref.slice(1), 10);
       return decodeCodePoint(code, match);
     }
-    return NAMED_ENTITIES[ref.toLowerCase()] ?? match;
+    return NAMED_ENTITIES.get(ref.toLowerCase()) ?? match;
   });
 }
 

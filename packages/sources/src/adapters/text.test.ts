@@ -50,6 +50,7 @@ describe("cleanHtml", () => {
       ["&unknownent;", "&unknownent;"], // unknown named entity passes through verbatim
       ["&amp", "&amp"], // missing semicolon is not an entity
       ["bare & ampersand", "bare & ampersand"], // lone ampersand untouched
+      ["&constructor;", "&constructor;"], // an Object.prototype key is not an entity
     ])("leaves %j unchanged", (input, expected) => {
       expect(cleanHtml(input, ["decode"])).toBe(expected);
     });
@@ -84,6 +85,18 @@ describe("cleanHtml", () => {
 
     it("leaves a malformed tag with no closing '>' intact (strip is bounded by the closing bracket)", () => {
       expect(cleanHtml("a <unclosed b", ["strip"])).toBe("a <unclosed b");
+    });
+
+    it("keeps a stray '<' as text instead of swallowing everything up to the next tag", () => {
+      expect(cleanHtml("1 < 2 <b>x</b>", ["strip"])).toBe("1 < 2  x ");
+    });
+
+    it("stays linear on a long run of unclosed '<' (raw, or entity-encoded on Greenhouse)", () => {
+      const start = performance.now();
+      htmlToText(`<p>${"<a".repeat(50_000)}`);
+      cleanHtml("&lt;a".repeat(50_000), GREENHOUSE_STEPS);
+      // Linear takes a few ms; a quadratic strip takes seconds here.
+      expect(performance.now() - start).toBeLessThan(1_000);
     });
   });
 

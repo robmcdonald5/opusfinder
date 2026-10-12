@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { inferRemoteFromText, joinParts } from "./fields";
+import { inferRemoteFromText, joinParts, nextOffset } from "./fields";
 
 // Built at runtime so the fixture carries a real U+00A0 byte (no literal-escape ambiguity in source).
 const NBSP = String.fromCharCode(0xa0);
@@ -56,5 +56,20 @@ describe("inferRemoteFromText", () => {
     { name: "telecommute synonym not matched", locations: ["Telecommute"] },
   ])("false: $name", ({ locations }) => {
     expect(inferRemoteFromText(locations)).toBe(false);
+  });
+});
+
+describe("nextOffset", () => {
+  const at = (offset: number) => ({ kind: "offset" as const, offset });
+
+  it.each([
+    { name: "first page below the total advances by the page size", total: 300, prev: null, count: 100, next: at(100) },
+    { name: "advances by the ACTUAL count (a server-clamped page)", total: 300, prev: at(100), count: 50, next: at(150) },
+    { name: "stops once the window covers the total", total: 300, prev: at(200), count: 100, next: null },
+    { name: "an empty page stops, even short of the total", total: 300, prev: at(100), count: 0, next: null },
+    { name: "no total: a full page continues", total: undefined, prev: at(100), count: 100, next: at(200) },
+    { name: "no total: a short page stops", total: undefined, prev: at(100), count: 37, next: null },
+  ])("$name", ({ total, prev, count, next }) => {
+    expect(nextOffset(total, prev, count, 100)).toEqual(next);
   });
 });

@@ -233,6 +233,19 @@ describe("trakstarAdapter.mapItem", () => {
   });
 });
 
+describe("trakstarAdapter — pagination by meta.total", () => {
+  it("reports meta.total (what fetchBoard checks the listing against) and pages by it", () => {
+    const body = { meta: { offset: 20, limit: 20, total: 50 }, objects: [] };
+    expect(trakstarAdapter.reportedTotal!(body)).toBe(50);
+    expect(trakstarAdapter.reportedTotal!({ meta: {}, objects: [] })).toBeUndefined();
+    expect(trakstarAdapter.nextCursor!(body, { kind: "offset", offset: 20 }, 20)).toEqual({
+      kind: "offset",
+      offset: 40,
+    });
+    expect(trakstarAdapter.nextCursor!(body, { kind: "offset", offset: 40 }, 10)).toBeNull();
+  });
+});
+
 describe("trakstarAdapter.normalizeSlug", () => {
   // The host is case-insensitive and echoes client_name lowercased, so the canonical slug must
   // lowercase before the universal floor brands it — otherwise apply-URL reconstruction diverges.
