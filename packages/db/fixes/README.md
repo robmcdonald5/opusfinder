@@ -60,6 +60,10 @@ fix is NOT in `data_fixes` (ask `neon-ops`). The summary shows `OUTCOME UNKNOWN`
 the connection dropped during COMMIT: then the fix may well be applied, so check `data_fixes` before
 touching anything.
 
+Two fix PRs that each add the same number can both pass CI and merge; the runner then applies nothing. Rename
+the one that is NOT in `data_fixes` to the next free number in a new PR. `guard:fixes` flags the rename, and
+the owner merges over it the same way.
+
 ## Previewing (orchestrator)
 
 Run the `/* preview` queries through the read-only `neon-ops` agent and paste the results into the PR. The

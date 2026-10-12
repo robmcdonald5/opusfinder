@@ -140,28 +140,34 @@ describe("data fixes: applied once, atomically, as the data_fixer role (integrat
     );
   });
 
-  it("setup aborts, changing nothing, when the role holds a privilege another role granted", async () => {
-    // The owner's REVOKE ALL removes only the owner's own grants; this one has another grantor.
-    await pg.exec(`
-      RESET ROLE;
-      CREATE ROLE other_admin;
-      GRANT SELECT ON "user" TO other_admin WITH GRANT OPTION;
-      SET ROLE other_admin;
-      GRANT SELECT ON "user" TO ${DATA_FIXER_ROLE};
-      RESET ROLE;
-    `);
-    try {
-      await expect(pg.exec(buildDataFixerSetupSql("q".repeat(32)))).rejects.toThrow(
-        /data_fixer holds privileges beyond its allowlist \(on: user;/,
-      );
-    } finally {
+  it.each(["SELECT", "SELECT (email)"])(
+    "setup aborts, changing nothing, when the role holds a privilege another role granted (%s)",
+    async (grant) => {
+      // The owner's REVOKE ALL removes only the owner's own grants; this one has another grantor.
       await pg.exec(`
-        REVOKE SELECT ON "user" FROM other_admin CASCADE;
-        DROP ROLE other_admin;
-        SET ROLE ${DATA_FIXER_ROLE};
+        RESET ROLE;
+        CREATE ROLE other_admin;
+        GRANT SELECT ON "user" TO other_admin WITH GRANT OPTION;
+        SET ROLE other_admin;
+        GRANT ${grant} ON "user" TO ${DATA_FIXER_ROLE};
+        RESET ROLE;
       `);
-    }
-  });
+      try {
+        await expect(pg.exec(buildDataFixerSetupSql("q".repeat(32)))).rejects.toThrow(
+          /data_fixer holds privileges beyond its allowlist \(on: user;/,
+        );
+      } finally {
+        await pg.exec(`
+          SET ROLE other_admin;
+          REVOKE ${grant} ON "user" FROM ${DATA_FIXER_ROLE};
+          RESET ROLE;
+          REVOKE SELECT ON "user" FROM other_admin;
+          DROP ROLE other_admin;
+          SET ROLE ${DATA_FIXER_ROLE};
+        `);
+      }
+    },
+  );
 
   it("applies pending fixes in order, records each with the git sha, and returns their notices", async () => {
     const run = await applyPendingFixes(fixer, [deactivateAcme, tagGlobex], "abc123");
