@@ -112,20 +112,26 @@ const NAMED: Record<string, string> = {
   shy: "",
 };
 
+/** A numeric entity's character; past Unicode's range it stays as written (fromCodePoint would throw). */
+const codePoint = (code: number, entity: string) =>
+  code <= 0x10ffff ? String.fromCodePoint(code) : entity;
+
 /** A crude HTML → text: invoices are often HTML-only, and the model reads text better than markup. */
 export function htmlToText(html: string): string {
   return (
     html
-      .replace(/<(style|script)[^>]*>[\s\S]*?<\/\1>/gi, " ")
-      .replace(/<(br|\/p|\/div|\/tr|\/li|\/h\d)[^>]*>/gi, "\n")
-      .replace(/<[^>]+>/g, " ")
+      // Linear on hostile input: a tag stops at the next "<", and an unclosed style or script runs to the
+      // end (as in a browser), so a run of unclosed "<" can't make every later "<" rescan the rest.
+      .replace(/<(style|script)\b[^<>]*>[\s\S]*?(?:<\/\1\s*>|$)/gi, " ")
+      .replace(/<(br|\/p|\/div|\/tr|\/li|\/h\d)[^<>]*>/gi, "\n")
+      .replace(/<[^<>]+>/g, " ")
       .replace(/&nbsp;/gi, " ")
       .replace(/&amp;/gi, "&")
       .replace(/&#36;|&dollar;/gi, "$")
       .replace(/&lt;/gi, "<")
       .replace(/&gt;/gi, ">")
-      .replace(/&#x([0-9a-f]{1,6});/gi, (_, n: string) => String.fromCodePoint(parseInt(n, 16)))
-      .replace(/&#(\d{1,7});/g, (_, n: string) => String.fromCodePoint(Number(n)))
+      .replace(/&#x([0-9a-f]{1,6});/gi, (m, n: string) => codePoint(parseInt(n, 16), m))
+      .replace(/&#(\d{1,7});/g, (m, n: string) => codePoint(Number(n), m))
       .replace(/&(\w+);/g, (m, name: string) => NAMED[name.toLowerCase()] ?? m)
       // Preheader padding (zero-width joiners, soft hyphens) carries nothing but inflates the text.
       .replace(/[\u00ad\u200b-\u200d\u2060\ufeff]/g, "")

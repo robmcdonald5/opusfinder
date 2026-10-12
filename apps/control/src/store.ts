@@ -545,11 +545,11 @@ export async function mailCountsSince(
 }
 
 /**
- * The recorded statement this one repeats, if any: the same vendor (compared by vendorKey, so "Neon, LLC"
- * and "Neon" match) and invoice number, or — when either side has no number — the same vendor and amount
- * charged within 3 days. Two invoices with different numbers are two charges, however alike (two domain
- * renewals on one day); the reader asks the model for the invoice number over a receipt number, so a
- * Stripe invoice and its receipt carry the same one.
+ * The recorded statement this one repeats, if any (with alsoWaiting, or one still in review): the same
+ * vendor (compared by vendorKey, so "Neon, LLC" and "Neon" match) and invoice number, or — when either side
+ * has no number — the same vendor and amount charged within 3 days. Two invoices with different numbers are
+ * two charges, however alike (two domain renewals on one day); the reader asks the model for the invoice
+ * number over a receipt number, so a Stripe invoice and its receipt carry the same one.
  */
 export async function findSameCharge(
   db: D1Database,
@@ -559,19 +559,20 @@ export async function findSameCharge(
     amount_cents: number | null;
     charged_on: string | null;
   },
+  { alsoWaiting = false }: { alsoWaiting?: boolean } = {},
 ): Promise<number | null> {
   const key = vendorKey(s.vendor);
   if (!key) return null;
   const { results } = await db
     .prepare(
       `SELECT id, vendor FROM statement
-       WHERE status = 'recorded'
+       WHERE (status = 'recorded' OR (?4 AND status = 'review'))
          AND ((?1 IS NOT NULL AND reference = ?1)
            OR ((?1 IS NULL OR reference IS NULL) AND ?2 IS NOT NULL AND amount_cents = ?2
                AND ?3 IS NOT NULL AND abs(julianday(charged_on) - julianday(?3)) <= 3))
        ORDER BY id`,
     )
-    .bind(s.reference, s.amount_cents, s.charged_on)
+    .bind(s.reference, s.amount_cents, s.charged_on, alsoWaiting ? 1 : 0)
     .all<{ id: number; vendor: string | null }>();
   return results.find((r) => vendorKey(r.vendor) === key)?.id ?? null;
 }

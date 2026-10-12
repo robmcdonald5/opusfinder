@@ -152,11 +152,12 @@ row per email:
   - everything else is refused at the SMTP stage (no row, no model read; the Worker logs the domain only).
 
   The envelope sender is SMTP's unauthenticated MAIL FROM, and Cloudflare admits mail that passes SPF _or_
-  carries any valid DKIM signature, so someone who knows the owner's address could forge it. **Shadow:**
-  each accepted email's SPF / DKIM / DMARC / ARC verdicts are stored in `statement.auth` (and logged), one
-  entry per header in header order, labelled with the server that wrote it, domains only. Any hop, and the
-  sender, can add these headers, so a gate must read only the topmost entry Cloudflare wrote, never match
-  a substring of the column. UNVERIFIED until the first filter forward (Cloudflare's, ~23rd): whether
+  carries any valid DKIM signature, so someone who knows the owner's address could forge it. Until the gate
+  checks authentication, nothing read from an email counts by itself (below). **Shadow:** each accepted
+  email's SPF / DKIM / DMARC / ARC verdicts are stored in `statement.auth` (and logged), one entry per
+  header in header order, labelled with the server that wrote it, domains only. Any hop, and the sender,
+  can add these headers, so a gate must read only the topmost entry Cloudflare wrote, never match a
+  substring of the column. UNVERIFIED until the first filter forward (Cloudflare's, ~23rd): whether
   Cloudflare writes such a header where the Worker sees it at all; if not, the gate needs another basis.
 
 - **Read by a model.** Workers AI (`[ai]` binding, `@cf/meta/llama-3.3-70b-instruct-fp8-fast` in JSON
@@ -164,22 +165,24 @@ row per email:
   over a receipt's); it gets both the plain-text and HTML parts, and when the body doesn't settle it, the
   attached PDF (via `toMarkdown`). Every field is validated (real calendar dates, a day of timezone slack);
   the email is untrusted text and the model has no tools.
-- **Never guessed.** No total, no charge date on a hand forward (its own date is the forward's, not the
-  invoice's), a currency other than USD, a failed model call, an unparseable or oversized (> 10 MiB) email,
-  or mail the model doesn't see a bill in → status `review`, for the owner to count (with the amount, date
-  and service period they read) or exclude. Only owner forwards reach the model, so it never drops one.
-  `ignored` is only for Gmail's confirmation, which can't be counted (the server refuses, whatever the
-  row's status). An agent's hand entry also waits in `review`; the owner's counts at once.
+- **Counted by the owner.** Every forward lands in `review` (or `duplicate`, below), pre-filled with what
+  the model read, for the owner to count (correcting the amount, date and service period as needed) or
+  exclude. A note says what's doubtful: no total, no charge date on a hand forward (its own date is the
+  forward's, not the invoice's), a currency other than USD, a failed model call, an unparseable or
+  oversized (> 10 MiB) email, or mail the model doesn't see a bill in. Only owner forwards reach the model,
+  so it never drops one. `ignored` is only for Gmail's confirmation, which can't be counted (the server
+  refuses, whatever the row's status). An agent's hand entry also waits in `review`; the owner's counts at
+  once.
 - **Caps.** Per UTC day: 100 owner forwards and, apart from them, 5 Gmail confirmations (anyone can write
   that From header, so junk confirmations can't use up the owner's quota); past either, mail is refused at
   the SMTP stage. Past 50 forwards in a day the rest wait in `review` unread (each read is at most two model
   calls and one PDF conversion). How Email Routing answers when the handler itself throws (e.g. a D1
   outage) isn't documented: the email may be lost, so check the Email Routing activity log after an outage.
 - **Counted once, mostly.** A redelivered email (same `Message-ID`) is dropped. A second email for a
-  recorded charge — same vendor (compared without case, punctuation or legal suffixes: "Neon, LLC" is
-  "Neon") and invoice number, or, when either has no number, same vendor and amount within 3 days — is
-  stored as `duplicate`. Different invoice numbers never merge, so the filter should still forward one
-  email per charge.
+  charge already counted or still in `review` — same vendor (compared without case, punctuation or legal
+  suffixes: "Neon, LLC" is "Neon") and invoice number, or, when either has no number, same vendor and
+  amount within 3 days — is stored as `duplicate`. Different invoice numbers never merge, so the filter
+  should still forward one email per charge.
 - **Filed by month.** Under the service period the invoice states, else the charge date. Prepaid credits
   always go by the charge date (cash, not usage). The month view groups vendor spellings into one line.
 - **Gmail's forwarding confirmation** (code and/or link) is shown on the Cost page to the owner only;

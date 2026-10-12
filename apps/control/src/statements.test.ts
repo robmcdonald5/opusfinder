@@ -443,6 +443,14 @@ describe("filingMonth / htmlToText", () => {
     expect(
       htmlToText("<p>Total&zwnj;&nbsp;\u200c&#x24;5 &rsquo;paid&rsquo; &mdash; &bogus;</p>"),
     ).toBe("Total $5 'paid' - &bogus;");
+    // Past Unicode's range: kept as written, not thrown (which would cost the email its reading).
+    expect(htmlToText("<p>$5 &#x110000; &#9999999;</p>")).toBe("$5 &#x110000; &#9999999;");
+  });
+
+  it("takes linear time on unclosed tags, so a hostile email can't exhaust the CPU", () => {
+    const start = performance.now();
+    for (const open of ["<", "<br", "<style>"]) htmlToText(open.repeat(64 * 1024));
+    expect(performance.now() - start).toBeLessThan(1000);
   });
 
   it("keeps the text and drops markup, styles and scripts", () => {

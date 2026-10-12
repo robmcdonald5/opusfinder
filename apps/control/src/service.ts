@@ -944,8 +944,8 @@ function statementFields(body: unknown, now: string) {
 
 /**
  * Record a statement by hand (history from before the mailbox, or a vendor that doesn't email one). The
- * owner's entry counts at once; an agent's waits in the owner's review queue, like anything the mailbox
- * isn't sure of: agents may record, but only the owner decides what counts.
+ * owner's entry counts at once; an agent's waits in the owner's review queue, like everything the mailbox
+ * reads: agents may record, but only the owner decides what counts.
  */
 export async function addStatement(db: D1Database, caller: Caller, body: unknown, now: string) {
   requireRole(caller, "owner", "agent");
