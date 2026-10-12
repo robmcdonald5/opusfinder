@@ -60,7 +60,7 @@ export interface JobCandidate {
   descriptionText: string;
   locations: string[];
   remote: boolean;
-  /** The content-dedup signature (md5 of normalized title+desc), or NULL until backfilled. Drives the
+  /** The content-dedup signature (md5 of normalized title+desc), or NULL for a blank description. Drives the
    *  same-signature display collapse. NOT forwarded into Inngest step state — the retrieve step
    *  deliberately returns only id/title/description; this stays a local retrieval field. */
   contentSignature: string | null;
@@ -104,7 +104,7 @@ export async function retrieveCandidatesForProfile(
   }
   if (excludeSignatures.length > 0) {
     // Additive repost anti-join: drop a candidate whose content_signature the user has already seen, but
-    // KEEP NULL-signature (un-backfilled) candidates. One bound text param cast to text[] (md5 hex is
+    // KEEP NULL-signature (blank-description) candidates. One bound text param cast to text[] (md5 hex is
     // brace/comma/NUL-free), mirroring the int[] idiom.
     const sigLiteral = textArrayLiteral(excludeSignatures);
     conditions.push(sql`(content_signature IS NULL OR content_signature <> ALL(${sigLiteral}::text[]))`);
@@ -155,8 +155,8 @@ export async function retrieveCandidatesForProfile(
 /**
  * Same-signature display collapse: from a DISTANCE-SORTED candidate list, keep the first member of each
  * content_signature group and drop later same-signature members, so a cross-posted role occupies ONE
- * digest slot (the closest-to-profile member wins). NULL signatures are each their own group — an
- * un-backfilled row is never collapsed. Pure + order-preserving; the `Set` is declared OUTSIDE the
+ * digest slot (the closest-to-profile member wins). NULL signatures are each their own group — a
+ * blank-description row is never collapsed. Pure + order-preserving; the `Set` is declared OUTSIDE the
  * predicate so state persists across the scan. Generic + exported so the smoke can drive it with minimal
  * `{contentSignature}` objects.
  *

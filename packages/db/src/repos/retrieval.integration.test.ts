@@ -405,7 +405,7 @@ describe("retrieveCandidatesForProfile — SQL filter + cosine rank + post-filte
     expect(sigRows).toHaveLength(1);
     const sigR = sigRows[0]!.sig;
     expect(sigR).toMatch(/^[0-9a-f]{32}$/);
-    // upsertJobs ALWAYS writes a signature SQL-side — a NULL (un-backfilled) row needs a raw UPDATE.
+    // upsertJobs signs S (it has a description) — a NULL-signature row needs a raw UPDATE.
     await db.execute(sql`UPDATE ${jobs} SET content_signature = NULL WHERE id = ${idS}`);
 
     const result = await retrieveCandidatesForProfile(db, oneHot(0), {
@@ -441,6 +441,18 @@ describe("retrieveCandidatesForProfile — SQL filter + cosine rank + post-filte
     // lower id first, so "first member wins" keeps a stable representative.
     expect(result.map((c) => c.id)).toEqual([Math.min(idX1, idX2), idY]);
     expect(result.map((c) => c.id)).not.toContain(Math.max(idX1, idX2));
+  });
+
+  // B15b
+  it("never collapses blank-description postings that only share a title — they sign NULL", async () => {
+    // A title-only signature would merge every blank-bodied posting with that title into one slot.
+    const seeded = await seedBoard([
+      { externalId: "e1", title: "Software Engineer", description: "", embedding: oneHot(0) },
+      { externalId: "e2", title: "Software  Engineer", description: "   ", embedding: oneHot(0) },
+    ]);
+    const result = await retrieveCandidatesForProfile(db, oneHot(0), { limit: 10 });
+    expect(result.map((c) => c.id)).toEqual(seeded);
+    expect(result.map((c) => c.contentSignature)).toEqual([null, null]);
   });
 
   // B16

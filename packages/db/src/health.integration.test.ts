@@ -1,11 +1,15 @@
+import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import type { Db } from "@opusfinder/db";
 import { gatherHealthSignals } from "@opusfinder/db/health";
-import { sourceRuns } from "@opusfinder/db/schema";
+import { upsertCompany, upsertJobs } from "@opusfinder/db/repos";
+import { companies, jobs, sourceRuns } from "@opusfinder/db/schema";
+import { companySlug, jobId, type NormalizedJob } from "@opusfinder/shared";
 
 import { createTestDb } from "@test/db/pglite";
 import { truncate } from "@test/db/truncate";
+import { oneHot } from "@test/db/vectors";
 
 // The hydrate_skip_ratio inputs are read from the LATEST ingestion run's `counts` jsonb by KEY NAME. The
 // pure evaluator suite (health.test.ts) feeds canned signals, so it can't see a key that drifted from the
@@ -83,5 +87,49 @@ describe("gatherHealthSignals — hydrate_skip_ratio inputs (integration: real P
     expect(signals.latestIngestHydrateSkipped).toBe(0);
     expect(signals.latestIngestHydrateListed).toBe(0);
     expect(signals.latestIngestRateLimitSkipped).toBe(0);
+  });
+});
+
+describe("gatherHealthSignals — embedding_backlog (integration: real PGlite)", () => {
+  let db: Db;
+  let close: (() => Promise<void>) | undefined;
+
+  beforeAll(async () => {
+    ({ db, close } = await createTestDb());
+  });
+  afterAll(async () => {
+    await close?.();
+  });
+
+  it("counts only the active, embeddable jobs still owed a vector — the drain's own work", async () => {
+    const job = (externalId: string, title: string, descriptionText = "body"): NormalizedJob => ({
+      source: "greenhouse",
+      externalId: jobId(externalId),
+      title,
+      companySlug: companySlug("acme"),
+      locations: [],
+      remote: true,
+      descriptionText,
+      applyUrl: `https://example.test/${externalId}`,
+      postedAt: null,
+    });
+    await truncate(db, companies, jobs);
+    const companyId = await upsertCompany(db, companySlug("acme"), "greenhouse");
+    await upsertJobs(db, companyId, [
+      job("owed", "Owed Role"),
+      job("closed", "Closed Role"),
+      job("embedded", "Embedded Role"),
+      job("blank", " ", ""),
+    ]);
+    await db
+      .update(jobs)
+      .set({ lifecycleState: "closed" })
+      .where(eq(jobs.externalId, jobId("closed")));
+    await db
+      .update(jobs)
+      .set({ embedding: oneHot(0) })
+      .where(eq(jobs.externalId, jobId("embedded")));
+
+    expect((await gatherHealthSignals(db)).embeddingBacklog).toBe(1);
   });
 });

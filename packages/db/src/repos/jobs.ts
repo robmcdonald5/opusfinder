@@ -154,7 +154,7 @@ export interface UpsertJobsResult {
  *  - A `NormalizedJob.contentMissing` job (a failed or empty hydrate: its title/description are list-level
  *    placeholders) never writes CONTENT. A stored row keeps its title, description, content_signature and
  *    embedding; writing the placeholder would overwrite the description, NULL the embedding (a paid
- *    re-embed) and recompute the signature from the title alone (an F1 de-dupe collapse), then flip it all
+ *    re-embed) and recompute the signature from the placeholder (breaking F1 de-dupe), then flip it all
  *    back on the next good hydrate. Only its company_id is refreshed ({@link moveToListingBoard}), so a
  *    posting that moved boards isn't falsely closed by its old board's sweep. A posting not yet stored is
  *    not inserted until a run fetches its content.
@@ -229,8 +229,8 @@ export async function upsertJobs(
   // NON-blank stored one — the stored text is kept, so content_signature and the embedding don't move for
   // it either. A blank body over real text is a fetch anomaly, not an edit: an inline-content source (e.g.
   // Greenhouse `content=true`, Workable `details=true`, Lever) momentarily serving "", or SmartRecruiters'
-  // `jobAd.sections: {}`. Writing it would NULL the embedding (a paid re-embed) and collapse the signature
-  // to the title alone (F1 de-dupe), then flip back. Every description reference below goes through this
+  // `jobAd.sections: {}`. Writing it would NULL the embedding (a paid re-embed) and clear the signature
+  // (dropping the row out of F1 de-dupe), then flip back. Every description reference below goes through this
   // ONE expression (the SET, the signature, the embedding reset, setWhere) so they can't disagree. A title
   // change in the same row still applies normally. A posting with NO stored row is inserted as given, ""
   // included (its first fetch is all we have; some postings genuinely have no body).

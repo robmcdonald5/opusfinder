@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 
 import type { Db } from "./client";
+import { needsEmbeddingSql } from "./repos/embeddings";
 import { resultRows } from "./repos/sql";
 
 /**
@@ -28,7 +29,7 @@ export type HealthCheckId =
   | "board_fail_ratio" // within-run coverage loss: (failed + rateLimitSkipped)/processed — the status='ok' trap
   | "hydrate_skip_ratio" // latest ingestion run: detail fetches that failed / postings on hydrating boards
   | "discovery_window" // discovery last-run age
-  | "embedding_backlog" // jobs WHERE embedding IS NULL
+  | "embedding_backlog" // active jobs still owed a vector (the embed drain's remaining work)
   | "digest_health" // any digest_runs with status='error' in the window
   | "bounce_suppression" // hard-bounced / suppressed users
   | "discovery_lane_errors"; // lane_<name>_error tallies on the latest discovery run
@@ -59,7 +60,7 @@ export interface HealthThresholds {
   /** (c) days since the last successful discovery run before the window fires. Default 13 ≈ ~2× the weekly
    *  Sunday cron period — tolerates a late/jittered run but still fires on a fully missed week (~14d). */
   discoveryMaxAgeD: number;
-  /** (d) un-embedded backlog (`jobs.embedding IS NULL`) watermark. */
+  /** (d) un-embedded backlog (active jobs still owed a vector) watermark. */
   backlogMax: number;
   /** (e) how many most-recent digest runs to scan for a `status='error'` run (clamped to >=1). */
   digestWindowN: number;
@@ -243,11 +244,8 @@ export async function gatherHealthSignals(
         SELECT extract(epoch FROM (now() - max(finished_at))) / 86400.0 AS age_d
         FROM source_runs WHERE pipeline = 'discovery' AND status = 'ok'
       `),
-    // (d) un-embedded backlog.
-    db.execute(sql`
-        SELECT count(*) FILTER (WHERE embedding IS NULL) AS embedding_backlog
-        FROM jobs
-      `),
+    // (d) un-embedded backlog — the drain's own predicate, served by the partial jobs_unembedded_idx.
+    db.execute(sql`SELECT count(*) AS embedding_backlog FROM jobs WHERE ${needsEmbeddingSql}`),
     // (e) digest health — count error-status runs in the recent window.
     db.execute(sql`
         SELECT count(*) FILTER (WHERE status = 'error')::int AS errors

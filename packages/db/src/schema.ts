@@ -182,7 +182,8 @@ export const jobs = pgTable(
     // NON-unique BY DESIGN: cross-posts and reposts are MEANT to share a signature, so it is the
     // grouping key two read paths collide on (retrieval display-collapse + the shown-history anti-join),
     // NEVER a UNIQUE constraint (jobs_source_external_id_uq stays the upsert conflict target). NULL until
-    // written/backfilled — the read paths treat NULL as "its own group", so un-backfilled rows are inert,
+    // written/backfilled, and NULL for a blank description (a title-only key would merge unrelated
+    // postings) — the read paths treat NULL as "its own group", so NULL rows are inert,
     // not wrong. DISTINCT from `embedding`/jobEmbeddingText: that folds these same two fields into a
     // SEMANTIC vector; this folds them into an EXACT-MATCH key — never merge the two.
     contentSignature: text("content_signature"),
@@ -201,8 +202,8 @@ export const jobs = pgTable(
     // to add IF NOT EXISTS (neon-http migrations aren't transactional — same discipline as the FK below).
     index("jobs_embedding_hnsw_idx").using("hnsw", t.embedding.op("vector_cosine_ops")),
     // Partial btree over ONLY the un-embedded rows. Backs the recurring `embedding IS NULL` scans,
-    // turning a full seq-scan into an index-only scan. Self-prunes to ~0 entries as rows embed, so it
-    // stays tiny (same partial-index discipline as companies_active_last_probed_idx /
+    // turning a full seq-scan into an index scan. Shrinks as rows embed (closed ones wait for the prune),
+    // so it stays small (same partial-index discipline as companies_active_last_probed_idx /
     // user_preferences_eligible_idx). The HNSW index above only covers NON-NULL vectors for the `<=>`
     // cosine path and cannot serve `IS NULL`. drizzle-kit emits this bare; the migration hand-adds
     // IF NOT EXISTS (neon-http isn't transactional) — same discipline as the guarded indexes above.
