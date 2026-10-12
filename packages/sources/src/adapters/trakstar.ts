@@ -79,7 +79,9 @@ export const trakstarAdapter: SourceAdapter = {
 
 function metaTotal(body: unknown): number | undefined {
   const meta = isRecord(body) && isRecord(body.meta) ? body.meta : undefined;
-  return meta && typeof meta.total === "number" && Number.isFinite(meta.total) ? meta.total : undefined;
+  return meta && typeof meta.total === "number" && Number.isFinite(meta.total)
+    ? meta.total
+    : undefined;
 }
 
 function toNormalizedJob(raw: unknown, ctx: SourceContext): NormalizedJob | null {
