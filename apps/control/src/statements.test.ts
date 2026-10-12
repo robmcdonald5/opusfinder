@@ -248,6 +248,22 @@ describe("readEmail", () => {
     expect(r).toMatchObject({ status: "review", vendor: null });
   });
 
+  it("sends a bill with no vendor to review: a hand forward has no sender domain to fall back on", async () => {
+    const r = await readEmail(
+      await parse(
+        raw({ from: "Owner <owner@gmail.com>", subject: "Fwd: Your receipt", body: "$19.00" }),
+      ),
+      fakeAi([bill({ vendor: "", total: "19.00" })]),
+      RECEIVED,
+    );
+    expect(r).toMatchObject({
+      status: "review",
+      vendor: null,
+      amountCents: 1900,
+      note: "No vendor found: enter it.",
+    });
+  });
+
   it("keeps the body's reading when the attached PDF can't be read", async () => {
     const ai = fakeAi([bill({ total: "" })]);
     ai.toMarkdown = () => Promise.reject(new Error("encrypted PDF"));

@@ -411,6 +411,9 @@ function fromAnswer(
       status: "review",
       note: `Currency ${currency ?? "unknown"}: totals count USD only. Enter the USD amount charged.`,
     };
+  // Duplicates are matched by vendor, so a charge without one could otherwise be counted twice.
+  if (reading.vendor === null)
+    return { ...reading, status: "review", note: "No vendor found: enter it." };
   return reading;
 }
 

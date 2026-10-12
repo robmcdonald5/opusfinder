@@ -170,12 +170,12 @@ row per email:
   the email is untrusted text and the model has no tools.
 - **Counted by the owner.** Every forward lands in `review` (or `duplicate`, below), pre-filled with what
   the model read, for the owner to count (correcting the amount, date and service period as needed) or
-  exclude. A note says what's doubtful: no total, no charge date on a hand forward (its own date is the
-  forward's, not the invoice's), a currency other than USD, a failed model call, an unparseable or
-  oversized (> 10 MiB) email, or mail the model doesn't see a bill in. Only owner forwards reach the model,
-  so it never drops one. `ignored` is only for Gmail's confirmation, which can't be counted (the server
-  refuses, whatever the row's status). An agent's hand entry also waits in `review`; the owner's counts at
-  once.
+  exclude. A note says what's doubtful: no total, no vendor, no charge date on a hand forward (its own
+  date is the forward's, not the invoice's), a currency other than USD, a failed model call, an
+  unparseable or oversized (> 10 MiB) email, or mail the model doesn't see a bill in. Only owner forwards
+  reach the model, so it never drops one. `ignored` is only for Gmail's confirmation, which can't be
+  counted (the server refuses, whatever the row's status). An agent's hand entry also waits in `review`;
+  the owner's counts at once.
 - **Caps.** Per UTC day: 100 owner forwards and, apart from them, 5 Gmail confirmations (anyone can write
   that From header, so junk confirmations can't use up the owner's quota); past either, mail is refused at
   the SMTP stage. Past 50 forwards in a day the rest wait in `review` unread (each read is at most two model
