@@ -90,7 +90,7 @@ integration (email ships in Phase 11 on the local dev runtime — locked at Phas
   flips Arm A + Arm B in the Worker. Prod has enforced since G1 (2026-06-18), which takes `enforce` in BOTH
   the Worker's `wrangler.toml` `[vars]` and the Vercel env, or the arms half-flip.
 - `src/delivery.ts` (Phase 11) — `deliverDigestEmail(step, db, email, digestId)`, the post-persist
-  step block: a `send-email` step (payload read → permit-gated Resend send with
+  step block: a `send-email` step (payload read → eligibility- and permit-gated Resend send with
   `Idempotency-Key: digest/<digestId>`) wrapped in the fail-run discipline (retry exhaustion →
   `delivery_status='failed'` → rethrow), then a separate `record-sent` step, so a DB blip after an accepted
   send retries only the write and never records 'failed'. G1b: `getDigestEmailPayload` filters items to
