@@ -202,6 +202,10 @@ describe("markJobsPresent — positive 'I saw this job live' writer (refresh + r
     expect(sql).toContain("closed_at = NULL");
     // NO-OP GUARD: touch only rows stale >1h or needing revival — an unchanged board doesn't churn.
     expect(sql).toContain("last_seen_at < now() - interval '1 hour'");
+    // The board is certified in the SAME statement: never without its jobs' stamps (the timer would close them).
+    expect(sql).toMatch(
+      /update\s+"companies"\s+set\s+last_ingested_at\s*=\s*now\(\)\s+where\s+id = \$\d+/i,
+    );
   });
 
   it("counts revivals from the pre-update revived_set snapshot, unnests the jsonb param, and binds companyId", async () => {
@@ -240,7 +244,7 @@ describe("markJobsPresent — positive 'I saw this job live' writer (refresh + r
   });
 });
 
-describe("markCompanyIngested — certify a successful non-empty board fetch", () => {
+describe("markCompanyIngested — certify a board that trustworthily lists nothing", () => {
   it("stamps companies.last_ingested_at = now() and binds the companyId", async () => {
     const { db, calls } = stubExecDb(() => []);
     await markCompanyIngested(db, 42);

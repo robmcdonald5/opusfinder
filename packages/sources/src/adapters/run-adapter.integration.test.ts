@@ -179,7 +179,7 @@ describe("runAdapter — invariant ATS plumbing over MSW", () => {
   });
 
   describe("maxItems cap (partial fetch)", () => {
-    it("caps mapped postings on a single page, trimming the tail and never paginating", async () => {
+    it("stops paginating at the cap, keeping the page it already fetched (no hydrate ⇒ trimming saves nothing)", async () => {
       const offsetsSeen: (string | null)[] = [];
       server.use(
         http.get(LIST, ({ request }) => {
@@ -200,14 +200,15 @@ describe("runAdapter — invariant ATS plumbing over MSW", () => {
           count > 0 ? { kind: "offset", offset: (prev?.offset ?? 0) + count } : null,
       });
 
-      const jobs = await runAdapter(adapter, "acme", { maxItems: 3 });
+      const { jobs, capped } = await fetchBoard(adapter, "acme", { maxItems: 3 });
 
-      expect(ids(jobs)).toEqual(["1", "2", "3"]); // trimmed to the first 3
+      expect(ids(jobs)).toEqual(["1", "2", "3", "4", "5"]);
+      expect(capped).toBe(true);
       expect(offsetsSeen).toEqual([null]); // pagination stopped — page 2 (offset 5) never requested
     });
 
     it("caps across pages, stopping the moment the cap is reached at a page boundary", async () => {
-      // pageSize 2, cap 3: page 0 [1,2] (len 2 < 3) → page 1 [3,4] (len 4 ≥ 3) → trim to 3, break.
+      // pageSize 2, cap 3: page 0 [1,2] (len 2 < 3) → page 1 [3,4] (len 4 ≥ 3) → stop.
       const pages: RawItem[][] = [[raw(1), raw(2)], [raw(3), raw(4)], [raw(5), raw(6)]];
       const offsetsSeen: (string | null)[] = [];
       server.use(
@@ -223,10 +224,33 @@ describe("runAdapter — invariant ATS plumbing over MSW", () => {
           count > 0 ? { kind: "offset", offset: (prev?.offset ?? 0) + count } : null,
       });
 
-      const jobs = await runAdapter(adapter, "acme", { maxItems: 3 });
+      const { jobs, capped } = await fetchBoard(adapter, "acme", { maxItems: 3 });
 
-      expect(ids(jobs)).toEqual(["1", "2", "3"]);
+      expect(ids(jobs)).toEqual(["1", "2", "3", "4"]);
+      expect(capped).toBe(true);
       expect(offsetsSeen).toEqual([null, "2"]); // page 2 (offset 4) never fetched — cap hit on page 1
+    });
+
+    it("a board that ends at or past the cap with nothing left to fetch or hydrate is whole, not capped", async () => {
+      const pages: RawItem[][] = [[raw(1), raw(2)], [raw(3)]];
+      server.use(
+        http.get(LIST, ({ request }) => {
+          const offset = Number(new URL(request.url).searchParams.get("offset") ?? "0");
+          return HttpResponse.json({ jobs: pages[offset / 2] ?? [] });
+        }),
+      );
+      const paginated = makeAdapter({
+        jobsRequest: (_ctx, cursor) => ({ url: cursor ? `${LIST}?offset=${cursor.offset}` : LIST }),
+        nextCursor: (_body, prev, count) =>
+          count === 2 ? { kind: "offset", offset: (prev?.offset ?? 0) + count } : null,
+      });
+
+      // The last page brings it to exactly the cap.
+      const exact = await fetchBoard(paginated, "acme", { maxItems: 3 });
+      expect([ids(exact.jobs), exact.capped]).toEqual([["1", "2", "3"], false]);
+      // An unpaginated, non-hydrating board is never cut: its whole body is already fetched and mapped.
+      const unpaginated = await fetchBoard(makeAdapter(), "acme", { maxItems: 1 });
+      expect([ids(unpaginated.jobs), unpaginated.capped]).toEqual([["1", "2"], false]);
     });
 
     it("bounds the hydrate pool to the capped set (the trim happens BEFORE hydrate)", async () => {
@@ -243,9 +267,10 @@ describe("runAdapter — invariant ATS plumbing over MSW", () => {
         },
       });
 
-      const jobs = await runAdapter(adapter, "acme", { maxItems: 2 });
+      const { jobs, capped } = await fetchBoard(adapter, "acme", { maxItems: 2 });
 
       expect(jobs).toHaveLength(2);
+      expect(capped).toBe(true);
       expect(hydrateCalls).toBe(2); // NOT 5 — hydrate never touches the trimmed-away items
     });
   });
@@ -799,9 +824,10 @@ describe("runAdapter — invariant ATS plumbing over MSW", () => {
         },
       });
 
-      const jobs = await runAdapter(adapter, "acme");
+      const { jobs, mapSkipped } = await fetchBoard(adapter, "acme");
 
       expect(ids(jobs)).toEqual(["1", "3"]); // the null-mapped middle item is skipped, order preserved
+      expect(mapSkipped).toBe(1);
       expect(warn).toHaveBeenCalledWith(expect.stringMatching(/skipped 1 malformed/));
     });
 
@@ -819,6 +845,24 @@ describe("runAdapter — invariant ATS plumbing over MSW", () => {
       const jobs = await runAdapter(adapter, "acme");
 
       expect(ids(jobs)).toEqual(["1", "3"]);
+    });
+  });
+
+  describe("an empty board", () => {
+    it("is `empty` unless its adapter's probe classifier calls an empty answer ambiguous; all-malformed isn't empty", async () => {
+      vi.spyOn(console, "warn").mockImplementation(() => {});
+      server.use(http.get(LIST, () => HttpResponse.json({ jobs: [] })));
+      expect((await fetchBoard(makeAdapter(), "acme")).empty).toBe(true);
+      const ambiguous = makeAdapter({ classifyProbe: () => "indeterminate" });
+      expect((await fetchBoard(ambiguous, "acme")).empty).toBe(false);
+
+      server.use(http.get(LIST, () => HttpResponse.json({ jobs: [raw(1)] })));
+      const malformed = makeAdapter({ mapItem: () => null });
+      expect(await fetchBoard(malformed, "acme")).toMatchObject({
+        jobs: [],
+        mapSkipped: 1,
+        empty: false,
+      });
     });
   });
 
