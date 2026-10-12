@@ -1,9 +1,8 @@
-# The secret-free regression gate for the repo. A single windows-latest lane runs the three structural guards
-# (test-isolation + Worker-isolation + data-fix files), both typecheck graphs (shippable + test), and the
-# unit+integration suite on every PR and every push to main. Deliberately SECRET-FREE: PGlite is in-process,
+# The secret-free regression gate for the repo. A single lane runs the three structural guards
+# (test-isolation + Worker-isolation + data-fix files), ESLint, both typecheck graphs (shippable + test), and
+# the unit+integration suite on every PR and every push to main. Deliberately SECRET-FREE: PGlite is in-process,
 # all HTTP boundaries are MSW-mocked, and every real-network gate is a `*.live.test.ts` in the `live` project
-# that `pnpm test` excludes and every `skipIf` flag leaves off. The gated live lane (Neon/Voyage/R2 on a
-# schedule) is a separate future workflow.
+# that `pnpm test` excludes and every `skipIf` flag leaves off; live-integration.yml runs those nightly.
 name: ci
 
 on:
@@ -16,29 +15,27 @@ on:
 permissions:
   contents: read
 
-# One in-flight run per ref; a new push to a feature branch / PR supersedes the previous run. NEVER cancel a
-# main run — each merge commit needs its own green `ci` status for branch protection / deploy gates, so a
-# rapid second merge must not cancel the first commit's check.
+# A new push to a feature branch / PR supersedes its previous run. NEVER cancel a main run — each merge
+# commit needs its own green `ci` status for branch protection / deploy gates — and group main per commit:
+# in one shared group a third quick merge would still replace the second's pending run.
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.ref == 'refs/heads/main' && github.sha || github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   test:
-    # Single lane, no OS matrix: Windows is both the dev environment AND the regression guard for the
-    # libuv UV_HANDLE_CLOSING teardown crash (exit 3221226505) — the reason the suite forbids `--forceExit`.
-    runs-on: windows-latest
+    runs-on: ubuntu-latest
     # Fail fast instead of burning GitHub's 6-hour default on a wedged run (e.g. a socket/WASM handle that
     # never drains). The full suite runs in well under this locally.
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
       # Install the pinned pnpm (reads `packageManager: pnpm@11.7.0` from package.json). Runs BEFORE
       # setup-node so its `cache: pnpm` can resolve the pnpm store path.
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24 # engines.node >=24
           cache: pnpm
@@ -49,7 +46,7 @@ jobs:
       - run: pnpm guard:tests
 
       # Structural gate: no server-only subsystem (auth / neon-serverless / inngest / email / anthropic)
-      # can reach the scrapers Cloudflare Worker bundle — esbuild resolves the real edge-runtime module graph.
+      # can reach either Cloudflare Worker bundle — esbuild resolves the real edge-runtime module graph.
       - run: pnpm guard:worker
 
       # Data-fix files (packages/db/fixes): naming + numbering, no transaction control / DDL / privilege /
@@ -59,12 +56,16 @@ jobs:
         run: git fetch --no-tags --depth=1 origin "+refs/heads/main:refs/remotes/origin/main"
       - run: pnpm guard:fixes
 
+      # Also enforces the ban on importing the MSW setup module (see eslint.config.js).
+      - run: pnpm lint
+
       # Type-check the shippable packages/* library graph (root tsconfig.json) — production source with NO
       # other CI type gate (typecheck:test globs only *.test.ts under packages; deployed apps are checked below).
       - run: pnpm typecheck
 
       # Type-check the node test graph (tsconfig.test.json) PLUS the deployed apps under their own runtime
-      # configs: the scrapers Worker src+tests (Workers types) and apps/web via svelte-check.
+      # configs: the scrapers Worker src+tests and the control Worker (Workers types), and apps/web via
+      # svelte-check.
       - run: pnpm typecheck:test
 
       # Unit + integration only. Every live gate skips (no flags, no secrets); no `--forceExit`.

@@ -14,7 +14,6 @@
 #   1. Create a `live-integration` GitHub Environment with a deployment-branch rule = `main` only.
 #   2. Add these Environment secrets (NOT repo-wide secrets):
 #        NEON_PROJECT_ID, NEON_API_KEY               — ephemeral branch create/delete (project-scoped key)
-#        BETTER_AUTH_SECRET                           — the auth neon-serverless tx gate
 #        VOYAGE_API_KEY                               — the live embeddings gate (dedicated CI key + rate cap)
 #        R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY,
 #        R2_BUCKET_NAME, R2_ACCOUNT_ID                — the R2 round-trip gate (dedicated `opusfinder-ci`
@@ -22,7 +21,8 @@
 #   3. Do NOT add ANTHROPIC_API_KEY / RESEND_* here — those gates stay manual (§9 Q6).
 #   Third-party actions are pinned to full commit SHAs (Dependabot bumps the trailing-comment version): a
 #   compromised action in a secrets job reads keys in plaintext, so pinning + source audit is the primary
-#   supply-chain control for a solo private repo (fork surface is already zero).
+#   supply-chain control for a solo private repo (fork surface is already zero). No `cache: pnpm` either:
+#   every workflow on main shares the Actions cache, so another run could plant the store installed here.
 name: live-integration
 
 on:
@@ -42,8 +42,7 @@ concurrency:
 
 jobs:
   live:
-    # The gated lane runs Linux; §9 Q4 keeps only the secret-free lane on windows-latest (the teardown-crash
-    # guard). Fail fast rather than burning the 6-hour default on a wedged socket.
+    # Fail fast rather than burning the 6-hour default on a wedged socket.
     runs-on: ubuntu-latest
     environment: live-integration # keys scoped to this Environment (branch rule = main), NOT repo secrets
     timeout-minutes: 20
@@ -53,7 +52,6 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24 # engines.node >=24
-          cache: pnpm
       - run: pnpm install --frozen-lockfile
 
       # A 24h auto-delete backstop so a run cancelled between create and the always()-delete cannot leak an
@@ -88,12 +86,18 @@ jobs:
       # Only the admitted providers' flags are set, so exactly the Neon (auth + digest), Voyage, and R2
       # gates run; every other live gate (prefs→Anthropic, hn→Algolia, outscal-seed) stays skipped. A gate
       # assertion failure surfaces here as the DRIFT ALERT. Never --forceExit (Windows-only crash, but the
-      # rule is repo-wide).
+      # rule is repo-wide). A gate whose credential is empty skips instead of failing, so an unset secret or
+      # a renamed branch output would leave the run green without testing anything; check them first.
       - name: Run live gates (failure = drift alert)
-        run: pnpm test:live
+        run: |
+          for v in DATABASE_URL VOYAGE_API_KEY R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY R2_BUCKET_NAME R2_ACCOUNT_ID; do
+            [ -n "${!v}" ] || { echo "::error::$v is empty, so its live gate would skip"; exit 1; }
+          done
+          pnpm test:live
         env:
           DATABASE_URL: ${{ steps.neon.outputs.db_url }}
-          BETTER_AUTH_SECRET: ${{ secrets.BETTER_AUTH_SECRET }}
+          # The auth gate only constructs createAuth, so a throwaway keeps the prod signing secret out of CI.
+          BETTER_AUTH_SECRET: ci-live-lane-throwaway-not-a-real-secret-0123456789
           VOYAGE_API_KEY: ${{ secrets.VOYAGE_API_KEY }}
           R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}

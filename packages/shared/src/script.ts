@@ -1,8 +1,11 @@
+import { describeDbError } from "./errors";
+
 /**
  * One consistent failure tail for every tsx CLI entry point in the repo, so the teardown contract
  * (and the Windows caveat below) lives in ONE place instead of being re-derived per script.
  *
- * Runs `main`; on a thrown error logs `${label} failed: <message>` and sets `process.exitCode = 1`.
+ * Runs `main`; on a thrown error logs `${label} failed: <describeDbError text>` (a failed query reads as its
+ * Postgres cause, never drizzle's params) and sets `process.exitCode = 1`.
  * It deliberately does NOT call `process.exit()`: an abrupt exit while an undici / neon-http socket
  * handle is still closing trips a libuv assertion on Windows (UV_HANDLE_CLOSING, exit code
  * 3221226505). Setting exitCode lets the event loop drain those handles and exit cleanly with the
@@ -15,7 +18,7 @@ export async function runScript(label: string, main: () => void | Promise<void>)
   try {
     await main();
   } catch (err) {
-    console.error(`${label} failed: ${err instanceof Error ? err.message : String(err)}`);
+    console.error(`${label} failed: ${describeDbError(err)}`);
     process.exitCode = 1;
   }
 }

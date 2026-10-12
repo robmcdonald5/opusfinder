@@ -12,7 +12,8 @@
 #   pnpm db:migrate && pnpm --filter @opusfinder/db run data-fixer:setup
 # It creates the Environment (main-only rule), the data_fixer role (plain SQL, NOT the Neon Console: Console
 # roles join neon_superuser) and sets the Environment secret. Third-party actions are pinned to full commit SHAs
-# (same as live-integration.yml): a compromised action in a secrets job could read the key.
+# and nothing is restored from the Actions cache (same as live-integration.yml): a compromised action or a
+# planted package store in a secrets job could read the key.
 name: data-fixes
 
 on:
@@ -54,7 +55,6 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24 # engines.node >=24
-          cache: pnpm
       - run: pnpm install --frozen-lockfile
 
       # The data-fix suites (lint, runner, role, and any fix's own fix-NNNN test) gate the apply, so a fix whose

@@ -51,7 +51,7 @@
     "digest": "pnpm --filter @opusfinder/inngest digest",
     "email:preview": "pnpm --filter @opusfinder/email preview",
     "inngest:serve": "pnpm --filter @opusfinder/inngest inngest:serve",
-    "inngest:dev": "npx --yes inngest-cli@latest dev -u http://localhost:3000/api/inngest --no-discovery",
+    "inngest:dev": "npx --yes inngest-cli@1.45.1 dev -u http://localhost:3000/api/inngest --no-discovery",
     "ctl": "node --import tsx packages/ctl/src/bin.ts"
   },
   "devDependencies": {

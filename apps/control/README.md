@@ -6,8 +6,8 @@ database that hold the project's **desired state** (every stage, policy, knob an
 its **change log**, the **approval queue** and a **run ledger**, behind Cloudflare Access.
 
 It never holds a Neon credential and bundles nothing that could reach Neon (`pnpm guard:worker`
-allow-lists its bundle to `apps/control/src` + `packages/control/src`), so reading or flipping a
-switch can't wake the database (C4).
+allow-lists its bundle to `apps/control/src`, `packages/control/src` and postal-mime), so reading
+or flipping a switch can't wake the database (C4).
 
 **Not built yet** (by design): no runtime OBEYS the gate — the scrapers Worker reads it in shadow (see
 "Runtimes wired" below) and Inngest doesn't read it at all, so both keep obeying their env vars — no

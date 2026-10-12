@@ -1,11 +1,12 @@
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { readFile, rename, writeFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { PGlite } from "@electric-sql/pglite";
+import { PGlite, types } from "@electric-sql/pglite";
 import { vector } from "@electric-sql/pglite-pgvector";
 import { drizzle } from "drizzle-orm/pglite";
 import { migrate } from "drizzle-orm/pglite/migrator";
@@ -21,13 +22,22 @@ const MIGRATIONS = fileURLToPath(new URL("../../packages/db/drizzle", import.met
 // don't reach workers, and inject() is test-only, but every process shares this path + cwd.
 const CACHE_DIR = join(tmpdir(), "opusfinder-vitest-pglite");
 
+// Prod's neon drivers return int8 (count(*), bigint) as a STRING; PGlite would parse it to a number, so a
+// missing Number() would pass here and break in prod. Keep the raw text, like neon.
+const parsers = { [types.INT8]: (value: string) => value };
+
 /**
  * Fingerprint the migration SET — every `*.sql` body AND `meta/_journal.json` — so a snapshot is reused only
  * when the migrations are byte-identical. An added, edited, renamed, or removed migration changes the hash,
  * so a stale snapshot can never be loaded: the new hash points at a file that doesn't exist yet → rebuild.
+ * The snapshot is a datadir written by one PGlite + pgvector build, so their installed versions are hashed too.
  */
-function migrationsHash(): string {
+function snapshotHash(): string {
   const h = createHash("sha256");
+  const require = createRequire(import.meta.url);
+  for (const pkg of ["@electric-sql/pglite", "@electric-sql/pglite-pgvector"]) {
+    h.update(readFileSync(join(dirname(require.resolve(pkg)), "..", "package.json")));
+  }
   h.update(readFileSync(join(MIGRATIONS, "meta", "_journal.json")));
   for (const f of readdirSync(MIGRATIONS).filter((n) => n.endsWith(".sql")).sort()) {
     h.update(f); // filename: catches a rename that keeps identical SQL
@@ -36,9 +46,9 @@ function migrationsHash(): string {
   return h.digest("hex").slice(0, 16);
 }
 
-/** Absolute path of the snapshot for the CURRENT migration set (hash-keyed → never stale). */
+/** Absolute path of the snapshot for the CURRENT migration set and engine versions. */
 export function snapshotPath(): string {
-  return join(CACHE_DIR, `schema-${migrationsHash()}.tar`);
+  return join(CACHE_DIR, `schema-${snapshotHash()}.tar`);
 }
 
 /**
@@ -102,7 +112,7 @@ function pruneCache(keep: string): void {
 
 /**
  * Return a ready PGlite client carrying the full migrated schema. Fast path: load the globalSetup-built
- * snapshot (~5.5× faster than replaying 24 migrations, byte-identical result — same tables, pgvector
+ * snapshot (~5.5× faster than replaying the migrations, byte-identical result — same tables, pgvector
  * extension, both HNSW indexes, `<=>` behavior, drizzle journal). Fallback: migrate a fresh instance when no
  * snapshot exists — a direct `vitest run <file>` still triggers the integration globalSetup, so this only
  * fires for a non-vitest import (e.g. a one-off script) where correctness, not speed, is the point.
@@ -111,7 +121,11 @@ export async function openMigratedClient(): Promise<PGlite> {
   const path = snapshotPath();
   if (existsSync(path)) {
     try {
-      const client = new PGlite({ loadDataDir: new Blob([await readFile(path)]), extensions: { vector } });
+      const client = new PGlite({
+        loadDataDir: new Blob([await readFile(path)]),
+        extensions: { vector },
+        parsers,
+      });
       await client.waitReady;
       return client;
     } catch {
@@ -121,7 +135,7 @@ export async function openMigratedClient(): Promise<PGlite> {
       rmSync(path, { force: true });
     }
   }
-  const client = new PGlite({ extensions: { vector } });
+  const client = new PGlite({ extensions: { vector }, parsers });
   await migrate(drizzle(client), { migrationsFolder: MIGRATIONS });
   return client;
 }

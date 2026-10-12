@@ -70,7 +70,9 @@ export function recordingStep(): RecordingStep {
     tools: {
       run: async <T>(id: string, fn: () => Promise<T>): Promise<T> => {
         runs.push(id);
-        return fn();
+        // Later code gets what Inngest replays: the JSON of the result (a Map → {}, a Date → a string,
+        // undefined → null), so a step returning a non-JSON value breaks here too, not only in prod.
+        return JSON.parse(JSON.stringify((await fn()) ?? null)) as T;
       },
       sleep: async (id: string, duration?: string): Promise<void> => {
         sleeps.push(id);

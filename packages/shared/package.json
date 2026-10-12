@@ -6,6 +6,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./script": "./src/script.ts",
+    "./errors": "./src/errors.ts",
     "./env": "./src/env.ts",
     "./async": "./src/async.ts",
     "./userid": "./src/userid.ts"

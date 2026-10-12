@@ -44,7 +44,7 @@ describe("auth service — createUserWithPreferences / getOrCreateUserByEmail / 
     // Defensive: better-auth telemetry is already skipped under NODE_ENV=test, but the MSW setup makes
     // any unmocked egress a hard error, so belt-and-braces it off. Unstubbed in afterAll.
     vi.stubEnv("BETTER_AUTH_TELEMETRY", "0");
-    ({ db, close } = await createTestDb());
+    ({ db, close } = await createTestDb({ transactions: true }));
     // ONE real better-auth instance over the SAME PGlite drizzle handle (the documented R1 cast — the
     // drizzle adapter resolves tables from db._.fullSchema, identical to createAuthDb's). Literal fake
     // secret (≥32 chars) + baseURL; auth keeps THIS real db reference even when a test hands the

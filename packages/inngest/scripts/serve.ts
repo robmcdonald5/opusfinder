@@ -1,6 +1,6 @@
 /**
  * Local Inngest serve endpoint (dev-only). Exposes the digest functions over a bare Node http server so
- * the local dev server (`npx inngest-cli@latest dev`) can discover + invoke them — no Inngest Cloud
+ * the local dev server (`pnpm inngest:dev`) can discover + invoke them — no Inngest Cloud
  * account, no keys (run with INNGEST_DEV=1). The development driver only. Long-running — kill with Ctrl-C.
  */
 import http from "node:http";
@@ -28,6 +28,6 @@ const handler = serve({
 http.createServer(handler).listen(port, () => {
   console.log(`Inngest serve listening on http://localhost:${port}/api/inngest`);
   console.log(
-    `INNGEST_DEV=${process.env.INNGEST_DEV ?? "(unset — set INNGEST_DEV=1 and run `npx inngest-cli@latest dev`)"}`,
+    `INNGEST_DEV=${process.env.INNGEST_DEV ?? "(unset — set INNGEST_DEV=1 and run `pnpm inngest:dev`)"}`,
   );
 });

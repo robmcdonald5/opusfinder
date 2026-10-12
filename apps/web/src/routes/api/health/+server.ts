@@ -12,10 +12,9 @@
  * ACCESS: the FULL report is shape-only (counts / ages / ratios — no secrets/PII) but still leaks
  * operational intelligence (backlog sizes, a user-count proxy via the bounce/suppressed counts, staleness
  * ages) on a public URL. So the full body is gated behind HEALTH_PING_TOKEN (Authorization: `Bearer
- * <token>` or `?token=<token>`); an anonymous / wrong-token caller gets only the minimal `{ unhealthy }`
- * body. When HEALTH_PING_TOKEN is UNSET the route is secure-by-default (minimal body for everyone); set the
- * token to read the full report at the URL, or use `pnpm health` (DB-direct) for full detail without
- * exposing it.
+ * <token>`); an anonymous / wrong-token caller gets only the minimal `{ unhealthy }` body. When
+ * HEALTH_PING_TOKEN is UNSET the route is secure-by-default (minimal body for everyone); set the token to
+ * read the full report at the URL, or use `pnpm health` (DB-direct) for full detail without exposing it.
  *
  * COST: a query wakes Neon, so public hits must not query per hit. Anonymous callers never query while no
  * check enforces (the answer is fixed); otherwise they share a per-instance answer refreshed at most every
@@ -42,9 +41,9 @@ async function publicUnhealthy(opts: HealthOptions): Promise<boolean> {
   return publicMemo.unhealthy;
 }
 
-export const GET: RequestHandler = async ({ request, url }) => {
+export const GET: RequestHandler = async ({ request }) => {
   const opts = healthOptionsFromEnv();
-  if (isAuthorized(request, url)) {
+  if (isAuthorized(request)) {
     const report = await checkHealth(createDb(getDatabaseUrl()), opts);
     return json(report, { status: report.unhealthy ? 503 : 200 });
   }

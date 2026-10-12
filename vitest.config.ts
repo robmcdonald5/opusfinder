@@ -9,7 +9,7 @@ const INLINE_WORKSPACE = [/^@opusfinder\//];
 
 export default defineConfig({
   resolve: {
-    // Shared test-support helpers (PGlite fixture, MSW handlers) live at the repo-root test/ dir;
+    // Shared test-support helpers (PGlite fixture, MSW server) live at the repo-root test/ dir;
     // @test/* keeps cross-package test imports stable instead of ../../../../ relative chains. The same
     // mapping is mirrored in tsconfig.test.json for type resolution.
     alias: { "@test": fileURLToPath(new URL("./test", import.meta.url)) },
@@ -31,6 +31,7 @@ export default defineConfig({
           // MANDATORY: a *.live.test.ts under src/ ends in .test.ts, so it would otherwise be
           // double-collected here (MSW-free) on top of the `live` project — exclude BOTH suffixes.
           exclude: ["**/*.integration.test.ts", "**/*.live.test.ts"],
+          setupFiles: ["./test/setup/no-network.ts"], // throwing fetch/WebSocket; suites stub their own
         },
       },
       {
@@ -39,10 +40,10 @@ export default defineConfig({
           name: "integration",
           environment: "node",
           isolate: true,
-          include: ["{packages,apps}/*/**/*.integration.test.ts"],
+          include: ["{packages,apps}/*/src/**/*.integration.test.ts"],
           setupFiles: ["./test/setup/msw.ts"], // shared MSW server lifecycle (per file, in each worker)
           // Runs ONCE in the main process before any worker: migrate a PGlite + dump a schema snapshot that
-          // every createTestDb() loads instead of replaying 24 migrations per file (~1.3s → ~0.24s). Scoped
+          // every createTestDb() loads instead of replaying the migrations per file (~1.3s → ~0.24s). Scoped
           // to this project only — `unit`/`live` never pay for it. `globalSetup` is a valid per-project
           // option (unlike root-only `teardownTimeout`). See test/db/snapshot.ts.
           globalSetup: ["./test/db/global-setup.ts"],
@@ -61,7 +62,7 @@ export default defineConfig({
           name: "live",
           environment: "node",
           isolate: true,
-          include: ["{packages,apps}/*/**/*.live.test.ts"],
+          include: ["{packages,apps}/*/src/**/*.live.test.ts"],
           // Live gates self-seed over real networks — the CI lane's ephemeral Neon branch COLD-STARTS its
           // compute, so first-query latency is unbounded by the code under test (the digest gate passed at
           // 3.7s and timed out at vitest's 5s default on the very next run). Generous budgets here; the

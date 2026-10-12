@@ -1,7 +1,7 @@
 /**
  * The PRODUCTION Inngest serve endpoint — the deployed counterpart of the dev-only `scripts/serve.ts` in
  * @opusfinder/inngest, swapped from `inngest/node` to `inngest/sveltekit`. It hosts the digest functions +
- * the backfill drains + the health-check alerter on Inngest Cloud, served from SvelteKit-on-Vercel.
+ * the embedding backfill drain + the health-check alerter on Inngest Cloud, served from SvelteKit-on-Vercel.
  *
  * Runtime: serverless NODE (not edge — the deps reach @anthropic-ai/sdk + @neondatabase/serverless);
  * maxDuration is set on the adapter (svelte.config.js). The Inngest Cloud keys (INNGEST_SIGNING_KEY /

@@ -2,7 +2,8 @@
 
 Cross-package types and validators, plus a few small cross-cutting runtime helpers.
 Exports the raw `src/index.ts` barrel (types + validators, dependency-free), a
-`@opusfinder/shared/script` subpath for the CLI runner (dependency-free), a
+`@opusfinder/shared/script` subpath for the CLI runner and a `@opusfinder/shared/errors` subpath for
+log-safe error text (both dependency-free), a
 `@opusfinder/shared/env` subpath for env loading (depends on `dotenv`), a
 `@opusfinder/shared/async` subpath for the shared retry/backoff (dependency-free, Worker-forward),
 and a `@opusfinder/shared/userid` subpath for deterministic user-id minting (depends on
@@ -40,34 +41,30 @@ rules on the adapter, never here.
 
 ## Escape hatches
 
-`unsafeCompanySlug(value)` / `unsafeJobId(value)` brand a value **without validating** — only for
-already-trusted values, e.g. rows read back from the DB.
+`unsafeCompanySlug(value)` brands a value **without validating** — only for already-trusted values,
+e.g. a test fixture.
 
 ## Normalized job shape
 
 `NormalizedJob` is the cross-source normalization contract — the single flat,
-source-agnostic shape every ATS adapter maps into. In-memory only in Phase 1
-(Greenhouse); persisted to Neon in Phase 2.
+source-agnostic shape every ATS adapter maps into.
 
 Fields: `source` (`SourceName`), `externalId` (branded `JobId`), `title`,
 `companySlug` (branded, platform-canonical), `locations` (raw ATS strings, kept
-whole — no parsing in Phase 1), `remote` (heuristic, inferred from the location
-text; "Hybrid" → `false`), `descriptionText` (HTML entities decoded → tags
-stripped → whitespace collapsed), `applyUrl`, `postedAt` (`Date | null`), and
-`raw` (the untouched source object, typed `unknown`). Per-field rationale lives
-in `src/index.ts` comments.
+whole), `remote` (heuristic, inferred from the location text; "Hybrid" →
+`false`), `descriptionText` (HTML entities decoded → tags stripped → whitespace
+collapsed), `applyUrl`, `postedAt` (`Date | null`), and `contentMissing` (the
+posting's detail fetch failed or came back empty, so its content must not be
+written). Per-field rationale lives in `src/index.ts` comments.
 
-The type is intentionally **not** generic over the raw payload, and there is
-**no adapter interface here** — that abstraction was extracted in Phase 6 (it
-lives in `@opusfinder/sources` as `SourceAdapter`), from 2–3 concrete adapters,
-not designed up front.
+There is deliberately **no `raw` source object**: the stored `jobs.raw` payload
+was never read back, yet filled Neon's 512 MB limit and took the pipeline down
+(2026-06). Don't re-add it.
 
-`SourceName` is the union of ATS names — `"greenhouse" | "lever" | "ashby" |
-"workable" | "smartrecruiters"` (the five Launch ATS; Phase 1 shipped Greenhouse,
-Phase 6 added the other four). Kept a union rather than `string` so a typo is a
-compile error and the `jobs.source` column / the Phase 6 source→adapter registry
-(`Record<SourceName, SourceAdapter>`) stay exhaustive — a missing adapter is a
-compile error.
+`SourceName` is the union of ATS names, one member per adapter (`src/index.ts`).
+It is a union rather than `string` so the source→adapter registry
+(`Record<SourceName, SourceAdapter>`, in `@opusfinder/sources`) stays
+exhaustive.
 
 ## Type guards
 
@@ -100,7 +97,8 @@ part of the vector (it comes from the Phase-12 form, feeds the deterministic fil
 
 `runScript(label, main)` (from `@opusfinder/shared/script`) is the shared failure
 tail for every tsx CLI entry point. It runs `main`, and on a thrown error logs
-`` `${label} failed: <message>` `` and sets `process.exitCode = 1`.
+`` `${label} failed: <describeDbError text>` `` (a failed query reads as its Postgres cause, never
+drizzle's params) and sets `process.exitCode = 1`.
 
 It deliberately never calls `process.exit()`: an abrupt exit while an undici /
 neon-http socket handle is still closing trips a libuv assertion on Windows
@@ -185,7 +183,7 @@ suppression, last-sent markers) is deliberately NOT in this contract.
 Web Crypto — node-free, so it lives on the barrel, not in `./userid`. Generated once at user creation and
 stored on `user_preferences.unsubscribe_token` for the RFC 8058 one-click List-Unsubscribe header
 (Phase 12 — the token stays dormant through Phase 11's lean send, which ships no unsubscribe
-link/headers); never email-derived. Locked by `pnpm --filter @opusfinder/shared test:token`.
+link/headers); never email-derived. Locked by `pnpm exec vitest run packages/shared/src/token.test.ts`.
 
 ## Digest enums (Phase 10)
 
