@@ -32,10 +32,17 @@ const CLOSE_COUNTER_KEYS = [
 ] as const;
 // probeDigestLiveness (pre-send 410 probe) tallies onto digests.counts.
 const PROBE_COUNTER_KEYS = ["probed410WouldClose", "probed410Closed", "probed404Dropped"] as const;
-// sweepStaleJobs (its OWN STALE_SWEEP switch) + capped-board observability, both tallied onto an ingestion
-// run's source_runs.counts. `staleWouldClose` is the standing population the owner reads BEFORE flipping
-// STALE_SWEEP=enforce; `cappedBoards` is how many boards skip the per-board sweep per tick.
-const STALE_SWEEP_KEYS = ["cappedBoards", "staleWouldClose", "staleClosed", "staleSweepFailed"] as const;
+// sweepStaleJobs (its OWN STALE_SWEEP switch) + capped/partial-board observability, all tallied onto an
+// ingestion run's source_runs.counts. `staleWouldClose` is the standing population the owner reads BEFORE
+// flipping STALE_SWEEP=enforce; `cappedBoards` + `partialBoards` are how many boards skip the per-board sweep
+// per tick.
+const STALE_SWEEP_KEYS = [
+  "cappedBoards",
+  "partialBoards",
+  "staleWouldClose",
+  "staleClosed",
+  "staleSweepFailed",
+] as const;
 
 await runScript("ShowShadowCloses", async () => {
   const limitArg = Number(process.argv[2]);
