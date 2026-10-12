@@ -77,7 +77,7 @@ function toNormalizedJob(raw: unknown, ctx: SourceContext): NormalizedJob | null
     locations,
     remote,
     // `description` plus the responsibilities and skills sections, each raw HTML tags (incl.
-    // <!--block--> markers, removed by the tag regex) plus SINGLE-encoded entities: strip → decode
+    // <!--block--> markers, removed by the strip) plus SINGLE-encoded entities: strip → decode
     // once → collapse. The `benefits` section is left out: it says nothing about fit.
     descriptionText: joinSections([
       htmlToText(raw.description),

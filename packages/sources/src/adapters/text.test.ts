@@ -37,6 +37,9 @@ describe("cleanHtml", () => {
       ["&apos;", "'"],
       ["&nbsp;", " "],
       ["&AMP;", "&"], // named lookup is case-insensitive
+      ["&Uuml;&uuml;", "Üü"], // ...after an exact match: letter entities are case-sensitive
+      ["&rsquo;&ndash;&hellip;&euro;", "’–…€"], // Windows-1252 typography
+      ["&frac12;", "½"], // a name with digits
       ["&#38;", "&"], // decimal codepoint
       ["&#x26;", "&"], // hex codepoint, lowercase x
       ["&#X26;", "&"], // hex codepoint, uppercase X
@@ -91,9 +94,24 @@ describe("cleanHtml", () => {
       expect(cleanHtml("1 < 2 <b>x</b>", ["strip"])).toBe("1 < 2  x ");
     });
 
-    it("stays linear on a long run of unclosed '<' (raw, or entity-encoded on Greenhouse)", () => {
+    it("drops comments and script/style bodies, which a browser never renders", () => {
+      const wordPaste =
+        "<!--[if gte mso 9]><xml><w:WordDocument><w:View>Normal</w:View><w:Zoom>0</w:Zoom>" +
+        "</w:WordDocument></xml><![endif]--><style>p.MsoNormal{margin:0in}</style>" +
+        "<p class=MsoNormal>We are hiring.</p><SCRIPT>track()</script>";
+      expect(htmlToText(wordPaste)).toBe("We are hiring.");
+      expect(
+        cleanHtml(
+          "&lt;style&gt;.x{color:red}&lt;/style&gt;&lt;p&gt;Role text&lt;/p&gt;",
+          GREENHOUSE_STEPS,
+        ),
+      ).toBe("Role text");
+    });
+
+    it("stays linear on long runs of unclosed '<', comments and bodies", () => {
       const start = performance.now();
       htmlToText(`<p>${"<a".repeat(50_000)}`);
+      htmlToText("<style><!--".repeat(50_000));
       cleanHtml("&lt;a".repeat(50_000), GREENHOUSE_STEPS);
       // Linear takes a few ms; a quadratic strip takes seconds here.
       expect(performance.now() - start).toBeLessThan(1_000);

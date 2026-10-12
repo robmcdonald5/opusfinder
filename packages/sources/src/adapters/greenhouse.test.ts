@@ -177,6 +177,7 @@ describe("greenhouseAdapter.mapItem", () => {
       })()],
       ["title is not a string", { ...RAW_JOB, title: 123 }],
       ["absolute_url is not a string", { ...RAW_JOB, absolute_url: null }],
+      ["absolute_url is empty", { ...RAW_JOB, absolute_url: "" }],
     ])("returns null for %s", (_label, raw) => {
       expect(mapJob(raw)).toBeNull();
     });

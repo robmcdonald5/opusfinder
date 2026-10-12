@@ -60,7 +60,7 @@ function toNormalizedJob(raw: unknown, ctx: SourceContext): NormalizedJob | null
   if (!isRecord(raw)) return null;
   const { id, title, absolute_url } = raw;
   if (typeof id !== "number" || !Number.isFinite(id)) return null;
-  if (typeof title !== "string" || typeof absolute_url !== "string") return null;
+  if (typeof title !== "string" || typeof absolute_url !== "string" || !absolute_url) return null;
 
   const locationName =
     isRecord(raw.location) && typeof raw.location.name === "string" ? raw.location.name.trim() : "";

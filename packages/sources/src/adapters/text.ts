@@ -22,10 +22,31 @@ export function cleanHtml(input: string, steps: readonly CleanStep[]): string {
   for (const step of steps) {
     if (step === "decode") s = decodeEntities(s);
     // `[^<>]`, not `[^>]`: the latter rescans the rest of the input for every unclosed "<" (quadratic).
-    else if (step === "strip") s = s.replace(/<[^<>]*>/g, " ");
+    else if (step === "strip") s = dropUnrendered(s).replace(/<[^<>]*>/g, " ");
     else s = s.replace(/\s+/g, " ").trim();
   }
   return s;
+}
+
+/**
+ * Drop text a browser never renders but a tag strip alone would keep: comments (Word pastes hide
+ * their mso XML in conditional comments) and <script>/<style> bodies. One forward scan, not a lazy
+ * regex (quadratic on many unclosed openers); an unclosed one ends the scan and the rest is kept.
+ */
+function dropUnrendered(input: string): string {
+  const open = /<!--|<(script|style)\b/gi;
+  let out = "";
+  let from = 0;
+  for (let m = open.exec(input); m !== null; m = open.exec(input)) {
+    const close = m[1] ? new RegExp(`</${m[1]}`, "gi") : /-->/g;
+    close.lastIndex = open.lastIndex;
+    const end = close.exec(input);
+    if (end === null) break;
+    out += `${input.slice(from, m.index)} `;
+    // A body ends at its end tag (the tag strip removes that); a comment after its "-->".
+    from = open.lastIndex = m[1] ? end.index : close.lastIndex;
+  }
+  return out + input.slice(from);
 }
 
 /**
@@ -49,7 +70,26 @@ export function joinSections(sections: readonly string[]): string {
   return sections.filter((s) => s.length > 0).join("\n\n");
 }
 
-const NAMED_ENTITIES = new Map([
+// The Latin-1 entity names, one row per 16 code points from U+00A0.
+const LATIN1 = `
+  nbsp iexcl cent pound curren yen brvbar sect uml copy ordf laquo not shy reg macr
+  deg plusmn sup2 sup3 acute micro para middot cedil sup1 ordm raquo frac14 frac12 frac34 iquest
+  Agrave Aacute Acirc Atilde Auml Aring AElig Ccedil Egrave Eacute Ecirc Euml Igrave Iacute Icirc Iuml
+  ETH Ntilde Ograve Oacute Ocirc Otilde Ouml times Oslash Ugrave Uacute Ucirc Uuml Yacute THORN szlig
+  agrave aacute acirc atilde auml aring aelig ccedil egrave eacute ecirc euml igrave iacute icirc iuml
+  eth ntilde ograve oacute ocirc otilde ouml divide oslash ugrave uacute ucirc uuml yacute thorn yuml`;
+
+// Name/character pairs for the rest of Windows-1252: the typography Word and rich-text editors emit.
+const CP1252 = `
+  euro € sbquo ‚ fnof ƒ bdquo „ hellip … dagger † Dagger ‡ circ ˆ permil ‰ Scaron Š lsaquo ‹ OElig Œ
+  Zcaron Ž lsquo ‘ rsquo ’ ldquo “ rdquo ” bull • ndash – mdash — tilde ˜ trade ™ scaron š rsaquo ›
+  oelig œ zcaron ž Yuml Ÿ`;
+
+const NAMED_ENTITIES = new Map<string, string>([
+  ...LATIN1.trim()
+    .split(/\s+/)
+    .map((name, i) => [name, String.fromCodePoint(0xa0 + i)] as const),
+  ...Array.from(CP1252.matchAll(/(\w+) (\S)/g), ([, name = "", ch = ""]) => [name, ch] as const),
   ["amp", "&"],
   ["lt", "<"],
   ["gt", ">"],
@@ -58,9 +98,11 @@ const NAMED_ENTITIES = new Map([
   ["nbsp", " "],
 ]);
 
+const ENTITY = /&(#[xX][0-9a-fA-F]+|#\d+|[a-zA-Z][a-zA-Z0-9]*);/g;
+
 /** Decode ONE layer of HTML entities: the common named set + numeric dec/hex. */
 function decodeEntities(input: string): string {
-  return input.replace(/&(#[xX][0-9a-fA-F]+|#\d+|[a-zA-Z]+);/g, (match: string, ref: string) => {
+  return input.replace(ENTITY, (match: string, ref: string) => {
     if (ref[0] === "#") {
       const code =
         ref[1] === "x" || ref[1] === "X"
@@ -68,7 +110,8 @@ function decodeEntities(input: string): string {
           : Number.parseInt(ref.slice(1), 10);
       return decodeCodePoint(code, match);
     }
-    return NAMED_ENTITIES.get(ref.toLowerCase()) ?? match;
+    // Exact first: letter entities are case-sensitive (&Uuml; Ü, &uuml; ü).
+    return NAMED_ENTITIES.get(ref) ?? NAMED_ENTITIES.get(ref.toLowerCase()) ?? match;
   });
 }
 

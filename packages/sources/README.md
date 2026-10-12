@@ -201,7 +201,7 @@ is silently IGNORED). Slugs lowercase. Posting `id` (string) is DISTINCT from th
 `job.id` and the url UUID. Locations compose `location.city` + `province` — NOT `location.name`
 (an office label, sometimes the literal "Remote" trap). `remote` from the `workplace_type` enum.
 Description = `description` + `key_responsibilities` + `skills_knowledge_expertise` (not `benefits`),
-single-encoded HTML (`<!--block-->` markers removed by the tag regex). NO posted
+single-encoded HTML (`<!--block-->` markers removed by the strip). NO posted
 date (only `deadline_at`, an application-CLOSE date) ⇒ `postedAt` null. Unknown slug ⇒ 404;
 real-but-empty ⇒ `200 {data:[]}`.
 
