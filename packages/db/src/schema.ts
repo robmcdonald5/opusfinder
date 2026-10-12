@@ -660,17 +660,20 @@ export const digestItems = pgTable(
     // and the record can outlive the job row (see the job_id note below). All nullable: NULL on
     // pre-snapshot rows until the one-time keyset
     // backfill, then every new row is populated at insert. `getDigestEmailPayload` reads these FIRST,
-    // COALESCE-falling-back to the live jobs/companies row during the backfill gap. DELIBERATELY NOT
-    // `content_signature` (a durable signature snapshot would suppress a relisted role FOREVER, breaking
-    // re-recommend-after-relist; the live INNER JOIN in `alreadyShownSignatures` is the self-scoping
-    // cooldown) and NOT `rank`/`score`/`reason` (already durable columns above). `lifecycle_state` is
-    // INTENTIONALLY not snapshotted: it is mutable, and the email's active-filter must read it LIVE, not
-    // a frozen copy.
+    // COALESCE-falling-back to the live jobs/companies row during the backfill gap. NOT
+    // `rank`/`score`/`reason` (already durable columns above). `lifecycle_state` is INTENTIONALLY not
+    // snapshotted: it is mutable, and the email's active-filter must read it LIVE, not a frozen copy.
     jobTitle: text("job_title"),
     companySlug: text("company_slug"),
     applyUrl: text("apply_url"),
     locations: jsonb("locations").$type<string[]>(),
     remote: boolean("remote"),
+    // The signature the user was shown, kept because an edit to the job rewrites the live one. NOT a
+    // durable exclusion: `alreadyShownSignatures` reads it only while the job row still exists, so it never
+    // suppresses a relist longer than the live signature does (see the job_id note below). Reading it
+    // unconditionally would suppress a relisted role forever. NULL when the job had no signature, and on
+    // rows persisted before the column existed (only the live one counts there).
+    contentSignature: text("content_signature"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [

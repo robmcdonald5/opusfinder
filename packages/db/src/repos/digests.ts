@@ -91,37 +91,42 @@ export function listDigestRecipients(
  * (user_id, job_id) anti-join, fed to `retrieveCandidatesForProfile`'s `excludeJobIds` so a job is
  * not re-surfaced. `selectDistinct` (not app-side dedup) leans on the composite
  * `digest_items_user_id_job_id_idx`. Empty for a first-time recipient.
+ *
+ * "Shown" means SENT (`digests.sent_at` set): items are persisted before the send, so a digest whose send
+ * failed or was skipped must not hide its matches from the next one.
  */
 export async function alreadyShownJobIds(db: Db, userId: UserId): Promise<number[]> {
   const rows = await db
     .selectDistinct({ jobId: digestItems.jobId })
     .from(digestItems)
-    .where(eq(digestItems.userId, userId));
+    .innerJoin(digests, eq(digests.id, digestItems.digestId))
+    .where(and(eq(digestItems.userId, userId), isNotNull(digests.sentAt)));
   return rows.map((r) => r.jobId);
 }
 
 /**
- * The distinct content signatures of every job already shown to a user — the signature sibling of
+ * The distinct content signatures of every job already shown (sent) to a user — the signature sibling of
  * `alreadyShownJobIds`, fed to retrieval's `excludeSignatures` so a RE-LISTED role (fresh external_id →
- * a new job_id the id anti-join can't see, but the SAME content_signature) is suppressed. Joins
- * `digest_items → jobs` and keeps only non-NULL signatures. NO `lifecycle_state` filter on the jobs side:
- * a soft-closed repost predecessor (`lifecycle_state='closed'`, never deleted — `digest_items.job_id` is
- * ON DELETE NO ACTION) still holds the signature that proves the user already saw the role. Empty for a
- * first-time recipient.
- *
- * KNOWN GAP (accepted): `dropDigestItemsAndRecount` DIRECT-deletes a `digest_items` row for a probe-time
- * 404 (NO ACTION blocks only parent-delete CASCADES, not a direct child delete), so a 404-dropped-but-
- * still-active job loses its shown record here and its repost can re-surface. Narrow (probe-time 404s
- * only); a same-signature repost on a NEW row is still caught. See `dropDigestItemsAndRecount` below for
- * the matching note.
+ * a new job_id the id anti-join can't see, but the SAME content_signature) is suppressed. Counts both the
+ * job's live signature and the one snapshotted at persist (an edit rewrites the live one), but only while
+ * the `jobs` row exists: the INNER JOIN drops a pruned job's signatures, so its relist is re-recommendable
+ * (see `digest_items.content_signature`). NO `lifecycle_state` filter on the jobs side: a soft-closed
+ * repost predecessor (not yet pruned) still holds the signature that proves the user already saw the
+ * role. Empty for a first-time recipient.
  */
 export async function alreadyShownSignatures(db: Db, userId: UserId): Promise<string[]> {
   const rows = await db
-    .selectDistinct({ contentSignature: jobs.contentSignature })
+    .selectDistinct({ live: jobs.contentSignature, shown: digestItems.contentSignature })
     .from(digestItems)
+    .innerJoin(digests, eq(digests.id, digestItems.digestId))
     .innerJoin(jobs, eq(jobs.id, digestItems.jobId))
-    .where(and(eq(digestItems.userId, userId), isNotNull(jobs.contentSignature)));
-  return rows.map((r) => r.contentSignature).filter((s): s is string => s !== null);
+    .where(and(eq(digestItems.userId, userId), isNotNull(digests.sentAt)));
+  const signatures = new Set<string>();
+  for (const r of rows) {
+    if (r.live !== null) signatures.add(r.live);
+    if (r.shown !== null) signatures.add(r.shown);
+  }
+  return [...signatures];
 }
 
 /**
@@ -194,13 +199,15 @@ export interface NewDigestItem extends DigestItemSnapshot {
 
 /** The display fields a digest_items row snapshots from its job's live `jobs`/`companies` row. The
  *  render/history reads these instead of joining live `jobs`, so the record is self-contained and
- *  survives the job's prune. Mirrors what `getDigestEmailPayload` projects. */
+ *  survives the job's prune. Mirrors what `getDigestEmailPayload` projects. `contentSignature` is the
+ *  one non-display field: the shown text's signature, for `alreadyShownSignatures`. */
 export interface DigestItemSnapshot {
   jobTitle: string;
   companySlug: string;
   applyUrl: string;
   locations: string[];
   remote: boolean;
+  contentSignature: string | null;
 }
 
 /**
@@ -224,22 +231,12 @@ export async function getJobSnapshots(
       applyUrl: jobs.applyUrl,
       locations: jobs.locations,
       remote: jobs.remote,
+      contentSignature: jobs.contentSignature,
     })
     .from(jobs)
     .innerJoin(companies, eq(companies.id, jobs.companyId))
     .where(inArray(jobs.id, jobIds));
-  return new Map(
-    rows.map((r) => [
-      r.jobId,
-      {
-        jobTitle: r.jobTitle,
-        companySlug: r.companySlug,
-        applyUrl: r.applyUrl,
-        locations: r.locations,
-        remote: r.remote,
-      },
-    ]),
-  );
+  return new Map(rows.map(({ jobId, ...snapshot }) => [jobId, snapshot]));
 }
 
 /**
@@ -270,6 +267,7 @@ export async function insertDigestItems(
       applyUrl: it.applyUrl.replaceAll(NUL, ""),
       locations: stripNul(it.locations) as string[],
       remote: it.remote,
+      contentSignature: it.contentSignature,
     })),
   );
 }
@@ -369,15 +367,14 @@ export function getDigestApplyTargets(db: Db, digestId: number): Promise<DigestA
  * same-statement `count(*)`) and merges the probe counts via jsonb `||`. This keeps the persisted
  * `digest_items` equal to what the user is actually SENT (the email render reads only the survivors).
  *
- * CAVEAT — shown-history coupling: `alreadyShownJobIds` derives the next run's dedup anti-join from
- * `digest_items`, so a DROPPED job is also removed from shown-history. A 404 is dropped but NOT closed (it
+ * CAVEAT — a dropped job was never sent, so it isn't shown-history. A 404 is dropped but NOT closed (it
  * may be a CDN blip); a 410 is soft-closed, but the next ingest revives it while the ATS still lists it
- * (markJobsPresent / sweepLifecycle). Either way the job stays retrieval-eligible AND loses its shown record,
- * so it can re-surface and re-pay synthesis on a later digest until the ATS delists it or recency clears it.
- * Bounded (≤TOP_K, ~daily cadence) and accepted for v1; if `probed404Dropped` or `probed410` trends high on
- * the same jobs, switch to a tombstone (keep the row with a `dropped` flag, exclude only at render) so the
- * anti-join stays intact. Empty `droppedJobIds` still records the counts; ranks are left with gaps (the
- * email orders by rank — inert).
+ * (markJobsPresent / sweepLifecycle). Either way the job stays retrieval-eligible and can re-surface and
+ * re-pay synthesis on a later digest until the ATS delists it or recency clears it. Bounded (≤TOP_K, ~daily
+ * cadence) and accepted for v1; if `probed404Dropped` or `probed410` trends high on the same jobs, switch to
+ * a tombstone (keep the row with a `dropped` flag, exclude only at render) so the anti-join covers it.
+ * Empty `droppedJobIds` still records the counts; ranks are left with gaps (the email orders by rank —
+ * inert).
  */
 export async function dropDigestItemsAndRecount(
   db: Db,

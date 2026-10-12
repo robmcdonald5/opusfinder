@@ -222,8 +222,8 @@ export interface JobNeighbor {
 
 /**
  * The `limit` jobs nearest to `queryVector` by cosine distance (`<=>`), via the HNSW
- * index, considering only rows that have an embedding. The digest pipeline runs the same
- * query against a user-profile vector.
+ * index, considering only rows that have an embedding. Digest retrieval does NOT use this shape:
+ * it runs an exact scan (see retrieval.ts).
  */
 export async function nearestJobs(
   db: Db,

@@ -46,11 +46,10 @@ the real Neon corpus — a read-only MEASUREMENT (not a pass/fail), written to
 `reports/hnsw-recall.dataset.json`. Each leg is planner-forced over the tx-capable neon-serverless driver
 and EXPLAIN-verified (the ANN leg must use the index, the exact leg must not), so it can never
 silently score exact-vs-exact. Recall is tie-aware on distance (`src/ann.ts`), because
-same-signature cross-posts carry identical embeddings. Production currently seq-scans (exact —
-neon-http can't hold `SET LOCAL hnsw.ef_search`; see repos/retrieval.ts), so this quantifies the
-cliff retrieval inherits if scale ever flips the planner to the index: at the default
-`ef_search=40` the production-filtered shape under-fills catastrophically (single-digit rows of
-the 150 fetched). Needs `DATABASE_URL` + `VOYAGE_API_KEY`.
+same-signature cross-posts carry identical embeddings. Digest retrieval runs an exact scan on
+purpose (see repos/retrieval.ts): on the index, at the default `ef_search=40`, the
+production-filtered shape under-fills catastrophically (single-digit rows of the 150 fetched).
+This quantifies what turning ANN on would cost. Needs `DATABASE_URL` + `VOYAGE_API_KEY`.
 
 ## Dataset
 

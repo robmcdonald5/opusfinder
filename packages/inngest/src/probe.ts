@@ -1,3 +1,5 @@
+import { BlockList, isIP } from "node:net";
+
 import type { Db } from "@opusfinder/db";
 import {
   closeJobsByIds,
@@ -63,10 +65,43 @@ function emptyProbeCounts(): ProbeCounts {
 
 const PROBE_TIMEOUT_MS = 5000;
 
+/** Literal addresses the probe never fetches: the apply URL comes from the board's data, and the probe runs
+ *  inside our runtime's network. A public name that resolves or redirects inward still gets through, but
+ *  the probe only ever reads a status. Covers IPv4-mapped IPv6 too (BlockList matches those). */
+const INTERNAL_ADDRESSES = new BlockList();
+INTERNAL_ADDRESSES.addSubnet("0.0.0.0", 8);
+INTERNAL_ADDRESSES.addSubnet("10.0.0.0", 8);
+INTERNAL_ADDRESSES.addSubnet("100.64.0.0", 10);
+INTERNAL_ADDRESSES.addSubnet("127.0.0.0", 8);
+INTERNAL_ADDRESSES.addSubnet("169.254.0.0", 16);
+INTERNAL_ADDRESSES.addSubnet("172.16.0.0", 12);
+INTERNAL_ADDRESSES.addSubnet("192.168.0.0", 16);
+INTERNAL_ADDRESSES.addAddress("::", "ipv6");
+INTERNAL_ADDRESSES.addAddress("::1", "ipv6");
+INTERNAL_ADDRESSES.addSubnet("fc00::", 7, "ipv6");
+INTERNAL_ADDRESSES.addSubnet("fe80::", 10, "ipv6");
+
+/** An http(s) URL whose host isn't localhost or a literal internal address. Any other URL isn't fetched
+ *  and reads `error` (kept, never closed). */
+function isProbeable(url: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return false;
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
+  const host = parsed.hostname.replace(/^\[|\]$/g, "");
+  if (host === "localhost" || host.endsWith(".localhost")) return false;
+  const family = isIP(host);
+  return family === 0 || !INTERNAL_ADDRESSES.check(host, family === 4 ? "ipv4" : "ipv6");
+}
+
 /** The real probe: HEAD (falling back to GET when an ATS rejects HEAD with 405/501), a short per-request
  *  timeout, classify the status. A network error / timeout is `error` (keep) — only an explicit 404/410 is
  *  actionable. Best-effort: any throw becomes `error`, so a flaky URL never fails the digest. */
 export const probeLiveness: LivenessProbe = async (url) => {
+  if (!isProbeable(url)) return { verdict: "error" };
   let status = await fetchStatus(url, "HEAD");
   if (status === 405 || status === 501) status = await fetchStatus(url, "GET");
   if (status === "error") return { verdict: "error" };

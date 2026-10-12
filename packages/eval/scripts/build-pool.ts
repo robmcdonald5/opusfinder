@@ -13,14 +13,10 @@
  * never showed the labeler). The arms:
  *   - voyage: the digest read path's SEMANTIC (active + 14d recency, cosine-nearest, signature
  *     collapse — retrieval.ts's predicates + post-processing) over a query-side embedding of
- *     composeProfileText, but run as a PLANNER-FORCED EXACT scan (the hnsw-recall exact-leg
- *     pattern: tx-capable driver + SET LOCAL + EXPLAIN-verified). NOT
- *     retrieveCandidatesForProfile itself: the planner now picks the HNSW index for this shape
- *     at the default ef_search=40, where the filtered fetch under-fills to single digits (the
- *     measured cliff — reports/hnsw-recall.dataset.json). The pool must nominate at full
- *     retrieval recall; the production under-fill is a retrieval incident to fix there, not a
- *     ground truth to inherit here. Geo/exclusion prefs deliberately neutral: the pool
- *     nominates broadly; the eval ranker doesn't filter either.
+ *     composeProfileText, run as a PLANNER-FORCED EXACT scan (the hnsw-recall exact-leg
+ *     pattern: tx-capable driver + SET LOCAL + EXPLAIN-verified) so the pool nominates at full
+ *     retrieval recall. Geo/exclusion prefs deliberately neutral: the pool nominates broadly; the
+ *     eval ranker doesn't filter either.
  *   - fts: Postgres full-text search over title+description with the profile's target roles and
  *     skills OR-ed — surfaces keyword-obvious jobs the embedding may rank low.
  *   - random: a seeded (profile-id-keyed, mulberry32) sample of the same filtered corpus — an

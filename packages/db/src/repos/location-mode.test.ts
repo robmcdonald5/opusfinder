@@ -7,7 +7,7 @@ import { geoMatches } from "./retrieval";
 // Leaf pure-unit for the ONE deterministic retrieval filter shipped now (salary/YoE are stored +
 // soft-prompt only). Ports scripts/test-location-mode.ts — a wrong branch silently drops or keeps the
 // wrong jobs. Fixtures copied VERBATIM from the smoke. `locationOverlaps` is private, so its boundary
-// (>=4-char containment vs <4-char exact-only) is exercised through geoMatches's on-site location path.
+// (>=4-char containment vs <4-char whole-word) is exercised through geoMatches's on-site location path.
 
 const REMOTE = { remote: true, locations: [] as string[] };
 const ONSITE_SF = { remote: false, locations: ["San Francisco, CA"] };
@@ -81,8 +81,8 @@ describe("geoMatches — location-mode truth table", () => {
 
   // locationOverlaps boundary (private → driven via the on-site 'onsite_only' location path):
   //   - a >=4-char token matches by CONTAINMENT in BOTH directions;
-  //   - a <4-char token ('ca'/'CA') matches ONLY exactly (case-folded) and must NOT substring-match inside
-  //     a longer location — "chicago" contains "ca", but the <4-char guard blocks the false positive.
+  //   - a <4-char token ('ca'/'CA') matches only as a whole word (case-folded), never as a substring —
+  //     "chicago" contains "ca", but the <4-char guard blocks the false positive.
   describe("locationOverlaps boundary via on-site match", () => {
     it(">=4-char token: job superset contains user subset ('san francisco, ca' ⊇ 'san francisco')", () => {
       expect(
@@ -103,8 +103,8 @@ describe("geoMatches — location-mode truth table", () => {
     });
 
     // Case-forcing: job & user differ ONLY in case, so a green result PROVES geoMatches lower-cases both
-    // sides (retrieval.ts:227 & :229). Delete either .toLowerCase() and both of these flip to false.
-    it("<4-char token is case-folded: job 'ca' matches user 'CA' (exact-only, differing case)", () => {
+    // sides. Delete either .toLowerCase() in geoMatches and both of these flip to false.
+    it("<4-char token is case-folded: job 'ca' matches user 'CA' (differing case)", () => {
       expect(geoMatches({ remote: false, locations: ["ca"] }, "onsite_only", ["CA"])).toBe(true);
     });
 
@@ -114,16 +114,31 @@ describe("geoMatches — location-mode truth table", () => {
       ).toBe(true);
     });
 
-    // b-side short-token guard (retrieval.ts:239): a <4-char USER token must NOT substring-match inside a
-    // longer JOB location — "chicago" contains "ca", but `b.length >= 4` blocks the false positive.
+    // Short-token guard: a <4-char USER token must NOT substring-match inside a longer JOB location —
+    // "chicago" contains "ca", but a short token only matches as a whole word.
     it("<4-char USER token 'CA' does NOT substring-match inside a longer JOB location ('chicago')", () => {
       expect(geoMatches({ remote: false, locations: ["Chicago"] }, "onsite_only", ["CA"])).toBe(false);
     });
 
-    // a-side short-token guard (retrieval.ts:240), the MIRROR of the above: a <4-char JOB token must NOT
-    // substring-match inside a longer USER location — `a.length >= 4` blocks it.
+    // The MIRROR of the above: a <4-char JOB token must NOT substring-match inside a longer USER location.
     it("<4-char JOB token 'CA' does NOT substring-match inside a longer USER location ('chicago')", () => {
       expect(geoMatches({ remote: false, locations: ["CA"] }, "onsite_only", ["Chicago"])).toBe(false);
+    });
+
+    // A state or country code entered on its own must still reach the jobs located in it.
+    it("<4-char USER token matches as a whole word: 'CA' in 'San Francisco, CA', 'USA' in 'Austin, TX, USA'", () => {
+      expect(
+        geoMatches({ remote: false, locations: ["San Francisco, CA"] }, "onsite_only", ["CA"]),
+      ).toBe(true);
+      expect(geoMatches({ remote: false, locations: ["Austin, TX, USA"] }, "any", ["usa"])).toBe(
+        true,
+      );
+    });
+
+    it("<4-char JOB token matches as a whole word inside a longer USER location ('CA' in 'San Francisco, CA')", () => {
+      expect(
+        geoMatches({ remote: false, locations: ["CA"] }, "onsite_only", ["San Francisco, CA"]),
+      ).toBe(true);
     });
   });
 });

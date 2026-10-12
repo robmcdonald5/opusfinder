@@ -189,7 +189,7 @@ describe("digests repo — recipient gates, shown-history anti-joins, persist/re
    *  parent), then insertDigest — the persist step's real call order, reused as seeding. */
   async function seedDigestForUser(
     userId: UserId,
-    opts: { itemCount?: number; counts?: Record<string, number> } = {},
+    opts: { itemCount?: number; counts?: Record<string, number>; sent?: boolean } = {},
   ): Promise<{ runId: number; digestId: number }> {
     const runId = await startDigestRun(db, "manual");
     const { id: digestId } = await insertDigest(db, {
@@ -198,6 +198,7 @@ describe("digests repo — recipient gates, shown-history anti-joins, persist/re
       itemCount: opts.itemCount ?? 1,
       counts: opts.counts ?? {},
     });
+    if (opts.sent) await recordDigestSent(db, digestId, `email-${digestId}`);
     return { runId, digestId };
   }
 
@@ -213,6 +214,7 @@ describe("digests repo — recipient gates, shown-history anti-joins, persist/re
       applyUrl: `https://snap.test/${forJobId}`,
       locations: ["Remote - US"],
       remote: true,
+      contentSignature: null,
       ...overrides,
     };
   }
@@ -320,11 +322,11 @@ describe("digests repo — recipient gates, shown-history anti-joins, persist/re
       const j1 = await seedJob(companyId);
       const j2 = await seedJob(companyId);
       const j3 = await seedJob(companyId);
-      const dA1 = await seedDigestForUser(a, { itemCount: 2 });
+      const dA1 = await seedDigestForUser(a, { itemCount: 2, sent: true });
       await insertDigestItems(db, dA1.digestId, a, [item(j1, 1), item(j2, 2)]);
-      const dA2 = await seedDigestForUser(a, { itemCount: 1 });
+      const dA2 = await seedDigestForUser(a, { itemCount: 1, sent: true });
       await insertDigestItems(db, dA2.digestId, a, [item(j1, 1)]); // j1 shown AGAIN in a second digest
-      const dB = await seedDigestForUser(b, { itemCount: 1 });
+      const dB = await seedDigestForUser(b, { itemCount: 1, sent: true });
       await insertDigestItems(db, dB.digestId, b, [item(j3, 1)]);
 
       // j3 appearing in A's set = the eq(digestItems.userId) where was dropped; a duplicated j1 =
@@ -342,10 +344,10 @@ describe("digests repo — recipient gates, shown-history anti-joins, persist/re
       });
       const jActive = await seedJob(companyId, { contentSignature: "sig-active" });
       const jNullSig = await seedJob(companyId); // content_signature stays NULL
-      const { digestId } = await seedDigestForUser(a, { itemCount: 5 });
+      const { digestId } = await seedDigestForUser(a, { itemCount: 5, sent: true });
       // 999999 has NO jobs row — legal (digest_items.job_id FK was deliberately dropped). Its
-      // contributing nothing is enforced REDUNDANTLY (INNER JOIN + isNotNull + the app-side null
-      // filter), so no single clause is the discriminator — the observable behavior is the contract.
+      // contributing nothing is enforced REDUNDANTLY (INNER JOIN + the app-side null filter), so no
+      // single clause is the discriminator — the observable behavior is the contract.
       await insertDigestItems(db, digestId, a, [
         item(jClosed, 1),
         item(jActive, 2),
@@ -358,7 +360,7 @@ describe("digests repo — recipient gates, shown-history anti-joins, persist/re
       // alreadyShownJobIds has its own leak test; this pins the signatures fn's separate WHERE.
       const b = await seedRecipient(2);
       const jOther = await seedJob(companyId, { contentSignature: "sig-other" });
-      const dB = await seedDigestForUser(b, { itemCount: 1 });
+      const dB = await seedDigestForUser(b, { itemCount: 1, sent: true });
       await insertDigestItems(db, dB.digestId, b, [item(jOther, 1)]);
 
       const sigs = await alreadyShownSignatures(db, a);
@@ -369,6 +371,43 @@ describe("digests repo — recipient gates, shown-history anti-joins, persist/re
       // The set equality also proves B's 'sig-other' did NOT leak in.
       expect(new Set(sigs)).toEqual(new Set(["sig-closed", "sig-active"]));
       expect(await alreadyShownSignatures(db, b)).toEqual(["sig-other"]);
+    });
+
+    it("counts only SENT digests — items persisted for a send that failed or never happened hide nothing", async () => {
+      const a = await seedRecipient(1);
+      const companyId = await seedCompany();
+      const jSent = await seedJob(companyId, { contentSignature: "sig-sent" });
+      const jFailed = await seedJob(companyId, { contentSignature: "sig-failed" });
+      const jUnsent = await seedJob(companyId, { contentSignature: "sig-unsent" });
+      const sent = await seedDigestForUser(a, { sent: true });
+      await insertDigestItems(db, sent.digestId, a, [item(jSent, 1)]);
+      const failed = await seedDigestForUser(a);
+      await insertDigestItems(db, failed.digestId, a, [item(jFailed, 1)]);
+      await recordDigestSendFailure(db, failed.digestId);
+      const unsent = await seedDigestForUser(a); // e.g. permit revoked before the send
+      await insertDigestItems(db, unsent.digestId, a, [item(jUnsent, 1)]);
+
+      expect(await alreadyShownJobIds(db, a)).toEqual([jSent]);
+      expect(await alreadyShownSignatures(db, a)).toEqual(["sig-sent"]);
+    });
+
+    it("keeps the signature the user was shown after the job's text changes, until the job row is pruned", async () => {
+      const a = await seedRecipient(1);
+      const companyId = await seedCompany();
+      const jShown = await seedJob(companyId, { contentSignature: "sig-shown" });
+      const { digestId } = await seedDigestForUser(a, { sent: true });
+      await insertDigestItems(db, digestId, a, [
+        item(jShown, 1, { contentSignature: "sig-shown" }),
+      ]);
+      // An edit re-signs the live row; a same-text cross-post of the shown text still carries sig-shown.
+      await db.update(jobs).set({ contentSignature: "sig-edited" }).where(eq(jobs.id, jShown));
+      expect(new Set(await alreadyShownSignatures(db, a))).toEqual(
+        new Set(["sig-shown", "sig-edited"]),
+      );
+
+      // Once the job is pruned its signatures leave the set, so a relist is re-recommendable.
+      await db.delete(jobs).where(eq(jobs.id, jShown));
+      expect(await alreadyShownSignatures(db, a)).toEqual([]);
     });
   });
 
@@ -443,6 +482,7 @@ describe("digests repo — recipient gates, shown-history anti-joins, persist/re
           applyUrl: `https://x.test/${NUL}a`,
           locations: [`Rem${NUL}ote`],
           remote: true,
+          contentSignature: null,
         },
       ]);
       const rows = await db.select().from(digestItems).where(eq(digestItems.digestId, digestId));
@@ -469,6 +509,7 @@ describe("digests repo — recipient gates, shown-history anti-joins, persist/re
         applyUrl: "https://a",
         locations: ["NYC"],
         remote: false,
+        contentSignature: "sig-j1",
       });
       await seedJob(companyId); // J2 — leaking into the map = the inArray(jobs.id, jobIds) filter dropped
       const map = await getJobSnapshots(db, [j1, 424242]);
@@ -480,6 +521,7 @@ describe("digests repo — recipient gates, shown-history anti-joins, persist/re
         applyUrl: "https://a",
         locations: ["NYC"],
         remote: false,
+        contentSignature: "sig-j1",
       });
       expect(map.get(424242)).toBeUndefined();
       expect((await getJobSnapshots(db, [])).size).toBe(0);

@@ -63,6 +63,22 @@ describe("probeLiveness — real fetch over MSW", () => {
     await expect(probeLiveness(`${HOST}/neterr`)).resolves.toEqual({ verdict: "error" });
   });
 
+  it("never requests a board-supplied URL that isn't http(s) or points at localhost / an internal address", async () => {
+    // Every one of these would read live if requested, so a status in the verdict means it went out.
+    server.use(http.all(/.*/, () => new HttpResponse(null, { status: 200 })));
+    for (const url of [
+      "http://127.0.0.1:8080/a",
+      "http://localhost/a",
+      "http://10.1.2.3/a",
+      "http://169.254.169.254/latest/meta-data",
+      "http://[::1]/a",
+      "http://[::ffff:127.0.0.1]/a",
+      "data:text/plain,x",
+    ]) {
+      await expect(probeLiveness(url)).resolves.toEqual({ verdict: "error" });
+    }
+  });
+
   it("classifies a hung request as error via the 5s AbortController timeout", async () => {
     vi.useFakeTimers();
     server.use(http.head(`${HOST}/hang`, () => new Promise<never>(() => {}))); // never resolves
