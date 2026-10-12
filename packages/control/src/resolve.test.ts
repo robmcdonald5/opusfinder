@@ -4,7 +4,6 @@ import { POLICY_IDS, STAGE_IDS, policies, stages } from "./registry";
 import {
   desiredMode,
   desiredValue,
-  effectiveAll,
   effectiveMode,
   knobValue,
   overrideMode,
@@ -88,10 +87,10 @@ describe("fail-closed layer 2: an unrecognised value is off", () => {
   });
 
   it("reads an unrecognised GLOBAL value as off — which turns everything off", () => {
-    const all = effectiveAll(state({ global: "yes" }));
-    expect(all.global).toBe("off");
-    expect(new Set(Object.values(all.stages))).toEqual(new Set(["off"]));
-    expect(new Set(Object.values(all.policies))).toEqual(new Set(["off"]));
+    const s = state({ global: "yes" });
+    expect(effectiveMode(s, "global").mode).toBe("off");
+    for (const id of STAGE_IDS) expect(effectiveMode(s, { stage: id }).mode, id).toBe("off");
+    for (const id of POLICY_IDS) expect(effectiveMode(s, { policy: id }).mode, id).toBe("off");
   });
 
   it("reads an unrecognised override as an 'off' override (narrows, never widens)", () => {
@@ -107,8 +106,6 @@ describe("fail-closed layer 2: an unrecognised value is off", () => {
     ["non-numeric", "lots"],
     ["empty", ""],
     ["whitespace", "  "],
-    ["above max", "501"],
-    ["below min", "0"],
     ["fractional on an int knob", "12.5"],
     ["infinite", "Infinity"],
   ])("reads a %s knob as its least-risky bound", (_label, raw) => {
@@ -122,9 +119,19 @@ describe("fail-closed layer 2: an unrecognised value is off", () => {
   });
 
   it("reads an invalid riskier-'down' knob as its MAXIMUM (a longer TTL closes less)", () => {
-    expect(knobValue(state({ "stale_sweep.ttlDays": "3" }), knob("stale_sweep.ttlDays"))).toEqual({
+    expect(knobValue(state({ "stale_sweep.ttlDays": "3d" }), knob("stale_sweep.ttlDays"))).toEqual({
       value: 90,
       source: "invalid",
+    });
+  });
+
+  it.each([
+    ["above max", "ingest.boardsPerTick", "501", 500],
+    ["below min", "stale_sweep.ttlDays", "3", 7],
+  ])("reads a number %s as its nearest bound", (_label, address, raw, value) => {
+    expect(knobValue(state({ [address]: raw }), knob(address))).toEqual({
+      value,
+      source: "clamped",
     });
   });
 });

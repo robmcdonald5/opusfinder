@@ -83,12 +83,6 @@ export function num(n: number): string {
   return n.toLocaleString("en-US");
 }
 
-export function compact(n: number): string {
-  return new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 }).format(
-    n,
-  );
-}
-
 export function usd(cents: number | null | undefined): string {
   if (cents === null || cents === undefined) return "—";
   return `$${(cents / 100).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;

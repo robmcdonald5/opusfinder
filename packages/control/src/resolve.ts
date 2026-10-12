@@ -2,19 +2,19 @@
 //
 // Fail-closed, in three layers (owner decision 2026-10-04: everywhere, ingest included):
 //   1. a MISSING row  → the registry default (`initial` / knob `default`; no override for a dimension);
-//   2. an UNRECOGNISED stored value → `off` for a mode or override, the LEAST risky bound for a knob;
+//   2. an UNRECOGNISED stored value → `off` for a mode or override, the LEAST risky bound for a knob —
+//      except a knob number outside its range, which takes the NEAREST bound and is flagged "clamped"
+//      (owner, 2026-10-12: a narrowed max must not turn 450 boards per tick into 1);
 //   3. an UNREACHABLE store → the caller skips the stage (that one lives in the runtime gate clients and
 //      the Worker's 503, not here — this module only ever sees rows that were read).
 // Layer 2 should never fire (every write is validated by targets.parseValue), but a break-glass
-// `wrangler d1 execute` or a registry edit that drops a mode can leave a stale value behind, and the safe
-// reading of "I don't know what this says" is "off".
+// `wrangler d1 execute` or a registry edit that drops a mode or narrows a range can leave a stale value
+// behind, and the safe reading of "I don't know what this says" is "off".
 //
 // Effective mode = the LOWEST of (global, entry, dimension override). Overrides can therefore only narrow:
 // nothing can be more on than its stage, and nothing is on while the master switch is off.
 import {
   MODE_RANK,
-  POLICY_IDS,
-  STAGE_IDS,
   globalSwitch,
   policyDef,
   stageDef,
@@ -27,13 +27,16 @@ import {
   type StageId,
   type StageMode,
 } from "./registry";
-import { entryKnobs, entryModes, formatTarget, type EntryRef, type Target } from "./targets";
+import { entryModes, formatTarget, knobDef, type EntryRef, type Target } from "./targets";
 
 /** Raw `state` rows: target address → stored value. */
 export type StateMap = ReadonlyMap<string, string>;
 
-/** Where a resolved value came from: a stored row, the registry default, or a fail-closed substitute. */
-export type ValueSource = "set" | "default" | "invalid";
+/**
+ * Where a resolved value came from: a stored row, the registry default, a stored knob number moved into
+ * its range, or a fail-closed substitute.
+ */
+export type ValueSource = "set" | "default" | "clamped" | "invalid";
 
 export interface Resolved<V> {
   value: V;
@@ -100,14 +103,15 @@ export function knobValue(
   state: StateMap,
   target: Extract<Target, { kind: "knob" }>,
 ): Resolved<number> {
-  const knob = entryKnobs(target.entry)[target.knob];
-  if (!knob) throw new Error(`unknown knob ${formatTarget(target)}`);
+  const knob = knobDef(target);
   const raw = state.get(formatTarget(target));
   if (raw === undefined) return { value: knob.default, source: "default" };
   const n = raw.trim() === "" ? Number.NaN : Number(raw);
-  const valid =
-    Number.isFinite(n) && n >= knob.min && n <= knob.max && (!knob.int || Number.isInteger(n));
-  return valid ? { value: n, source: "set" } : { value: safestKnobValue(knob), source: "invalid" };
+  if (!Number.isFinite(n) || (knob.int && !Number.isInteger(n))) {
+    return { value: safestKnobValue(knob), source: "invalid" };
+  }
+  const value = Math.min(Math.max(n, knob.min), knob.max);
+  return { value, source: value === n ? "set" : "clamped" };
 }
 
 /** What capped an effective mode below the entry's own desired mode. */
@@ -162,19 +166,6 @@ export function effectiveMode(
     }
   }
   return { mode, desired, cappedBy };
-}
-
-/** Every stage's and policy's effective mode — handy for the "all off" view and tests. */
-export function effectiveAll(state: StateMap): {
-  global: GlobalMode;
-  stages: Record<StageId, StageMode>;
-  policies: Record<PolicyId, PolicyMode>;
-} {
-  const stagesOut = {} as Record<StageId, StageMode>;
-  for (const id of STAGE_IDS) stagesOut[id] = effectiveMode(state, { stage: id }).mode;
-  const policiesOut = {} as Record<PolicyId, PolicyMode>;
-  for (const id of POLICY_IDS) policiesOut[id] = effectiveMode(state, { policy: id }).mode;
-  return { global: effectiveMode(state, "global").mode, stages: stagesOut, policies: policiesOut };
 }
 
 /** The stored-or-default value of any target, as the canonical string the change log records. */

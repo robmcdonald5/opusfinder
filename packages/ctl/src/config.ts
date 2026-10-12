@@ -37,11 +37,9 @@ export type ConfigResult =
   | { ok: true; config: CtlConfig; path: string; warnings: string[] }
   | { ok: false; error: string };
 
+/** Not XDG_CONFIG_HOME: the agent sandbox points that at a scratch dir, away from the provisioned file. */
 export function configPath(deps: Pick<ConfigDeps, "env" | "home">): string {
-  const explicit = deps.env[ENV_VARS.file];
-  if (explicit) return explicit;
-  const base = deps.env.XDG_CONFIG_HOME || join(deps.home, ".config");
-  return join(base, "opusfinder-agent", "ctl.json");
+  return deps.env[ENV_VARS.file] || join(deps.home, ".config", "opusfinder-agent", "ctl.json");
 }
 
 /** https only — the service token rides in request headers — except a loopback URL for `wrangler dev`. */
@@ -54,7 +52,7 @@ function validUrl(raw: string): string | null {
   }
   const loopback = u.hostname === "localhost" || u.hostname === "127.0.0.1";
   if (u.protocol !== "https:" && !(u.protocol === "http:" && loopback)) return null;
-  if (u.search || u.hash) return null;
+  if (u.search || u.hash || u.username || u.password) return null;
   return u.toString().replace(/\/+$/, "");
 }
 
@@ -108,16 +106,18 @@ export function loadConfig(deps: ConfigDeps): ConfigResult {
   if (!url)
     return {
       ok: false,
-      error: "url must be an https:// origin (or http://localhost for wrangler dev)",
+      error:
+        "url must be an https:// origin without credentials (or http://localhost for wrangler dev)",
     };
-  return {
-    ok: true,
-    path,
-    warnings,
-    config: {
-      url,
-      clientId: pick("clientId") as string,
-      clientSecret: pick("clientSecret") as string,
-    },
-  };
+  const clientId = pick("clientId") as string;
+  const clientSecret = pick("clientSecret") as string;
+  // Header values can't carry these (a pasted newline, a NUL); say so here rather than fail every call.
+  for (const [key, value] of [
+    ["clientId", clientId],
+    ["clientSecret", clientSecret],
+  ] as const) {
+    if (!/^[\x21-\x7e]+$/.test(value))
+      return { ok: false, error: `${key} contains invalid characters (${value.length} chars)` };
+  }
+  return { ok: true, path, warnings, config: { url, clientId, clientSecret } };
 }

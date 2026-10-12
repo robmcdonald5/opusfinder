@@ -115,6 +115,13 @@ function requireRole(caller: Caller, ...roles: Caller["role"][]): void {
   }
 }
 
+/** A runtime writes only for its own stages: those whose registry `runtime` is the caller name. */
+function requireOwnStage(caller: Caller, stage: StageId, action: string): void {
+  const runtime = stageDef(stage).runtime;
+  if (runtime !== caller.name)
+    throw new ApiError(403, "forbidden", `only ${runtime} may ${action} ${stage}`);
+}
+
 /** One field of a request body (undefined when the body isn't an object). Shared with index.ts. */
 export function field(body: unknown, name: string): unknown {
   return typeof body === "object" && body !== null && !Array.isArray(body)
@@ -684,13 +691,14 @@ function isoTime(raw: unknown, name: string, required: boolean): string | null {
   return new Date(ms).toISOString();
 }
 
-/** One ledger row per run (B1). Runtime-only. Units must be ones the stage declares (registry). */
+/** One ledger row per run (B1), from the stage's own runtime; only units the stage declares. */
 export async function recordRun(db: D1Database, caller: Caller, body: unknown, now: string) {
   requireRole(caller, "runtime");
   const stage = field(body, "stage");
   if (typeof stage !== "string" || !isStageId(stage)) {
     throw new ApiError(400, "invalid_run", "stage must be a registry stage id");
   }
+  requireOwnStage(caller, stage, "record runs of");
   const outcome = field(body, "outcome");
   if (typeof outcome !== "string" || !(RUN_OUTCOMES as readonly string[]).includes(outcome)) {
     throw new ApiError(400, "invalid_run", `outcome must be one of: ${RUN_OUTCOMES.join(", ")}`);
@@ -763,8 +771,10 @@ export async function recordRun(db: D1Database, caller: Caller, body: unknown, n
 }
 
 /**
- * The runtime's one write (§7.3): turn its stage OFF on a runaway or an error storm. It can only ever set
- * off (classify enforces that), so a leaked runtime credential's worst case is an outage, never spend.
+ * The runtime's one write (§7.3): turn its OWN stage OFF on a runaway or an error storm. The caller's name
+ * must be the stage's registry runtime, so one runtime can't stop another's or silence alerting. It can
+ * only ever set off (classify enforces that), so a leaked runtime credential's worst case is an outage of
+ * its own stages, never spend.
  * Retries a lost compare-and-set race: a guard firing must not be dropped because something else wrote.
  */
 export async function trip(
@@ -778,6 +788,7 @@ export async function trip(
   const stage = field(body, "stage");
   if (typeof stage !== "string" || !isStageId(stage))
     throw new ApiError(400, "invalid_trip", "stage must be a registry stage id");
+  requireOwnStage(caller, stage, "trip");
   const why = field(body, "reason");
   if (typeof why !== "string" || !(TRIP_REASONS as readonly string[]).includes(why)) {
     throw new ApiError(400, "invalid_trip", `reason must be one of: ${TRIP_REASONS.join(", ")}`);

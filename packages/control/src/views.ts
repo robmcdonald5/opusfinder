@@ -78,7 +78,6 @@ export interface StageView extends Pick<
   effective: StageMode;
   cappedBy: CappedBy;
   agent: AgentRule;
-  onUnreadable: "skip";
   knobs: KnobView[];
   /** The dimensions this stage can be narrowed by, with every known value (for forms). */
   dims: Partial<Record<DimKey, readonly string[]>>;
@@ -171,7 +170,6 @@ export function stageView(state: StateMap, id: StageId): StageView {
     effective: eff.mode,
     cappedBy: eff.cappedBy,
     agent: agentRule({ kind: "mode", entry }),
-    onUnreadable: def.onUnreadable,
     knobs: knobViews(entry, state),
     dims,
     overrides,
@@ -229,10 +227,13 @@ export interface GateView {
   cappedBy: CappedBy;
   global: GlobalMode;
   knobs: Record<string, number>;
-  policies: Record<string, { mode: PolicyMode; knobs: Record<string, number> }>;
+  /** `watchedStageOff`: a health check whose watched stage is off reports "skipped (stage off)" (C6). */
+  policies: Record<
+    string,
+    { mode: PolicyMode; knobs: Record<string, number>; watchedStageOff?: boolean }
+  >;
   /** Effective mode for every slice that has an override set, per dimension. */
   overrides: Partial<Record<DimKey, Record<string, StageMode>>>;
-  onUnreadable: "skip";
 }
 
 /** What the control Worker answers (`GET /v1/gate`, `ControlRpc.gate()`): the view plus its provenance. */
@@ -258,7 +259,11 @@ export function gateView(
     const p = policyView(state, id);
     const pk: Record<string, number> = {};
     for (const k of p.knobs) pk[k.name] = k.value;
-    policiesOut[id] = { mode: p.effective, knobs: pk };
+    policiesOut[id] = {
+      mode: p.effective,
+      knobs: pk,
+      ...(p.watches ? { watchedStageOff: p.watchedStageOff } : {}),
+    };
   }
   const overrides: GateView["overrides"] = {};
   for (const o of view.overrides) (overrides[o.dim] ??= {})[o.value] = o.effective;
@@ -271,6 +276,5 @@ export function gateView(
     knobs,
     policies: policiesOut,
     overrides,
-    onUnreadable: view.onUnreadable,
   };
 }

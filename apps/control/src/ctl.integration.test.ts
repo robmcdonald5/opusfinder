@@ -91,7 +91,7 @@ describe("pnpm ctl against the control Worker", () => {
   it("status renders a readable summary from the real payload", async () => {
     const r = await ctl(["status"]);
     expect(r.code).toBe(EXIT.ok);
-    expect(r.stdout).toMatch(/^ingest\s+on\s+on\s+-$/m);
+    expect(r.stdout).toMatch(/^ingest\s+on\s+on\s+logs only\s+-$/m);
     expect(r.stdout).toMatch(/^health\.digest_health\s+shadow\s+shadow\s+approval$/m);
     expect(r.stdout).toContain("slice-1 seed");
   });
@@ -99,7 +99,9 @@ describe("pnpm ctl against the control Worker", () => {
   it("set applies a safe change, logged as channel cli", async () => {
     const r = await ctl(["set", "ingest", "off", "--reason", "token spike, investigating"]);
     expect(r.code).toBe(EXIT.ok);
-    expect(r.stdout).toMatch(/^applied: ingest on → off \(change #\d+\)$/);
+    expect(r.stdout).toMatch(
+      /^applied: ingest on → off \(change #\d+\) — not enforced yet \(ingest: logs only\)$/,
+    );
     expect(await stateValue("ingest")).toBe("off");
     const log = await h.db
       .prepare("SELECT channel, actor_name FROM change_log ORDER BY id DESC LIMIT 1")
@@ -123,6 +125,12 @@ describe("pnpm ctl against the control Worker", () => {
     ).toEqual([id]);
     expect((await ctl(["withdraw", String(id)])).code).toBe(EXIT.ok);
     expect((await ctl(["proposals"])).stdout).toBe("no proposals");
+  });
+
+  it("propose of the value already set is already so (exit 0)", async () => {
+    const r = await ctl(["propose", "embed", "off", "--reason", "contain spend"]);
+    expect(r.code).toBe(EXIT.ok);
+    expect(r.stdout).toBe("no change: embed is already off");
   });
 
   it("status marks an open proposal whose target moved as STALE", async () => {

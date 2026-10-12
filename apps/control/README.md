@@ -17,7 +17,7 @@ drift probes, no notifications, no observer agent.
 
 | Path                             | What                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | -------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `packages/control`               | The pure registry (`registry.ts`), target addresses (`targets.ts`), the fail-closed resolver / `effectiveMode()` (`resolve.ts`), `classify(change, role)` (`classify.ts`) and the read models (`views.ts`). Worker-safe, dependency-free.                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `packages/control`               | The pure registry (`registry.ts`), target addresses (`targets.ts`), the fail-closed resolver / `effectiveMode()` (`resolve.ts`), `classify(change, role)` (`classify.ts`), the read models (`views.ts`) and missed-tick detection (`cadence.ts`). Worker-safe, dependency-free.                                                                                                                                                                                                                                                                                                                                                                                |
 | `apps/control/src/index.ts`      | HTTP routing (JSON API + the page + its form posts) and the `ControlRpc` entrypoint.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | `apps/control/src/auth.ts`       | Caller identity from a verified Access token (default deny).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | `apps/control/src/service.ts`    | The operations, shared by API, page and RPC.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
@@ -56,9 +56,10 @@ What each role may change is decided by `classify()` in `packages/control`:
   add a narrowing override); anything else must be proposed. Entries declared `agent: "approval"` in
   the registry need approval for **any** change, quieter or louder, knobs included: the **master
   switch** (an agent may stop any single spending stage, not everything at once), the **alerts**
-  stage (an agent may not silence alerting) and the **8 health checks**. Posture repairs
-  (re-enabling a platform schedule) are agent-safe.
-- **runtime** — read gates, write ledger rows, `trip(stage, reason)` which can only set a stage off.
+  stage (an agent may not silence alerting) and the **8 health checks**.
+- **runtime** — read gates; write ledger rows and `trip(stage, reason)` (which can only set a stage
+  off) for **its own** stages: those whose registry `runtime` is the caller's name (the token's `name`,
+  the binding's `props.name`).
 
 **Why there is no local identity shortcut.** The Worker has exactly one way to learn who is
 calling — the verified JWT — and no code path that trusts anything else (no header, cookie, env flag
@@ -103,7 +104,8 @@ top mode caps nothing, so it is stored as no override — setting one where none
 Every registry dimension is also a `/v1/gate` query parameter.
 
 RPC (`ControlRpc`, for a service binding): `gate(stage, dims?)`, `recordRun(run)`,
-`trip(stage, reason, detail?)`. A binding may pass `props = { name = "…" }` as its audit label.
+`trip(stage, reason, detail?)`. A binding passes `props = { name = "<registry runtime id>" }`: its audit
+label and the stages it may record and trip.
 
 ## Storage and the fail-closed rules
 
@@ -114,8 +116,9 @@ against — so a concurrent trip can't turn an agent's safe "on → shadow" into
 "off → shadow".
 
 Fail-closed (owner decision, ingest included): a **missing row** reads as the registry default; an
-**unrecognised value** reads as `off` (a knob: its least risky bound); an **unreachable store** means
-the caller skips its tick (the gate clients of later slices; this Worker answers 5xx).
+**unrecognised value** reads as `off` (a knob: its least risky bound, but a number outside its range
+takes the nearest bound); an **unreachable store** means the caller skips its tick (the gate clients
+of later slices; this Worker answers 5xx).
 
 ## Local development
 
@@ -306,7 +309,7 @@ nano ~/.config/opusfinder-agent/ctl.json
 ```
 
 (`OPUSFINDER_CTL_URL` / `OPUSFINDER_CTL_CLIENT_ID` / `OPUSFINDER_CTL_CLIENT_SECRET` override the
-file per field.)
+file per field; `OPUSFINDER_CTL_CONFIG` names another file.)
 
 **7. Verify**
 
@@ -331,7 +334,8 @@ Applications → Add → Self-hosted), with the same two policies; use that app'
 - Add Claude Code `deny`/`ask` rules for `wrangler d1`, `wrangler deploy`, `wrangler secret` and
   `wrangler kv` — your wrangler login could otherwise bypass the API and its rules.
 - Agents run `pnpm ctl` in their sandbox: it must be able to read `~/.config/opusfinder-agent` and
-  reach the `workers.dev` hostname (add it to the sandbox network allowlist).
+  reach the `workers.dev` hostname (add it to the sandbox network allowlist). Behind the sandbox's
+  proxy, Node's fetch needs `NODE_USE_ENV_PROXY=1`.
 - Don't grant the browser extension the panel's hostname.
 
 **Break-glass** (Access locks you out): edit D1 directly as yourself and log it by hand —
@@ -386,12 +390,13 @@ Worker has no subrequest counter, and Neon awake time is an estimate for the cos
     functions the serve routes register;
   - `ingest.boardsPerTick`'s default, min and max;
   - the `discover` knob defaults;
+  - the `close` and `stale_sweep` initial modes and `stale_sweep.ttlDays`'s default, against the
+    scrapers Worker's `wrangler.toml` vars;
   - the `health.*` check ids, threshold defaults and env var names.
 
   **Not pinned** (keep both sides in step by hand): the `live_integration` cron
   (`.github/workflows/live-integration.yml`), the `discover` knobs' min/max, every `expect` period
-  (update it with its cron), `embed.pagesPerRun`, `digest.topK`, `stale_sweep.ttlDays` and
-  `alerts.cooldownH`.
+  (update it with its cron), `embed.pagesPerRun`, `digest.topK` and `alerts.cooldownH`.
 
 - Approvals don't force a fresh Access login (feasibility unverified).
 - Proposals expire lazily (read-time), with no notification.

@@ -2,14 +2,20 @@ import { parseArgs } from "node:util";
 
 import {
   INHERIT,
+  STAGE_IDS,
   normalizeReason,
   parseTarget,
   parseValue,
+  policyDef,
+  stageDef,
   type PolicyView,
+  type StageId,
   type StageView,
+  type Target,
+  type ValueSource,
 } from "@opusfinder/control";
 
-import { apiError, callApi, CtlError, type FetchLike } from "./client";
+import { apiError, callApi, CtlError, type ApiResponse, type FetchLike } from "./client";
 import { loadConfig, type ConfigDeps } from "./config";
 
 /**
@@ -50,7 +56,17 @@ targets: global | <stage> | <policy> | <entry>.<knob> | <stage>@<dim>=<value>
   e.g. ingest, close, health.board_fail_ratio, ingest.boardsPerTick, ingest@source=smartrecruiters
 values:  off | shadow | on | enforce | a number | inherit (clears an override)
 config:  ~/.config/opusfinder-agent/ctl.json {"url","clientId","clientSecret"}
+         (OPUSFINDER_CTL_CONFIG names another file)
          or OPUSFINDER_CTL_URL / OPUSFINDER_CTL_CLIENT_ID / OPUSFINDER_CTL_CLIENT_SECRET`;
+
+/** The options each command takes besides --json: any other is refused, so a stray --dry-run can't write. */
+const OPTIONS = new Map<string, readonly string[]>([
+  ["status", []],
+  ["proposals", ["all"]],
+  ["withdraw", []],
+  ["propose", ["reason"]],
+  ["set", ["reason", "propose", "no-propose", "dry-run"]],
+]);
 
 class UsageError extends Error {}
 
@@ -86,6 +102,14 @@ function parse(argv: string[]): Parsed {
   }
   const [command = "help", ...positionals] = parsed.positionals;
   const v = parsed.values;
+  const allowed = OPTIONS.get(command);
+  if (allowed) {
+    const stray = Object.keys(v).filter(
+      (o) => o !== "json" && o !== "help" && !allowed.includes(o),
+    );
+    if (stray.length > 0)
+      throw new UsageError(`${command} doesn't take ${stray.map((o) => `--${o}`).join(", ")}`);
+  }
   if (v.propose && v["no-propose"])
     throw new UsageError("--propose and --no-propose are mutually exclusive");
   return {
@@ -149,43 +173,93 @@ function proposalLine(p: Proposal): string {
   return `#${p.id} ${p.target}: ${val(p.from_value)} → ${val(p.to_value)} by ${p.proposer} [${p.status}]${stale} (expires ${short(p.expires_at)}) — ${p.reason}`;
 }
 
+/** A stage's wiring (the registry's `gate`) in the panel's words; "shadow" there would read as a mode. */
+const WIRING: Record<StageView["gate"], string> = {
+  unwired: "not wired",
+  shadow: "logs only",
+  enforced: "wired",
+};
+
+/** A stored value that isn't used as stored; without this the substitute reads as deliberate. */
+const sourceNote = (source: ValueSource) =>
+  source === "invalid"
+    ? " (unreadable, so the safe value is used)"
+    : source === "clamped"
+      ? " (out of range, so the nearest allowed value is used)"
+      : "";
+
+/** The stages whose runtimes read a target. */
+function readers(t: Target): readonly StageId[] {
+  if (t.kind === "dim") return [t.stage];
+  if (t.entry.type === "global") return STAGE_IDS;
+  return t.entry.type === "stage" ? [t.entry.id] : policyDef(t.entry.id).readBy;
+}
+
+/** A change reaches only the record until its readers' runtimes enforce their gates. */
+function notEnforced(address: string): string {
+  const t = parseTarget(address);
+  if (!t.ok) return "";
+  const byWiring = new Map<string, StageId[]>();
+  for (const id of readers(t.value)) {
+    const gate = stageDef(id).gate;
+    if (gate === "enforced") continue;
+    byWiring.set(WIRING[gate], [...(byWiring.get(WIRING[gate]) ?? []), id]);
+  }
+  if (byWiring.size === 0) return "";
+  const which = [...byWiring].map(([w, ids]) => `${ids.join(", ")}: ${w}`).join("; ");
+  return ` — not enforced yet (${which})`;
+}
+
 function formatStatus(s: Json): string {
-  const stages = (s.stages ?? []) as (StageView & { lastRun: Json | null })[];
+  const stages = (s.stages ?? []) as (StageView & { lastRun: Json | null; overdue: boolean })[];
   const policies = (s.policies ?? []) as PolicyView[];
   const caller = s.caller as { role: string; name: string };
-  const global = s.global as { desired: string };
+  const global = s.global as { desired: string; source: ValueSource };
+  const byStage = (s.recentRuns as { byStage?: Record<string, { error?: number }> } | undefined)
+    ?.byStage;
   const out: string[] = [];
   out.push(`opusfinder control — ${short(s.generatedAt)} (you: ${caller.role}:${caller.name})`);
   out.push(
-    `master switch: ${global.desired}${global.desired === "off" ? " (everything is capped at off)" : ""}`,
+    `master switch: ${global.desired}${sourceNote(global.source)}${global.desired === "off" ? " (everything is capped at off)" : ""}`,
     "",
   );
   out.push(
     pad([
-      ["STAGE", "DESIRED", "EFFECTIVE", "LAST RUN"],
-      ...stages.map((st) => [
-        st.id,
-        st.desired,
-        st.effective + (st.cappedBy ? ` (capped: ${st.cappedBy})` : ""),
-        st.lastRun ? `${String(st.lastRun.outcome)} ${short(st.lastRun.started_at)}` : "-",
-      ]),
+      ["STAGE", "DESIRED", "EFFECTIVE", "WIRING", "LAST RUN"],
+      ...stages.map((st) => {
+        const errors = byStage?.[st.id]?.error ?? 0;
+        return [
+          st.id,
+          st.desired + sourceNote(st.source),
+          st.effective + (st.cappedBy ? ` (capped: ${st.cappedBy})` : ""),
+          WIRING[st.gate],
+          (st.lastRun ? `${String(st.lastRun.outcome)} ${short(st.lastRun.started_at)}` : "-") +
+            (errors > 0 ? ` (${errors} failed in 24 h)` : "") +
+            (st.overdue ? " OVERDUE" : ""),
+        ];
+      }),
     ]),
   );
   const overrides = stages.flatMap((st) => st.overrides);
   if (overrides.length > 0)
-    out.push("", `overrides: ${overrides.map((o) => `${o.target}=${o.override}`).join(", ")}`);
+    out.push(
+      "",
+      `overrides: ${overrides.map((o) => `${o.target}=${o.override}${sourceNote(o.source)}`).join(", ")}`,
+    );
   const knobs = [...stages.flatMap((st) => st.knobs), ...policies.flatMap((p) => p.knobs)].filter(
     (k) => k.source !== "default",
   );
   if (knobs.length > 0)
-    out.push(`knobs (non-default): ${knobs.map((k) => `${k.target}=${k.value}`).join(", ")}`);
+    out.push(
+      `knobs (non-default): ${knobs.map((k) => `${k.target}=${k.value}${sourceNote(k.source)}`).join(", ")}`,
+    );
   out.push(
     "",
     pad([
       ["POLICY", "DESIRED", "EFFECTIVE", "AGENT"],
       ...policies.map((p) => [
         p.id,
-        p.desired,
+        p.desired + sourceNote(p.source),
         p.effective,
         p.agent === "approval" ? "approval" : "safe-direction",
       ]),
@@ -246,9 +320,14 @@ export async function main(argv: string[], deps: CliDeps): Promise<number> {
       if (p.json && err.body !== undefined) deps.stdout(JSON.stringify(err.body, null, 2));
       return EXIT.error;
     }
-    throw err;
+    // An unreadable config file, a truncated or unexpected body, a timeout mid-body: still exit 1, no stack.
+    deps.stderr(`error: ${String(err)}`);
+    return EXIT.error;
   }
 }
+
+/** 409 no_change: the target already holds the value, which is "already so" (exit 0), not a failure. */
+const alreadySo = (res: ApiResponse) => res.status === 409 && apiError(res).code === "no_change";
 
 /** Parse a command into a runner (throws UsageError up front, before any config or network). */
 function command(p: Parsed, deps: CliDeps): (call: Call) => Promise<number> {
@@ -293,6 +372,10 @@ function command(p: Parsed, deps: CliDeps): (call: Call) => Promise<number> {
       const args = changeArgs(p);
       return async (call) => {
         const res = await call("POST", "/v1/proposals", args);
+        if (alreadySo(res)) {
+          emit(res.body, `no change: ${args.target} is already ${args.value}`);
+          return EXIT.ok;
+        }
         if (res.status !== 200 && res.status !== 201) throw apiError(res);
         const { proposal, duplicate } = res.body as { proposal: Proposal; duplicate: boolean };
         emit(
@@ -307,6 +390,7 @@ function command(p: Parsed, deps: CliDeps): (call: Call) => Promise<number> {
       const args = changeArgs(p);
       // Unattended (no terminal) or --propose: file the proposal in the same call. A terminal asks first.
       const autoPropose = p.propose || (!deps.isTTY && !p.noPropose);
+      const unenforced = notEnforced(args.target);
       return async (call) => {
         const res = await call("POST", "/v1/changes", {
           ...args,
@@ -315,14 +399,15 @@ function command(p: Parsed, deps: CliDeps): (call: Call) => Promise<number> {
         });
         const b = res.body as Json & { result?: string };
         const fromTo = `${args.target} ${val(b.from as string | null)} → ${val(b.to as string | null)}`;
+        const noop = (body: unknown) => {
+          emit(body, `no change: ${args.target} is already ${args.value}${unenforced}`);
+          return EXIT.ok;
+        };
         if (res.status === 200 && b.result === "applied") {
-          emit(b, `applied: ${fromTo} (change #${String(b.changeId)})`);
+          emit(b, `applied: ${fromTo} (change #${String(b.changeId)})${unenforced}`);
           return EXIT.ok;
         }
-        if (res.status === 200 && b.result === "noop") {
-          emit(b, `no change: ${args.target} is already ${args.value}`);
-          return EXIT.ok;
-        }
+        if (res.status === 200 && b.result === "noop") return noop(b);
         if (res.status === 200 && b.result === "dry_run") {
           const d = b.decision as { outcome: string; rule: string };
           emit(b, `dry run: ${fromTo}: ${d.outcome} (${d.rule})`);
@@ -352,6 +437,7 @@ function command(p: Parsed, deps: CliDeps): (call: Call) => Promise<number> {
           return EXIT.notApplied;
         }
         const filed = await call("POST", "/v1/proposals", args);
+        if (alreadySo(filed)) return noop(filed.body);
         if (filed.status !== 200 && filed.status !== 201) throw apiError(filed);
         const { proposal, duplicate } = filed.body as { proposal: Proposal; duplicate: boolean };
         emit(

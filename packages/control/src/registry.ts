@@ -1,7 +1,7 @@
 // The stage registry — the ONE place every switch is declared (control-surface architecture §5, §13).
 // The control Worker's API + page, `pnpm ctl`, the classify() policy, the runtime gates (the scrapers Worker,
-// in shadow) and (a later slice) guard:schedules all DERIVE their lists from this file; nothing else keeps
-// its own copy.
+// in shadow) and (a later slice) guard:schedules all DERIVE their lists from this file. The few copies a
+// runtime keeps (db/health's check ids, the scrapers Worker's stage names) are pinned by sync tests.
 //
 // WORKER-SAFE, PURE DATA + TYPES. This package is compiled into the control Worker and the scrapers Worker
 // (which checks its gate's mode against `stages`), so: no `process`, no Buffer, no node:* imports, and NO
@@ -31,9 +31,9 @@ export type Runtime =
   | "cli"; // run by hand (pnpm …)
 
 /**
- * Units a run may record in the ledger (B1). Exact quantities; dollars are a later slice (prices.ts).
- * `<vendor>.<metric>` is what a vendor bills or meters; `<stage>.<metric>` is a stage's own work count
- * (never priced), kept so a run's cost can be read against how much it did.
+ * Units a run may record in the ledger (B1): exact quantities, never priced here (Cost comes from the
+ * vendors' statements). `<vendor>.<metric>` is what a vendor bills or meters; `<stage>.<metric>` is a
+ * stage's own work count, kept so a run's cost can be read against how much it did.
  */
 export const UNIT_IDS = [
   "voyage.tokens",
@@ -124,8 +124,6 @@ export interface StageDef {
    * A stage ADDED LATER must ship with `initial: "off"` so it starts off until the owner turns it on.
    */
   initial: StageMode;
-  /** C5. Every stage skips if the store can't be read; kept explicit so the panel can show it. */
-  onUnreadable: "skip";
   /**
    * How far this stage's runtime has been wired to the control plane (§12.2), so the panel can say whether
    * flipping it changes anything yet: "unwired" = the runtime never reads its gate (its env vars, constants
@@ -136,9 +134,12 @@ export interface StageDef {
   units: readonly UnitId[];
   dims?: readonly DimKey[];
   knobs?: Readonly<Record<string, Knob>>;
-  /** Advisory only (T4). Shown, never enforced, in slice 1; prices/month-to-date are a later slice. */
+  /**
+   * Advisory only (T4): the panel shows the monthly target. `runaway` is the per-day limit the stage's
+   * runtime will trip on; nothing meters or trips on it yet, so the panel doesn't show it.
+   */
   budget?: { targetUsdPerMonth?: number; runaway?: { unit: UnitId | "usd"; perDay: number } };
-  /** S2/C6: missed-tick detection (later slice). Every tick writes a ledger row, even when off. */
+  /** S2/C6: the period cadence.ts checks for a missed tick. Every tick writes a ledger row, even when off. */
   expect?: { everyMin: number; graceMin: number };
   heartbeat?: "healthchecks:ingest";
   /** Defaults to "safe-direction". */
@@ -155,7 +156,6 @@ export interface PolicyDef {
   /** Health checks: report "skipped (stage off)" while the watched stage is off (C6). */
   watches?: StageId;
   knobs?: Readonly<Record<string, Knob>>;
-  legacyEnv?: string;
   /** Defaults to "safe-direction". Applies to the policy's mode AND its knobs. */
   agent?: AgentRule;
 }
@@ -171,6 +171,9 @@ export interface GlobalDef {
  * The "all off" master switch: every stage's and policy's effective mode is capped by it (§5.1). An agent
  * may stop any single spending stage on its own, but flipping EVERYTHING off (alerting and the watchdog
  * heartbeat's driver included) is an owner call — hence "approval", in both directions.
+ * Stop by stop, an agent can still reach all-off with every health check skipped (C6), so (owner,
+ * 2026-10-12) each agent stop still applies at once, keeping the brake fast, but must notify the owner.
+ * Nothing notifies yet: that is built with the notification/observer slice.
  */
 export const globalSwitch: GlobalDef = {
   label: "Master switch",
@@ -182,13 +185,14 @@ export const globalSwitch: GlobalDef = {
 // Crons, platform ids and knob values here copy their runtimes, which this pure package can't import. Sync
 // tests in those sources (control-registry.test.ts) pin SOME of them, so a change on one side fails there:
 //   - apps/scrapers: the ingest and discover crons (through the Worker's own dispatch),
-//     ingest.boardsPerTick's default, min and max, and the discover knobs' defaults;
+//     ingest.boardsPerTick's default, min and max, the discover knobs' defaults, and (against
+//     wrangler.toml's vars) the close / stale_sweep initial modes and stale_sweep.ttlDays's default;
 //   - packages/inngest: each Inngest stage's platformId and the cron its served function registers;
 //   - packages/db (for the health.* policies below): the check ids, threshold defaults and env var names.
 // NOT pinned, so keep them in step by hand: live_integration's cron (.github/workflows/
 // live-integration.yml), the discover knobs' min/max, every `expect` period (change it with its cron),
-// embed.pagesPerRun, digest.topK, stale_sweep.ttlDays and alerts.cooldownH. (embed.tokensPerRun and
-// digest.maxRecipientsPerRun have no runtime counterpart yet.)
+// embed.pagesPerRun, digest.topK and alerts.cooldownH. (embed.tokensPerRun and digest.maxRecipientsPerRun
+// have no runtime counterpart yet.)
 export const stages = {
   ingest: {
     label: "Ingest job boards",
@@ -197,7 +201,6 @@ export const stages = {
     // Shadow not offered: a fetch-without-writing tick still costs the full Neon time (§5.2).
     modes: ["off", "on"],
     initial: "on",
-    onUnreadable: "skip",
     gate: "shadow",
     units: [
       "cf.wall_ms",
@@ -233,7 +236,6 @@ export const stages = {
     trigger: { cron: "0 3 * * SUN" },
     modes: ["off", "on"],
     initial: "on",
-    onUnreadable: "skip",
     gate: "shadow",
     units: ["cf.wall_ms", "cf.subrequests", "neon.awake_s"],
     dims: ["lane"],
@@ -265,7 +267,6 @@ export const stages = {
     modes: ["off", "shadow", "on"],
     shadowMeans: "count the backlog and estimate tokens; no Voyage calls",
     initial: "off",
-    onUnreadable: "skip",
     gate: "unwired",
     units: ["voyage.tokens", "neon.awake_s"],
     knobs: {
@@ -299,7 +300,6 @@ export const stages = {
     // Shadow not offered: per-check shadow already exists at the policy level (§5.2).
     modes: ["off", "on"],
     initial: "off",
-    onUnreadable: "skip",
     gate: "unwired",
     units: ["resend.emails", "neon.awake_s"],
     // Turning alerting off is how an outage goes unseen, so — like the health checks — every agent move
@@ -328,7 +328,6 @@ export const stages = {
     modes: ["off", "shadow", "on"],
     shadowMeans: "resolve eligible users and retrieve candidates; no LLM, no email",
     initial: "off",
-    onUnreadable: "skip",
     gate: "unwired",
     units: [
       "anthropic.haiku.in",
@@ -360,7 +359,6 @@ export const stages = {
     trigger: { cron: "0 7 * * *" },
     modes: ["off", "on"],
     initial: "off",
-    onUnreadable: "skip",
     gate: "unwired",
     units: ["gh.minutes", "voyage.tokens", "neon.awake_s"],
     expect: { everyMin: 24 * 60, graceMin: 180 }, // GitHub schedules can be delayed or dropped
@@ -371,7 +369,6 @@ export const stages = {
     trigger: { manual: true },
     modes: ["off", "on"],
     initial: "on",
-    onUnreadable: "skip",
     gate: "unwired",
     units: ["anthropic.haiku.in", "anthropic.haiku.out", "r2.bytes"],
   },
@@ -402,7 +399,6 @@ export const policies = {
     modes: ["shadow", "enforce"],
     initial: "enforce",
     readBy: ["ingest", "discover", "digest"], // one row → the atomic both-runtimes flip is automatic
-    legacyEnv: "LIFECYCLE_CLOSE_ENFORCE",
   },
   stale_sweep: {
     label: "Close stale jobs",
@@ -422,7 +418,6 @@ export const policies = {
         legacyEnv: "STALE_SWEEP_TTL_DAYS",
       },
     },
-    legacyEnv: "STALE_SWEEP",
   },
   // The 8 health checks. Ids are `health.<HealthCheckId>` (packages/db/src/health.ts); a sync test in
   // @opusfinder/db pins the two lists, each threshold default and its env var together. A later slice

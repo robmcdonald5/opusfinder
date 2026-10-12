@@ -49,12 +49,15 @@ export async function callApi(
       headers,
       body: body === undefined ? undefined : JSON.stringify(body),
       redirect: "manual",
+      // Bounds the body read too. A timed-out POST may still have landed: a rerun answers noop or duplicate.
+      signal: AbortSignal.timeout(30_000),
     });
   } catch (err) {
-    // The URL is not a secret; the headers (which hold one) are never part of a fetch error message.
-    throw new CtlError(
-      `could not reach ${config.url}: ${err instanceof Error ? err.message : String(err)}`,
-    );
+    // Only the error's code: fetch's message can quote a header value, and the headers hold the secret.
+    const cause = (err as { cause?: { code?: unknown } } | null)?.cause;
+    const reason =
+      typeof cause?.code === "string" ? cause.code : err instanceof Error ? err.name : "error";
+    throw new CtlError(`could not reach ${config.url} (${reason})`);
   }
   if (res.status >= 300 && res.status < 400) {
     await res.body?.cancel();

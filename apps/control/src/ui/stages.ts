@@ -5,7 +5,7 @@ import type { ChangeRow } from "../store";
 import { changeRows } from "./changes";
 import { card, controlRow, empty, facts, item, rowList, table } from "./components";
 import { knobRow, modeControl, sliceControl } from "./forms";
-import { ago, compact, duration, esc, period } from "./format";
+import { ago, duration, esc, period } from "./format";
 import { isOwner, layout } from "./layout";
 import { runTable } from "./runs";
 import {
@@ -108,19 +108,8 @@ export function renderStages(view: StatusView, flash: string | null): string {
 }
 
 function budgetText(s: StageRow): string {
-  const b = s.budget;
-  if (!b) return "";
-  const r = b.runaway;
-  return [
-    b.targetUsdPerMonth !== undefined ? `$${esc(b.targetUsdPerMonth)}/mo target` : "",
-    r
-      ? r.unit === "usd"
-        ? `stop above $${esc(r.perDay)}/day`
-        : `stop above ${esc(compact(r.perDay))} <code>${esc(r.unit)}</code>/day`
-      : "",
-  ]
-    .filter(Boolean)
-    .join(" · ");
+  const target = s.budget?.targetUsdPerMonth;
+  return target !== undefined ? `$${esc(target)}/mo target` : "";
 }
 
 function stageFacts(s: StageRow, nowIso: string): string {

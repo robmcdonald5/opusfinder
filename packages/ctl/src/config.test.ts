@@ -31,11 +31,9 @@ const goodFile = JSON.stringify({
 });
 
 describe("configPath", () => {
-  it("defaults to ~/.config/opusfinder-agent/ctl.json, honouring XDG_CONFIG_HOME and an explicit override", () => {
+  it("defaults to ~/.config/opusfinder-agent/ctl.json whatever XDG_CONFIG_HOME says, unless overridden", () => {
     expect(configPath({ env: {}, home: HOME })).toBe(DEFAULT_PATH);
-    expect(configPath({ env: { XDG_CONFIG_HOME: "/xdg" }, home: HOME })).toBe(
-      join("/xdg", "opusfinder-agent", "ctl.json"),
-    );
+    expect(configPath({ env: { XDG_CONFIG_HOME: "/xdg" }, home: HOME })).toBe(DEFAULT_PATH);
     expect(configPath({ env: { OPUSFINDER_CTL_CONFIG: "/elsewhere.json" }, home: HOME })).toBe(
       "/elsewhere.json",
     );
@@ -128,6 +126,7 @@ describe("loadConfig", () => {
     ["plain http to a remote host", "http://opusfinder-control.example.workers.dev"],
     ["a query string", "https://x.example.com/?a=1"],
     ["not a URL", "opusfinder-control"],
+    ["credentials in the url", `https://agent:${SECRET}@x.example.com`],
   ])("refuses %s as the url", (_label, url) => {
     const r = loadConfig(
       deps({
@@ -140,6 +139,21 @@ describe("loadConfig", () => {
     );
     expect(r.ok).toBe(false);
     expect(r.ok ? "" : r.error).not.toContain(SECRET);
+  });
+
+  it("refuses a client secret with a control character, naming only the field and its length", () => {
+    const r = loadConfig(
+      deps({
+        env: {
+          OPUSFINDER_CTL_URL: "https://x.example.com",
+          OPUSFINDER_CTL_CLIENT_ID: "a",
+          OPUSFINDER_CTL_CLIENT_SECRET: `${SECRET}\nmore`,
+        },
+      }),
+    );
+    expect(r.ok ? "" : r.error).toBe(
+      `clientSecret contains invalid characters (${SECRET.length + 5} chars)`,
+    );
   });
 
   it("warns when the credential file is readable by others", () => {
