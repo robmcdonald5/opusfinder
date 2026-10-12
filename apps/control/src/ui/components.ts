@@ -193,7 +193,7 @@ export function facts(pairs: readonly (readonly [string, string])[]): string {
 /**
  * The row for every switch and setting, so they all read and line up alike: the name on the left, the value
  * (or the owner's control for it) on the right. A switch's own settings sit indented under it, one row each.
- * `name` is plain text. `idle` greys the names of a switch that isn't being acted on.
+ * `name` is plain text. `idle` greys the names (a health check whose watched stage is off).
  */
 export function controlRow(o: {
   name: string;

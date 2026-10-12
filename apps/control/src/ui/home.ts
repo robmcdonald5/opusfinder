@@ -24,7 +24,7 @@ function attention(view: StatusView, c: CostSummary): string[] {
       out.push(
         row(
           true,
-          `<a href="/runs?stage=${esc(stage)}&amp;outcome=error">${esc(stageLabel(stage))}: ${plural(failed, "failed run")}</a>`,
+          `<a href="/runs?stage=${esc(stage)}&amp;outcome=error&amp;from=${esc(view.recentRuns.since.slice(0, 10))}">${esc(stageLabel(stage))}: ${plural(failed, "failed run")}</a>`,
           `<span class="muted">last 24 h</span>`,
         ),
       );

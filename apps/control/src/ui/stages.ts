@@ -158,7 +158,11 @@ function dimCard(s: StageRow, dim: string, values: readonly string[], edit: stri
           name: v,
           value: `${
             edit
-              ? sliceControl(s, { target, label: v, override: o?.override ?? null }, edit)
+              ? sliceControl(
+                  s,
+                  { target, label: v, override: o?.override ?? null, source: o?.source },
+                  edit,
+                )
               : mode(o?.override, "stage")
           }${o ? sourceNote(o.source) : ""}${
             o && o.effective !== o.override ? ` → ${mode(o.effective, "stage")}` : ""
