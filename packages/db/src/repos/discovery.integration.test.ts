@@ -43,6 +43,7 @@ interface CompanySeed {
   consecutiveProbeFailures?: number;
   lastLiveAt?: Date | null;
   lastProbedAt?: Date | null;
+  lastIngestedAt?: Date | null;
   createdAt?: Date;
   updatedAt?: Date;
 }
@@ -75,6 +76,7 @@ describe("discovery repo — companies lifecycle field semantics (integration: r
         consecutiveProbeFailures: seed.consecutiveProbeFailures,
         lastLiveAt: seed.lastLiveAt,
         lastProbedAt: seed.lastProbedAt,
+        lastIngestedAt: seed.lastIngestedAt,
         createdAt: seed.createdAt,
         updatedAt: seed.updatedAt,
       })
@@ -251,6 +253,26 @@ describe("discovery repo — companies lifecycle field semantics (integration: r
       expect((await readCompany(neverFailed)).active).toBe(true);
       expect((await readCompany(recent)).active).toBe(true);
       expect((await readCompany(alreadyInactive)).active).toBe(false);
+    });
+
+    it("a recent successful ingest counts as liveness — a failing board last probed live past the window is spared while it still ingests", async () => {
+      // SPARED: one 404 on a board that still ingests fine (last LIVE probe past the window).
+      const ingesting = await seedCompany({
+        slug: "ingesting",
+        consecutiveProbeFailures: 1,
+        lastLiveAt: daysAgo(35),
+        lastIngestedAt: daysAgo(1),
+      });
+      // SWEPT: its last successful ingest is past the window too.
+      const dead = await seedCompany({
+        slug: "dead",
+        consecutiveProbeFailures: 1,
+        lastLiveAt: daysAgo(40),
+        lastIngestedAt: daysAgo(35),
+      });
+
+      expect(await deactivateStale(db)).toEqual([dead]);
+      expect((await readCompany(ingesting)).active).toBe(true);
     });
 
     it("scopes the sweep to opts.source — a qualifying row on another source is left active", async () => {

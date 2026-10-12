@@ -136,9 +136,9 @@ export function listCompanyStates(
 /**
  * Record one probe outcome for a company in a SINGLE branchless UPDATE. Every probe stamps
  * `last_probed_at` + `updated_at`. A LIVE probe additionally resets the failure streak to 0,
- * refreshes `last_live_at` (the staleness clock), and re-activates the row — so a slug that comes
- * back to life un-deactivates itself. A FAILED (confirmed-ABSENT) probe increments the streak and
- * leaves `last_live_at` + `active` untouched, so the staleness window keeps counting. Keeping it
+ * refreshes `last_live_at` (part of the staleness clock), and re-activates the row (the only path
+ * that does). A FAILED (confirmed-ABSENT) probe increments the streak and leaves `last_live_at` +
+ * `active` untouched, so the staleness window keeps counting. Keeping it
  * one statement means the shared stamping can't drift between the live and failed paths; the
  * increment is SQL-side (`failures + 1`) → race-free. ONLY call on a definitive live/absent
  * verdict; an `indeterminate` probe must skip this so it can't drift a healthy row.
@@ -171,18 +171,16 @@ export async function markProbed(db: Db, companyId: number): Promise<void> {
 }
 
 /**
- * Deactivate every company whose slug has been failing for at least `olderThanDays` days, decidable
- * from each row alone: ACTIVE, a non-zero failure streak, and a staleness clock
- * COALESCE(last_live_at, created_at) older than the window. The COALESCE falls back to `created_at`
- * for a row a discovery LIVE probe has never refreshed (an ingestion-seeded company with
- * `last_live_at` NULL), so the clock runs from when the row was created. NOTE: this gives the FULL
- * window only to a row created WITHIN it — an ingestion-seeded row created longer ago than
- * `olderThanDays` can be swept on its FIRST confirmed-absent reprobe (its created_at clock is
- * already past). That is acceptable: `absent` is a definitive 404/400 (transients classify as
- * `indeterminate` and never increment the streak), and deactivation is reversible — a later live
- * probe reactivates the row. A never-failed row (streak 0) is untouched, so a source whose absence
- * can't be asserted — SmartRecruiters' ambiguous 200, which never increments the streak — never
- * wrongly deactivates.
+ * Deactivate every company that failed a probe and has shown no sign of life for `olderThanDays`
+ * days, decidable from each row alone: ACTIVE, a non-zero failure streak, and a staleness clock
+ * COALESCE(GREATEST(last_live_at, last_ingested_at), created_at) older than the window (GREATEST
+ * ignores NULLs). A successful non-empty ingest counts as liveness: a board is reprobed only every
+ * few weeks, so its last LIVE probe alone is often already past the window, and one 404 would
+ * deactivate a board that ingests fine (and close all its jobs). A never-failed row (streak 0) is
+ * untouched, so a source whose absence can't be asserted — SmartRecruiters' ambiguous 200, which never
+ * increments the streak — never wrongly deactivates. Not readily reversible: only a live probe
+ * reactivates (`markProbeResult`), and discovery probes an inactive row only when a seed lane
+ * re-emits its slug.
  * `opts.source` scopes the sweep to one source so a `--source` run doesn't deactivate rows of an
  * unrelated source it never re-probed; omit it (the broader pass) to sweep all sources. Returns the
  * ids of the rows flipped (the caller derives the count via `.length`, and closes their jobs via
@@ -197,7 +195,8 @@ export async function deactivateStale(
   const conditions = [
     sql`${companies.active} = true`,
     sql`${companies.consecutiveProbeFailures} > 0`,
-    sql`COALESCE(${companies.lastLiveAt}, ${companies.createdAt}) < now() - ${days} * interval '1 day'`,
+    sql`COALESCE(GREATEST(${companies.lastLiveAt}, ${companies.lastIngestedAt}), ${companies.createdAt})
+      < now() - ${days} * interval '1 day'`,
   ];
   if (opts.source) conditions.push(eq(companies.source, opts.source));
   const rows = await db

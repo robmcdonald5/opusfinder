@@ -14,7 +14,7 @@
  * to NULL when a job revives — the staleness clock the prune (prune-stale-jobs.ts) keys on. The stamp
  * rides the SAME enforce gate as the close itself, so shadow mode writes neither.
  */
-import { sql } from "drizzle-orm";
+import { sql, type SQL } from "drizzle-orm";
 
 import type { Db } from "../client";
 import { companies, jobs } from "../schema";
@@ -106,6 +106,8 @@ export async function sweepLifecycle(
     ? sql`WHEN jobs.consecutive_absences + 1 >= ${threshold} THEN now() `
     : sql``;
 
+  // A row this UPDATE revives also gets a fresh last_seen_at (markJobsPresent normally stamps it, but
+  // runIngestion still sweeps when that stamp fails), else the same tick's sweepStaleJobs re-closes it.
   const result: unknown = await db.execute(sql`
     WITH present_set AS (
       SELECT array_agg(value) AS ids
@@ -124,6 +126,10 @@ export async function sweepLifecycle(
         closed_at = CASE
           WHEN jobs.external_id = ANY(present_set.ids) THEN NULL
           ${closedAtBranch}ELSE jobs.closed_at
+        END,
+        last_seen_at = CASE
+          WHEN jobs.external_id = ANY(present_set.ids) THEN now()
+          ELSE jobs.last_seen_at
         END,
         updated_at = now()
       FROM present_set
@@ -210,10 +216,10 @@ async function closeActiveJobsBy(
 /**
  * Bulk soft-close every still-active job of the given (just-deactivated) companies — the board-death path
  * the feed-absence sweep is structurally blind to (a deactivated board runs activeOnly:true and is never
- * re-fetched, so its jobs never enter that sweep). NOT streak-gated: the company deactivation already
- * carried ~30 days of hysteresis (discovery.ts deactivateStale). Reversible — a later live probe
- * reactivates the company (markProbeResult) and the next ingest revives the present jobs via the
- * presence-reset.
+ * re-fetched, so its jobs never enter that sweep). NOT streak-gated: deactivateStale only deactivates a
+ * board that failed a probe and has had no live probe or successful ingest for ~30 days. Reversal needs a
+ * live probe (markProbeResult), which discovery runs on an inactive board only when a seed lane re-emits
+ * its slug; the next ingest then revives the listed jobs.
  */
 export function closeJobsForCompanies(
   db: Db,
@@ -235,6 +241,12 @@ export function closeJobsByIds(
 ): Promise<CloseResult> {
   return closeActiveJobsBy(db, "id", jobIds, opts.enforce ?? false);
 }
+
+/**
+ * markJobsPresent leaves a row stamped within this window untouched, so a job's last_seen_at can trail
+ * its board's last_ingested_at by up to this much. sweepStaleJobs' board-health guard adds it as a margin.
+ */
+const PRESENT_STAMP_WINDOW = sql`interval '1 hour'`;
 
 /**
  * The completeness-INDEPENDENT positive "I saw this job live" writer, called per board from runIngestion
@@ -292,7 +304,7 @@ export async function markJobsPresent(
       WHERE jobs.company_id = ${companyId}
         AND jobs.external_id = ANY(present_set.ids)
         AND (
-          jobs.last_seen_at < now() - interval '1 hour'
+          jobs.last_seen_at < now() - ${PRESENT_STAMP_WINDOW}
           OR jobs.lifecycle_state <> 'active'
           OR jobs.closed_at IS NOT NULL
         )
@@ -335,13 +347,15 @@ export const DEFAULT_STALE_TTL_DAYS = 21;
  * stays a FAST-PATH for boards we see completely; this timer is the floor under all of them.
  *
  * BOARD-HEALTH GUARD (joins companies): a job closes ONLY if its company was SUCCESSFULLY ingested within the
- * same TTL window (`c.last_ingested_at >= cutoff`, stamped by {@link markCompanyIngested}). A board that is
- * DOWN/empty for >TTL has last_ingested_at older than the window (or NULL pre-first-ingest), so its still-live
- * jobs are SPARED — NOT false-closed because the cron simply couldn't fetch them. Using the SAME cutoff for
- * the job-staleness and the board-health window makes a failing board's jobs become stale-eligible and
- * board-excluded at the same moment. A HEALTHY capped board keeps last_ingested_at fresh, so its aged-out
- * tail still closes (the intended FRESHNESS close — see schema.ts last_seen_at; those jobs are past recency
- * and revive if they re-enter the fetch window).
+ * same TTL window (`c.last_ingested_at >= cutoff + 1 hour`, stamped by {@link markCompanyIngested}). A board
+ * that is DOWN/empty for >TTL has last_ingested_at older than the window (or NULL pre-first-ingest), so its
+ * still-live jobs are SPARED — NOT false-closed because the cron simply couldn't fetch them. Using the SAME
+ * cutoff for the job-staleness and the board-health window makes a failing board's jobs become stale-eligible
+ * and board-excluded at the same moment; the 1-hour margin ({@link PRESENT_STAMP_WINDOW}) covers a job whose
+ * last_seen_at trails its board's last fetch, e.g. a board fetched twice within the hour and then down for
+ * the TTL. A HEALTHY capped board keeps last_ingested_at fresh, so its aged-out tail still closes (the
+ * intended FRESHNESS close — see schema.ts last_seen_at; those jobs are past recency and revive if they
+ * re-enter the fetch window).
  *
  * GLOBAL (all healthy companies), not per-board — the signal is time, not feed presence, so there is no
  * complete-feed precondition and no empty-set trap (`= ANY`/JOIN here, never `<> ALL`). count-only by DEFAULT
@@ -359,13 +373,7 @@ export async function sweepStaleJobs(
 ): Promise<CloseResult> {
   const ttlDays = Math.max(1, Math.trunc(opts.ttlDays ?? DEFAULT_STALE_TTL_DAYS));
   const enforce = opts.enforce ?? false;
-  // `${ttlDays}::int` (a Math.trunc'd in-code/env integer, never raw input) * interval — `::` binds tighter
-  // than `*`, so `($n::int) * (interval '1 day')`. ONE cutoff drives both the job-staleness test and the
-  // board-health window (so a failing board's jobs become stale-eligible and excluded together).
-  const cutoff = sql`now() - ${ttlDays}::int * interval '1 day'`;
-  const stale = sql`jobs.lifecycle_state = 'active'
-      AND COALESCE(jobs.last_seen_at, jobs.created_at) < ${cutoff}
-      AND c.last_ingested_at >= ${cutoff}`;
+  const stale = staleJobsWhere(ttlDays);
 
   // SHADOW (count-only): never UPDATE — just tally the standing stale-AND-board-healthy population.
   if (!enforce) {
@@ -386,4 +394,18 @@ export async function sweepStaleJobs(
     RETURNING jobs.id
   `);
   return { closed: resultRows(result).length, wouldClose: 0 };
+}
+
+/**
+ * {@link sweepStaleJobs}' predicate over `jobs` joined to `companies c`; the shadow-closes per-board
+ * breakdown reuses it so it counts exactly what the sweep would close. `ttlDays` must be an integer.
+ */
+export function staleJobsWhere(ttlDays: number): SQL {
+  // `${ttlDays}::int` (an in-code/env integer, never raw input) * interval — `::` binds tighter than `*`,
+  // so `($n::int) * (interval '1 day')`. ONE cutoff drives both the job-staleness test and the
+  // board-health window (so a failing board's jobs become stale-eligible and excluded together).
+  const cutoff = sql`now() - ${ttlDays}::int * interval '1 day'`;
+  return sql`jobs.lifecycle_state = 'active'
+      AND COALESCE(jobs.last_seen_at, jobs.created_at) < ${cutoff}
+      AND c.last_ingested_at >= ${cutoff} + ${PRESENT_STAMP_WINDOW}`;
 }

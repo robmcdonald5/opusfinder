@@ -27,10 +27,14 @@ export function companySlug(value: string): CompanySlug {
   return trimmed as CompanySlug;
 }
 
-/** Trim + require a non-empty, whitespace-free id, and brand. Throws otherwise. */
+/**
+ * Trim + require a non-empty id free of whitespace and control characters, and brand. Throws
+ * otherwise. Control characters include NUL, which Postgres text rejects: one such id would fail its
+ * board's whole upsert on every tick.
+ */
 export function jobId(value: string): JobId {
   const trimmed = value.trim();
-  if (trimmed.length === 0 || /\s/.test(trimmed)) {
+  if (trimmed.length === 0 || /[\s\p{Cc}]/u.test(trimmed)) {
     throw new Error(`Invalid JobId: ${JSON.stringify(value)}`);
   }
   return trimmed as JobId;
@@ -38,9 +42,10 @@ export function jobId(value: string): JobId {
 
 /**
  * Non-throwing {@link jobId}: returns the branded id, or `null` for any value `jobId` would reject
- * (non-string, empty/whitespace-only, or containing interior whitespace). Delegates to `jobId` so the
- * accept/reject rule can never drift. Lets a `SourceAdapter.mapItem` honor its "skip + count, never
- * throw on bad data" contract for a malformed posting id instead of throwing out of the page loop.
+ * (non-string, empty/whitespace-only, or containing interior whitespace or a control character).
+ * Delegates to `jobId` so the accept/reject rule can never drift. Lets a `SourceAdapter.mapItem` honor
+ * its "skip + count, never throw on bad data" contract for a malformed posting id instead of throwing
+ * out of the page loop.
  */
 export function safeJobId(value: unknown): JobId | null {
   if (typeof value !== "string") return null;

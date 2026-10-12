@@ -55,7 +55,8 @@ describe("sweepLifecycle — per-board feed-absence sweep (shadow suppresses clo
     // closed_at clock: the revive-clear (present → NULL) is emitted in shadow too, but no close-stamp.
     expect(sql).toContain("closed_at = CASE");
     expect(sql).toContain("THEN NULL");
-    expect(sql).not.toContain("THEN now()"); // no close → no closed_at stamp in shadow
+    // no close → no closed_at stamp in shadow
+    expect(sql).not.toMatch(/consecutive_absences \+ 1 >= \$\d+ THEN now\(\)/);
     expect(params).toContain(7); // companyId bound
     expect(params).toContain(ABSENCE_CLOSE_THRESHOLD); // default threshold (3) bound
   });

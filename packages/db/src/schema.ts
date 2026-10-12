@@ -67,11 +67,11 @@ export const companies = pgTable(
     metadata: jsonb("metadata"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-    // `active` flips false after ~30 days of CONSECUTIVE failed probes (deactivateStale). The
-    // staleness clock is COALESCE(last_live_at, created_at). Deactivation is gated on a non-zero
-    // failure STREAK, so a never-failed row is never swept and SmartRecruiters' unassertable 200
-    // (which never increments the streak) can't drift a healthy company. last_probed_at drives
-    // reprobe ORDERING, not staleness.
+    // `active` flips false once a failing board (non-zero failure STREAK) has had no live probe or
+    // successful ingest for ~30 days (deactivateStale: COALESCE(GREATEST(last_live_at,
+    // last_ingested_at), created_at)). The streak gate means a never-failed row is never swept and
+    // SmartRecruiters' unassertable 200 (which never increments the streak) can't drift a healthy
+    // company. last_probed_at drives reprobe ORDERING, not staleness.
     active: boolean("active").notNull().default(true),
     lastProbedAt: timestamp("last_probed_at", { withTimezone: true }),
     lastLiveAt: timestamp("last_live_at", { withTimezone: true }),

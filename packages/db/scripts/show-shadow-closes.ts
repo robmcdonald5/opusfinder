@@ -4,7 +4,7 @@ import { runScript } from "@opusfinder/shared/script";
 
 import { createDb } from "../src/client";
 import { getDatabaseUrl } from "../src/env";
-import { DEFAULT_STALE_TTL_DAYS } from "../src/repos/lifecycle";
+import { DEFAULT_STALE_TTL_DAYS, staleJobsWhere, sweepStaleJobs } from "../src/repos/lifecycle";
 import { digests, sourceRuns } from "../src/schema";
 
 /**
@@ -59,12 +59,10 @@ await runScript("ShowShadowCloses", async () => {
   console.log(`=== Arm A/B + Tier-1 stale — last ${runs.length} ingestion/discovery run(s) ===`);
   let wouldCloseTotal = 0;
   let closedTotal = 0;
-  let staleWouldCloseTotal = 0;
   let staleClosedTotal = 0;
   for (const r of runs) {
     wouldCloseTotal += num(r.counts, "wouldClose") + num(r.counts, "wouldCloseOnDeactivation");
     closedTotal += num(r.counts, "closed") + num(r.counts, "jobsClosedOnDeactivation");
-    staleWouldCloseTotal += num(r.counts, "staleWouldClose");
     staleClosedTotal += num(r.counts, "staleClosed");
     console.log(
       `#${r.id} ${r.pipeline} started=${iso(r.startedAt)} ${pick(r.counts, CLOSE_COUNTER_KEYS)} | ` +
@@ -112,30 +110,31 @@ await runScript("ShowShadowCloses", async () => {
   );
 
   // Universal staleness timer (sweepStaleJobs) — its OWN STALE_SWEEP switch, read BEFORE flipping it.
-  const stalePct = active > 0 ? `${((staleWouldCloseTotal / active) * 100).toFixed(2)}%` : "n/a";
+  // Each run's staleWouldClose is the whole standing population, so summing runs would multiply it:
+  // count it once, live, with the sweep's own count-only mode (default TTL).
+  const { wouldClose: staleStanding } = await sweepStaleJobs(db);
+  const stalePct = active > 0 ? `${((staleStanding / active) * 100).toFixed(2)}%` : "n/a";
   console.log(
     `\n=== Tier-1 stale timer ===\n` +
-      `staleWouldClose across shown runs=${staleWouldCloseTotal} (${stalePct} of active); ` +
-      `staleClosed=${staleClosedTotal}`,
+      `staleWouldClose (standing, live)=${staleStanding} (${stalePct} of active); ` +
+      `staleClosed across shown runs=${staleClosedTotal}`,
   );
   console.log(
     staleClosedTotal > 0
       ? "NOTE: staleClosed > 0 — STALE_SWEEP may ALREADY be 'enforce' (shadow never closes)."
-      : "Gate: staleWouldClose is the STANDING stale-active population each tick. The FIRST enforce clears a " +
+      : "Gate: staleWouldClose is the STANDING stale-active population. The FIRST enforce clears a " +
           "one-time backlog (healthy capped mega-boards' aged-out tails — EXPECTED). Read the per-board breakdown below.",
   );
 
-  // Per-board attribution for the stale timer — the gate's key calibration aid. Replicates sweepStaleJobs'
+  // Per-board attribution for the stale timer — the gate's key calibration aid. sweepStaleJobs' own
   // board-health-guarded predicate at the DEFAULT TTL (the deployed STALE_SWEEP_TTL_DAYS may differ). A
-  // healthy capped mega-board topping this is EXPECTED (its aged-out tail); the guard
-  // (c.last_ingested_at >= cutoff) already excludes any board down > TTL, so a down board's jobs never appear.
+  // healthy capped mega-board topping this is EXPECTED (its aged-out tail); the guard already excludes any
+  // board down > TTL, so a down board's jobs never appear.
   const byBoard = rows(
     await db.execute(sql`
       SELECT c.source, c.slug, count(*)::int AS would_close, max(c.last_ingested_at) AS last_ingested
-      FROM jobs j JOIN companies c ON c.id = j.company_id
-      WHERE j.lifecycle_state = 'active'
-        AND COALESCE(j.last_seen_at, j.created_at) < now() - ${DEFAULT_STALE_TTL_DAYS}::int * interval '1 day'
-        AND c.last_ingested_at >= now() - ${DEFAULT_STALE_TTL_DAYS}::int * interval '1 day'
+      FROM jobs JOIN companies c ON c.id = jobs.company_id
+      WHERE ${staleJobsWhere(DEFAULT_STALE_TTL_DAYS)}
       GROUP BY c.source, c.slug
       ORDER BY would_close DESC
       LIMIT 10`),
