@@ -3,23 +3,19 @@
  *
  * Every ingested job lands with `embedding` NULL (the Node-free scraper Worker can't run embed), and a
  * NULL-embedding job is invisible to matching. This cron function drains that backlog daily on the deployed
- * Node runtime (inngest/sveltekit on Vercel), wrapping the SAME repo primitive the `embeddings:backfill` CLI
- * uses — no repo or schema change.
+ * Node runtime (inngest/sveltekit on Vercel), running the SAME page body (`embedNextPage`) the
+ * `embeddings:backfill` CLI loops over.
  *
  * Why NOT call backfillJobEmbeddings directly: it runs an unbounded in-process loop to backlog exhaustion,
- * which would blow Vercel's maxDuration (the SvelteKit serve can't stream). So the drain pages the low-level
- * primitives ONE page per `step.run`, mirroring the digest's bounded poll loop: a per-page bound keeps one
- * step short, and MAX_PAGES_PER_RUN bounds the per-invocation step count (a deep backlog finishes across
- * subsequent daily runs — the drain is idempotent).
+ * which would blow Vercel's maxDuration (the SvelteKit serve can't stream). So the drain runs ONE page per
+ * `step.run`, mirroring the digest's bounded poll loop: a per-page bound keeps one step short, and
+ * MAX_PAGES_PER_RUN bounds the per-invocation step count (a deep backlog finishes across subsequent daily
+ * runs — the drain is idempotent).
  *
  * Paging is CURSORLESS — a written row drops out of `embedding IS NULL`, so the next no-offset query returns
  * the following rows.
  */
-import {
-  jobEmbeddingText,
-  jobsNeedingEmbedding,
-  writeJobEmbeddings,
-} from "@opusfinder/db/repos";
+import { EmbedCountMismatchError, embedNextPage } from "@opusfinder/db/repos";
 import type { Db } from "@opusfinder/db";
 import { NonRetriableError } from "inngest";
 
@@ -55,7 +51,7 @@ export interface EmbedDrainStepTools {
 
 /**
  * The embed-drain loop body, extracted from the Inngest handler so its page / mismatch / cap branches are
- * unit-testable with a recording fake `step` + stubbed repo primitives (no real Neon / Voyage). Pages the
+ * unit-testable with a recording fake `step` + a stubbed page primitive (no real Neon / Voyage). Pages the
  * backlog ONE page per `step.run` (each = one Voyage request + one UPDATE), bounded by MAX_PAGES_PER_RUN.
  * Cursorless: a written row drops out of `embedding IS NULL`, so the next no-offset query returns the rows
  * after it.
@@ -75,23 +71,17 @@ export async function embedDrainStep(
     // Step id derives ONLY from the loop index (never ctx.attempt — that would orphan a retried step).
     // Each page is its own step.run = one Voyage request + one UPDATE.
     const page = await step.run(`embed-page-${i}`, async () => {
-      const batch = await jobsNeedingEmbedding(deps.db, { limit: EMBED_PAGE });
-      if (batch.length === 0) return { processed: 0, tokens: 0, done: true };
-      const { embeddings, usage } = await deps.embed(
-        batch.map((job) => jobEmbeddingText(job)),
-        { inputType: "document" },
-      );
-      // A length mismatch is a deterministic bug — fail terminally rather than burn paid retries.
-      if (embeddings.length !== batch.length) {
-        throw new NonRetriableError(
-          `embed returned ${embeddings.length} vectors for ${batch.length} jobs`,
-        );
+      try {
+        const { embedded, tokens, done } = await embedNextPage(deps.db, deps.embed, {
+          limit: EMBED_PAGE,
+          inputType: "document",
+        });
+        return { processed: embedded, tokens, done };
+      } catch (err) {
+        // A length mismatch is a deterministic bug — fail terminally rather than burn paid retries.
+        if (err instanceof EmbedCountMismatchError) throw new NonRetriableError(err.message);
+        throw err;
       }
-      const written = await writeJobEmbeddings(
-        deps.db,
-        batch.map((job, k) => ({ id: job.id, embedding: embeddings[k] as number[] })),
-      );
-      return { processed: written, tokens: usage.totalTokens, done: batch.length < EMBED_PAGE };
     });
     pages++;
     processed += page.processed;
@@ -113,7 +103,7 @@ export async function embedDrainStep(
 function makeEmbedDrain(deps: BackfillDeps) {
   return inngest.createFunction(
     { id: "embed-backlog-drain", singleton: { mode: "skip" } },
-    { cron: "0 4 * * *" }, // 04:00 UTC — after the night's ingestion ticks, clear of the digest cadence
+    { cron: "0 4 * * *" }, // 04:00 UTC, alongside that hour's ingest tick; clear of the digest cadence
     // The adapter passes Inngest's tools through; the cast is sound — the page step's return
     // ({processed,tokens,done}) is a JSON fixed-point, so Inngest's Jsonify memoization is the identity on it.
     ({ step }) =>

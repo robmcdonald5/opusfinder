@@ -86,12 +86,20 @@ export function textArrayLiteral(values: string[]): string {
  * `chr(10)` separator keeps a whitespace boundary between title and description. Normalization is MINIMAL
  * — NO punctuation stripping, to avoid false-merging short distinct titles.
  *
+ * NULL when the description is blank: the key would be the title alone, so every blank-bodied posting
+ * with that title (any company) would collapse into one digest slot and, once shown, suppress the rest
+ * for good. NULL is its own group, never collapsed or excluded. The test is the NULLIF: normalized
+ * title + blank description equals the normalized title alone. Testing against the (short) title rather
+ * than the description keeps the INSERT from binding the description one more time.
+ *
  * IMPLEMENTATION NOTE: the whitespace pattern is the POSIX class `[[:space:]]+`, NOT `\s+` — inside a
  * `sql` tagged TEMPLATE LITERAL the cooked escape `\s` would collapse to a bare `s` and silently match
  * the letter 's' instead of whitespace. `[[:space:]]` is backslash-free and equivalent to Postgres `\s`.
  */
 export function signatureSql(titleExpr: SQL, descExpr: SQL): SQL {
-  return sql`md5(btrim(regexp_replace(lower(${titleExpr} || chr(10) || ${descExpr}), '[[:space:]]+', ' ', 'g')))`;
+  const normalize = (text: SQL): SQL =>
+    sql`btrim(regexp_replace(lower(${text}), '[[:space:]]+', ' ', 'g'))`;
+  return sql`md5(NULLIF(${normalize(sql`${titleExpr} || chr(10) || ${descExpr}`)}, ${normalize(titleExpr)}))`;
 }
 
 /**

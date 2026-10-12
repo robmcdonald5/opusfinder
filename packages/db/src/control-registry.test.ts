@@ -35,7 +35,6 @@ const QUIET: HealthSignals = {
   discoveryLaneErrors: 0,
   embeddingBacklog: 0,
   digestErrors: 0,
-  hardBounces: 0,
   suppressed: 0,
   cost: { digestsConsidered: 0, rerankCacheReadTokens: 0, rerankCacheCreationTokens: 0 },
 };

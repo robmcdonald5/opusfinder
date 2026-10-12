@@ -283,8 +283,6 @@ describe("upsertCompany + upsertJobs — board persistence semantics (integratio
       // The row demonstrably HAS a vector before the re-upsert, so a surviving vector is
       // unambiguous evidence the WHEN ... THEN NULL branch was deleted.
       expect(await writeJobEmbeddings(db, [{ id: before.id, embedding: oneHot(0) }])).toBe(1);
-      // writeJobEmbeddings' return falls back to chunk.length on an empty RETURNING — assert the
-      // precondition directly so the toBeNull below can never pass off a silently no-oped write.
       expect((await jobRow("ext-e")).embedding).not.toBeNull();
       await db.update(jobs).set({ updatedAt: SENTINEL_2020 }).where(eq(jobs.id, before.id));
 

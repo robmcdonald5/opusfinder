@@ -377,7 +377,9 @@ export async function runPerUser(deps: DigestDeps, event: PerUserEvent, step: Pe
   });
   if (candidates.length === 0) {
     // Considered this cadence period (nothing retrieved) — back off so the daily cron doesn't re-run.
-    await step.run("mark-considered-no-candidates", () => markDigestConsidered(deps.db, userId));
+    await step.run("mark-considered-no-candidates", () =>
+      markDigestConsidered(deps.db, userId, digestRunId),
+    );
     return { userId, skipped: "no-candidates" as const };
   }
 
@@ -408,7 +410,9 @@ export async function runPerUser(deps: DigestDeps, event: PerUserEvent, step: Pe
   // an empty email). Distinct from "no-candidates": jobs matched here, but none scored well enough.
   if (reranked.items.length === 0) {
     // Considered this period (matches found, none cleared the floor) — back off after the PAID rerank.
-    await step.run("mark-considered-no-strong", () => markDigestConsidered(deps.db, userId));
+    await step.run("mark-considered-no-strong", () =>
+      markDigestConsidered(deps.db, userId, digestRunId),
+    );
     return { userId, skipped: "no-strong-matches" as const };
   }
 
@@ -582,7 +586,9 @@ export async function runPerUser(deps: DigestDeps, event: PerUserEvent, step: Pe
     // no-send success, distinct from the persist step's throw for an empty SYNTHESIS.
     // Considered this period (a digest was built, every apply-URL was dead) — back off after the PAID
     // rerank + synthesis so the daily cron doesn't re-run the whole pipeline for them tomorrow.
-    await step.run("mark-considered-all-dead", () => markDigestConsidered(deps.db, userId));
+    await step.run("mark-considered-all-dead", () =>
+      markDigestConsidered(deps.db, userId, digestRunId),
+    );
     return {
       userId,
       digestId: persisted.digestId,
@@ -601,14 +607,18 @@ export async function runPerUser(deps: DigestDeps, event: PerUserEvent, step: Pe
   // cadence here (else the daily cron re-runs the paid pipeline for them every tick). A real send already
   // stamped via recordDigestSent.
   if (delivery === "skipped-unapproved") {
-    await step.run("mark-considered-unapproved", () => markDigestConsidered(deps.db, userId));
+    await step.run("mark-considered-unapproved", () =>
+      markDigestConsidered(deps.db, userId, digestRunId),
+    );
   } else if (delivery === "skipped-empty") {
     // Every item's job was lifecycle-closed between retrieval and send (closed after retrieval, persisted
     // anyway, kept by the probe's URL-only check), so the render filtered them all out and no email was
     // sent. Like the all-dead and unapproved-skip paths, back the user off the cadence (no send stamped
     // sent_at) so the daily cron doesn't re-run the paid pipeline for them next tick. The 0-item digest
     // row stays as audit.
-    await step.run("mark-considered-all-closed", () => markDigestConsidered(deps.db, userId));
+    await step.run("mark-considered-all-closed", () =>
+      markDigestConsidered(deps.db, userId, digestRunId),
+    );
   }
   return { ...persisted, delivery };
 }

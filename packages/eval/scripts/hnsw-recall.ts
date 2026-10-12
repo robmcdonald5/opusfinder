@@ -3,13 +3,11 @@
  * index return, on the REAL Neon corpus at its real scale? A MEASUREMENT, not a pass/fail gate —
  * the report is the deliverable (same framing as the prefs YoE directional check).
  *
- * Why it exists: production retrieval currently seq-scans (exact) — neon-http is stateless per
- * request, so `SET LOCAL hnsw.ef_search` can't be honored and the planner ignores the index at
- * today's table size (see repos/retrieval.ts). The moment scale flips the planner to the index,
- * retrieval silently inherits ANN recall at the DEFAULT ef_search=40 — while the digest path
- * over-fetches limit*overFetch=150 rows. This script measures exactly that cliff: recall@{10,50,150}
- * at ef_search {40,100,200}, for the unfiltered nearest-neighbour shape AND the production-filtered
- * shape (active + 14d recency — the filtered-ANN under-fill risk the over-fetch guards).
+ * Why it exists: digest retrieval runs an exact scan on purpose (see repos/retrieval.ts). On the
+ * index it would inherit ANN recall at the DEFAULT ef_search=40 while fetching limit*overFetch=150
+ * rows. This script measures that cliff, i.e. what turning ANN on would cost: recall@{10,50,150} at
+ * ef_search {40,100,200}, for the unfiltered nearest-neighbour shape AND the production-filtered
+ * shape (active + 14d recency, applied after the index's ef_search-bounded candidate list).
  *
  * How it stays honest (the #56 vacuity lesson): each leg runs inside a transaction on the
  * TX-CAPABLE neon-serverless driver (`createAuthDb`), planner-forced via SET LOCAL — the exact leg
@@ -47,7 +45,7 @@ import { defaultReportPath, PKG_ROOT, relativeToPkg } from "../src/runner";
 
 /** 150 = production retrieval's default fetch depth (limit 50 × overFetch 3). */
 const KS = [10, 50, 150] as const;
-/** 40 = the pgvector DEFAULT — the value production would get, since neon-http can't SET it. */
+/** 40 = the pgvector DEFAULT — what an index scan gets unless the query sets it. */
 const EF_SEARCH = [40, 100, 200] as const;
 const FETCH = Math.max(...KS);
 const HNSW_INDEX = "jobs_embedding_hnsw_idx";

@@ -182,7 +182,8 @@ export const jobs = pgTable(
     // NON-unique BY DESIGN: cross-posts and reposts are MEANT to share a signature, so it is the
     // grouping key two read paths collide on (retrieval display-collapse + the shown-history anti-join),
     // NEVER a UNIQUE constraint (jobs_source_external_id_uq stays the upsert conflict target). NULL until
-    // written/backfilled — the read paths treat NULL as "its own group", so un-backfilled rows are inert,
+    // written/backfilled, and NULL for a blank description (a title-only key would merge unrelated
+    // postings) — the read paths treat NULL as "its own group", so NULL rows are inert,
     // not wrong. DISTINCT from `embedding`/jobEmbeddingText: that folds these same two fields into a
     // SEMANTIC vector; this folds them into an EXACT-MATCH key — never merge the two.
     contentSignature: text("content_signature"),
@@ -201,8 +202,8 @@ export const jobs = pgTable(
     // to add IF NOT EXISTS (neon-http migrations aren't transactional — same discipline as the FK below).
     index("jobs_embedding_hnsw_idx").using("hnsw", t.embedding.op("vector_cosine_ops")),
     // Partial btree over ONLY the un-embedded rows. Backs the recurring `embedding IS NULL` scans,
-    // turning a full seq-scan into an index-only scan. Self-prunes to ~0 entries as rows embed, so it
-    // stays tiny (same partial-index discipline as companies_active_last_probed_idx /
+    // turning a full seq-scan into an index scan. Shrinks as rows embed (closed ones wait for the prune),
+    // so it stays small (same partial-index discipline as companies_active_last_probed_idx /
     // user_preferences_eligible_idx). The HNSW index above only covers NON-NULL vectors for the `<=>`
     // cosine path and cannot serve `IS NULL`. drizzle-kit emits this bare; the migration hand-adds
     // IF NOT EXISTS (neon-http isn't transactional) — same discipline as the guarded indexes above.
@@ -659,17 +660,20 @@ export const digestItems = pgTable(
     // and the record can outlive the job row (see the job_id note below). All nullable: NULL on
     // pre-snapshot rows until the one-time keyset
     // backfill, then every new row is populated at insert. `getDigestEmailPayload` reads these FIRST,
-    // COALESCE-falling-back to the live jobs/companies row during the backfill gap. DELIBERATELY NOT
-    // `content_signature` (a durable signature snapshot would suppress a relisted role FOREVER, breaking
-    // re-recommend-after-relist; the live INNER JOIN in `alreadyShownSignatures` is the self-scoping
-    // cooldown) and NOT `rank`/`score`/`reason` (already durable columns above). `lifecycle_state` is
-    // INTENTIONALLY not snapshotted: it is mutable, and the email's active-filter must read it LIVE, not
-    // a frozen copy.
+    // COALESCE-falling-back to the live jobs/companies row during the backfill gap. NOT
+    // `rank`/`score`/`reason` (already durable columns above). `lifecycle_state` is INTENTIONALLY not
+    // snapshotted: it is mutable, and the email's active-filter must read it LIVE, not a frozen copy.
     jobTitle: text("job_title"),
     companySlug: text("company_slug"),
     applyUrl: text("apply_url"),
     locations: jsonb("locations").$type<string[]>(),
     remote: boolean("remote"),
+    // The signature the user was shown, kept because an edit to the job rewrites the live one. NOT a
+    // durable exclusion: `alreadyShownSignatures` reads it only while the job row still exists, so it never
+    // suppresses a relist longer than the live signature does (see the job_id note below). Reading it
+    // unconditionally would suppress a relisted role forever. NULL when the job had no signature, and on
+    // rows persisted before the column existed (only the live one counts there).
+    contentSignature: text("content_signature"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [

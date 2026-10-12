@@ -17,10 +17,11 @@ export type { CompanyState } from "./discovery";
 export {
   jobsNeedingEmbedding,
   writeJobEmbeddings,
+  embedNextPage,
+  EmbedCountMismatchError,
   backfillJobEmbeddings,
   nearestJobs,
   jobEmbeddingText,
-  embeddableContentSql,
 } from "./embeddings";
 export type { JobNeedingEmbedding, JobNeighbor } from "./embeddings";
 export {

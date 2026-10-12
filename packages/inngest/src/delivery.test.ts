@@ -22,6 +22,7 @@ const FIXTURE: DigestEmailPayload = {
   recipient: { email: "Owner@Example.com", name: "Owner" },
   createdAt: new Date("2026-06-11T00:00:00Z"),
   approvedAt: new Date("2026-06-10T00:00:00Z"),
+  eligible: true,
   items: [
     {
       rank: 1,
@@ -49,6 +50,7 @@ const FIXTURE: DigestEmailPayload = {
 function joinedPayloadRows(
   states: string[] = FIXTURE.items.map(() => "active"),
   approved = true,
+  eligible = true,
 ): unknown[] {
   const head = {
     userId: FIXTURE.userId,
@@ -58,6 +60,7 @@ function joinedPayloadRows(
     // The send-permit re-read (digest_approved_at): non-null = approved. `approved=false` drives the
     // un-approved no-send branch in deliverDigestEmail.
     approvedAt: approved ? FIXTURE.approvedAt : null,
+    eligible,
   };
   return FIXTURE.items.map((it, i) => ({ ...head, ...it, lifecycleState: states[i] ?? "active" }));
 }
@@ -125,6 +128,30 @@ describe("deliverDigestEmail", () => {
     );
 
     expect(result).toBe("skipped-unapproved");
+    expect(sendCalled).toBe(false);
+    expect(runs).toEqual(["send-email"]);
+    expect(sleeps).toEqual([]);
+  });
+
+  it("skips a recipient who opted out, was suppressed or lost verification mid-run — no send, no poll", async () => {
+    const { runs, sleeps, tools } = recordingStep();
+    const db = stubDb([joinedPayloadRows(undefined, true, false)]);
+    let sendCalled = false;
+
+    const result = await deliverDigestEmail(
+      tools,
+      db,
+      {
+        send: async () => {
+          sendCalled = true;
+          return { emailId: "re_x" };
+        },
+        lastEvent: async () => "delivered",
+      },
+      7,
+    );
+
+    expect(result).toBe("skipped-ineligible");
     expect(sendCalled).toBe(false);
     expect(runs).toEqual(["send-email"]);
     expect(sleeps).toEqual([]);

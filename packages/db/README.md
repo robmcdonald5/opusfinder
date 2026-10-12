@@ -13,8 +13,8 @@ the Phase-9 profiles repo — `insertCvFile` / `patchCvFileExtracted` / `markCvF
 `upsertUserProfile` / `getProfileTextKey`; and the Phase-9.5 preferences repo — `getPreferences` /
 `getOrCreatePreferences` / `updatePreferences`; the Phase-10 retrieval repo —
 `retrieveCandidatesForProfile`; and the Phase-10 digests repo — `listDigestRecipients` (gained an
-opt-in `cadenceDue` cadence-window predicate — daily 20h / weekly 6d / monthly 28d off
-`last_digest_sent_at`; default no-filter, set true only on a cron run) /
+opt-in `cadenceDue` cadence-window predicate off `last_digest_sent_at`; default no-filter, set true
+only on a cron run) /
 `alreadyShownJobIds` / `startDigestRun` / `finishDigestRun` / `insertDigest` / `insertDigestItems` /
 `deleteUserDigestForRun` / `getLatestDigestForUser` / `markDigestConsidered` (the Phase-12a no-send
 backoff — stamps `last_digest_sent_at` on the skip paths so a due-but-empty user doesn't re-run the paid
@@ -146,8 +146,9 @@ Run from the repo root via the workspace filter so the cwd is `packages/db`:
   already tests). Two read paths collide on it: `collapseBySignature` (a retrieval display-collapse — a cross-post
   takes ONE digest slot) and `alreadyShownSignatures` → retrieval's additive `excludeSignatures` repost anti-join
   (`content_signature IS NULL OR <> ALL(...)`); NULL signatures are each their own group, never collapsed or
-  excluded, so un-backfilled rows are inert, not wrong. `alreadyShownSignatures` carries NO `lifecycle_state`
-  filter (a soft-closed predecessor's signature still suppresses its repost). Re-runnable backfill:
+  excluded. A blank-description row signs NULL: a title-only key would merge unrelated same-title postings.
+  `alreadyShownSignatures` carries NO `lifecycle_state` filter (a soft-closed predecessor's signature still
+  suppresses its repost). Re-runnable backfill:
   `pnpm db:backfill-signatures` (`scripts/backfill-content-signature.ts`); no-creds smoke
   `pnpm exec vitest run packages/db/src/repos/content-signature.test.ts`. **LIVE** — migration 0011 is APPLIED and the rows are
   backfilled, so the display-collapse + repost anti-join read paths are active; the cosine near-dup layer
@@ -171,7 +172,7 @@ Run from the repo root via the workspace filter so the cwd is `packages/db`:
   (Phase F3) are unaffected — they remain soft prompt signals only.
 - **Health checker (Phase F6) — NO migration.** `src/health.ts` (subpath `@opusfinder/db/health`) computes seven
   liveness checks (`ingestion_staleness`, `board_fail_ratio`, `discovery_window`, `embedding_backlog`,
-  `digest_health` [error-runs only], `bounce_suppression`, `discovery_lane_errors` [F5f —
+  `digest_health`, `bounce_suppression`, `discovery_lane_errors` [F5f —
   per-lane `lane_<name>_error` on the latest all-source discovery run]; since 2026-10 an eighth,
   `hydrate_skip_ratio` — the latest ingestion run's `hydrateSkipped / hydrateListed`, the share of postings on
   hydrating boards whose detail fetch failed, default 0.2, `HEALTH_HYDRATE_SKIP_RATIO`) + a rerank-cache cost rollup from
@@ -208,8 +209,8 @@ Run from the repo root via the workspace filter so the cwd is `packages/db`:
   `CREATE INDEX IF NOT EXISTS`, same neon-http discipline as 0002) adds a partial btree
   `ON "jobs" ("id") WHERE "embedding" IS NULL`, so the recurring un-embedded scans index-scan instead of
   seq-scanning the whole table: the F6 `embedding_backlog` health count, `jobsNeedingEmbedding`, and the F8
-  `embed-backlog-drain`'s `ORDER BY id LIMIT` paging. Self-prunes to ~0 entries as rows embed. **APPLIED to
-  prod.**
+  `embed-backlog-drain`'s newest-first paging. It shrinks as rows embed; a job that closes before it is
+  embedded stays in it until the prune deletes it. **APPLIED to prod.**
 - **Migrations 0018-0024.** Each file's header has the detail; what an operator needs:
   - `0018` adds `jobs.closed_at`, the clock of the jobs prune (`pnpm db:prune` is a dry run; the script
     header has the `--apply` command). It deletes only jobs closed for 30+ days that no `digest_items` row

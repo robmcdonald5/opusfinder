@@ -99,6 +99,7 @@ describe("TTL prunes (integration: real PGlite Postgres)", () => {
         applyUrl: "https://example.test/shown",
         locations: [],
         remote: false,
+        contentSignature: null,
       },
     ]);
     // A history row from before the display snapshot: once its job is gone it has nothing to render, so its

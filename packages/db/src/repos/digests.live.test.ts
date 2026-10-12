@@ -116,6 +116,7 @@ describe.skipIf(!LIVE)("getDigestEmailPayload over neon-http (live: real Neon)",
       applyUrl: "https://snap",
       locations: ["Remote - US", "NYC"],
       remote: true,
+      contentSignature: null,
     };
     await insertDigestItems(db, digestId, userId, [snapItem]);
     // Item 2 — NULL snapshot (insertDigestItems cannot write NULLs, so seed directly) → forces COALESCE

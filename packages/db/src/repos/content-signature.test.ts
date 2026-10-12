@@ -65,8 +65,8 @@ describe("signatureSql — rendered SQL at both call-site forms", () => {
 
     // LOCK the wrapper NESTING/ORDER — substring-PRESENCE alone would still pass if the wrappers were
     // re-nested (e.g. regexp_replace(btrim(...)) instead of btrim(regexp_replace(...)), or md5 applied to
-    // the wrong subexpr). Assert the outermost→innermost chain md5 ⊃ btrim ⊃ regexp_replace ⊃ lower.
-    expect(text).toMatch(/md5\(\s*btrim\(\s*regexp_replace\(\s*lower\(/);
+    // the wrong subexpr). Assert the outermost→innermost chain md5 ⊃ NULLIF ⊃ btrim ⊃ regexp_replace ⊃ lower.
+    expect(text).toMatch(/md5\(\s*NULLIF\(\s*btrim\(\s*regexp_replace\(\s*lower\(/);
     // …and inside lower(...) the title/desc are joined by `|| chr(10) ||`, which must PRECEDE the
     // whitespace-collapse pattern `'[[:space:]]+'` (the 2nd arg to regexp_replace). Locks concat→pattern order.
     expect(text).toMatch(/\|\|\s*chr\(10\)\s*\|\|[\s\S]*'\[\[:space:\]\]\+'/);
@@ -77,17 +77,17 @@ describe("signatureSql — rendered SQL at both call-site forms", () => {
     expect(params).toHaveLength(0);
   });
 
-  it("VALUES form (bound values) binds [title, desc] as params and keeps chr(10) + [[:space:]]+", () => {
+  it("VALUES form (bound values) binds the desc once, the title twice, and keeps chr(10) + [[:space:]]+", () => {
     const { sql: text, params } = render(signatureSql(sql`${"My Title"}`, sql`${"My Desc"}`));
 
     expect(text).toContain("chr(10)");
     expect(text).toContain("'[[:space:]]+'");
-    // Same wrapper NESTING/ORDER lock as the SET form: md5 ⊃ btrim ⊃ regexp_replace ⊃ lower, with the
-    // `|| chr(10) ||` concat inside lower(...) preceding the `'[[:space:]]+'` collapse pattern.
-    expect(text).toMatch(/md5\(\s*btrim\(\s*regexp_replace\(\s*lower\(/);
+    // Same wrapper NESTING/ORDER lock as the SET form: md5 ⊃ NULLIF ⊃ btrim ⊃ regexp_replace ⊃ lower, with
+    // the `|| chr(10) ||` concat inside lower(...) preceding the `'[[:space:]]+'` collapse pattern.
+    expect(text).toMatch(/md5\(\s*NULLIF\(\s*btrim\(\s*regexp_replace\(\s*lower\(/);
     expect(text).toMatch(/\|\|\s*chr\(10\)\s*\|\|[\s\S]*'\[\[:space:\]\]\+'/);
-    expect(params).toHaveLength(2);
-    expect(params).toEqual(["My Title", "My Desc"]);
+    // The blank-description test compares against the title, so the (long) description is bound once.
+    expect(params).toEqual(["My Title", "My Desc", "My Title"]);
   });
 });
 

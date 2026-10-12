@@ -3,21 +3,19 @@
  * embedding into a ranked candidate set. Kept separate from the embeddings backfill machinery
  * (embeddings.ts) so the digest read path is self-contained.
  *
- * Reuses nearestJobs's exact cosine pattern (bind the query vector ONCE, compute `<=>` in the
- * projection, ORDER BY the distance alias so the HNSW path still matches at scale) and layers the
- * deterministic predicates on top. SQL handles the cheap, plannable filters (has-embedding, active,
- * recency, already-shown exclusions). The remote/location geo filter AND the free-form exclusion
- * keywords are applied APP-SIDE after an OVER-FETCH because (a) jobs.locations is jsonb and user prefs
- * are a string[] needing fuzzy overlap, and (b) over-fetch+trim is the guard against pgvector HNSW
- * returning fewer than `limit` rows once a selective WHERE post-filters the ef_search-bounded candidate
- * set (filtered-ANN under-fill). Both post-filters run BEFORE the trim, so they draw on the whole
- * over-fetch buffer instead of shrinking the returned set below `limit`.
+ * SQL handles the cheap, plannable filters (has-embedding, active, recency, already-shown exclusions)
+ * and the cosine ranking. The remote/location geo filter AND the free-form exclusion keywords are applied
+ * APP-SIDE after an OVER-FETCH, because jobs.locations is jsonb and user prefs are a string[] needing fuzzy
+ * overlap. Both post-filters run BEFORE the trim, so they draw on the whole over-fetch buffer instead of
+ * shrinking the returned set below `limit`.
  *
- * NOTE on ef_search: `SET LOCAL hnsw.ef_search` cannot be honored over the neon-http driver (it is
- * autocommit + stateless per request, so a SET does not span the follow-up query). Over-fetch is the
- * recall guard for now; the table currently seq-scans regardless of HNSW. Revisit (a neon-serverless
- * transaction, or pgvector iterative scan) only once the jobs table is large enough that recall under a
- * selective filter measurably drops — validate with EXPLAIN then.
+ * EXACT SCAN, ON PURPOSE: the distance is computed in an `OFFSET 0` subquery, which Postgres doesn't
+ * flatten, so the outer sort is on a plain column jobs_embedding_hnsw_idx can't serve and the planner
+ * never takes the index. On the index, pgvector returns only ~hnsw.ef_search (default 40) nearest rows
+ * and the active + recency filter runs after it; `pnpm eval:hnsw` measured that filtered fetch at ~3 of
+ * 150 rows, and no over-fetch can fill a set the index never returns. The exact scan computes distances
+ * only for rows the filters keep. If ANN is ever needed, `db.batch([SET LOCAL hnsw.iterative_scan…,
+ * query])` runs in one transaction on neon-http (PGlite has no batch).
  */
 import { sql } from "drizzle-orm";
 
@@ -31,8 +29,7 @@ export interface RetrieveOpts {
   /** Final candidate count returned (default 50). */
   limit?: number;
   /** SQL fetch multiplier before the app-side post-filters (geo + exclusions) trim to `limit`
-   *  (default 3). Guards against those filters — and pgvector's filtered-ANN post-filtering —
-   *  under-filling the result. */
+   *  (default 3). Guards against those filters under-filling the result. */
   overFetch?: number;
   /** From user_preferences: Indeed/LinkedIn-style location mode (default "any"). `remote_only` keeps only
    *  remote jobs; `onsite_only` keeps only on-site jobs (subject to `locations`); `any` keeps both. Applied
@@ -60,7 +57,7 @@ export interface JobCandidate {
   descriptionText: string;
   locations: string[];
   remote: boolean;
-  /** The content-dedup signature (md5 of normalized title+desc), or NULL until backfilled. Drives the
+  /** The content-dedup signature (md5 of normalized title+desc), or NULL for a blank description. Drives the
    *  same-signature display collapse. NOT forwarded into Inngest step state — the retrieve step
    *  deliberately returns only id/title/description; this stays a local retrieval field. */
   contentSignature: string | null;
@@ -104,20 +101,25 @@ export async function retrieveCandidatesForProfile(
   }
   if (excludeSignatures.length > 0) {
     // Additive repost anti-join: drop a candidate whose content_signature the user has already seen, but
-    // KEEP NULL-signature (un-backfilled) candidates. One bound text param cast to text[] (md5 hex is
+    // KEEP NULL-signature (blank-description) candidates. One bound text param cast to text[] (md5 hex is
     // brace/comma/NUL-free), mirroring the int[] idiom.
     const sigLiteral = textArrayLiteral(excludeSignatures);
     conditions.push(sql`(content_signature IS NULL OR content_signature <> ALL(${sigLiteral}::text[]))`);
   }
   const whereClause = sql.join(conditions, sql` AND `);
 
-  // Bind the query vector once (the distance alias keeps the HNSW sort pathkey — see nearestJobs).
+  // The query vector is bound once, in the inner projection; `OFFSET 0` keeps the plan an exact scan (see
+  // the header) and computes `<=>` once per row. `id` breaks the exact ties of same-signature cross-posts
+  // (identical text, identical embedding), so collapseBySignature keeps the same representative run to run.
   const result: unknown = await db.execute(sql`
-    SELECT id, title, description_text, locations, remote, content_signature,
-           embedding <=> ${literal}${VECTOR_CAST} AS distance
-    FROM ${jobs}
-    WHERE ${whereClause}
-    ORDER BY distance
+    SELECT * FROM (
+      SELECT id, title, description_text, locations, remote, content_signature,
+             embedding <=> ${literal}${VECTOR_CAST} AS distance
+      FROM ${jobs}
+      WHERE ${whereClause}
+      OFFSET 0
+    ) candidates
+    ORDER BY distance, id
     LIMIT ${fetchLimit}
   `);
 
@@ -136,13 +138,6 @@ export async function retrieveCandidatesForProfile(
     } satisfies JobCandidate;
   });
 
-  // Deterministic tiebreak: same-signature cross-posts have IDENTICAL embeddings → an exact distance tie
-  // that the SQL `ORDER BY distance` (kept single-key on purpose, to preserve the HNSW sort pathkey) leaves
-  // in implementation-defined order. Re-break ties by id here so collapseBySignature's "first member wins"
-  // keeps a STABLE representative run-to-run (the lowest/oldest job id) instead of a flipping
-  // apply_url/company. No-op for distinct distances (distance still decides), so the HNSW ordering stands.
-  candidates.sort((a, b) => a.distance - b.distance || a.id - b.id);
-
   // App-side geo + exclusion filters, then the same-signature display collapse, then trim to `limit`.
   // Running the collapse on the over-fetch buffer means a dropped cross-post frees a slot the trim
   // back-fills from the remaining buffer.
@@ -155,8 +150,8 @@ export async function retrieveCandidatesForProfile(
 /**
  * Same-signature display collapse: from a DISTANCE-SORTED candidate list, keep the first member of each
  * content_signature group and drop later same-signature members, so a cross-posted role occupies ONE
- * digest slot (the closest-to-profile member wins). NULL signatures are each their own group — an
- * un-backfilled row is never collapsed. Pure + order-preserving; the `Set` is declared OUTSIDE the
+ * digest slot (the closest-to-profile member wins). NULL signatures are each their own group — a
+ * blank-description row is never collapsed. Pure + order-preserving; the `Set` is declared OUTSIDE the
  * predicate so state persists across the scan. Generic + exported so the smoke can drive it with minimal
  * `{contentSignature}` objects.
  *
@@ -231,14 +226,19 @@ export function geoMatches<T extends { remote: boolean; locations: string[] }>(
   return have.some((h) => wanted.some((w) => locationOverlaps(h, w)));
 }
 
-/** Case-folded location overlap: exact match, or containment when the CONTAINED side is ≥4 chars —
- *  "san francisco" ↔ "san francisco, ca" matches either way round, but a bare token like "ca" only
- *  matches exactly (substring would false-match inside "chicago"). */
+/** Case-folded location overlap: exact match, or either side containing the other — "san francisco" ↔
+ *  "san francisco, ca" matches either way round. */
 function locationOverlaps(a: string, b: string): boolean {
-  if (a === b) return true;
-  if (b.length >= 4 && a.includes(b)) return true;
-  if (a.length >= 4 && b.includes(a)) return true;
-  return false;
+  return a === b || locationContains(a, b) || locationContains(b, a);
+}
+
+/** A part of ≥4 chars matches as a substring; a shorter one ("ca", "usa", "uk") only as a whole word, so
+ *  "ca" matches "san francisco, ca" but not "chicago". Ambiguous codes (CA = California or Canada) match
+ *  both, which keeps jobs rather than dropping them. */
+function locationContains(whole: string, part: string): boolean {
+  if (part.length >= 4) return whole.includes(part);
+  const escaped = part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(?<![\\p{L}\\p{N}])${escaped}(?![\\p{L}\\p{N}])`, "u").test(whole);
 }
 
 /** jobs.locations is jsonb<string[]>, NOT NULL default []; neon-http returns it pre-parsed as an array. */

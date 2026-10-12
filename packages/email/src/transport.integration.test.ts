@@ -29,6 +29,7 @@ function makePayload(overrides: Partial<DigestEmailPayload> = {}): DigestEmailPa
     recipient: { email: "user@example.com", name: "User" },
     createdAt: new Date("2026-06-11T00:00:00Z"),
     approvedAt: new Date("2026-06-10T00:00:00Z"),
+    eligible: true,
     items: [
       {
         rank: 1,

@@ -55,8 +55,8 @@ integration (email ships in Phase 11 on the local dev runtime — locked at Phas
     10 min after the 12:00 ingestion tick so it rides that Neon wake; it was `0 13 * * *` until 2026-10): the
     Phase-12a daily tick. It just emits `digest/run.requested` with `{ trigger: 'cron' }` (reusing the
     orchestrator above rather than a parallel pipeline), so `listDigestRecipients`'s opt-in `cadenceDue`
-    predicate (daily 20h / weekly 6d / monthly 28d off `last_digest_sent_at`) decides who is actually due
-    on each daily run. Manual `pnpm digest --all` is unaffected (no `cadenceDue`).
+    predicate (off `last_digest_sent_at`) decides who is actually due on each daily run. Manual
+    `pnpm digest --all` is unaffected (no `cadenceDue`).
   - **Per-user** (`digest-user`, `singleton` keyed on `userId`, mode `skip` — `concurrency` would
     release its slot during the batch-wait sleeps and let runs overlap): load + **eligibility gate**
     (skip if no profile/embedding, unverified email, `!digestEnabled`, or suppressed — so even a manual

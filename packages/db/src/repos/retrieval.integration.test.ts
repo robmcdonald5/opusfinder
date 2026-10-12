@@ -1,4 +1,4 @@
-import { eq, sql } from "drizzle-orm";
+import { eq, inArray, sql } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import type { Db } from "@opusfinder/db";
@@ -48,8 +48,8 @@ function toJob(spec: SeedSpec): NormalizedJob {
 
 // This file proves the digest retrieval read path (retrieveCandidatesForProfile) under REAL Postgres
 // semantics: the SQL predicates (embedding IS NOT NULL, lifecycle_state='active', the COALESCE
-// recency window, the id/signature anti-joins), `<=>` cosine ORDER BY deciding LIMIT survival, and
-// the app-side sort → geo/exclusion post-filters → signature collapse → trim pipeline, plus the
+// recency window, the id/signature anti-joins), `<=>` cosine ORDER BY (id tiebreak) deciding LIMIT
+// survival, and the geo/exclusion post-filters → signature collapse → trim pipeline, plus the
 // raw-row → JobCandidate mapping seam. NOT this file's job: the geoMatches truth table
 // (location-mode.test.ts) and collapseBySignature's unit surface (content-signature.test.ts) — each
 // gets exactly ONE wiring probe here; SQL TEXT + param binding stay with the unit render() seams.
@@ -102,8 +102,8 @@ describe("retrieveCandidatesForProfile — SQL filter + cosine rank + post-filte
     ]);
     const result = await retrieveCandidatesForProfile(db, oneHot(0), { limit: 10 });
     expect(result).toHaveLength(3);
-    // If the app sort's distance key (`a.distance - b.distance`) is removed, the id tiebreak alone
-    // returns [C, B, A]; three strictly distinct distances mean no tie can mask the regression.
+    // If the SQL distance key is removed, the id tiebreak alone returns [C, B, A]; three strictly
+    // distinct distances mean no tie can mask the regression.
     expect(result.map((c) => c.id)).toEqual([seeded[2]!, seeded[1]!, seeded[0]!]);
     expect(result[0]!.distance).toBeCloseTo(0, 5);
     expect(result[1]!.distance).toBeCloseTo(0.4, 5);
@@ -127,8 +127,7 @@ describe("retrieveCandidatesForProfile — SQL filter + cosine rank + post-filte
     await db.execute(sql`UPDATE ${jobs} SET updated_at = now() WHERE id = ${seeded[1]!}`);
     const result = await retrieveCandidatesForProfile(db, oneHot(0), { limit: 1, overFetch: 1 });
     expect(result).toHaveLength(1);
-    // Dropping SQL `ORDER BY distance` makes the seq scan feed LIMIT 1 its first physical row —
-    // FAR. The app-side sort can only reorder survivors, never repair which row survived.
+    // Dropping the SQL distance ordering makes the seq scan feed LIMIT 1 its first physical row — FAR.
     expect(result[0]!.id).toBe(seeded[1]!);
     expect(result[0]!.distance).toBeCloseTo(0, 5);
   });
@@ -319,14 +318,14 @@ describe("retrieveCandidatesForProfile — SQL filter + cosine rank + post-filte
     const idT2 = seeded[1]!;
     // Heap-rewrite trick: UPDATE the LOWER-id row AFTER the higher-id one exists — the new tuple
     // version lands after T2 in seq-scan order, so the tied SQL result comes back [T2, T1] and only
-    // the `|| a.id - b.id` tiebreak restores [T1, T2]. Without this rewrite the seed is VACUOUS
+    // the ORDER BY's `id` tiebreak restores [T1, T2]. Without this rewrite the seed is VACUOUS
     // (heap order == id order and the test passes with the tiebreak deleted). Verified under PGlite:
     // the raw SQL row order after this UPDATE is [T2, T1].
     await db.execute(sql`UPDATE ${jobs} SET updated_at = now() WHERE id = ${idT1}`);
 
     const result = await retrieveCandidatesForProfile(db, oneHot(0), { limit: 10 });
     expect(result).toHaveLength(2);
-    // Removing the id tiebreak leaves JS's stable sort preserving the SQL order → [T2, T1].
+    // Removing the id tiebreak returns [T2, T1].
     expect(result.map((c) => c.id)).toEqual([idT1, idT2]);
   });
 
@@ -352,7 +351,7 @@ describe("retrieveCandidatesForProfile — SQL filter + cosine rank + post-filte
   });
 
   // B12
-  it("never surfaces NULL-embedding rows — a NULL distance would coerce to 0 and rank FIRST app-side", async () => {
+  it("never surfaces NULL-embedding rows — a NULL distance would coerce to a fake 0", async () => {
     const seeded = await seedBoard([
       // U gets NO writeJobEmbeddings call → embedding stays NULL.
       { externalId: "u", title: "Senior Platform Engineer" },
@@ -360,8 +359,7 @@ describe("retrieveCandidatesForProfile — SQL filter + cosine rank + post-filte
     ]);
     const result = await retrieveCandidatesForProfile(db, oneHot(0), { limit: 10 });
     expect(result).toHaveLength(1);
-    // Number(null) === 0: without `embedding IS NOT NULL`, U's NULL `<=>` distance coerces to 0
-    // and the app sort promotes it to RANK 1 — not tail-noise, a rank-1 corruption.
+    // Number(null) === 0: without `embedding IS NOT NULL`, U comes back with a fake distance of 0.
     expect(result[0]!.id).toBe(seeded[1]!);
     expect(result.map((c) => c.id)).not.toContain(seeded[0]!);
     // A NULL distance that slipped through would map to a non-finite/zero fake — pin finiteness.
@@ -405,7 +403,7 @@ describe("retrieveCandidatesForProfile — SQL filter + cosine rank + post-filte
     expect(sigRows).toHaveLength(1);
     const sigR = sigRows[0]!.sig;
     expect(sigR).toMatch(/^[0-9a-f]{32}$/);
-    // upsertJobs ALWAYS writes a signature SQL-side — a NULL (un-backfilled) row needs a raw UPDATE.
+    // upsertJobs signs S (it has a description) — a NULL-signature row needs a raw UPDATE.
     await db.execute(sql`UPDATE ${jobs} SET content_signature = NULL WHERE id = ${idS}`);
 
     const result = await retrieveCandidatesForProfile(db, oneHot(0), {
@@ -441,6 +439,18 @@ describe("retrieveCandidatesForProfile — SQL filter + cosine rank + post-filte
     // lower id first, so "first member wins" keeps a stable representative.
     expect(result.map((c) => c.id)).toEqual([Math.min(idX1, idX2), idY]);
     expect(result.map((c) => c.id)).not.toContain(Math.max(idX1, idX2));
+  });
+
+  // B15b
+  it("never collapses blank-description postings that only share a title — they sign NULL", async () => {
+    // A title-only signature would merge every blank-bodied posting with that title into one slot.
+    const seeded = await seedBoard([
+      { externalId: "e1", title: "Software Engineer", description: "", embedding: oneHot(0) },
+      { externalId: "e2", title: "Software  Engineer", description: "   ", embedding: oneHot(0) },
+    ]);
+    const result = await retrieveCandidatesForProfile(db, oneHot(0), { limit: 10 });
+    expect(result.map((c) => c.id)).toEqual(seeded);
+    expect(result.map((c) => c.contentSignature)).toEqual([null, null]);
   });
 
   // B16
@@ -558,5 +568,34 @@ describe("retrieveCandidatesForProfile — SQL filter + cosine rank + post-filte
     await expect(retrieveCandidatesForProfile(db, new Array<number>(3).fill(0))).rejects.toThrow(
       /vectorLiteral: expected 1024 dimensions, got 3/,
     );
+  });
+
+  // B20
+  it("stays an exact scan when the planner is pushed toward the HNSW index — a filtered fetch still fills", async () => {
+    // 40 jobs fanned out from oneHot(0); the 30 NEAREST are closed. A plan on jobs_embedding_hnsw_idx returns
+    // only ~ef_search nearest rows and filters `active` after them, so it would return ~0 of the 10 active.
+    const seeded = await seedBoard(
+      Array.from({ length: 40 }, (_, i) => {
+        const angle = (i * Math.PI) / 80;
+        return {
+          externalId: `j${i}`,
+          title: `Role ${i}`,
+          embedding: blend(Math.cos(angle), Math.sin(angle)),
+        };
+      }),
+    );
+    await db
+      .update(jobs)
+      .set({ lifecycleState: "closed", closedAt: sql`now()` })
+      .where(inArray(jobs.id, seeded.slice(0, 30)));
+    await db.execute(sql`SET enable_seqscan = off`);
+    await db.execute(sql`SET hnsw.ef_search = 1`);
+    try {
+      const result = await retrieveCandidatesForProfile(db, oneHot(0), { limit: 10, overFetch: 1 });
+      expect(result.map((c) => c.id)).toEqual(seeded.slice(30));
+    } finally {
+      await db.execute(sql`RESET enable_seqscan`);
+      await db.execute(sql`RESET hnsw.ef_search`);
+    }
   });
 });

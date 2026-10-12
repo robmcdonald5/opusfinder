@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 
 import type { Db } from "./client";
+import { needsEmbeddingSql } from "./repos/embeddings";
 import { resultRows } from "./repos/sql";
 
 /**
@@ -28,9 +29,9 @@ export type HealthCheckId =
   | "board_fail_ratio" // within-run coverage loss: (failed + rateLimitSkipped)/processed — the status='ok' trap
   | "hydrate_skip_ratio" // latest ingestion run: detail fetches that failed / postings on hydrating boards
   | "discovery_window" // discovery last-run age
-  | "embedding_backlog" // jobs WHERE embedding IS NULL
-  | "digest_health" // any digest_runs with status='error' in the window
-  | "bounce_suppression" // hard-bounced / suppressed users
+  | "embedding_backlog" // active jobs still owed a vector (the embed drain's remaining work)
+  | "digest_health" // errored digest runs + failed digest sends in the recent window
+  | "bounce_suppression" // users suppressed (hard bounce / complaint) in the recent window
   | "discovery_lane_errors"; // lane_<name>_error tallies on the latest discovery run
 
 /** Per-check posture: `off` = don't compute; `shadow` = compute + log but never page (never sets
@@ -59,9 +60,10 @@ export interface HealthThresholds {
   /** (c) days since the last successful discovery run before the window fires. Default 13 ≈ ~2× the weekly
    *  Sunday cron period — tolerates a late/jittered run but still fires on a fully missed week (~14d). */
   discoveryMaxAgeD: number;
-  /** (d) un-embedded backlog (`jobs.embedding IS NULL`) watermark. */
+  /** (d) un-embedded backlog (active jobs still owed a vector) watermark. */
   backlogMax: number;
-  /** (e) how many most-recent digest runs to scan for a `status='error'` run (clamped to >=1). */
+  /** (e) how many most-recent digest runs (of the last {@link RECENT_DAYS} days) to scan for errors
+   *  (clamped to >=1). */
   digestWindowN: number;
   /** Cost rollup window: how many most-recent `digests` rows to sum rerank-cache tokens over. */
   costRollupN: number;
@@ -142,11 +144,12 @@ export interface HealthSignals {
   discoveryLaneErrors: number;
   /** (d) un-embedded backlog. */
   embeddingBacklog: number;
-  /** (e) count of recent digest runs with `status='error'` in the window; delivery failures are caught
-   *  by (f). */
+  /** (e) errored runs in the recent window plus failed sends (`digests.delivery_status='failed'`) from those
+   *  runs. A run row finishes 'ok' at fan-out, so a per-user failure shows only on its `digests` row; one
+   *  that throws before persist leaves no row and is visible only in Inngest. */
   digestErrors: number;
-  /** (f) hard-bounced and suppressed user counts. */
-  hardBounces: number;
+  /** (f) users suppressed in the last {@link RECENT_DAYS} days. A hard bounce and a spam complaint both stamp
+   *  `digest_suppressed_at`, so each user counts once. */
   suppressed: number;
   /** raw cost rollup inputs (summed over recent `digests`). */
   cost: {
@@ -185,6 +188,10 @@ const CHECK_LABELS: Record<HealthCheckId, string> = {
  *  budget-cut run where all 17 boards failed (the 2026-10-06 shape) must still fire. */
 export const BOARD_FAIL_MIN_COUNT = 5;
 
+/** (e) and (f) look back this many days, so a one-off failure stops firing once it ages out instead of
+ *  latching the check on (nothing ever clears a suppression). */
+const RECENT_DAYS = 7;
+
 const num = (v: unknown): number => {
   const n = Number(v);
   return Number.isFinite(n) ? n : 0;
@@ -198,11 +205,18 @@ export async function gatherHealthSignals(
   db: Db,
   opts?: { digestWindowN?: number; costRollupN?: number },
 ): Promise<HealthSignals> {
-  // Clamp to >=1: a 0 (or sub-1) window would issue `LIMIT 0` and SILENTLY disarm the check it sizes
-  // (digestErrors → always 0; the cost rollup → empty), even in enforce mode. `?? default` only catches
-  // undefined, not a 0 an operator set via HEALTH_DIGEST_WINDOW_N / HEALTH_COST_ROLLUP_N.
-  const digestWindowN = Math.max(1, opts?.digestWindowN ?? DEFAULT_HEALTH_THRESHOLDS.digestWindowN);
-  const costRollupN = Math.max(1, opts?.costRollupN ?? DEFAULT_HEALTH_THRESHOLDS.costRollupN);
+  // Whole numbers >=1: a 0 (or sub-1) window would issue `LIMIT 0` and SILENTLY disarm the check it sizes
+  // (digestErrors → always 0; the cost rollup → empty), even in enforce mode, and a fraction fails the
+  // LIMIT's bigint parse, which rejects the Promise.all below and takes every check dark. `?? default` only
+  // catches undefined, not what an operator set via HEALTH_DIGEST_WINDOW_N / HEALTH_COST_ROLLUP_N.
+  const digestWindowN = Math.max(
+    1,
+    Math.floor(opts?.digestWindowN ?? DEFAULT_HEALTH_THRESHOLDS.digestWindowN),
+  );
+  const costRollupN = Math.max(
+    1,
+    Math.floor(opts?.costRollupN ?? DEFAULT_HEALTH_THRESHOLDS.costRollupN),
+  );
 
   // Issue all reads concurrently so total latency is bounded by the slowest query, not their sum
   // (matters for the serverless dev-panel caller under a function time budget).
@@ -238,26 +252,29 @@ export async function gatherHealthSignals(
         FROM source_runs WHERE pipeline = 'ingestion' AND status <> 'running'
         ORDER BY started_at DESC LIMIT 1
       `),
-    // (c) discovery window — last SUCCESS (finished_at WHERE status='ok'), mirroring (a).
+    // (c) discovery window — last SUCCESS (finished_at WHERE status='ok'), mirroring (a), of the all-source
+    //     sweep only, as (h): a fresh ad-hoc `pnpm discover --source=X` run must not hide a dead weekly cron.
     db.execute(sql`
         SELECT extract(epoch FROM (now() - max(finished_at))) / 86400.0 AS age_d
-        FROM source_runs WHERE pipeline = 'discovery' AND status = 'ok'
+        FROM source_runs WHERE pipeline = 'discovery' AND status = 'ok' AND source IS NULL
       `),
-    // (d) un-embedded backlog.
+    // (d) un-embedded backlog — the drain's own predicate, served by the partial jobs_unembedded_idx.
+    db.execute(sql`SELECT count(*) AS embedding_backlog FROM jobs WHERE ${needsEmbeddingSql}`),
+    // (e) digest health — errored runs in the recent window, plus the failed sends of those runs.
     db.execute(sql`
-        SELECT count(*) FILTER (WHERE embedding IS NULL) AS embedding_backlog
-        FROM jobs
+        WITH recent AS (
+          SELECT id, status FROM digest_runs
+          WHERE started_at > now() - ${RECENT_DAYS} * interval '1 day'
+          ORDER BY started_at DESC LIMIT ${digestWindowN}
+        )
+        SELECT ((SELECT count(*) FROM recent WHERE status = 'error')
+              + (SELECT count(*) FROM digests
+                 WHERE delivery_status = 'failed' AND digest_run_id IN (SELECT id FROM recent)))::int AS errors
       `),
-    // (e) digest health — count error-status runs in the recent window.
+    // (f) recent suppressions.
     db.execute(sql`
-        SELECT count(*) FILTER (WHERE status = 'error')::int AS errors
-        FROM (SELECT status FROM digest_runs ORDER BY started_at DESC LIMIT ${digestWindowN}) t
-      `),
-    // (f) bounce / suppression spike.
-    db.execute(sql`
-        SELECT count(*) FILTER (WHERE digest_bounce_status = 'hard')    AS hard_bounced,
-               count(*) FILTER (WHERE digest_suppressed_at IS NOT NULL) AS suppressed
-        FROM user_preferences
+        SELECT count(*) AS suppressed FROM user_preferences
+        WHERE digest_suppressed_at > now() - ${RECENT_DAYS} * interval '1 day'
       `),
     // cost rollup — the NAMED rerank-cache keys over recent digests (counts carries other keys too).
     db.execute(sql`
@@ -287,9 +304,7 @@ export async function gatherHealthSignals(
   const discoveryAge = resultRows(discoveryAgeResult)[0] as { age_d: unknown } | undefined;
   const backlogs = resultRows(backlogResult)[0] as { embedding_backlog: unknown } | undefined;
   const digestErr = resultRows(digestErrorResult)[0] as { errors: unknown } | undefined;
-  const bounce = resultRows(bounceResult)[0] as
-    | { hard_bounced: unknown; suppressed: unknown }
-    | undefined;
+  const bounce = resultRows(bounceResult)[0] as { suppressed: unknown } | undefined;
   const costRows = resultRows(costResult) as Array<{ counts: Record<string, unknown> | null }>;
 
   let rerankCacheReadTokens = 0;
@@ -320,7 +335,6 @@ export async function gatherHealthSignals(
     discoveryLaneErrors,
     embeddingBacklog: num(backlogs?.embedding_backlog),
     digestErrors: num(digestErr?.errors),
-    hardBounces: num(bounce?.hard_bounced),
     suppressed: num(bounce?.suppressed),
     cost: { digestsConsidered: costRows.length, rerankCacheReadTokens, rerankCacheCreationTokens },
   };
@@ -357,7 +371,6 @@ export function evaluateHealth(signals: HealthSignals, opts?: HealthOptions): He
   const hydrateListed = signals.latestIngestHydrateListed;
   const hydrateSkipRatio =
     hydrateListed > 0 ? signals.latestIngestHydrateSkipped / hydrateListed : 0;
-  const bounceTotal = signals.hardBounces + signals.suppressed;
 
   const checks: HealthCheck[] = [
     // (a) null age (never succeeded) is itself a failure → firing.
@@ -399,7 +412,7 @@ export function evaluateHealth(signals: HealthSignals, opts?: HealthOptions): He
     ),
     // (e)/(f) fire on any occurrence (threshold null = boolean condition).
     make("digest_health", signals.digestErrors, null, signals.digestErrors > 0),
-    make("bounce_suppression", bounceTotal, null, bounceTotal > 0),
+    make("bounce_suppression", signals.suppressed, null, signals.suppressed > 0),
     // (h) any per-lane discovery fetch error on the latest run (threshold null = boolean, fire on > 0).
     make(
       "discovery_lane_errors",
@@ -467,14 +480,27 @@ export function healthOptionsFromEnv(
   }
 
   const ids = new Set<HealthCheckId>(Object.keys(CHECK_LABELS) as HealthCheckId[]);
+  const unknown: string[] = [];
   const parseList = (key: string): HealthCheckId[] =>
     (env[key] ?? "")
+      .toLowerCase()
       .split(",")
-      .map((s) => s.trim())
-      .filter((s): s is HealthCheckId => ids.has(s as HealthCheckId));
+      // The control panel names a check `health.<id>`; accept that spelling too.
+      .map((s) => s.trim().replace(/^health\./, ""))
+      .filter((s): s is HealthCheckId => {
+        if (ids.has(s as HealthCheckId)) return true;
+        if (s !== "") unknown.push(`${key}: ${s}`);
+        return false;
+      });
   const modes: Partial<Record<HealthCheckId, HealthMode>> = {};
   for (const id of parseList("HEALTH_OFF")) modes[id] = "off";
   for (const id of parseList("HEALTH_ENFORCE")) modes[id] = "enforce"; // enforce wins over off if both list it
+  // An unmatched HEALTH_ENFORCE id leaves its check in shadow, never paging: say so, don't fail open silently.
+  if (unknown.length > 0) {
+    console.warn(
+      `[health] ignoring unknown check id(s) (${unknown.join("; ")}); valid ids: ${[...ids].join(", ")}`,
+    );
+  }
 
   return { thresholds, modes };
 }

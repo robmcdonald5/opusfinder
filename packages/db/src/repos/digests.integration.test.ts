@@ -189,7 +189,7 @@ describe("digests repo — recipient gates, shown-history anti-joins, persist/re
    *  parent), then insertDigest — the persist step's real call order, reused as seeding. */
   async function seedDigestForUser(
     userId: UserId,
-    opts: { itemCount?: number; counts?: Record<string, number> } = {},
+    opts: { itemCount?: number; counts?: Record<string, number>; sent?: boolean } = {},
   ): Promise<{ runId: number; digestId: number }> {
     const runId = await startDigestRun(db, "manual");
     const { id: digestId } = await insertDigest(db, {
@@ -198,6 +198,7 @@ describe("digests repo — recipient gates, shown-history anti-joins, persist/re
       itemCount: opts.itemCount ?? 1,
       counts: opts.counts ?? {},
     });
+    if (opts.sent) await recordDigestSent(db, digestId, `email-${digestId}`);
     return { runId, digestId };
   }
 
@@ -213,6 +214,7 @@ describe("digests repo — recipient gates, shown-history anti-joins, persist/re
       applyUrl: `https://snap.test/${forJobId}`,
       locations: ["Remote - US"],
       remote: true,
+      contentSignature: null,
       ...overrides,
     };
   }
@@ -281,13 +283,17 @@ describe("digests repo — recipient gates, shown-history anti-joins, persist/re
       ]);
     });
 
-    it("weekly is 6 days and monthly is 28 — each cadence is evaluated only against its own branch", async () => {
+    it("weekly is 7 ticks and monthly is 29 — each cadence is evaluated only against its own branch", async () => {
       const w1 = await seedRecipient(1, { digestCadence: "weekly", lastDigestSentAt: daysAgo(7) });
       // W2 at 1d is PAST the daily 20h window — it reds if a weekly user is evaluated on the daily interval.
       await seedRecipient(2, { digestCadence: "weekly", lastDigestSentAt: daysAgo(1) });
       const m1 = await seedRecipient(3, { digestCadence: "monthly", lastDigestSentAt: daysAgo(29) });
-      // M2 at 10d is PAST the weekly 6d window — it reds if a monthly user hits the weekly interval.
+      // M2 at 10d is PAST the weekly window — it reds if a monthly user hits the weekly interval.
       await seedRecipient(4, { digestCadence: "monthly", lastDigestSentAt: daysAgo(10) });
+      // Stamped at a tick (the run's start) 6 / 28 days ago: the next tick is not yet due, or weekly drifts
+      // to 6 days and monthly to 28.
+      await seedRecipient(5, { digestCadence: "weekly", lastDigestSentAt: hoursAgo(6 * 24 + 1) });
+      await seedRecipient(6, { digestCadence: "monthly", lastDigestSentAt: hoursAgo(28 * 24 + 1) });
       expect(await listDigestRecipients(db, { limit: 10, cadenceDue: true })).toEqual([
         { userId: w1 },
         { userId: m1 },
@@ -320,11 +326,11 @@ describe("digests repo — recipient gates, shown-history anti-joins, persist/re
       const j1 = await seedJob(companyId);
       const j2 = await seedJob(companyId);
       const j3 = await seedJob(companyId);
-      const dA1 = await seedDigestForUser(a, { itemCount: 2 });
+      const dA1 = await seedDigestForUser(a, { itemCount: 2, sent: true });
       await insertDigestItems(db, dA1.digestId, a, [item(j1, 1), item(j2, 2)]);
-      const dA2 = await seedDigestForUser(a, { itemCount: 1 });
+      const dA2 = await seedDigestForUser(a, { itemCount: 1, sent: true });
       await insertDigestItems(db, dA2.digestId, a, [item(j1, 1)]); // j1 shown AGAIN in a second digest
-      const dB = await seedDigestForUser(b, { itemCount: 1 });
+      const dB = await seedDigestForUser(b, { itemCount: 1, sent: true });
       await insertDigestItems(db, dB.digestId, b, [item(j3, 1)]);
 
       // j3 appearing in A's set = the eq(digestItems.userId) where was dropped; a duplicated j1 =
@@ -342,10 +348,10 @@ describe("digests repo — recipient gates, shown-history anti-joins, persist/re
       });
       const jActive = await seedJob(companyId, { contentSignature: "sig-active" });
       const jNullSig = await seedJob(companyId); // content_signature stays NULL
-      const { digestId } = await seedDigestForUser(a, { itemCount: 5 });
+      const { digestId } = await seedDigestForUser(a, { itemCount: 5, sent: true });
       // 999999 has NO jobs row — legal (digest_items.job_id FK was deliberately dropped). Its
-      // contributing nothing is enforced REDUNDANTLY (INNER JOIN + isNotNull + the app-side null
-      // filter), so no single clause is the discriminator — the observable behavior is the contract.
+      // contributing nothing is enforced REDUNDANTLY (INNER JOIN + the app-side null filter), so no
+      // single clause is the discriminator — the observable behavior is the contract.
       await insertDigestItems(db, digestId, a, [
         item(jClosed, 1),
         item(jActive, 2),
@@ -358,7 +364,7 @@ describe("digests repo — recipient gates, shown-history anti-joins, persist/re
       // alreadyShownJobIds has its own leak test; this pins the signatures fn's separate WHERE.
       const b = await seedRecipient(2);
       const jOther = await seedJob(companyId, { contentSignature: "sig-other" });
-      const dB = await seedDigestForUser(b, { itemCount: 1 });
+      const dB = await seedDigestForUser(b, { itemCount: 1, sent: true });
       await insertDigestItems(db, dB.digestId, b, [item(jOther, 1)]);
 
       const sigs = await alreadyShownSignatures(db, a);
@@ -369,6 +375,43 @@ describe("digests repo — recipient gates, shown-history anti-joins, persist/re
       // The set equality also proves B's 'sig-other' did NOT leak in.
       expect(new Set(sigs)).toEqual(new Set(["sig-closed", "sig-active"]));
       expect(await alreadyShownSignatures(db, b)).toEqual(["sig-other"]);
+    });
+
+    it("counts only SENT digests — items persisted for a send that failed or never happened hide nothing", async () => {
+      const a = await seedRecipient(1);
+      const companyId = await seedCompany();
+      const jSent = await seedJob(companyId, { contentSignature: "sig-sent" });
+      const jFailed = await seedJob(companyId, { contentSignature: "sig-failed" });
+      const jUnsent = await seedJob(companyId, { contentSignature: "sig-unsent" });
+      const sent = await seedDigestForUser(a, { sent: true });
+      await insertDigestItems(db, sent.digestId, a, [item(jSent, 1)]);
+      const failed = await seedDigestForUser(a);
+      await insertDigestItems(db, failed.digestId, a, [item(jFailed, 1)]);
+      await recordDigestSendFailure(db, failed.digestId);
+      const unsent = await seedDigestForUser(a); // e.g. permit revoked before the send
+      await insertDigestItems(db, unsent.digestId, a, [item(jUnsent, 1)]);
+
+      expect(await alreadyShownJobIds(db, a)).toEqual([jSent]);
+      expect(await alreadyShownSignatures(db, a)).toEqual(["sig-sent"]);
+    });
+
+    it("keeps the signature the user was shown after the job's text changes, until the job row is pruned", async () => {
+      const a = await seedRecipient(1);
+      const companyId = await seedCompany();
+      const jShown = await seedJob(companyId, { contentSignature: "sig-shown" });
+      const { digestId } = await seedDigestForUser(a, { sent: true });
+      await insertDigestItems(db, digestId, a, [
+        item(jShown, 1, { contentSignature: "sig-shown" }),
+      ]);
+      // An edit re-signs the live row; a same-text cross-post of the shown text still carries sig-shown.
+      await db.update(jobs).set({ contentSignature: "sig-edited" }).where(eq(jobs.id, jShown));
+      expect(new Set(await alreadyShownSignatures(db, a))).toEqual(
+        new Set(["sig-shown", "sig-edited"]),
+      );
+
+      // Once the job is pruned its signatures leave the set, so a relist is re-recommendable.
+      await db.delete(jobs).where(eq(jobs.id, jShown));
+      expect(await alreadyShownSignatures(db, a)).toEqual([]);
     });
   });
 
@@ -443,6 +486,7 @@ describe("digests repo — recipient gates, shown-history anti-joins, persist/re
           applyUrl: `https://x.test/${NUL}a`,
           locations: [`Rem${NUL}ote`],
           remote: true,
+          contentSignature: null,
         },
       ]);
       const rows = await db.select().from(digestItems).where(eq(digestItems.digestId, digestId));
@@ -469,6 +513,7 @@ describe("digests repo — recipient gates, shown-history anti-joins, persist/re
         applyUrl: "https://a",
         locations: ["NYC"],
         remote: false,
+        contentSignature: "sig-j1",
       });
       await seedJob(companyId); // J2 — leaking into the map = the inArray(jobs.id, jobIds) filter dropped
       const map = await getJobSnapshots(db, [j1, 424242]);
@@ -480,6 +525,7 @@ describe("digests repo — recipient gates, shown-history anti-joins, persist/re
         applyUrl: "https://a",
         locations: ["NYC"],
         remote: false,
+        contentSignature: "sig-j1",
       });
       expect(map.get(424242)).toBeUndefined();
       expect((await getJobSnapshots(db, [])).size).toBe(0);
@@ -771,6 +817,23 @@ describe("digests repo — recipient gates, shown-history anti-joins, persist/re
       expect(payloadP!.items[0]!).not.toHaveProperty("approvedAt");
     });
 
+    it("surfaces the other recipient gates as eligible — false once digests are off, suppressed or unverified", async () => {
+      const companyId = await seedCompany();
+      const j1 = await seedJob(companyId);
+      const cases: [RecipientOverrides, boolean][] = [
+        [{}, true],
+        [{ digestEnabled: false }, false],
+        [{ digestSuppressedAt: new Date() }, false],
+        [{ emailVerified: false }, false],
+      ];
+      for (const [i, [overrides, eligible]] of cases.entries()) {
+        const u = await seedRecipient(i + 1, overrides);
+        const { digestId } = await seedDigestForUser(u, { itemCount: 1 });
+        await insertDigestItems(db, digestId, u, [item(j1, 1)]);
+        expect((await getDigestEmailPayload(db, digestId))!.eligible).toBe(eligible);
+      }
+    });
+
     it("projects every render field per item exactly as persisted", async () => {
       const a = await seedRecipient(1);
       const companyId = await seedCompany();
@@ -846,7 +909,7 @@ describe("digests repo — recipient gates, shown-history anti-joins, persist/re
         { userId: b },
       ]);
 
-      await markDigestConsidered(db, a);
+      await markDigestConsidered(db, a, await startDigestRun(db, "cron"));
 
       const prefs = await readPrefs(a);
       // A surviving 'prev-real-email' = the lastDigestEmailId:null set member was dropped, mislabeling
@@ -860,6 +923,33 @@ describe("digests repo — recipient gates, shown-history anti-joins, persist/re
       expect(prefsB.lastDigestEmailId).toBeNull();
       // ...and the stamp feeds cadenceDuePredicate — A is off the window, B is still due.
       expect(await listDigestRecipients(db, { limit: 10, cadenceDue: true })).toEqual([{ userId: b }]);
+    });
+
+    it("the cadence clock is the run's start, not the send time, and never moves back", async () => {
+      // A run started 22h ago whose email only went out now (a long synthesis wait): stamped at send time,
+      // the user would miss the next daily tick.
+      const startedAt = hoursAgo(22);
+      const [run] = await db
+        .insert(digestRuns)
+        .values({ trigger: "cron", startedAt })
+        .returning({ id: digestRuns.id });
+      const a = await seedRecipient(1, { digestCadence: "daily" });
+      const { id: dA } = await insertDigest(db, {
+        userId: a,
+        digestRunId: run!.id,
+        itemCount: 1,
+        counts: {},
+      });
+      // B was stamped by a newer run; a dashboard rerun of the older run must not move it back.
+      const bStamp = hoursAgo(1);
+      const b = await seedRecipient(2, { digestCadence: "daily", lastDigestSentAt: bStamp });
+
+      await recordDigestSent(db, dA, "resend-email-1");
+      await markDigestConsidered(db, b, run!.id);
+
+      expect((await readPrefs(a)).lastDigestSentAt).toEqual(startedAt);
+      expect((await readPrefs(b)).lastDigestSentAt).toEqual(bStamp);
+      expect(await listDigestRecipients(db, { limit: 10, cadenceDue: true })).toEqual([{ userId: a }]);
     });
 
     it("recordDigestDeliveryOutcome without suppress upgrades ONLY delivery_status; an unknown id throws", async () => {
@@ -947,6 +1037,17 @@ describe("digests repo — recipient gates, shown-history anti-joins, persist/re
       // Failure-path posture: resolving (not throwing) on a missing row — a second error here would
       // mask the ORIGINAL send error; "fixing" this to the throwing posture of its siblings reds this.
       await expect(recordDigestSendFailure(db, 999999)).resolves.toBeUndefined();
+    });
+
+    it("recordDigestSendFailure never downgrades a digest already recorded as sent", async () => {
+      const a = await seedRecipient(1);
+      const { digestId } = await seedDigestForUser(a, { sent: true });
+
+      await recordDigestSendFailure(db, digestId);
+
+      const digest = await readDigest(digestId);
+      expect(digest.deliveryStatus).toBe("sent");
+      expect(digest.emailId).toBe(`email-${digestId}`);
     });
   });
 });

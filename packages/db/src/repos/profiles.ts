@@ -157,8 +157,8 @@ export async function getProfileTextKey(db: Db, userId: UserId): Promise<Profile
 /**
  * The user's semantic profile for the Phase-10 digest: the structured fields, the stored query-side
  * embedding, and the backing file id — read from the one `user_profiles` row (null if the user has
- * none, e.g. no CV ingested yet). The embedding may be null (a profile written when the CV had no
- * embeddable content); the digest caller skips such users. Drizzle's typed `vector` column maps the
+ * none, e.g. no CV ingested yet). The column is nullable though `upsertUserProfile` always writes a
+ * vector, so the digest caller still skips a null one. Drizzle's typed `vector` column maps the
  * stored value back to `number[]` on select, so the embedding is ready to pass to
  * `retrieveCandidatesForProfile` (which re-asserts the dimension via `vectorLiteral`).
  */

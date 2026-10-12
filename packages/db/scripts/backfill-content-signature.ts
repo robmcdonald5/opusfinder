@@ -1,4 +1,4 @@
-import { isNull, sql } from "drizzle-orm";
+import { and, isNull, sql } from "drizzle-orm";
 
 import { runScript } from "@opusfinder/shared/script";
 
@@ -13,33 +13,31 @@ import { jobs } from "../src/schema";
  * IDENTICAL signatureSql used by upsertJobs (INSERT VALUES + ON CONFLICT SET), so a backfilled row's
  * signature is byte-identical to what a future re-ingest would write — no JS write path, no parity drift.
  *
- * Re-runnable: `WHERE content_signature IS NULL` means already-signed rows stop matching, so a partial
- * run just resumes next time. It terminates without a keyset cursor because md5 over EVEN empty/whitespace
- * text is non-NULL, so every selected row becomes non-NULL — nothing is perpetually re-selected. (This is
- * why it does NOT copy the embeddings backfill's non-empty-content predicate: a contentless job must still
- * get a valid signature so the "no unsigned rows" gate below holds; excluding it would leave it NULL
- * forever.) The SET references column expressions only (no per-row bind params), so the 65535 bind-param
- * ceiling and id-keyset chunking don't apply at today's table size — chunk only if the table ever outgrows
- * a single statement.
+ * Re-runnable: it selects only rows that are NULL but would sign non-NULL, so already-signed rows stop
+ * matching and a partial run just resumes next time. A blank-description row signs NULL by design (see
+ * signatureSql), so it is neither selected nor counted as unsigned by the gate below. The SET references
+ * column expressions only (no per-row bind params), so the 65535 bind-param ceiling and id-keyset chunking
+ * don't apply at today's table size — chunk only if the table ever outgrows a single statement.
  *
  *   pnpm db:backfill-signatures            (needs DATABASE_URL)
  */
 await runScript("BackfillContentSignature", async () => {
   const db = createDb(getDatabaseUrl());
 
+  const signature = signatureSql(sql`${jobs.title}`, sql`${jobs.descriptionText}`);
   const updated = await db
     .update(jobs)
-    .set({ contentSignature: signatureSql(sql`${jobs.title}`, sql`${jobs.descriptionText}`) })
-    .where(isNull(jobs.contentSignature))
+    .set({ contentSignature: signature })
+    .where(and(isNull(jobs.contentSignature), sql`${signature} IS NOT NULL`))
     .returning({ id: jobs.id });
   const signed = updated.length;
 
-  // Acceptance gate: assert no unsigned rows remain. within_group_dups (rows minus distinct
+  // Acceptance gate: assert no unsigned rows remain. within_group_dups (signed rows minus distinct
   // signatures) is a SIGNAL, not an error — non-zero is EXPECTED once real cross-posts/reposts exist.
   const stats: unknown = await db.execute(sql`
     SELECT count(*)                                              AS total,
-           count(*) FILTER (WHERE content_signature IS NULL)     AS unsigned,
-           count(*) - count(DISTINCT content_signature)          AS within_group_dups
+           count(*) FILTER (WHERE content_signature IS NULL AND ${signature} IS NOT NULL) AS unsigned,
+           count(content_signature) - count(DISTINCT content_signature) AS within_group_dups
     FROM ${jobs}
   `);
   const row = resultRows(stats)[0] as Record<string, unknown> | undefined;
