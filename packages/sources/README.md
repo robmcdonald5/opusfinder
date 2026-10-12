@@ -153,8 +153,10 @@ location string. `postedAt` = `first_published` ‖ `updated_at`.
 
 **Lever** — `api.lever.co/v0/postings/{slug}?mode=json`. Response is a BARE array (no envelope).
 Slugs CASE-SENSITIVE (don't lowercase). `id` is a UUID string; title is on `text`; `createdAt`
-is ms-epoch. Structured `workplaceType` (`remote`⇒true, `hybrid`/`onsite`⇒false). Description
-from `descriptionPlain` (collapse only); the `lists[]`/`additional` sections are not mapped.
+is ms-epoch. Structured `workplaceType` (`remote`⇒true, `hybrid`/`onsite`⇒false). Description is
+`descriptionPlain` (opening + body only), then each `lists[]` section (requirements etc.: heading +
+HTML items), then `salaryDescriptionPlain` and the `additionalPlain` closing (these two only extend a
+body: alone they'd defeat `upsertJobs`' blank-description guard).
 **US host only** — EU tenants (`api.eu.lever.co` / `jobs.eu.lever.co`) return `null` from `matchUrl`
 and stay deferred (EU needs a per-company region channel; Phase 8).
 
@@ -162,7 +164,9 @@ and stay deferred (EU needs a per-company region channel; Phase 8).
 `{ jobs, apiVersion }`. Slugs case-PRESERVED (server is case-insensitive but apply URLs echo
 casing — seed one canonical casing per board). `isRemote` is a TRAP (true on Hybrid postings);
 `remote` is derived from `workplaceType` (null ⇒ infer from location text). Multi-office via
-`location` + `secondaryLocations[]`. Description from `descriptionPlain`.
+`location` + `secondaryLocations[]`. Description from `descriptionPlain`, plus the
+`compensation.compensationTierSummary` pay line (not when the company hides pay, or the body is
+blank). `isListed: false` postings (direct-link only) are dropped in `locate`.
 
 **Workable** — `apply.workable.com/api/v1/widget/accounts/{slug}?details=true`. Unpaginated
 (returns the whole board in one response). Hydration is INLINE via `?details=true` (not an N+1;
@@ -185,17 +189,19 @@ public apply URL, so `mapItem` reconstructs `applyUrl` + sets `descriptionText: 
 **Recruitee** — `{slug}.recruitee.com/api/offers/`. Unpaginated `{ offers }`. Slugs lowercase
 (host case-insensitive). `id` is NUMERIC (stringified before `jobId`). `remote` is THREE
 independent booleans `remote`/`hybrid`/`on_site` that CO-OCCUR (`remote:true` ships with
-`hybrid:true`), so `hybrid` is checked FIRST → Hybrid ⇒ false. Locations prefer the multi-office
-`locations[].name` over the primary-only top-level `location`. `published_at` is
-`"YYYY-MM-DD HH:MM:SS UTC"` (NOT ISO) → massaged to ISO for engine-independent parsing
-(Worker-forward). `applyUrl` = `careers_apply_url` ‖ `careers_url` VERBATIM (custom careers
+`hybrid:true`), so `hybrid` is checked FIRST → Hybrid ⇒ false. Locations compose each multi-office
+`locations[]` entry's city/state/country (its `name` is a free-form office label, used only when those
+are empty), else the primary-only top-level `location`. Description = `description` + `requirements`.
+`published_at` is `"YYYY-MM-DD HH:MM:SS UTC"` (NOT ISO) → massaged to ISO for engine-independent
+parsing (Worker-forward). `applyUrl` = `careers_apply_url` ‖ `careers_url` VERBATIM (custom careers
 domains exist — never reconstruct). Unknown slug ⇒ 404 (assertable, Phase 7).
 
 **Pinpoint** — `{slug}.pinpointhq.com/postings.json`. Unpaginated `{ data }` (the `?page` param
 is silently IGNORED). Slugs lowercase. Posting `id` (string) is DISTINCT from the nested
 `job.id` and the url UUID. Locations compose `location.city` + `province` — NOT `location.name`
 (an office label, sometimes the literal "Remote" trap). `remote` from the `workplace_type` enum.
-`description` is single-encoded HTML (`<!--block-->` markers removed by the tag regex). NO posted
+Description = `description` + `key_responsibilities` + `skills_knowledge_expertise` (not `benefits`),
+single-encoded HTML (`<!--block-->` markers removed by the strip). NO posted
 date (only `deadline_at`, an application-CLOSE date) ⇒ `postedAt` null. Unknown slug ⇒ 404;
 real-but-empty ⇒ `200 {data:[]}`.
 

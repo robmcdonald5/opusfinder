@@ -111,6 +111,29 @@ const UPSERT_BATCH_SIZE = 500;
  *  backslash: inside a `sql` template a `\s` would cook to a bare `s` — see signatureSql). */
 const BLANK_RE = sql.raw(`'^[[:space:]]*$'`);
 
+/** Length caps on third-party job text, so a board can't set a posting's storage and embedding cost (real
+ *  descriptions run 2–15K chars). Deterministic, so a capped posting's content_signature doesn't churn. */
+const MAX_DESCRIPTION_CHARS = 30_000;
+const MAX_SHORT_TEXT_CHARS = 500; // a title, or one location
+const MAX_LOCATIONS = 200;
+
+/** A lone UTF-16 surrogate (an ATS cutting an emoji in half, or a length cap splitting one). */
+const LONE_SURROGATE = /\p{Cs}/gu;
+
+/** Third-party text as Postgres will store it: capped at `max` chars, then U+0000 and lone surrogates
+ *  dropped (Postgres rejects a NUL in text/jsonb, and a lone surrogate in jsonb). */
+function pgText(text: string, max = Number.POSITIVE_INFINITY): string {
+  return text.slice(0, max).replaceAll(NUL, "").replace(LONE_SURROGATE, "");
+}
+
+/** `postedAt`, or null for a date Postgres rejects: drizzle binds `toISOString()`, which writes a year
+ *  outside 1–9999 in expanded form ("+020240-…"). */
+function pgTimestamp(date: Date | null): Date | null {
+  if (!date) return null;
+  const year = date.getUTCFullYear();
+  return year >= 1 && year <= 9999 ? date : null;
+}
+
 /** What {@link upsertJobs} did with a board's postings (all counts are DISTINCT postings). */
 export interface UpsertJobsResult {
   /** Rows inserted or updated (an unchanged re-ingest is skipped by `setWhere` and not counted). */
@@ -169,9 +192,8 @@ export async function upsertJobs(
   if (writable.length === 0) return { changed: 0, total: 0, contentMissing: missing.length };
 
   const values = writable.map((job) => {
-    // Strip U+0000 from anything bound for text/jsonb (Postgres rejects it).
-    const title = job.title.replaceAll(NUL, "");
-    const descriptionText = job.descriptionText.replaceAll(NUL, "");
+    const title = pgText(job.title, MAX_SHORT_TEXT_CHARS);
+    const descriptionText = pgText(job.descriptionText, MAX_DESCRIPTION_CHARS);
     return {
       externalId: job.externalId,
       companyId,
@@ -183,16 +205,20 @@ export async function upsertJobs(
       // different order across ingests would otherwise report a spurious "changed" every run.
       // runAdapter already canonicalizes the in-memory job's locations, so on the ingestion
       // path this is a no-op — it stays here as the defense for any direct upsertJobs caller.
-      // Order isn't semantically meaningful for ATS locations.
-      locations: [...job.locations].map((loc) => loc.replaceAll(NUL, "")).sort(),
+      // Order isn't semantically meaningful for ATS locations. Sorted before the count cap, so a
+      // reorder can't change which ones are kept.
+      locations: job.locations
+        .map((loc) => pgText(loc, MAX_SHORT_TEXT_CHARS))
+        .sort()
+        .slice(0, MAX_LOCATIONS),
       remote: job.remote,
-      applyUrl: job.applyUrl.replaceAll(NUL, ""),
-      postedAt: job.postedAt,
+      applyUrl: pgText(job.applyUrl),
+      postedAt: pgTimestamp(job.postedAt),
       // The `raw` column is DEPRECATED and intentionally NOT written — write-only debug data that grew to
       // dominate the DB (NormalizedJob no longer even carries it). The column is nullable; omitting it from
       // the INSERT leaves it NULL. See schema.ts jobs doc.
       // content_signature: md5 over the SAME normalized title+desc, computed SQL-side from the
-      // bound (NUL-stripped) values via the ONE signatureSql definition — byte-identical to the ON CONFLICT
+      // bound (sanitized) values via the ONE signatureSql definition — byte-identical to the ON CONFLICT
       // SET and the backfill, so an insert and any later re-ingest/backfill of the same content always
       // produce the same signature. (embedding omitted — populated by the embedding backfill.)
       contentSignature: signatureSql(sql`${title}`, sql`${descriptionText}`),

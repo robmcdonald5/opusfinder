@@ -1,9 +1,9 @@
 import { companySlug, isRecord, safeJobId } from "@opusfinder/shared";
 import type { NormalizedJob } from "@opusfinder/shared";
 
-import { inferRemoteFromText, joinParts } from "./fields";
+import { inferRemoteFromText, joinParts, nextOffset } from "./fields";
 import { htmlToText } from "./text";
-import type { Cursor, ProbeOutcome, SourceAdapter, SourceContext } from "./types";
+import type { ProbeOutcome, SourceAdapter, SourceContext } from "./types";
 import { subdomainLabel } from "./url-match";
 
 const API = "https://jsapi.recruiterbox.com/v1/openings/";
@@ -69,26 +69,20 @@ export const trakstarAdapter: SourceAdapter = {
     return body.objects;
   },
 
-  // Advance by the actual page size (robust to a server clamp). An empty page always
-  // terminates. With a usable `meta.total`, stop once the window covers it; without one (API
-  // drift), keep going while pages are full and let the short/empty page terminate (the server
-  // honors offset). Mirrors the SmartRecruiters defensive shape.
-  nextCursor: (body, prevCursor, pageItemCount): Cursor | null => {
-    if (pageItemCount === 0) return null;
-    const offset = (prevCursor ? prevCursor.offset : 0) + pageItemCount;
-    const meta = isRecord(body) && isRecord(body.meta) ? body.meta : undefined;
-    const total =
-      meta && typeof meta.total === "number" && Number.isFinite(meta.total)
-        ? meta.total
-        : undefined;
-    if (total !== undefined) {
-      return offset >= total ? null : { kind: "offset", offset };
-    }
-    return pageItemCount < PAGE_LIMIT ? null : { kind: "offset", offset };
-  },
+  reportedTotal: (body) => metaTotal(body),
+
+  nextCursor: (body, prevCursor, pageItemCount) =>
+    nextOffset(metaTotal(body), prevCursor, pageItemCount, PAGE_LIMIT),
 
   mapItem: (raw, ctx) => toNormalizedJob(raw, ctx),
 };
+
+function metaTotal(body: unknown): number | undefined {
+  const meta = isRecord(body) && isRecord(body.meta) ? body.meta : undefined;
+  return meta && typeof meta.total === "number" && Number.isFinite(meta.total)
+    ? meta.total
+    : undefined;
+}
 
 function toNormalizedJob(raw: unknown, ctx: SourceContext): NormalizedJob | null {
   if (!isRecord(raw)) return null;

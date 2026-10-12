@@ -165,6 +165,47 @@ describe("upsertCompany + upsertJobs — board persistence semantics (integratio
       expect(row.applyUrl).toBe("https://x.test/ab");
     });
 
+    it("drops a lone surrogate and an out-of-range postedAt — the bad postings land beside the good one", async () => {
+      const companyId = await upsertCompany(db, companySlug("acme"), "greenhouse");
+
+      // Half an emoji, runtime-built (never an escape in this source file). In jsonb `locations` Postgres
+      // rejects it, failing the whole batch.
+      const half = String.fromCharCode(0xd83d);
+      const res = await upsertJobs(db, companyId, [
+        job("ext-good"),
+        job("ext-half", { title: `Engineer ${half}`, locations: [`Berlin ${half}`] }),
+        // A microsecond epoch read as ms: year 55840, which toISOString writes as "+055840-…".
+        job("ext-year", { postedAt: new Date(1.7e15) }),
+      ]);
+      expect(res).toEqual({ changed: 3, total: 3, contentMissing: 0 });
+
+      expect((await jobRow("ext-half")).title).toBe("Engineer ");
+      expect((await jobRow("ext-half")).locations).toEqual(["Berlin "]);
+      expect((await jobRow("ext-year")).postedAt).toBeNull();
+    });
+
+    it("caps title, description and locations — a split emoji at the cut is dropped, and the kept locations ignore input order", async () => {
+      const companyId = await upsertCompany(db, companySlug("acme"), "greenhouse");
+
+      const emoji = String.fromCodePoint(0x1f600); // two UTF-16 units: the 500-char cut lands between them
+      const locations = Array.from({ length: 300 }, (_, i) => `L${String(i).padStart(3, "0")}`).reverse();
+      await upsertJobs(db, companyId, [
+        job("ext-big", {
+          title: `${"t".repeat(499)}${emoji}`,
+          descriptionText: "d".repeat(40_000),
+          locations,
+        }),
+      ]);
+
+      const row = await jobRow("ext-big");
+      expect(row.title).toBe("t".repeat(499));
+      expect(row.descriptionText).toHaveLength(30_000);
+      // Sorted, then capped: the same 200 whatever order the ATS sends.
+      expect(row.locations).toHaveLength(200);
+      expect(row.locations[0]).toBe("L000");
+      expect(row.locations[199]).toBe("L199");
+    });
+
     it("writes locations in canonical sorted order — a reordered re-ingest is a no-op", async () => {
       const companyId = await upsertCompany(db, companySlug("acme"), "greenhouse");
 

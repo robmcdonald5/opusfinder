@@ -238,6 +238,74 @@ describe("runAdapter — invariant ATS plumbing over MSW", () => {
     });
   });
 
+  describe("partial listing", () => {
+    // Offset paging (pageSize 2) whose every page reports `total`; `page(offset)` answers each request.
+    function pagedAdapter(
+      page: (offset: number) => RawItem[],
+      total?: number,
+      over: Partial<SourceAdapter> = {},
+    ) {
+      const offsetsSeen: (string | null)[] = [];
+      server.use(
+        http.get(LIST, ({ request }) => {
+          const offset = new URL(request.url).searchParams.get("offset");
+          offsetsSeen.push(offset);
+          return HttpResponse.json({ jobs: page(Number(offset ?? "0")), total });
+        }),
+      );
+      const adapter = makeAdapter({
+        jobsRequest: (_ctx, cursor) => ({ url: cursor ? `${LIST}?offset=${cursor.offset}` : LIST }),
+        nextCursor: (_body, prev, count) =>
+          count > 0 ? { kind: "offset", offset: (prev?.offset ?? 0) + count } : null,
+        reportedTotal: (body) => (body as { total?: number }).total,
+        ...over,
+      });
+      return { adapter, offsetsSeen };
+    }
+    const twoPages = (offset: number): RawItem[] =>
+      offset === 0 ? [raw(1), raw(2)] : offset === 2 ? [raw(3), raw(4)] : [];
+
+    it("a page repeating earlier ones (the server ignoring the offset) stops the loop and is partial", async () => {
+      // No total: only the repeat check stops it (bounded at offset 10 so a missing check fails, not hangs).
+      const { adapter, offsetsSeen } = pagedAdapter((offset) => (offset < 10 ? [raw(1), raw(2)] : []));
+
+      const { partial } = await fetchBoard(adapter, "acme");
+
+      expect(partial).toBe(true);
+      expect(offsetsSeen).toEqual([null, "2"]);
+    });
+
+    it("a later page holding only malformed postings is not a repeat", async () => {
+      const { adapter } = pagedAdapter(
+        (offset) => (offset === 0 ? [raw(1), raw(2)] : offset === 2 ? [raw(3, { title: "" })] : []),
+        3,
+        { mapItem: (item, ctx) => ((item as RawItem).title === "" ? null : mkJob(item as RawItem, ctx)) },
+      );
+
+      const { jobs, partial } = await fetchBoard(adapter, "acme");
+
+      expect(ids(jobs)).toEqual(["1", "2"]);
+      expect(partial).toBe(false);
+    });
+
+    it("an early empty page well short of the reported total is partial; a shortfall within the slack is not", async () => {
+      const short = pagedAdapter(twoPages, 20); // 4 of 20 listed
+      expect((await fetchBoard(short.adapter, "acme")).partial).toBe(true);
+
+      const overcount = pagedAdapter(twoPages, 9); // 4 of 9: short by 5, the slack's floor
+      expect((await fetchBoard(overcount.adapter, "acme")).partial).toBe(false);
+    });
+
+    it("a capped listing is not partial, however short of the total it stops", async () => {
+      const { adapter } = pagedAdapter(twoPages, 100);
+
+      const { jobs, partial } = await fetchBoard(adapter, "acme", { maxItems: 3 });
+
+      expect(jobs).toHaveLength(3);
+      expect(partial).toBe(false);
+    });
+  });
+
   describe("resilient fetch — retry / backoff", () => {
     it("retries a transient 503 (Retry-After: 0) and succeeds on the next attempt", async () => {
       let calls = 0;

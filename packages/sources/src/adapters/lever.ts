@@ -2,7 +2,7 @@ import { companySlug, isRecord, safeJobId } from "@opusfinder/shared";
 import type { NormalizedJob } from "@opusfinder/shared";
 
 import { inferRemoteFromText } from "./fields";
-import { cleanHtml } from "./text";
+import { cleanHtml, htmlToText, joinSections } from "./text";
 import type { SourceAdapter, SourceContext } from "./types";
 import { firstPathSegment, segmentAfter } from "./url-match";
 
@@ -87,15 +87,32 @@ function toNormalizedJob(raw: unknown, ctx: SourceContext): NormalizedJob | null
     companySlug: ctx.slug,
     locations,
     remote,
-    // `descriptionPlain` is pre-stripped plain text (opening + body), so only collapse is
-    // needed. The richer `lists[]`/`additional` sections + the HTML `description` are not mapped.
-    descriptionText: cleanHtml(
-      typeof raw.descriptionPlain === "string" ? raw.descriptionPlain : "",
-      ["collapse"],
-    ),
+    descriptionText: describePosting(raw),
     applyUrl,
     postedAt,
   };
+}
+
+/**
+ * The posting text in page order: `descriptionPlain` (opening + body only), each `lists[]` section
+ * (requirements, responsibilities, benefits: a plain heading plus HTML list items), the salary note,
+ * then the `additionalPlain` closing. The `*Plain` fields are pre-stripped, so they only collapse.
+ */
+function describePosting(raw: Record<string, unknown>): string {
+  const plain = (value: unknown) => cleanHtml(typeof value === "string" ? value : "", ["collapse"]);
+  const body = [plain(raw.descriptionPlain)];
+  if (Array.isArray(raw.lists)) {
+    for (const list of raw.lists) {
+      if (!isRecord(list)) continue;
+      const items = htmlToText(list.content);
+      const heading = plain(list.text);
+      if (items) body.push(heading ? `${heading}\n${items}` : items);
+    }
+  }
+  // The salary note and closing (often EEO boilerplate) only extend a body: alone they'd overwrite the
+  // stored text through a blank fetch, which upsertJobs' blank-description guard otherwise keeps.
+  if (!body.some((section) => section.length > 0)) return "";
+  return joinSections([...body, plain(raw.salaryDescriptionPlain), plain(raw.additionalPlain)]);
 }
 
 /** Prefer the multi-office `categories.allLocations`; fall back to `categories.location`. */

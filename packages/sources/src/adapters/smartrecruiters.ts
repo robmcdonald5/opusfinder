@@ -1,9 +1,9 @@
 import { companySlug, isRecord, safeJobId } from "@opusfinder/shared";
 import type { NormalizedJob } from "@opusfinder/shared";
 
-import { joinParts } from "./fields";
-import { htmlToText } from "./text";
-import type { Cursor, FetchJson, ProbeOutcome, SourceAdapter, SourceContext } from "./types";
+import { joinParts, nextOffset } from "./fields";
+import { htmlToText, joinSections } from "./text";
+import type { FetchJson, ProbeOutcome, SourceAdapter, SourceContext } from "./types";
 import { firstPathSegment, segmentAfter } from "./url-match";
 
 const API = "https://api.smartrecruiters.com/v1/companies";
@@ -44,12 +44,14 @@ export const smartRecruitersAdapter: SourceAdapter = {
   normalizeSlug: (rawSlug) => companySlug(rawSlug),
 
   // jobs/careers.smartrecruiters.com/{slug} OR api.smartrecruiters.com/v1/companies/{slug}/...
-  matchUrl: (url) =>
-    url.hostname === PUBLIC_HOST || url.hostname === CAREERS_HOST
-      ? firstPathSegment(url)
-      : url.hostname === API_HOST
-        ? segmentAfter(url, "companies")
-        : null,
+  // `/oneclick-ui/company/{id}/…` is the apply flow, not a board; its company id isn't known to be
+  // the API's, so it yields nothing rather than a phantom "oneclick-ui" board.
+  matchUrl: (url) => {
+    if (url.hostname === API_HOST) return segmentAfter(url, "companies");
+    if (url.hostname !== PUBLIC_HOST && url.hostname !== CAREERS_HOST) return null;
+    const firstSegment = firstPathSegment(url);
+    return firstSegment === "oneclick-ui" ? null : firstSegment;
+  },
 
   // An unknown slug returns 200 + totalFound:0 (NOT 404), indistinguishable from a real-but-empty
   // board, so existence can't be asserted: a positive count is live, anything else indeterminate
@@ -73,28 +75,21 @@ export const smartRecruitersAdapter: SourceAdapter = {
     return body.content;
   },
 
-  // Advance by the actual page size (robust to the server's limit clamp). An empty page
-  // always terminates. With a usable `totalFound`, stop once the window covers it; without
-  // one (API drift), do NOT stop early and silently truncate — keep going while pages are
-  // full and let the short/empty page be the terminator (the server respects offset, so it
-  // arrives), which also can't loop forever.
-  nextCursor: (body, prevCursor, pageItemCount): Cursor | null => {
-    if (pageItemCount === 0) return null;
-    const offset = (prevCursor ? prevCursor.offset : 0) + pageItemCount;
-    const totalFound =
-      isRecord(body) && typeof body.totalFound === "number" && Number.isFinite(body.totalFound)
-        ? body.totalFound
-        : undefined;
-    if (totalFound !== undefined) {
-      return offset >= totalFound ? null : { kind: "offset", offset };
-    }
-    return pageItemCount < PAGE_LIMIT ? null : { kind: "offset", offset };
-  },
+  reportedTotal: (body) => totalFound(body),
+
+  nextCursor: (body, prevCursor, pageItemCount) =>
+    nextOffset(totalFound(body), prevCursor, pageItemCount, PAGE_LIMIT),
 
   mapItem: (raw, ctx) => toNormalizedJob(raw, ctx),
 
   hydrate: (job, _raw, ctx, fetchJson) => hydratePosting(job, ctx, fetchJson),
 };
+
+function totalFound(body: unknown): number | undefined {
+  return isRecord(body) && typeof body.totalFound === "number" && Number.isFinite(body.totalFound)
+    ? body.totalFound
+    : undefined;
+}
 
 /**
  * Map ONE raw list item to a fully-valid job (apply URL reconstructed from the public
@@ -190,14 +185,13 @@ async function hydratePosting(
 
 /** Concatenate the description sections in a stable order, each cleaned to plain text. */
 function cleanSections(sections: Record<string, unknown>): string {
-  const parts: string[] = [];
-  for (const key of SECTION_ORDER) {
-    const section = sections[key];
-    // jobAd section text is RAW tags + single-encoded entities (the htmlToText recipe).
-    const cleaned = htmlToText(isRecord(section) ? section.text : "");
-    if (cleaned) parts.push(cleaned);
-  }
-  return parts.join("\n\n");
+  return joinSections(
+    SECTION_ORDER.map((key) => {
+      const section = sections[key];
+      // jobAd section text is RAW tags + single-encoded entities (the htmlToText recipe).
+      return htmlToText(isRecord(section) ? section.text : "");
+    }),
+  );
 }
 
 /** Prefer `location.fullLocation`; else compose city/region/country. Single-element array. */

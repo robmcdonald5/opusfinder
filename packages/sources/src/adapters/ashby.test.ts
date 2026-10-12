@@ -174,6 +174,41 @@ describe("ashbyAdapter.mapItem — description source + fallback", () => {
   });
 });
 
+describe("ashbyAdapter.mapItem — compensation (?includeCompensation=true)", () => {
+  const compensation = {
+    compensationTierSummary: "$81K – $87K • 0.5% – 1.75%",
+    scrapeableCompensationSalarySummary: "$81K - $87K",
+  };
+
+  it("appends the labelled pay summary after the description", () => {
+    const job = ashbyAdapter.mapItem({ ...RAW_JOB, compensation }, CTX) as NormalizedJob;
+    expect(job.descriptionText).toBe("Build the best pipeline.\n\nCompensation: $81K – $87K • 0.5% – 1.75%");
+  });
+
+  it("leaves pay out when the company hides it on its postings", () => {
+    const job = ashbyAdapter.mapItem(
+      { ...RAW_JOB, compensation, shouldDisplayCompensationOnJobPostings: false },
+      CTX,
+    ) as NormalizedJob;
+    expect(job.descriptionText).toBe("Build the best pipeline.");
+  });
+
+  it("adds no pay line to a blank body (keeps upsertJobs' blank-description guard working)", () => {
+    const job = ashbyAdapter.mapItem(
+      { ...RAW_JOB, descriptionPlain: "", descriptionHtml: undefined, compensation },
+      CTX,
+    ) as NormalizedJob;
+    expect(job.descriptionText).toBe("");
+  });
+});
+
+describe("ashbyAdapter.locate — unlisted postings", () => {
+  it("drops isListed:false (direct-link-only) postings, keeping listed and unflagged ones", () => {
+    const jobs = [{ id: "a", isListed: true }, { id: "b", isListed: false }, { id: "c" }];
+    expect(ashbyAdapter.locate({ jobs, apiVersion: "1" }, CTX)).toEqual([jobs[0], jobs[2]]);
+  });
+});
+
 describe("ashbyAdapter.mapItem — postedAt parsing", () => {
   it("nulls postedAt for a missing publishedAt", () => {
     const { publishedAt: _omit, ...noDate } = RAW_JOB;

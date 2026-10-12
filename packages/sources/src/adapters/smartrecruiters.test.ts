@@ -185,6 +185,19 @@ describe("smartRecruitersAdapter.mapItem — skips malformed items (returns null
   });
 });
 
+describe("smartRecruitersAdapter — pagination by totalFound", () => {
+  it("reports totalFound (what fetchBoard checks the listing against) and pages by it", () => {
+    const body = { totalFound: 250, content: [] };
+    expect(smartRecruitersAdapter.reportedTotal!(body)).toBe(250);
+    expect(smartRecruitersAdapter.reportedTotal!({ content: [] })).toBeUndefined();
+    expect(smartRecruitersAdapter.nextCursor!(body, { kind: "offset", offset: 100 }, 100)).toEqual({
+      kind: "offset",
+      offset: 200,
+    });
+    expect(smartRecruitersAdapter.nextCursor!(body, { kind: "offset", offset: 200 }, 50)).toBeNull();
+  });
+});
+
 describe("smartRecruitersAdapter.hydrate — content, or a throw (never an empty patch)", () => {
   // hydrate is called by runAdapter with the resilient fetchJson; here a stub returns the parsed detail.
   const hydrate = smartRecruitersAdapter.hydrate!;

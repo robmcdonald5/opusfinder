@@ -92,6 +92,13 @@ export interface SourceAdapter {
   nextCursor?(body: unknown, prevCursor: Cursor | null, pageItemCount: number): Cursor | null;
 
   /**
+   * The board's posting count as one page's body reports it, if the API reports one (SmartRecruiters
+   * `totalFound`, Trakstar `meta.total`). runAdapter flags a listing that ends well short of it as
+   * partial. OMIT ⇒ no such check.
+   */
+  reportedTotal?(body: unknown): number | undefined;
+
+  /**
    * OPTIONAL per-item enrichment via a SECOND fetch (the N+1 case — SmartRecruiters).
    * Given an already-mapped job + its raw list item (handed over directly — the job carries no
    * raw), fetch extra data through the injected resilient `fetchJson` and return a PATCH to merge.
