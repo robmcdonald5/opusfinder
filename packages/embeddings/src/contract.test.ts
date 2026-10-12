@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { EMBEDDING_DIMENSIONS } from "@opusfinder/db/schema";
 
-import { chunkByLimits, parseEmbeddingResponse } from "./contract";
+import { chunkByLimits, EmbeddingRejectedError, parseEmbeddingResponse } from "./contract";
 import { getVoyageApiKey } from "./env";
 import { EMBED_DIMENSIONS, estimateCostUsd, formatEmbedCost } from "./provider";
 
@@ -43,6 +43,17 @@ describe("chunkByLimits", () => {
 
   it("yields nothing for empty input", () => {
     expect(collect([], limits)).toEqual([]);
+  });
+
+  it("counts a CJK char as ~1 token, so a page of long CJK texts splits under the real cap", () => {
+    // 64 x 4,000 CJK chars is ~256K real tokens: one request would be far over Voyage's 120K cap.
+    const texts = Array.from({ length: 64 }, (_, i) =>
+      String.fromCharCode(0x4e00 + i).repeat(4000),
+    );
+    const out = collect(texts, limits);
+    expect(out.length).toBeGreaterThan(1);
+    for (const chunk of out) expect(chunk.join("").length).toBeLessThanOrEqual(limits.maxTokens);
+    expect(out.flat()).toEqual(texts);
   });
 });
 
@@ -98,11 +109,23 @@ describe("parseEmbeddingResponse", () => {
     { name: "an Infinity component", body: { data: [{ embedding: [1, 2, Infinity], index: 0 }] }, msg: "Voyage returned a non-finite embedding component for item 0." },
   ])("throws the exact message on $name", ({ body, msg }) => {
     expect(() => parseEmbeddingResponse(body, opts)).toThrow(msg);
+    expect(() => parseEmbeddingResponse(body, opts)).toThrow(EmbeddingRejectedError);
   });
 
   it("throws when the returned count does not match the inputs sent", () => {
     const body = { data: [{ embedding: vecA, index: 0 }] }; // one valid vector, expectedCount is 2
     expect(() => parseEmbeddingResponse(body, opts)).toThrow("Voyage returned 1 embeddings for 2 inputs.");
+    expect(() => parseEmbeddingResponse(body, opts)).toThrow(EmbeddingRejectedError);
+  });
+
+  it.each([
+    { name: "duplicate", indices: [0, 0] },
+    { name: "out-of-range", indices: [0, 2] },
+  ])("throws on $name indices instead of misaligning vectors", ({ indices }) => {
+    const body = { data: [vecA, vecB].map((embedding, k) => ({ embedding, index: indices[k] })) };
+    expect(() => parseEmbeddingResponse(body, opts)).toThrow(
+      "Voyage returned embedding indices that are not 0..1.",
+    );
   });
 });
 

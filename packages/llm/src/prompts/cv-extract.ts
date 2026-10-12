@@ -2,10 +2,15 @@ import { z } from "zod";
 
 import type { StructuredProfile } from "@opusfinder/shared";
 
+import { pdfPart } from "../file-part";
+import { generate } from "../generate";
+import { generateObject } from "../generate-object";
+
 /**
- * The two prompts for CV ingestion, exported so the eval harness runs the SAME prompts production
- * does. Layer 1 (transcribe) and Layer 2 (structure) are deliberately separate calls so the
- * structured extraction can re-run from cached text without re-paying the vision call.
+ * The two CV-ingestion calls and their prompts, exported so the eval harness runs the SAME calls
+ * production does. Layer 1 (transcribe) and Layer 2 (structure) are deliberately separate calls so the
+ * structured extraction can re-run from cached text without re-paying the vision call. Both run at
+ * temperature 0: transcription is a faithful-copy task and structuring is grounded extraction.
  */
 
 /**
@@ -76,3 +81,47 @@ export type CvProfile = z.infer<typeof CvProfileSchema>;
 // when the CV pipeline wires its `structure()` seam (which is typed to return StructuredProfile).
 type Equal<A, B> = [A] extends [B] ? ([B] extends [A] ? true : never) : never;
 const _cvProfileMatchesStructuredProfile: Equal<CvProfile, StructuredProfile> = true;
+
+/** Layer 1: Haiku vision over the PDF → clean transcript text. */
+export async function transcribeCv(pdf: Uint8Array): Promise<string> {
+  const { text, finishReason } = await generate({
+    model: "haiku",
+    system: CV_TRANSCRIBE_SYSTEM,
+    temperature: 0,
+    maxOutputTokens: 8192,
+    messages: [
+      {
+        role: "user",
+        content: [
+          pdfPart(pdf),
+          { type: "text", text: "Transcribe this CV to clean plain text per the rules." },
+        ],
+      },
+    ],
+  });
+  // generate() returns a cut-off or refused transcript without throwing, and a cached transcript is
+  // permanent (restructure re-reads it, never re-transcribing) — so accept only a natural stop.
+  if (finishReason !== "stop") {
+    const hint =
+      finishReason === "length" ? "; raise transcribeCv's maxOutputTokens or split the PDF" : "";
+    throw new Error(
+      `transcribeCv: transcription stopped with finishReason "${finishReason}"${hint}`,
+    );
+  }
+  return text;
+}
+
+/** Layer 2: Haiku structured extraction over the transcript → a RAW profile (callers scrub PII). */
+export async function structureCv(text: string): Promise<CvProfile> {
+  const { object } = await generateObject({
+    model: "haiku",
+    schema: CvProfileSchema,
+    system: CV_STRUCTURE_SYSTEM,
+    temperature: 0,
+    // Above generateObject's 2048 default: a skill-dense CV's profile JSON can exceed 2048 output
+    // tokens (which would throw a truncation Error).
+    maxOutputTokens: 4096,
+    messages: [{ role: "user", content: text }],
+  });
+  return object;
+}

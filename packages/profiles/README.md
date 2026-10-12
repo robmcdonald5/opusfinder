@@ -21,9 +21,10 @@ re-throws — the cached text stands, only the profile write failed.
 ## Re-run seam (the layered cache)
 
 - `restructureProfile(db, { structure, embed, storage }, userId)` — re-structure from the cached R2
-  transcript (skips the expensive transcribe). For a structuring prompt/schema change. Re-running a
-  whole pipeline (e.g. for an embedding-model swap) is done by re-running `ingest-cv` on the original
-  PDF until the corpus is large enough to warrant a dedicated re-embed path.
+  transcript (skips the expensive transcribe), then re-embed with the current model. For a structuring
+  prompt/schema change, and for an embedding-model swap: the stored profile vector never refreshes on
+  its own, so run `pnpm profiles:restructure <email>` for every user before the next digest (see
+  `packages/db/scripts/reset-embeddings.ts`).
 
 ## Seams (and why)
 
@@ -54,8 +55,11 @@ guarantee**, not a seam contract — `src/` stays free of `@opusfinder/llm`.
 
 ## Known gaps
 
-- **R2 object lifecycle.** Each ingest mints a fresh `uploadId`, and a pre-extraction failure stores
-  the original PDF before failing — so old/failed R2 objects accumulate (cv_file rows are append-only
-  history; the current profile only references the latest upload). `deleteObject` exists but no
-  sweeper reclaims orphans yet. Fine at Phase-9 scale (a script, low volume); a cleanup job is
-  deferred to a later phase.
+- **R2 object lifecycle.** Nothing deletes CV objects: each ingest mints a fresh `uploadId`, so the
+  PDFs and transcripts of superseded and failed uploads accumulate. They hold the user's CV, so a
+  user-deletion flow must delete the user's R2 objects BEFORE deleting the `user` row: the FK
+  cascade drops the `user_cv_files` rows that record their keys.
+- **Failed profile steps leave no DB trace.** After the transcript is cached, a structure/embed
+  failure (or a profile with nothing to embed) records no error on the upload, and the previous
+  profile keeps driving digests; only the CLI output says so. An async or UI-driven ingest needs a
+  persisted per-upload outcome.

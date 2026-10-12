@@ -1,6 +1,7 @@
 import { findUserIdByEmail } from "@opusfinder/auth";
 import { createDb } from "@opusfinder/db";
 import { getDatabaseUrl } from "@opusfinder/db/env";
+import { formatEmbedCost } from "@opusfinder/embeddings";
 import { runScript } from "@opusfinder/shared/script";
 import { createS3StorageClient } from "@opusfinder/storage";
 import { getR2Config } from "@opusfinder/storage/env";
@@ -26,8 +27,11 @@ async function main(): Promise<void> {
       process.exitCode = 1;
       return;
     }
-    await restructureProfile(db, { structure, embed, storage }, userId);
-    console.log(`Re-structured profile for ${userId}.`);
+    const result = await restructureProfile(db, { structure, embed, storage }, userId);
+    console.log(
+      `Re-structured profile for ${userId} from cv_file #${result.sourceCvFileId} (embedded, ${formatEmbedCost(result.embedTokens)}).`,
+    );
+    if (result.warnings.length > 0) console.log(`warnings: ${result.warnings.join("; ")}`);
   } finally {
     storage.close();
   }

@@ -1,4 +1,4 @@
-import { parseEmbeddingResponse } from "./contract";
+import { EmbeddingRejectedError, parseEmbeddingResponse } from "./contract";
 import { getVoyageApiKey } from "./env";
 
 /**
@@ -16,21 +16,22 @@ export type VoyageInputType = "query" | "document" | null;
 const VOYAGE_URL = "https://api.voyageai.com/v1/embeddings";
 export const EMBED_MODEL = "voyage-4-large";
 // Must match the jobs.embedding column width (EMBEDDING_DIMENSIONS in @opusfinder/db).
-// 1024 is also voyage-4-large's default output dimension, so the swap from voyage-3-large
-// needs NO schema migration — but it DOES require a full corpus + profile re-embed: the two
-// models live in different embedding spaces, so a voyage-3 vector and a voyage-4 vector
-// cannot be cosine-compared (mixing them silently corrupts retrieval).
+// Moving EMBED_MODEL to another embedding space needs a full corpus + profile re-embed even at
+// the same width: no row records which model produced its vector, so a mixed corpus silently
+// corrupts retrieval. Swap by flush-then-refill (packages/db/scripts/reset-embeddings.ts).
 export const EMBED_DIMENSIONS = 1024;
 
 // Per-request limits the embed() chunker enforces. They live HERE (the swap point) with
 // the other provider facts, so a provider swap updates them in one place. voyage-4-large
 // accepts a 32K-token context per input; these bounds (128 items, ~90K estimated tokens per
-// request) stay deliberately conservative and well under Voyage's per-request caps.
-// CHARS_PER_TOKEN is a deliberately LOW (worst-case dense text) estimate, so
-// MAX_TOKENS_PER_REQUEST is an UPPER bound on the real token count per request.
+// request) stay deliberately conservative, under Voyage's 120K-token request cap.
+// CHARS_PER_TOKEN is a deliberately LOW (dense-text) estimate; the chunker applies it to UTF-8 bytes.
 export const MAX_ITEMS_PER_REQUEST = 128;
 export const MAX_TOKENS_PER_REQUEST = 90_000;
 export const CHARS_PER_TOKEN = 3;
+// One request at those limits normally answers in seconds; the bound fails a stalled connection
+// well inside one drain step's function timeout.
+const REQUEST_TIMEOUT_MS = 60_000;
 
 // voyage-4-large list price, USD per 1M tokens (pinned 2026-06-19; revisit if Voyage
 // changes pricing or the model is swapped). The first 200M tokens per account are free, so
@@ -63,11 +64,10 @@ export interface VoyageEmbedResponse {
  * items and the per-request token budget) — chunking is embed()'s job, not this layer's.
  * Returns vectors aligned to input order plus usage for cost accounting.
  *
- * `apiKey` is the injection seam: a caller without `process.env` (the Cloudflare
- * Worker) passes the key explicitly; omit it (or pass an empty string) and we fall back to
- * `getVoyageApiKey()` (the local-script / env path). An empty injected key is treated as
- * absent — not sent as `Bearer ` — so a misconfigured secret surfaces the env path's
- * friendly error instead of a silent 401. The key is never logged (no-secrets-in-logs rule).
+ * `apiKey` overrides the env key (tests, or a caller holding its own key); omit it (or pass an
+ * empty string) to use `getVoyageApiKey()`. An empty key is treated as absent — not sent as
+ * `Bearer ` — so a blank secret surfaces the env path's friendly error instead of a silent 401.
+ * The key is never logged. Not a Worker seam: this module imports ./env, which loads dotenv.
  */
 export async function embedRequest(
   input: string[],
@@ -87,6 +87,7 @@ export async function embedRequest(
       input_type: inputType,
       output_dimension: EMBED_DIMENSIONS,
     }),
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
 
   if (!res.ok) {
@@ -94,10 +95,11 @@ export async function embedRequest(
     // key); reading it also drains the stream so no socket handle lingers, which keeps
     // the Windows process exiting cleanly (same caveat as the Greenhouse adapter).
     const snippet = await res.text().catch(() => "");
-    throw new Error(
+    const message =
       `Voyage embeddings request failed: ${res.status} ${res.statusText}` +
-        (snippet ? ` - ${snippet.slice(0, 300)}` : ""),
-    );
+      (snippet ? ` - ${snippet.slice(0, 300)}` : "");
+    const rejected = res.status < 500 && res.status !== 408 && res.status !== 429;
+    throw rejected ? new EmbeddingRejectedError(message) : new Error(message);
   }
 
   // Envelope validation + order-aligned extraction is the shared embedding contract; only

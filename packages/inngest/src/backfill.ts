@@ -22,8 +22,7 @@ import { NonRetriableError } from "inngest";
 import { inngest } from "./inngest";
 
 /** The embedder shape the embed drain needs, declared structurally so this module need not import
- *  `@opusfinder/embeddings`. The real `embed` is structurally assignable, so `buildBackfillDeps()` passes it
- *  directly. */
+ *  `@opusfinder/embeddings`; `buildBackfillDeps()` wires the real `embed`. */
 type EmbedFn = (
   texts: string[],
   params: { inputType: "query" | "document" | null },
@@ -35,8 +34,9 @@ export interface BackfillDeps {
   embed: EmbedFn;
 }
 
-/** Jobs embedded per page. ≤128 (Voyage's per-request item cap) ⇒ exactly one Voyage request per page; ≪
- *  writeJobEmbeddings' 1000-row chunk ⇒ one UPDATE per page. Matches the CLI default. */
+/** Jobs embedded per page. ≤128 (Voyage's per-request item cap) ⇒ one Voyage request per page unless long
+ *  texts outgrow embed()'s token budget and split it; ≪ writeJobEmbeddings' 1000-row chunk ⇒ one UPDATE per
+ *  page. Matches the CLI default. */
 const EMBED_PAGE = 64;
 /** Bound the per-invocation STEP count (not just per-page time): a deep backlog otherwise emits too many
  *  step.run iterations for one Inngest request (the digest fn already sits ~340 steps). A run that hits the
@@ -52,7 +52,7 @@ export interface EmbedDrainStepTools {
 /**
  * The embed-drain loop body, extracted from the Inngest handler so its page / mismatch / cap branches are
  * unit-testable with a recording fake `step` + a stubbed page primitive (no real Neon / Voyage). Pages the
- * backlog ONE page per `step.run` (each = one Voyage request + one UPDATE), bounded by MAX_PAGES_PER_RUN.
+ * backlog ONE page per `step.run` (each = one embed() call + one UPDATE), bounded by MAX_PAGES_PER_RUN.
  * Cursorless: a written row drops out of `embedding IS NULL`, so the next no-offset query returns the rows
  * after it.
  *   - empty batch, or a short (<EMBED_PAGE) last page ⇒ done ⇒ drained:true, stop.
@@ -69,7 +69,7 @@ export async function embedDrainStep(
   let drained = false;
   for (let i = 0; i < MAX_PAGES_PER_RUN; i++) {
     // Step id derives ONLY from the loop index (never ctx.attempt — that would orphan a retried step).
-    // Each page is its own step.run = one Voyage request + one UPDATE.
+    // Each page is its own step.run = one embed() call + one UPDATE.
     const page = await step.run(`embed-page-${i}`, async () => {
       try {
         const { embedded, tokens, done } = await embedNextPage(deps.db, deps.embed, {
