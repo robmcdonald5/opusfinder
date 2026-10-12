@@ -9,7 +9,7 @@ const INLINE_WORKSPACE = [/^@opusfinder\//];
 
 export default defineConfig({
   resolve: {
-    // Shared test-support helpers (PGlite fixture, MSW handlers) live at the repo-root test/ dir;
+    // Shared test-support helpers (PGlite fixture, MSW server) live at the repo-root test/ dir;
     // @test/* keeps cross-package test imports stable instead of ../../../../ relative chains. The same
     // mapping is mirrored in tsconfig.test.json for type resolution.
     alias: { "@test": fileURLToPath(new URL("./test", import.meta.url)) },
@@ -43,7 +43,7 @@ export default defineConfig({
           include: ["{packages,apps}/*/src/**/*.integration.test.ts"],
           setupFiles: ["./test/setup/msw.ts"], // shared MSW server lifecycle (per file, in each worker)
           // Runs ONCE in the main process before any worker: migrate a PGlite + dump a schema snapshot that
-          // every createTestDb() loads instead of replaying 24 migrations per file (~1.3s → ~0.24s). Scoped
+          // every createTestDb() loads instead of replaying the migrations per file (~1.3s → ~0.24s). Scoped
           // to this project only — `unit`/`live` never pay for it. `globalSetup` is a valid per-project
           // option (unlike root-only `teardownTimeout`). See test/db/snapshot.ts.
           globalSetup: ["./test/db/global-setup.ts"],

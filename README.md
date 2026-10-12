@@ -90,7 +90,7 @@ pnpm db:ping      # round-trips SELECT 1 against Neon
 | `pnpm digest`                             | Trigger a per-user digest run + poll for the result (`--user <uuid>` or `--all`; `[--timeout-ms] [--poll-ms]`)                                                                 |
 | `pnpm inngest:serve`                      | Local Inngest serve endpoint for the digest functions (bare Node http, port 3000; dev-only)                                                                                    |
 | `pnpm inngest:dev`                        | Local Inngest dev server (keyless; registers the serve URL for discovery + invocation)                                                                                         |
-| `pnpm guard:worker`                       | Assert auth / neon-serverless / the Inngest digest stack (`inngest`, `@opusfinder/llm`, `@opusfinder/rerank`, `@anthropic-ai/sdk`) never leak into the scrapers Worker (#6665); the control Worker bundles only its src + the pure `packages/control` |
+| `pnpm guard:worker`                       | Assert auth / neon-serverless / the Inngest digest stack (`inngest`, `@opusfinder/llm`, `@opusfinder/rerank`, `@anthropic-ai/sdk`) never leak into the scrapers Worker (#6665); the control Worker bundles only its src, the pure `packages/control` and postal-mime |
 | `pnpm ctl <command>`                      | Read and flip the control plane as an agent: `status [--json]`, `set <target> <value> --reason …`, `propose`, `proposals`, `withdraw` (see [apps/control](apps/control/README.md)) |
 
 ## Deploying a schedule change

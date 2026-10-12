@@ -10,7 +10,7 @@ import { openMigratedClient } from "./snapshot";
  * return a drizzle client cast to the repo's `Db`.
  *
  * Schema delivery is amortized: the `integration` project's globalSetup migrates ONCE and dumps a datadir
- * snapshot; each call here loads that snapshot (~5.5× faster than replaying the 24 migrations, and
+ * snapshot; each call here loads that snapshot (~5.5× faster than replaying the migrations, and
  * byte-identical — same tables, pgvector extension, both HNSW indexes, `<=>` behavior, drizzle journal). On
  * a snapshot cache-miss (a non-vitest import) `openMigratedClient` falls back to a fresh migrate. See
  * `./snapshot.ts` and VITEST_MIGRATION_PLAN §10.1 (PGlite setup amortization).
