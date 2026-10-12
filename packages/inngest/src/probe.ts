@@ -19,7 +19,7 @@ import {
  *                and never close).
  * Runs in the Node Inngest runtime (Worker-isolation-free — `@opusfinder/inngest` is barred from the scraper
  * bundle), so the outbound fetch has no subrequest budget. The fetch is an INJECTED seam (`LivenessProbe`,
- * like delivery.ts's `EmailSeam`) so the stub smoke drives it with a fake. The whole pass is ONE memoized
+ * like delivery.ts's `EmailSeam`) so the tests drive it with a fake. The whole pass is ONE memoized
  * step, so it runs exactly once, not on a synthesis-poll replay.
  */
 
@@ -30,10 +30,10 @@ export interface LivenessOutcome {
 }
 
 /** The `DigestDeps.probe` seam — wired to the real `probeLiveness` by buildDigestDeps (./deps), stubbed by
- *  the smoke. One URL in, one verdict out; the per-digest fan-out + DB writes live in `probeDigestLiveness`. */
+ *  the tests. One URL in, one verdict out; the per-digest fan-out + DB writes live in `probeDigestLiveness`. */
 export type LivenessProbe = (url: string) => Promise<LivenessOutcome>;
 
-/** The one step primitive this module uses — structural, so the stub smoke can pass a fake `step.run`. */
+/** The one step primitive this module uses — structural, so the tests can pass a fake `step.run`. */
 export interface ProbeStepTools {
   run<T>(id: string, fn: () => Promise<T>): Promise<T>;
 }

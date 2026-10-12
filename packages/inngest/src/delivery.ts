@@ -12,9 +12,9 @@ import type { SendDigestResult } from "@opusfinder/email";
 
 /**
  * The email-delivery tail of `digest-user`: a send step (payload read → permit-gated Resend send), a
- * record-sent step, a bounded delivery poll, and a record-delivery step. Split from ./digest so the stub smoke
- * (scripts/test-digest-email.ts) can drive the failure/skip/happy paths with a fake `step` — the real
- * function passes Inngest's step tools straight through.
+ * record-sent step, a bounded delivery poll, and a record-delivery step. Split from ./digest so
+ * delivery.test.ts can drive the failure/skip/happy paths with a fake `step` — the real function passes
+ * Inngest's step tools straight through.
  */
 
 // Bounded delivery poll (two polls max, not webhooks): 2m catches the common fast delivery, the 10m
@@ -23,13 +23,13 @@ const DELIVERY_WAIT_INITIAL = "2m";
 const DELIVERY_WAIT_RETRY = "10m";
 
 /** The `DigestDeps.email` seam — wired to @opusfinder/email by buildDigestDeps (./deps), stubbed by
- *  the smoke scripts. Lives here (not ./digest) beside its only consumer. */
+ *  the tests. Lives here (not ./digest) beside its only consumer. */
 export interface EmailSeam {
   send: (payload: DigestEmailPayload) => Promise<SendDigestResult>;
   lastEvent: (emailId: string) => Promise<string>;
 }
 
-/** The two step primitives this module uses — structural, so the stub smoke drives it with a fake
+/** The two step primitives this module uses — structural, so the tests drive it with a fake
  *  step that records ids and runs `fn` inline, while Inngest's real tools pass straight through.
  *  Every step return here (SendDigestResult, string, void) is a JSON fixed-point, so Inngest's
  *  `Jsonify` memoization is the identity on them. */

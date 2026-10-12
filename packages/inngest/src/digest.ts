@@ -96,7 +96,7 @@ export interface DigestDeps {
   };
   email: EmailSeam;
   /** The pre-send apply-URL liveness probe (one URL → verdict); the per-digest fan-out lives in
-   *  `probeDigestLiveness`. Injected so the stub smoke drives it with a fake. */
+   *  `probeDigestLiveness`. Injected so the tests drive it with a fake. */
   probe: LivenessProbe;
   /** Lifecycle-close enforcement. Default false = SHADOW: the dead-link (404/410) DROP is always live, but
    *  the explicit-410 soft-CLOSE is suppressed and tallied. buildDigestDeps sets this from
@@ -297,12 +297,12 @@ function makeOrchestrator(deps: DigestDeps) {
  * `singleton` keyed on userId (mode `skip`) prevents overlapping runs for one user — `concurrency`
  * cannot: a run sleeping through the batch wait holds no concurrency slot, so a second run could read
  * the already-shown ids before the first persists. `skip` (not `cancel`) so an in-flight paid batch is
- * never abandoned. Lock retention across `step.sleep` is undocumented but held on the dev server
- * (re-verify on Inngest Cloud). The held window extends PAST persist, through the delivery sleeps
- * (~2–12 min): a same-user re-trigger inside that tail is SKIPPED — the intended dedup, but a
- * `pnpm digest --user` retry fired inside it will time out waiting for a digest that never starts;
- * re-trigger after the run finishes in the dashboard. Returns a small JSON summary; per-user failures
- * surface to Inngest (orchestrator failures additionally land on the run row's `error_sample`).
+ * never abandoned. Per Inngest's singleton docs the lock is held for the whole run, sleeps and retries
+ * included. The held window extends PAST persist, through the delivery sleeps (~2–12 min): a same-user
+ * re-trigger inside that tail is SKIPPED — the intended dedup, but a `pnpm digest --user` retry fired
+ * inside it will time out waiting for a digest that never starts; re-trigger after the run finishes in
+ * the dashboard. Returns a small JSON summary; per-user failures surface to Inngest (orchestrator
+ * failures additionally land on the run row's `error_sample`).
  *
  * Extracted from the Inngest handler so its 9-step skip matrix + invariant throws are unit-testable with
  * a recording fake `step` + stubbed repos (makePerUser wraps it).

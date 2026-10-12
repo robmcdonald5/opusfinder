@@ -1,5 +1,5 @@
 /**
- * Local Inngest serve endpoint (dev-only). Exposes the digest functions over a bare Node http server so
+ * Local Inngest serve endpoint (dev-only). Exposes the non-cron functions over a bare Node http server so
  * the local dev server (`pnpm inngest:dev`) can discover + invoke them — no Inngest Cloud
  * account, no keys (run with INNGEST_DEV=1). The development driver only. Long-running — kill with Ctrl-C.
  */
