@@ -9,10 +9,17 @@ export function parseBool(value: string, flag: string): boolean {
   throw new Error(`--${flag} must be "true" or "false" (got ${JSON.stringify(value)})`);
 }
 
+/** Digits only: Number() alone would turn "" into 0 and accept signs, hex and exponents. */
 export function parseIntFlag(value: string, flag: string): number {
-  const n = Number(value);
-  if (!Number.isInteger(n))
-    throw new Error(`--${flag} must be an integer (got ${JSON.stringify(value)})`);
+  if (!/^\d+$/.test(value))
+    throw new Error(`--${flag} must be a non-negative integer (got ${JSON.stringify(value)})`);
+  return Number(value);
+}
+
+/** Retrieval keeps jobs posted within the last N days, so 0 would silently empty every digest. */
+function parseRecencyDays(value: string): number {
+  const n = parseIntFlag(value, "recency-days");
+  if (n < 1 || n > 365) throw new Error(`--recency-days must be 1..365 (got ${n})`);
   return n;
 }
 
@@ -29,17 +36,16 @@ export function parseLocationMode(value: string): LocationMode {
 }
 
 /** A nullable integer flag: the literal "clear" (or an empty string) sets the column to NULL ("no bound");
- *  anything else parses as an integer. parseIntFlag alone can't express a clear — Number("") is 0, a wrong
- *  value not an absent one — so the nullable min/max bounds route through here. */
+ *  anything else parses as an integer. */
 export function parseNullableInt(value: string, flag: string): number | null {
   if (value === "clear" || value === "") return null;
   return parseIntFlag(value, flag);
 }
 
-/** Comma-separated list → trimmed, non-empty parts. */
-export function parseList(value: string): string[] {
+/** Separated list (comma by default) → trimmed, non-empty parts. */
+export function parseList(value: string, separator = ","): string[] {
   return value
-    .split(",")
+    .split(separator)
     .map((s) => s.trim())
     .filter((s) => s.length > 0);
 }
@@ -59,19 +65,20 @@ export function maskEmail(email: string): string {
 
 /** Build a UserPreferences patch from the (already string-typed) preference flags; omits unset ones. The
  *  nullable bounds (min/max salary, min/max yoe) accept "clear" to write NULL; "" empties an array
- *  (dealbreakers/exclusions). */
+ *  (locations/dealbreakers/exclusions). Locations are ';'-separated: a "City, Region" entry contains a
+ *  comma, and splitting it would widen the location filter to the whole region. */
 export function prefsFromFlags(
   values: Record<string, string | undefined>,
 ): Partial<UserPreferences> {
   const prefs: Partial<UserPreferences> = {};
   if (values["location-mode"] !== undefined) prefs.locationMode = parseLocationMode(values["location-mode"]);
-  if (values.locations !== undefined) prefs.locations = parseList(values.locations);
+  if (values.locations !== undefined) prefs.locations = parseList(values.locations, ";");
   if (values["min-salary"] !== undefined) prefs.minSalary = parseNullableInt(values["min-salary"], "min-salary");
   if (values["max-salary"] !== undefined) prefs.maxSalary = parseNullableInt(values["max-salary"], "max-salary");
   if (values["min-yoe"] !== undefined) prefs.yoeMin = parseNullableInt(values["min-yoe"], "min-yoe");
   if (values["max-yoe"] !== undefined) prefs.yoeMax = parseNullableInt(values["max-yoe"], "max-yoe");
   if (values["recency-days"] !== undefined)
-    prefs.recencyDays = parseIntFlag(values["recency-days"], "recency-days");
+    prefs.recencyDays = parseRecencyDays(values["recency-days"]);
   if (values.exclusions !== undefined) prefs.exclusions = parseList(values.exclusions);
   if (values.dealbreakers !== undefined) prefs.dealbreakers = parseList(values.dealbreakers);
   if (values.cadence !== undefined) prefs.digestCadence = parseCadence(values.cadence);

@@ -72,6 +72,25 @@ describe("prefsFromFlags — list fields", () => {
   it("exclusions wired ('a,b' → ['a','b'])", () => {
     expect(prefsFromFlags({ exclusions: "a,b" }).exclusions).toEqual(["a", "b"]);
   });
+
+  it("locations split on ';' so a 'City, Region' entry stays whole", () => {
+    expect(prefsFromFlags({ locations: "Berlin, Germany; Austin, TX" }).locations).toEqual([
+      "Berlin, Germany",
+      "Austin, TX",
+    ]);
+  });
+});
+
+describe("prefsFromFlags — recency-days", () => {
+  it.each(["0", "366"])("%j throws (outside 1..365)", (value) => {
+    expect(() => prefsFromFlags({ "recency-days": value })).toThrow(
+      /--recency-days must be 1\.\.365/,
+    );
+  });
+
+  it("'30' → 30", () => {
+    expect(prefsFromFlags({ "recency-days": "30" }).recencyDays).toBe(30);
+  });
 });
 
 describe("prefsFromFlags — patch shape (unset keys are absent, not undefined-valued)", () => {

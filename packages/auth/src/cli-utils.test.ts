@@ -35,14 +35,10 @@ describe("parseIntFlag", () => {
     expect(parseIntFlag("42", "recency-days")).toBe(42);
   });
 
-  it.each(["1.5", "abc"])("%j throws (non-integer)", (value) => {
-    expect(() => parseIntFlag(value, "recency-days")).toThrow(/--recency-days must be an integer/);
-  });
-
-  // Quirk pinned deliberately: Number("") === 0 and Number.isInteger(0), so an empty string
-  // parses to 0 rather than throwing. parseNullableInt is what handles the "clear"/empty sentinel.
-  it("'' returns 0 (Number('') === 0 — NOT a throw)", () => {
-    expect(parseIntFlag("", "recency-days")).toBe(0);
+  it.each(["1.5", "abc", "", "  ", "0x10", "1e3", "-3"])("%j throws", (value) => {
+    expect(() => parseIntFlag(value, "min-yoe")).toThrow(
+      /--min-yoe must be a non-negative integer/,
+    );
   });
 });
 
@@ -76,13 +72,9 @@ describe("parseNullableInt", () => {
   });
 
   it("invalid non-empty input throws", () => {
-    expect(() => parseNullableInt("abc", "max-salary")).toThrow(/--max-salary must be an integer/);
-  });
-
-  // Whitespace is NOT the "" sentinel: "  " !== "" so it routes to parseIntFlag, and
-  // Number("  ") === 0 — so a blank-but-nonempty string coerces to 0, not null.
-  it("'  ' returns 0 (whitespace is not the clear sentinel)", () => {
-    expect(parseNullableInt("  ", "max-salary")).toBe(0);
+    expect(() => parseNullableInt("abc", "max-salary")).toThrow(
+      /--max-salary must be a non-negative integer/,
+    );
   });
 });
 

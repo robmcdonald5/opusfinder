@@ -70,4 +70,6 @@ headers activate `user_preferences.unsubscribe_token` (the Phase-11 footer delib
 unsubscribe link — a dead link is worse than none at one-recipient volume), the `digest_approved_at` operator permit either retires (drop the one
 enrollment predicate) or becomes an operator-override lane once a real signup makes `email_verified` a true
 consent signal, Better Auth's `sendVerificationEmail` wires to this package, and the template gets its
-design pass with the frontend.
+design pass with the frontend. Landmine for that switch: `user:create` and `ingest-cv` set
+`email_verified = true` without verifying anything, so those rows must be reset first, or the permit
+must stay a required AND term (`email_verified OR approved` would enrol every operator-made user).

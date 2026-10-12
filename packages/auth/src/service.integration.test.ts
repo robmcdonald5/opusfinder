@@ -23,11 +23,11 @@ import {
 // signUpEmail + real PGlite Postgres — the create path (user + credential account, DB-generated uuid,
 // lowercased email, no session under autoSignIn:false), the seed-only emailVerified flip (scoped,
 // bystander-proof), the prefs seeding (defaults / overrides / 64-hex token), the documented NON-ATOMIC
-// error contract (duplicate email = better-auth 1.6.14's phantom-uuid generic-duplicate response → FK
-// reject; poisoned-Db step failures leave the half-created user), getOrCreateUserByEmail's idempotency
-// + lost-race recovery, and findUserIdByEmail's normalized exact-eq lookup. NOT this file's job: the
-// neon-serverless driver protocol (auth.integration.test.ts owns that live gate) and prefs flag
-// parsing (prefs-flags.test.ts).
+// error contract (duplicate email = better-auth 1.6.14's phantom-uuid generic-duplicate response →
+// "already exists"; poisoned-Db step failures leave the half-created user and propagate),
+// getOrCreateUserByEmail's idempotency, and findUserIdByEmail's normalized exact-eq lookup. NOT this
+// file's job: the neon-serverless driver protocol (auth.integration.test.ts owns that live gate) and
+// prefs flag parsing (prefs-flags.test.ts).
 //
 // NEVER import ./env here — it runs loadPackageEnv at module scope against the real packages/auth/.env
 // and would demand a real BETTER_AUTH_SECRET. The auth instance gets literals instead.
@@ -327,9 +327,9 @@ describe("auth service — createUserWithPreferences / getOrCreateUserByEmail / 
       expect(await allPrefsRows()).toHaveLength(0);
     });
 
-    it("duplicate email: signUpEmail resolves with a PHANTOM uuid (generic duplicate response under autoSignIn:false) and the prefs insert FK-rejects — existing user untouched", async () => {
-      // The existing user is created UNVERIFIED so "emailVerified unchanged" is load-bearing: the
-      // phantom-uuid markVerified UPDATE must match 0 rows — an unscoped update would flip this true.
+    it("duplicate email: signUpEmail resolves with a PHANTOM uuid (generic duplicate response under autoSignIn:false) and the service rejects with 'already exists' — existing user untouched", async () => {
+      // The existing user is created UNVERIFIED so "emailVerified unchanged" is load-bearing: no
+      // markVerified UPDATE may reach it.
       const { userId: existing } = await createUserWithPreferences(db, auth, {
         email: "dupe@svc.test",
         password: "pw-first-0000",
@@ -345,18 +345,16 @@ describe("auth service — createUserWithPreferences / getOrCreateUserByEmail / 
         }),
       );
 
-      // OBSERVABLE contract only (better-auth 1.6.14: generic-duplicate → phantom uuid → the prefs
-      // INSERT violates user_preferences_user_id_user_id_fk). drizzle 0.45 wraps the PG error as
-      // "Failed query: …" — the 23503 text lives on err.cause, never the wrapper message.
-      expect(String(err.cause ?? err)).toMatch(/foreign key|violates/i);
+      // A plain message, not drizzle's "Failed query: … params: …" FK error (which echoes the prefs).
+      expect(err.message).toBe("a user with this email already exists");
 
       // The pre-existing user is untouched: exactly one user row, still unverified.
       const users = await db.select().from(user);
       expect(users).toHaveLength(1);
       expect(users[0]!.id).toBe(existing);
       expect(users[0]!.emailVerified).toBe(false);
-      // Prefs row byte-identical (token NOT rotated — full-row equality covers it), no orphan row for
-      // the phantom id (the FK rejection is what guarantees that).
+      // Prefs row byte-identical (token NOT rotated — full-row equality covers it), no row for the
+      // phantom id.
       expect(await prefsRow(existing)).toEqual(prefsBefore);
       expect(await allPrefsRows()).toHaveLength(1);
       // Exactly one account row (the original), no session row minted by the duplicate attempt.
@@ -426,9 +424,10 @@ describe("auth service — createUserWithPreferences / getOrCreateUserByEmail / 
 
   describe("getOrCreateUserByEmail — idempotency (case/space-insensitive, no duplicate)", () => {
     it("creates a NEW verified user with the normalized email, opts.prefs applied, and a prefs row with a 64-hex token", async () => {
-      const { userId } = await getOrCreateUserByEmail(db, auth, " NewUser@Svc.Test ", {
+      const { userId, created } = await getOrCreateUserByEmail(db, auth, " NewUser@Svc.Test ", {
         prefs: { recencyDays: 7, digestCadence: "daily" },
       });
+      expect(created).toBe(true);
       const row = await userById(userId);
       // trim+lowercase happens BEFORE the create, so the stored email is fully normalized.
       expect(row.email).toBe("newuser@svc.test");
@@ -447,6 +446,7 @@ describe("auth service — createUserWithPreferences / getOrCreateUserByEmail / 
       const first = await getOrCreateUserByEmail(db, auth, "same@svc.test");
       const again = await getOrCreateUserByEmail(db, auth, " SAME@SVC.TEST ");
       expect(again.userId).toBe(first.userId);
+      expect(again.created).toBe(false);
       // user_email_uq invariant: one row total — a broken normalization would have created a second
       // user under a different raw email, which this whole-table count catches.
       expect(await allUserRows()).toHaveLength(1);
@@ -475,9 +475,8 @@ describe("auth service — createUserWithPreferences / getOrCreateUserByEmail / 
       const existing = await seedUser(11, { email: "backfill@svc.test" });
 
       // MANGLED variant on purpose: this is the only found-path call with a non-normalized email, so
-      // the lookup normalization at service.ts:82 is load-bearing HERE — a raw-email lookup would miss,
-      // fall into the create path, converge through the lost-race catch, and silently SKIP the
-      // backfill (prefsRow() below would then find 0 rows).
+      // the lookup normalization is load-bearing HERE — a raw-email lookup would miss and fall into the
+      // create path, which rejects the existing email as a duplicate.
       const { userId } = await getOrCreateUserByEmail(db, auth, " BACKFILL@SVC.TEST ", {
         prefs: { recencyDays: 3, digestCadence: "daily", locationMode: "onsite_only" },
       });
@@ -509,47 +508,12 @@ describe("auth service — createUserWithPreferences / getOrCreateUserByEmail / 
     });
   });
 
-  describe("getOrCreateUserByEmail — lost-race recovery", () => {
-    it("stub auth plants the winner row then fails: the catch re-resolves and returns the WINNER id with no duplicate", async () => {
-      const winnerId = uid(50);
-      // The honest race seam: the real better-auth cannot lose a race deterministically in-process, so
-      // signUpEmail is stubbed to (a) commit the RACING process's user row via the real db, then
-      // (b) return better-auth 1.6.14's generic-duplicate shape — a phantom uuid that exists in NO
-      // table. The service's prefs insert then FK-rejects and the catch must re-resolve to the winner.
-      const stubAuth = {
-        api: {
-          signUpEmail: async () => {
-            await db.insert(user).values({
-              id: winnerId,
-              name: "Race Winner",
-              email: "race@svc.test",
-              emailVerified: true,
-            });
-            return { token: null, user: { id: crypto.randomUUID() } };
-          },
-        },
-      } as unknown as Auth;
-
-      const { userId } = await getOrCreateUserByEmail(db, stubAuth, " RACE@Svc.Test ");
-
-      expect(userId).toBe(winnerId);
-      const rows = await db.select({ id: user.id }).from(user).where(eq(user.email, "race@svc.test"));
-      expect(rows).toHaveLength(1);
-    });
-
-    it("stub auth fails and the email still resolves to nothing: the ORIGINAL sentinel error rethrows (same instance)", async () => {
-      const sentinel = new Error("signup-lost-no-winner");
-      const stubAuth = {
-        api: {
-          signUpEmail: async (): Promise<never> => {
-            throw sentinel;
-          },
-        },
-      } as unknown as Auth;
-
-      // rejects.toBe = IDENTITY, not just message — the catch must rethrow `err` itself, never a rewrap.
-      await expect(getOrCreateUserByEmail(db, stubAuth, "gone@svc.test")).rejects.toBe(sentinel);
-      expect(await allUserRows()).toHaveLength(0);
+  describe("getOrCreateUserByEmail — create-path failures", () => {
+    it("a failure after signUpEmail committed the row propagates — never reported as success on a half-created user", async () => {
+      const sentinel = new Error("verify-update-poisoned");
+      await expect(
+        getOrCreateUserByEmail(poisonDb(db, "update", sentinel), auth, "halfc@svc.test"),
+      ).rejects.toBe(sentinel);
     });
   });
 

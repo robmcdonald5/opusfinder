@@ -50,6 +50,14 @@ export async function createUserWithPreferences(
     },
   });
   const userId = signUpResult.user.id as UserId;
+  // Under autoSignIn:false better-auth answers an already-registered email with a made-up id that is in
+  // no table (anti-enumeration), so the id has to be checked before anything is written against it.
+  const [persisted] = await db
+    .select({ id: user.id })
+    .from(user)
+    .where(eq(user.id, userId))
+    .limit(1);
+  if (!persisted) throw new Error("a user with this email already exists");
 
   // 2. signUpEmail hardcodes emailVerified:false; the admin plugin would need a session a CLI lacks,
   //    so a direct single-row UPDATE is the correct seed-only path (safe over neon-http).
@@ -70,15 +78,15 @@ export async function createUserWithPreferences(
 /**
  * Resolve a real `user.id` from an email alone (the CV-ingest path, which has no password): look up an
  * existing user, else create a verified one with a throwaway random password — the person claims the
- * account via password reset later. Idempotent on email (normalized trim+lowercase), and tolerant of a
- * lost create race.
+ * account via password reset later. Idempotent on email (normalized trim+lowercase); `created` says
+ * which branch ran. A failed create propagates (a concurrent create of the same email included).
  */
 export async function getOrCreateUserByEmail(
   db: Db,
   auth: Auth,
   email: string,
   opts?: { prefs?: Partial<UserPreferences> },
-): Promise<{ userId: UserId }> {
+): Promise<{ userId: UserId; created: boolean }> {
   const normalized = email.trim().toLowerCase();
   const found = await findUserIdByNormalizedEmail(db, normalized);
   if (found) {
@@ -87,23 +95,17 @@ export async function getOrCreateUserByEmail(
       userId: found,
       unsubscribeToken: generateUnsubscribeToken(),
     });
-    return { userId: found };
+    return { userId: found, created: false };
   }
-  try {
-    return await createUserWithPreferences(db, auth, {
-      email: normalized,
-      // A throwaway, cryptographically-random password (≥ better-auth's 8-char min). Ingest-created
-      // users can't log in until they reset it; identity here is the email, not a credential.
-      password: generateUnsubscribeToken(),
-      markVerified: true,
-      prefs: opts?.prefs,
-    });
-  } catch (err) {
-    // Lost a race (the email now exists) — re-resolve rather than fail the ingest.
-    const reResolved = await findUserIdByNormalizedEmail(db, normalized);
-    if (reResolved) return { userId: reResolved };
-    throw err;
-  }
+  const { userId } = await createUserWithPreferences(db, auth, {
+    email: normalized,
+    // A throwaway, cryptographically-random password (≥ better-auth's 8-char min). Ingest-created
+    // users can't log in until they reset it; identity here is the email, not a credential.
+    password: generateUnsubscribeToken(),
+    markVerified: true,
+    prefs: opts?.prefs,
+  });
+  return { userId, created: true };
 }
 
 /**
