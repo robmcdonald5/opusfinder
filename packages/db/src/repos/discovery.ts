@@ -15,9 +15,10 @@ import { companies, sourceRuns, type RunCounts, type RunPipeline, type RunStatus
 import type { CompanyRow } from "./jobs";
 import { finishRunRow } from "./runs";
 
-// Stale-`running` window. A run never legitimately exceeds the Cloudflare Worker wall limit (15 min)
-// — a tick is ~30s — so anything still `running` after this is a zombie from a killed/timed-out
-// process. Set well above the max real duration so a slow-but-live concurrent run is never swept.
+// Stale-`running` window. A Worker run never legitimately exceeds the Cloudflare Worker wall limit
+// (15 min), so anything still `running` after this is a zombie from a killed/timed-out process. Set
+// well above the max real duration so a slow-but-live concurrent run is never swept. A CLI ingest
+// (`ingestion-cli`) has no such limit and walks every board for an hour or more: it gets a day.
 const DEFAULT_STALE_RUN_MINUTES = 60;
 
 /**
@@ -43,6 +44,7 @@ export async function failStaleRuns(
       and(
         eq(sourceRuns.status, "running"),
         sql`${sourceRuns.startedAt} < now() - ${minutes} * interval '1 minute'`,
+        sql`(${sourceRuns.pipeline} <> 'ingestion-cli' OR ${sourceRuns.startedAt} < now() - interval '1 day')`,
       ),
     )
     .returning({ id: sourceRuns.id });
@@ -115,8 +117,7 @@ export interface CompanyState {
 /**
  * Every company's `(id, slug, source, active)`, optionally scoped to one source. Backs the discovery
  * partition that must route NEW + INACTIVE candidates to the probe path (so a re-discovered dead-then-
- * revived slug can reactivate via `markProbeResult(true)`) and ACTIVE ones to the reprobe pass — which
- * plain `listCompanies` can't drive because it omits `active`.
+ * revived slug can reactivate via `markProbeResult(true)`) and ACTIVE ones to the reprobe pass.
  */
 export function listCompanyStates(
   db: Db,
@@ -177,13 +178,13 @@ export async function markProbed(db: Db, companyIds: number[]): Promise<void> {
  * Deactivate every company that failed a probe and has shown no sign of life for `olderThanDays`
  * days, decidable from each row alone: ACTIVE, a non-zero failure streak, and a staleness clock
  * COALESCE(GREATEST(last_live_at, last_ingested_at), created_at) older than the window (GREATEST
- * ignores NULLs). A successful non-empty ingest counts as liveness: a board is reprobed only every
+ * ignores NULLs). A successful ingest counts as liveness: a board is reprobed only every
  * few weeks, so its last LIVE probe alone is often already past the window, and one 404 would
  * deactivate a board that ingests fine (and close all its jobs). A never-failed row (streak 0) is
  * untouched, so a source whose absence can't be asserted — SmartRecruiters' ambiguous 200, which never
- * increments the streak — never wrongly deactivates. Not readily reversible: only a live probe
- * reactivates (`markProbeResult`), and discovery probes an inactive row only when a seed lane
- * re-emits its slug.
+ * increments the streak — never wrongly deactivates. Not readily reversible: only a live probe, or a
+ * CLI ingest that lists postings, reactivates (`markProbeResult`), and discovery probes an inactive
+ * row only when a seed lane re-emits its slug.
  * `opts.source` scopes the sweep to one source so a `--source` run doesn't deactivate rows of an
  * unrelated source it never re-probed; omit it (the broader pass) to sweep all sources. Returns the
  * ids of the rows flipped. `days` is the trunc of an in-code number, never user input.

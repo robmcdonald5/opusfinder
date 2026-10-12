@@ -219,7 +219,8 @@ async function closeActiveJobsBy(
  * re-fetched, so its jobs never enter that sweep). NOT streak-gated: deactivateStale only deactivates a
  * board that failed a probe and has had no live probe or successful ingest for ~30 days. Reversal needs a
  * live probe (markProbeResult), which discovery runs on an inactive board only when a seed lane re-emits
- * its slug; the next ingest then revives the listed jobs.
+ * its slug, after which the next ingest revives the listed jobs; or a CLI ingest that lists postings,
+ * which does both.
  */
 export function closeJobsForCompanies(
   db: Db,
@@ -253,10 +254,12 @@ const PRESENT_STAMP_WINDOW = sql`interval '1 hour'`;
  * for the de-duplicated external_ids a fetch LISTED — including a `contentMissing` posting upsertJobs did
  * not write (a failed detail fetch is not an absence). It (1) refreshes last_seen_at (the staleness clock
  * {@link sweepStaleJobs} keys on), (2) REVIVES any reappearing closed job (lifecycle_state→'active',
- * closed_at→NULL) and (3) resets the absence streak. Runs for EVERY board, capped or not — UNLIKE the
- * set-difference sweep (sweepLifecycle), which is skipped on a capped/partial/rate-limited fetch; this is
- * the path that lets a capped mega-board's jobs both stay fresh AND revive on reappearance, and that resets
- * a listed job's streak on a visit whose sweep is skipped.
+ * closed_at→NULL), (3) resets the absence streak and (4) certifies the board (companies.last_ingested_at,
+ * the timer's board-health guard) in the SAME statement, so a board is never certified without its jobs'
+ * stamps — the timer would close those. Runs for EVERY board, capped or not — UNLIKE the set-difference sweep
+ * (sweepLifecycle), which is skipped on a capped/partial/drifted fetch; this is the path that lets a capped
+ * mega-board's jobs both stay fresh AND revive on reappearance, and that resets a listed job's streak on a
+ * visit whose sweep is skipped.
  *
  * Separate from upsertJobs (pure content persistence) and from its content-gated ON CONFLICT SET:
  * last_seen_at must advance on every re-fetch even when content is byte-unchanged, and reviving a closed
@@ -308,6 +311,9 @@ export async function markJobsPresent(
           OR jobs.consecutive_absences <> 0
         )
       RETURNING 1
+    ),
+    certified AS (
+      UPDATE ${companies} SET last_ingested_at = now() WHERE id = ${companyId}
     )
     SELECT (SELECT count(*) FROM revived_set) AS revived
   `);
@@ -316,11 +322,10 @@ export async function markJobsPresent(
 }
 
 /**
- * Stamp companies.last_ingested_at = now() to record a SUCCESSFUL, non-empty fetch of this board.
- * runIngestion calls it only when the board listed ≥1 posting (an empty/ambiguous fetch must not certify
- * health) — even if every listed posting's detail fetch failed: the list, which is what presence and the
- * absence sweep key on, was fetched.
- * {@link sweepStaleJobs} requires this stamp to be recent, so a board that fails or empties for >TTL is
+ * Stamp companies.last_ingested_at = now() for a board fetched SUCCESSFULLY that lists nothing, when its
+ * adapter trusts an empty answer (not SmartRecruiters' ambiguous 200 + totalFound:0): {@link sweepStaleJobs}
+ * then closes the jobs it no longer lists. A board listing postings is certified by {@link markJobsPresent}.
+ * The timer requires this stamp to be recent, so a board that fails (or answers ambiguously) for >TTL is
  * not certified and its still-live jobs are SPARED from the timer.
  */
 export async function markCompanyIngested(db: Db, companyId: number): Promise<void> {
@@ -346,15 +351,15 @@ export const DEFAULT_STALE_TTL_DAYS = 21;
  * stays a FAST-PATH for boards we see completely; this timer is the floor under all of them.
  *
  * BOARD-HEALTH GUARD (joins companies): a job closes ONLY if its company was SUCCESSFULLY ingested within the
- * same TTL window (`c.last_ingested_at >= cutoff + 1 hour`, stamped by {@link markCompanyIngested}). A board
- * that is DOWN/empty for >TTL has last_ingested_at older than the window (or NULL pre-first-ingest), so its
- * still-live jobs are SPARED — NOT false-closed because the cron simply couldn't fetch them. Using the SAME
- * cutoff for the job-staleness and the board-health window makes a failing board's jobs become stale-eligible
- * and board-excluded at the same moment; the 1-hour margin ({@link PRESENT_STAMP_WINDOW}) covers a job whose
- * last_seen_at trails its board's last fetch, e.g. a board fetched twice within the hour and then down for
- * the TTL. A HEALTHY capped board keeps last_ingested_at fresh, so its aged-out tail still closes (the
- * intended FRESHNESS close — see schema.ts last_seen_at; those jobs are past recency and revive if they
- * re-enter the fetch window).
+ * same TTL window (`c.last_ingested_at >= cutoff + 1 hour`, stamped by {@link markJobsPresent} or
+ * {@link markCompanyIngested}). A board that is DOWN for >TTL has last_ingested_at older than the window (or
+ * NULL pre-first-ingest), so its still-live jobs are SPARED — NOT false-closed because the cron simply
+ * couldn't fetch them. Using the SAME cutoff for the job-staleness and the board-health window makes a failing
+ * board's jobs become stale-eligible and board-excluded at the same moment; the 1-hour margin
+ * ({@link PRESENT_STAMP_WINDOW}) covers a job whose last_seen_at trails its board's last fetch, e.g. a board
+ * fetched twice within the hour and then down for the TTL. A HEALTHY capped board keeps last_ingested_at
+ * fresh, so its aged-out tail still closes (the intended FRESHNESS close — see schema.ts last_seen_at; those
+ * jobs are past recency and revive if they re-enter the fetch window).
  *
  * GLOBAL (all healthy companies), not per-board — the signal is time, not feed presence, so there is no
  * complete-feed precondition and no empty-set trap (`= ANY`/JOIN here, never `<> ALL`). count-only by DEFAULT

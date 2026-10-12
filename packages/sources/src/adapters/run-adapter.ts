@@ -35,13 +35,15 @@ export interface RunAdapterOptions {
    */
   fetchTimeoutMs?: number;
   /**
-   * Cap the postings PROCESSED for one board (Worker-only). Stops PAGINATION once this many valid
-   * postings are mapped, so the list-fetch count, the N+1 hydrate pool, AND the in-memory array are all
-   * bounded — a pathological mega-board (SmartRecruiters boschgroup ~4.6k postings) otherwise consumes
-   * the whole Worker invocation's wall-clock / memory / subrequest budget and kills the tick before
-   * `finishRun`, freezing the chunk cursor. Omit ⇒ no cap (the CLI, in Node, has no per-invocation budget
-   * and ingests the whole board). A capped board is a PARTIAL fetch: runIngestion skips its feed-absence
-   * sweep (an incomplete present-set would false-close the un-fetched tail).
+   * Cap the postings PROCESSED for one board (Worker-only). Once this many valid postings are mapped it
+   * stops PAGINATION and trims what the N+1 hydrate pool would fetch — a pathological mega-board
+   * (SmartRecruiters boschgroup ~4.6k postings) otherwise consumes the whole Worker invocation's wall-clock /
+   * subrequest budget and kills the tick before `finishRun`, freezing the chunk cursor. A page already
+   * fetched is never trimmed when nothing would be hydrated (that would save nothing), so an unpaginated,
+   * non-hydrating board is never capped; only {@link MAX_BODY_BYTES} bounds its memory. Omit ⇒ no cap (the
+   * CLI, in Node, has no per-invocation budget and ingests the whole board). A capped board is a PARTIAL
+   * fetch (`capped`): runIngestion skips its feed-absence sweep (an incomplete present-set would
+   * false-close the un-fetched tail).
    */
   maxItems?: number;
   /**
@@ -80,6 +82,13 @@ const DEFAULT_MAX_RETRIES = 3;
 // Generous for a healthy ATS JSON endpoint, but well under the Worker wall limit so one hung
 // board (worst case ~maxRetries attempts + backoff) can't eat the whole tick's budget.
 const DEFAULT_FETCH_TIMEOUT_MS = 10_000;
+/**
+ * The largest response body read, in bytes: past it the read stops and the request fails. Parsing holds the
+ * text and its parsed copy at once — about 2 bytes of heap per body byte, 3 when the text decodes to two-byte
+ * — so a bigger body can never be ingested in the Worker's 128 MiB isolate. Read whole, it would kill the
+ * isolate mid-tick (skipping `finishRun`, freezing the chunk cursor) instead of failing one board.
+ */
+const MAX_BODY_BYTES = 64 * 1024 * 1024;
 /** The least a rate limit sidelines its host: the wait assumed when a 429 carries no usable Retry-After,
  *  and runIngestion's cooldown floor (a 429 that outlasted a short retry means the host still throttles). */
 export const RATE_LIMIT_MIN_COOLDOWN_MS = 60_000;
@@ -92,18 +101,31 @@ export async function runAdapter(
   return (await fetchBoard(adapter, rawSlug, opts)).jobs;
 }
 
-/**
- * {@link runAdapter}, plus `rateLimited`: the RateLimitedError a hydrate (detail) fetch hit, if any. The
- * board itself still succeeds, so this is how runIngestion learns to cool that host down. And `partial`:
- * the listing came back incomplete though no cap stopped it — a page repeated earlier ones (the server
- * ignoring the offset; the loop stops there), or it ended well short of the adapter's `reportedTotal`.
- * Package-internal.
- */
+/** One board's fetch, as {@link fetchBoard} returns it. */
+export interface BoardFetch {
+  /** What {@link runAdapter} returns. */
+  jobs: NormalizedJob[];
+  /** The RateLimitedError a hydrate (detail) fetch hit, if any. The board itself still succeeds, so this is
+   *  how runIngestion learns to cool that host down. */
+  rateLimited?: RateLimitedError;
+  /** `maxItems` cut the fetch short: `jobs` is a partial listing. */
+  capped: boolean;
+  /** The listing came back incomplete though no cap stopped it — a page repeated earlier ones (the server
+   *  ignoring the offset; the loop stops there), or it ended well short of the adapter's `reportedTotal`. */
+  partial: boolean;
+  /** Listed postings `mapItem` rejected (malformed), so missing from `jobs`. */
+  mapSkipped: number;
+  /** The board lists no postings at all, and its adapter trusts that answer: its `classifyProbe` would call
+   *  it `live-empty` (the default). SmartRecruiters' 200 + totalFound:0 is also what an unknown slug gets. */
+  empty: boolean;
+}
+
+/** {@link runAdapter}, plus what runIngestion needs to know about the fetch. Package-internal. */
 export async function fetchBoard(
   adapter: SourceAdapter,
   rawSlug: string,
   opts: RunAdapterOptions = {},
-): Promise<{ jobs: NormalizedJob[]; rateLimited?: RateLimitedError; partial: boolean }> {
+): Promise<BoardFetch> {
   const hydrateConcurrency = opts.hydrateConcurrency ?? DEFAULT_HYDRATE_CONCURRENCY;
   const maxRetries = opts.maxRetries ?? DEFAULT_MAX_RETRIES;
   const fetchTimeoutMs = opts.fetchTimeoutMs ?? DEFAULT_FETCH_TIMEOUT_MS;
@@ -115,17 +137,15 @@ export async function fetchBoard(
   const fetchJson: FetchJson = (req) =>
     fetchJsonResilient(req, tag, maxRetries, fetchTimeoutMs, opts.maxRetryWaitMs, deadline);
 
-  // Pagination loop. Keep each raw list item beside its mapped job ONLY when there is a hydrate to
-  // hand it to (the job itself carries no raw — it is not stored); otherwise drop the reference so a
-  // multi-page board doesn't pin every parsed page until the loop ends.
   const hydrate = adapter.hydrate;
-  const mapped: { raw: unknown; job: NormalizedJob }[] = [];
+  const mapped: NormalizedJob[] = [];
   let skipped = 0;
+  let capped = false;
+  let empty = false;
   let cursor: Cursor | null = null;
   const seenIds = new Set<string>();
   let listed = 0; // raw items over all pages, malformed ones included
   let total: number | undefined;
-  let capped = false;
   let partial = false;
   for (;;) {
     const body = await fetchJson(adapter.jobsRequest(ctx, cursor));
@@ -134,6 +154,9 @@ export async function fetchBoard(
     total = adapter.reportedTotal?.(body) ?? total;
     const mappedBefore = mapped.length;
     const seenBefore = seenIds.size;
+    if (cursor === null && items.length === 0) {
+      empty = (adapter.classifyProbe?.(200, body) ?? "live-empty") === "live-empty";
+    }
     for (const raw of items) {
       // fail SOFT: a null return OR a thrown error (e.g. a branding-floor violation such as
       // an id with internal whitespace) skips + counts one posting, never aborts the board.
@@ -147,26 +170,25 @@ export async function fetchBoard(
         // Canonical location order: keeps the in-memory job identical to what upsertJobs
         // persists, and keeps its order-sensitive jsonb compare from churning on a reorder.
         job.locations = [...job.locations].sort();
-        mapped.push({ raw: hydrate ? raw : undefined, job });
+        mapped.push(job);
         seenIds.add(job.externalId);
       } else {
         skipped++;
       }
     }
+    const next: Cursor | null = adapter.nextCursor?.(body, cursor, items.length) ?? null; // omitted ⇒ one fetch
     // Per-board cap — see RunAdapterOptions.maxItems.
     if (maxItems !== undefined && mapped.length >= maxItems) {
-      mapped.length = maxItems;
-      capped = true;
+      capped = next !== null || (hydrate !== undefined && mapped.length > maxItems);
+      if (hydrate) mapped.length = maxItems;
       break;
     }
-    if (!adapter.nextCursor) break; // omitted ⇒ single unpaginated fetch
     // A later page whose postings all repeat earlier ones: the server is ignoring the offset, and paging
     // on could never end. A page of only malformed items proves nothing either way.
     if (cursor && mapped.length > mappedBefore && seenIds.size === seenBefore) {
       partial = true;
       break;
     }
-    const next = adapter.nextCursor(body, cursor, items.length);
     if (!next) break;
     cursor = next;
   }
@@ -174,23 +196,23 @@ export async function fetchBoard(
   // overcounting total from marking the board partial on every visit.
   if (!capped && total !== undefined && total - listed > Math.max(5, total * 0.02)) partial = true;
 
-  // Optional hydrate (N+1 second fetch) through a bounded-concurrency pool, each call handed its own
-  // list item. A per-item failure — ANY failed or empty detail fetch (retries exhausted, a timeout, a
-  // 404/410, a body with no content; the adapter throws) — keeps the listed job, because it WAS listed and
-  // so is live: ingestion must still count it present. But its description is mapItem's placeholder "",
-  // not the posting's text, so it is flagged `contentMissing` and upsertJobs never writes its content —
-  // persisted, it would overwrite the stored description, NULL the embedding (a paid re-embed) and flip
-  // content_signature, then flip it all back on the next good hydrate.
+  // Optional hydrate (N+1 second fetch) through a bounded-concurrency pool. A per-item failure — ANY
+  // failed or empty detail fetch (retries exhausted, a timeout, a 404/410, a body with no content; the
+  // adapter throws) — keeps the listed job, because it WAS listed and so is live: ingestion must still
+  // count it present. But its description is mapItem's placeholder "", not the posting's text, so it is
+  // flagged `contentMissing` and upsertJobs never writes its content — persisted, it would overwrite the
+  // stored description, NULL the embedding (a paid re-embed) and flip content_signature, then flip it all
+  // back on the next good hydrate.
   let jobs: NormalizedJob[];
   let unhydrated = 0;
   let rateLimited: RateLimitedError | undefined;
   if (hydrate) {
     // After the first rate-limited detail fetch the rest skip theirs (contentMissing, no request) rather
     // than each hitting a host that is throttling us.
-    jobs = await mapWithConcurrency(mapped, hydrateConcurrency, async ({ raw, job }) => {
+    jobs = await mapWithConcurrency(mapped, hydrateConcurrency, async (job) => {
       if (!rateLimited) {
         try {
-          return { ...job, ...(await hydrate(job, raw, ctx, fetchJson)) };
+          return { ...job, ...(await hydrate(job, ctx, fetchJson)) };
         } catch (err) {
           if (err instanceof RateLimitedError) rateLimited ??= err;
         }
@@ -199,7 +221,7 @@ export async function fetchBoard(
       return { ...job, contentMissing: true as const };
     });
   } else {
-    jobs = mapped.map((m) => m.job);
+    jobs = mapped;
   }
 
   if (skipped > 0 || unhydrated > 0) {
@@ -209,7 +231,7 @@ export async function fetchBoard(
         (unhydrated > 0 ? `, ${unhydrated} un-hydrated (content missing, not written)` : ""),
     );
   }
-  return { jobs, rateLimited, partial };
+  return { jobs, rateLimited, capped, partial, mapSkipped: skipped, empty };
 }
 
 /**
@@ -246,7 +268,9 @@ async function fetchJsonResilient(
       : new RateLimitedError(tag, limitedRetryAfterMs, { cause: err });
   for (;;) {
     // The board's time limit: no new attempt once it is spent (see RunAdapterOptions.boardTimeLimitMs).
-    if (deadline !== undefined && Date.now() >= deadline) throw new Error(`${tag} board time limit reached`);
+    if (deadline !== undefined && Date.now() >= deadline) {
+      throw fail(new Error(`${tag} board time limit reached`));
+    }
     let res: Response;
     try {
       // Bound every attempt with a fresh timeout signal (the abort throws -> the catch below
@@ -265,7 +289,19 @@ async function fetchJsonResilient(
     }
 
     if (res.ok) {
-      const text = await res.text();
+      let text: string | null;
+      try {
+        text = await readBody(res);
+      } catch (err) {
+        // The body broke off mid-stream (a reset, the timeout): transient, like a fetch error.
+        if (limitedRetryAfterMs === undefined && (await retry())) continue;
+        throw fail(
+          new Error(`${tag} body read error: ${err instanceof Error ? err.message : String(err)}`, {
+            cause: err,
+          }),
+        );
+      }
+      if (text === null) throw fail(new Error(`${tag} body over ${MAX_BODY_BYTES} bytes`));
       try {
         return JSON.parse(text) as unknown;
       } catch {
@@ -292,6 +328,28 @@ async function fetchJsonResilient(
     // A request already 429'd ends at this failure; otherwise retry (within maxRetryWaitMs, in fail-fast).
     if (!wasLimited && (await retry(retryAfter))) continue;
     throw fail(error);
+  }
+}
+
+/**
+ * A 2xx body as text, decoded like `res.text()` (UTF-8, a leading BOM dropped), or null once it passes
+ * {@link MAX_BODY_BYTES} — the stream is cancelled there, so an oversized body is never held whole.
+ */
+async function readBody(res: Response): Promise<string | null> {
+  if (!res.body) return "";
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let bytes = 0;
+  let text = "";
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) return text + decoder.decode();
+    bytes += value.byteLength;
+    if (bytes > MAX_BODY_BYTES) {
+      await reader.cancel().catch(() => {});
+      return null;
+    }
+    text += decoder.decode(value, { stream: true });
   }
 }
 

@@ -1,12 +1,12 @@
 import { createDb } from "@opusfinder/db";
 import { getDatabaseUrl } from "@opusfinder/db/env";
-import { embed, formatEmbedCost } from "@opusfinder/embeddings";
+import { embed } from "@opusfinder/embeddings";
 import type { SourceName } from "@opusfinder/shared";
 import { runScript } from "@opusfinder/shared/script";
 
 import { isSourceName } from "../src/adapters";
 import { runIngestion } from "../src/ingest";
-import { embedPolicy } from "./ingest-shared";
+import { embedPolicy, printBoard } from "./ingest-shared";
 
 /**
  * Ingest every known company across all sources. A thin CLI shell over `runIngestion`
@@ -44,29 +44,11 @@ async function main(): Promise<void> {
     // has deactivated (a manual run may want to re-check a dead board). The Worker cron opts
     // into `activeOnly: true`.
     activeOnly: false,
+    pipeline: "ingestion-cli",
     // Inline-embed when the policy allows (key present + not --no-embed). The CLI relies on the
     // local VOYAGE_API_KEY (embedRequest's fallback); the Worker injects the key instead.
     embed: policy.enabled ? embed : undefined,
-    // Real-time per-board output — the Worker omits this hook and stays quiet (its audit trail is
-    // source_runs).
-    onBoard: (board) => {
-      if (board.skipped) {
-        console.log(`  ${board.source}:${board.slug} skipped (${board.skipped})`);
-        return;
-      }
-      if (!board.ok) {
-        console.warn(`  ${board.source}:${board.slug} FAILED: ${board.error}`);
-        return;
-      }
-      // The not-written postings are printed so a board whose every detail fetch failed doesn't read as
-      // an empty board ("0 job(s)").
-      console.log(
-        `  ${board.source}:${board.slug} -> ${board.jobs} job(s), changed ${board.changed}` +
-          (board.hydrateSkipped > 0 ? `, ${board.hydrateSkipped} not written (detail fetch failed)` : "") +
-          (board.embedded > 0 ? `, embedded ${board.embedded} (${formatEmbedCost(board.embedTokens)})` : "") +
-          (board.error ? ` [embed failed: ${board.error}]` : ""),
-      );
-    },
+    onBoard: printBoard,
   });
 
   if (counts.companies === 0) {

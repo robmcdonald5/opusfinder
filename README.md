@@ -171,9 +171,8 @@ fetch-only Algolia calls + a regex over covered ATS board URLs (Worker-safe, reu
 `@opusfinder/sources` `cleanHtml(["decode"])` to decode `&#x2F;`-encoded URLs). `pnpm discover` gains
 `--lanes`; the weekly Worker discovery cron is **RESUMED** (`0 3 * * SUN`, Workers Paid) via
 `runDiscovery({ workerOnly: true })`; the health checker gains a `discovery_lane_errors` check;
-`discoveryMaxAgeD` 8→13; `@opusfinder/sources` now exports `cleanHtml` / `htmlToText` / `CleanStep`.
-**Scope: registry + HN only** (passive DNS + Common Crawl → F5-LANES-2); **NO migration**. Merged to
-`main` (PR #23).
+`discoveryMaxAgeD` 8→13. **Scope: registry + HN only** (passive DNS + Common Crawl → F5-LANES-2);
+**NO migration**. Merged to `main` (PR #23).
 
 Phase F3 added **user preferences** as a hard-filter + soft-prompt layer. A new `location_mode`
 (`any` / `remote_only` / `onsite_only`) hard filter subsumes the old `remote_ok` boolean in retrieval;

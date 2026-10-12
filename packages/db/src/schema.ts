@@ -76,13 +76,14 @@ export const companies = pgTable(
     lastProbedAt: timestamp("last_probed_at", { withTimezone: true }),
     lastLiveAt: timestamp("last_live_at", { withTimezone: true }),
     consecutiveProbeFailures: integer("consecutive_probe_failures").notNull().default(0),
-    // Last SUCCESSFUL, non-empty INGESTION of this board (board-health guard). Stamped by
-    // markCompanyIngested after a clean upsertJobs of a board that listed ≥1 posting (repos/lifecycle.ts —
-    // even when every posting's detail fetch failed and nothing was written); a board that FAILS to
-    // fetch or returns empty does NOT advance it. sweepStaleJobs only stale-closes a job whose company was
-    // successfully fetched within the staleness TTL (`last_ingested_at >= now() - ttl`), so a board that is
-    // DOWN for >TTL has its still-live jobs SPARED rather than false-closed. NULL until the first
-    // successful ingest post-deploy ⇒ conservatively EXCLUDED from the timer until then.
+    // Last SUCCESSFUL INGESTION of this board (board-health guard). Stamped with its jobs' presence by
+    // markJobsPresent after a clean upsertJobs of a board that listed ≥1 posting (repos/lifecycle.ts —
+    // even when every posting's detail fetch failed and nothing was written), or by markCompanyIngested for
+    // a board whose adapter trusts its empty listing; a board that FAILS to fetch or answers ambiguously
+    // (SmartRecruiters' 200 + totalFound:0) does NOT advance it. sweepStaleJobs only stale-closes a job
+    // whose company was successfully fetched within the staleness TTL (`last_ingested_at >= now() - ttl`),
+    // so a board that is DOWN for >TTL has its still-live jobs SPARED rather than false-closed. NULL until
+    // the first successful ingest post-deploy ⇒ conservatively EXCLUDED from the timer until then.
     lastIngestedAt: timestamp("last_ingested_at", { withTimezone: true }),
   },
   (t) => [
@@ -228,8 +229,9 @@ export const jobs = pgTable(
  * {@link LifecycleState}). */
 export type RunStatus = "running" | "ok" | "error";
 
-/** Which pipeline a run belongs to: `discovery` or `ingestion`. */
-export type RunPipeline = "discovery" | "ingestion";
+/** Which pipeline a run belongs to: `discovery`, `ingestion` (the cron), or `ingestion-cli` (a manual
+ * `pnpm ingest` / `ingest:all` run — kept apart so health reads only the cron's runs). */
+export type RunPipeline = "discovery" | "ingestion" | "ingestion-cli";
 
 /** Open metric bag for a run, keyed by count name. Discovery and ingestion tally different
  * things (candidates/probed/inserted vs boards/changed/…), so it stays a free-form jsonb map

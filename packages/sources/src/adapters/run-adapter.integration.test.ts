@@ -70,6 +70,18 @@ function makeAdapter(over: Partial<SourceAdapter> = {}): SourceAdapter {
 
 const ids = (jobs: NormalizedJob[]): string[] => jobs.map((j) => j.externalId as string);
 
+/** A 200 whose body breaks off after its first bytes, as a connection reset mid-body does. */
+const brokenBody = () =>
+  new HttpResponse(
+    new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('{"jobs":['));
+        controller.error(new TypeError("terminated"));
+      },
+    }),
+    { status: 200 },
+  );
+
 describe("runAdapter — invariant ATS plumbing over MSW", () => {
   afterEach(() => vi.restoreAllMocks());
 
@@ -99,8 +111,8 @@ describe("runAdapter — invariant ATS plumbing over MSW", () => {
       expect(ids(jobs)).toEqual(["1", "2"]);
       // runAdapter canonicalizes location order (keeps the persisted jsonb stable) — ["Zeta","Alpha"] → sorted.
       expect(jobs[0]?.locations).toEqual(["Alpha", "Zeta"]);
-      // The sort must COPY: mkJob aliases job.locations to the raw item's array, and that raw item is what a
-      // hydrate is handed. An in-place `.sort()` would reorder the raw item too — assert it didn't.
+      // The sort must COPY: mkJob aliases job.locations to the raw item's array, which an in-place `.sort()`
+      // would reorder too (or throw on, were it frozen) — assert it didn't.
       expect(items[0]?.locations).toEqual(["Zeta", "Alpha"]);
     });
 
@@ -167,7 +179,7 @@ describe("runAdapter — invariant ATS plumbing over MSW", () => {
   });
 
   describe("maxItems cap (partial fetch)", () => {
-    it("caps mapped postings on a single page, trimming the tail and never paginating", async () => {
+    it("stops paginating at the cap, keeping the page it already fetched (no hydrate ⇒ trimming saves nothing)", async () => {
       const offsetsSeen: (string | null)[] = [];
       server.use(
         http.get(LIST, ({ request }) => {
@@ -188,14 +200,15 @@ describe("runAdapter — invariant ATS plumbing over MSW", () => {
           count > 0 ? { kind: "offset", offset: (prev?.offset ?? 0) + count } : null,
       });
 
-      const jobs = await runAdapter(adapter, "acme", { maxItems: 3 });
+      const { jobs, capped } = await fetchBoard(adapter, "acme", { maxItems: 3 });
 
-      expect(ids(jobs)).toEqual(["1", "2", "3"]); // trimmed to the first 3
+      expect(ids(jobs)).toEqual(["1", "2", "3", "4", "5"]);
+      expect(capped).toBe(true);
       expect(offsetsSeen).toEqual([null]); // pagination stopped — page 2 (offset 5) never requested
     });
 
     it("caps across pages, stopping the moment the cap is reached at a page boundary", async () => {
-      // pageSize 2, cap 3: page 0 [1,2] (len 2 < 3) → page 1 [3,4] (len 4 ≥ 3) → trim to 3, break.
+      // pageSize 2, cap 3: page 0 [1,2] (len 2 < 3) → page 1 [3,4] (len 4 ≥ 3) → stop.
       const pages: RawItem[][] = [[raw(1), raw(2)], [raw(3), raw(4)], [raw(5), raw(6)]];
       const offsetsSeen: (string | null)[] = [];
       server.use(
@@ -211,10 +224,33 @@ describe("runAdapter — invariant ATS plumbing over MSW", () => {
           count > 0 ? { kind: "offset", offset: (prev?.offset ?? 0) + count } : null,
       });
 
-      const jobs = await runAdapter(adapter, "acme", { maxItems: 3 });
+      const { jobs, capped } = await fetchBoard(adapter, "acme", { maxItems: 3 });
 
-      expect(ids(jobs)).toEqual(["1", "2", "3"]);
+      expect(ids(jobs)).toEqual(["1", "2", "3", "4"]);
+      expect(capped).toBe(true);
       expect(offsetsSeen).toEqual([null, "2"]); // page 2 (offset 4) never fetched — cap hit on page 1
+    });
+
+    it("a board that ends at or past the cap with nothing left to fetch or hydrate is whole, not capped", async () => {
+      const pages: RawItem[][] = [[raw(1), raw(2)], [raw(3)]];
+      server.use(
+        http.get(LIST, ({ request }) => {
+          const offset = Number(new URL(request.url).searchParams.get("offset") ?? "0");
+          return HttpResponse.json({ jobs: pages[offset / 2] ?? [] });
+        }),
+      );
+      const paginated = makeAdapter({
+        jobsRequest: (_ctx, cursor) => ({ url: cursor ? `${LIST}?offset=${cursor.offset}` : LIST }),
+        nextCursor: (_body, prev, count) =>
+          count === 2 ? { kind: "offset", offset: (prev?.offset ?? 0) + count } : null,
+      });
+
+      // The last page brings it to exactly the cap.
+      const exact = await fetchBoard(paginated, "acme", { maxItems: 3 });
+      expect([ids(exact.jobs), exact.capped]).toEqual([["1", "2", "3"], false]);
+      // An unpaginated, non-hydrating board is never cut: its whole body is already fetched and mapped.
+      const unpaginated = await fetchBoard(makeAdapter(), "acme", { maxItems: 1 });
+      expect([ids(unpaginated.jobs), unpaginated.capped]).toEqual([["1", "2"], false]);
     });
 
     it("bounds the hydrate pool to the capped set (the trim happens BEFORE hydrate)", async () => {
@@ -231,9 +267,10 @@ describe("runAdapter — invariant ATS plumbing over MSW", () => {
         },
       });
 
-      const jobs = await runAdapter(adapter, "acme", { maxItems: 2 });
+      const { jobs, capped } = await fetchBoard(adapter, "acme", { maxItems: 2 });
 
       expect(jobs).toHaveLength(2);
+      expect(capped).toBe(true);
       expect(hydrateCalls).toBe(2); // NOT 5 — hydrate never touches the trimmed-away items
     });
   });
@@ -299,9 +336,9 @@ describe("runAdapter — invariant ATS plumbing over MSW", () => {
     it("a capped listing is not partial, however short of the total it stops", async () => {
       const { adapter } = pagedAdapter(twoPages, 100);
 
-      const { jobs, partial } = await fetchBoard(adapter, "acme", { maxItems: 3 });
+      const { capped, partial } = await fetchBoard(adapter, "acme", { maxItems: 3 });
 
-      expect(jobs).toHaveLength(3);
+      expect(capped).toBe(true);
       expect(partial).toBe(false);
     });
   });
@@ -448,6 +485,54 @@ describe("runAdapter — invariant ATS plumbing over MSW", () => {
       } finally {
         vi.useRealTimers();
       }
+    });
+
+    it("retries a 2xx whose body breaks off mid-stream, and fails it tagged once out of retries", async () => {
+      vi.useFakeTimers();
+      try {
+        let calls = 0;
+        server.use(
+          http.get(LIST, () => {
+            calls += 1;
+            return calls === 1 ? brokenBody() : HttpResponse.json({ jobs: [raw(1)] });
+          }),
+        );
+
+        const promise = runAdapter(makeAdapter(), "acme", { maxRetries: 1 });
+        await vi.advanceTimersByTimeAsync(2500); // no Retry-After: the full 2 s base backoff (+ jitter)
+
+        await expect(promise).resolves.toHaveLength(1);
+        expect(calls).toBe(2);
+      } finally {
+        vi.useRealTimers();
+      }
+
+      server.use(http.get(LIST, () => brokenBody()));
+      const err = await rejectionOf(runAdapter(makeAdapter(), "acme", { maxRetries: 0 }));
+      expect(err.message).toMatch(/^greenhouse "acme" body read error:/);
+    });
+
+    it("fails a 2xx body over 64 MiB at once, never retried", async () => {
+      let calls = 0;
+      const mib = new Uint8Array(1024 * 1024).fill(0x20); // 1 MiB of JSON whitespace
+      server.use(
+        http.get(LIST, () => {
+          calls += 1;
+          let sent = 0;
+          const body = new ReadableStream<Uint8Array>({
+            pull(controller) {
+              if (sent++ < 65) controller.enqueue(mib);
+              else controller.close();
+            },
+          });
+          return new HttpResponse(body, { status: 200 });
+        }),
+      );
+
+      const err = await rejectionOf(runAdapter(makeAdapter(), "acme", { maxRetries: 3 }));
+
+      expect(err.message).toBe('greenhouse "acme" body over 67108864 bytes');
+      expect(calls).toBe(1);
     });
 
     it("throws a tagged fetch-error on a network failure with no retries left", async () => {
@@ -632,6 +717,7 @@ describe("runAdapter — invariant ATS plumbing over MSW", () => {
       ["hangs past the fetch timeout", () => new Promise<never>(() => {})],
       ["fails at the network", () => HttpResponse.error()],
       ["returns a non-JSON body", () => new HttpResponse("<html>", { status: 200 })],
+      ["breaks off mid-body", () => brokenBody()],
       ["answers 500", () => limited(500)],
       ["is refused 403 (a WAF)", () => limited(403)],
       ["is 429'd again", () => limited(429, { "retry-after": "1" })],
@@ -738,9 +824,10 @@ describe("runAdapter — invariant ATS plumbing over MSW", () => {
         },
       });
 
-      const jobs = await runAdapter(adapter, "acme");
+      const { jobs, mapSkipped } = await fetchBoard(adapter, "acme");
 
       expect(ids(jobs)).toEqual(["1", "3"]); // the null-mapped middle item is skipped, order preserved
+      expect(mapSkipped).toBe(1);
       expect(warn).toHaveBeenCalledWith(expect.stringMatching(/skipped 1 malformed/));
     });
 
@@ -758,6 +845,24 @@ describe("runAdapter — invariant ATS plumbing over MSW", () => {
       const jobs = await runAdapter(adapter, "acme");
 
       expect(ids(jobs)).toEqual(["1", "3"]);
+    });
+  });
+
+  describe("an empty board", () => {
+    it("is `empty` unless its adapter's probe classifier calls an empty answer ambiguous; all-malformed isn't empty", async () => {
+      vi.spyOn(console, "warn").mockImplementation(() => {});
+      server.use(http.get(LIST, () => HttpResponse.json({ jobs: [] })));
+      expect((await fetchBoard(makeAdapter(), "acme")).empty).toBe(true);
+      const ambiguous = makeAdapter({ classifyProbe: () => "indeterminate" });
+      expect((await fetchBoard(ambiguous, "acme")).empty).toBe(false);
+
+      server.use(http.get(LIST, () => HttpResponse.json({ jobs: [raw(1)] })));
+      const malformed = makeAdapter({ mapItem: () => null });
+      expect(await fetchBoard(malformed, "acme")).toMatchObject({
+        jobs: [],
+        mapSkipped: 1,
+        empty: false,
+      });
     });
   });
 
@@ -813,26 +918,6 @@ describe("runAdapter — invariant ATS plumbing over MSW", () => {
       expect(warn).toHaveBeenCalledWith(expect.stringMatching(/1 un-hydrated/));
     });
 
-    it("hands each hydrate ITS OWN raw list item, and returns jobs that carry no raw", async () => {
-      const items = [raw(1, { title: "one" }), raw(2, { title: "two" })];
-      server.use(http.get(LIST, () => HttpResponse.json({ jobs: items })));
-      const seen: unknown[] = [];
-      const adapter = makeAdapter({
-        hydrate: (job, item) => {
-          seen.push(item);
-          return Promise.resolve({ descriptionText: `desc-${job.externalId}` });
-        },
-      });
-
-      const jobs = await runAdapter(adapter, "acme", { hydrateConcurrency: 1 });
-
-      // The list item rides to hydrate as its own argument (the job has no raw to read it from) — the
-      // parsed item for THAT posting, not another posting's, not undefined.
-      expect(seen).toEqual(items);
-      // jobs.raw is not stored, so the returned jobs don't carry the source object either.
-      for (const job of jobs) expect(job).not.toHaveProperty("raw");
-    });
-
     it("bounds concurrent hydrate calls to hydrateConcurrency", async () => {
       server.use(
         http.get(LIST, () =>
@@ -843,7 +928,7 @@ describe("runAdapter — invariant ATS plumbing over MSW", () => {
       let inFlight = 0;
       let peak = 0;
       const adapter = makeAdapter({
-        hydrate: async (job, _item, _ctx, fetchJson) => {
+        hydrate: async (job, _ctx, fetchJson) => {
           inFlight += 1;
           peak = Math.max(peak, inFlight);
           await fetchJson({ url: `${DETAIL}/${job.externalId}` }); // suspends so peak is observable
@@ -871,7 +956,7 @@ describe("runAdapter — invariant ATS plumbing over MSW", () => {
         }),
       );
       const adapter = makeAdapter({
-        hydrate: async (job, _item, _ctx, fetchJson) => {
+        hydrate: async (job, _ctx, fetchJson) => {
           const detail = (await fetchJson({ url: `${DETAIL}/${job.externalId}` })) as {
             title: string;
           };
@@ -901,7 +986,7 @@ describe("runAdapter — invariant ATS plumbing over MSW", () => {
       );
       vi.spyOn(console, "warn").mockImplementation(() => {});
       const adapter = makeAdapter({
-        hydrate: async (job, _item, _ctx, fetchJson) => {
+        hydrate: async (job, _ctx, fetchJson) => {
           const detail = (await fetchJson({ url: `${DETAIL}/${job.externalId}` })) as { title: string };
           return { title: detail.title };
         },
@@ -938,7 +1023,7 @@ describe("runAdapter — invariant ATS plumbing over MSW", () => {
       };
       const hydrating = () =>
         makeAdapter({
-          hydrate: async (job, _item, _ctx, fetchJson) => {
+          hydrate: async (job, _ctx, fetchJson) => {
             await fetchJson({ url: `${DETAIL}/${job.externalId}` });
             return {};
           },
@@ -993,6 +1078,35 @@ describe("runAdapter — invariant ATS plumbing over MSW", () => {
         }
       });
 
+      it("a request 429'd before the limit ends as a RateLimitedError, not the plain limit error", async () => {
+        vi.useFakeTimers();
+        try {
+          let calls = 0;
+          server.use(
+            http.get(LIST, () => {
+              calls += 1;
+              return new HttpResponse(null, { status: 429, headers: { "retry-after": "1" } });
+            }),
+          );
+
+          const settled = rejectionOf(
+            runAdapter(makeAdapter(), "acme", {
+              maxRetries: 3,
+              maxRetryWaitMs: 5000,
+              boardTimeLimitMs: 500,
+            }),
+          );
+          await vi.advanceTimersByTimeAsync(1300); // the 1 s Retry-After (+ jitter) outlasts the limit
+          const err = await settled;
+
+          expect(calls).toBe(1);
+          expect(err).toBeInstanceOf(RateLimitedError);
+          expect(err).toMatchObject({ retryAfterMs: 1000 });
+        } finally {
+          vi.useRealTimers();
+        }
+      });
+
       it("unset (the CLI): no limit — every posting's detail keeps retrying", async () => {
         vi.useFakeTimers();
         try {
@@ -1027,7 +1141,7 @@ describe("runAdapter — invariant ATS plumbing over MSW", () => {
       });
       const adapter = () =>
         makeAdapter({
-          hydrate: async (job, _item, _ctx, fetchJson) => {
+          hydrate: async (job, _ctx, fetchJson) => {
             await fetchJson({ url: `${DETAIL}/${job.externalId}` });
             return {};
           },

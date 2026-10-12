@@ -227,8 +227,7 @@ export interface NormalizedJob {
    * good hydrate.
    *
    * (There is deliberately no `raw` source object on this type: `jobs.raw` is no longer stored, and
-   * keeping it pinned every posting's full source JSON in memory for the whole board. An adapter whose
-   * hydrate needs the list item receives it as hydrate's own `raw` argument.)
+   * keeping it pinned every posting's full source JSON in memory for the whole board.)
    */
   contentMissing?: true;
 }

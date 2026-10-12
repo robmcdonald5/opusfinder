@@ -202,7 +202,7 @@ describe("smartRecruitersAdapter.hydrate — content, or a throw (never an empty
   // hydrate is called by runAdapter with the resilient fetchJson; here a stub returns the parsed detail.
   const hydrate = smartRecruitersAdapter.hydrate!;
   const job = mapItem(RAW, CTX)!;
-  const run = (detail: unknown) => hydrate(job, RAW, CTX, () => Promise.resolve(detail));
+  const run = (detail: unknown) => hydrate(job, CTX, () => Promise.resolve(detail));
 
   it("patches the description (fixed section order), the real applyUrl and remote — and no raw", async () => {
     const patch = await run({
@@ -244,6 +244,6 @@ describe("smartRecruitersAdapter.hydrate — content, or a throw (never an empty
 
   it("rethrows a failed detail fetch (e.g. a 404) unchanged — any failure is contentMissing", async () => {
     const cause = new Error('smartrecruiters "SmartRecruitersInc" fetch failed: 404 Not Found');
-    expect(await rejectionReasonOf(hydrate(job, RAW, CTX, () => Promise.reject(cause)))).toBe(cause);
+    expect(await rejectionReasonOf(hydrate(job, CTX, () => Promise.reject(cause)))).toBe(cause);
   });
 });

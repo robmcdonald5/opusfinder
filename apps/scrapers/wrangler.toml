@@ -115,10 +115,11 @@ LIFECYCLE_CLOSE_ENFORCE = "enforce"
 # Flip to "enforce" ONLY after reading `pnpm --filter @opusfinder/db shadow-closes`, which breaks
 # `staleWouldClose` down PER BOARD. EXPECT the first enforce to clear a one-time BACKLOG — every healthy capped
 # mega-board's accumulated aged-out tail (boschgroup alone is ~thousands of >3-week-old postings); that is the
-# feature working, NOT a spike-bug. What to verify: the top per-board contributors are capped mega-boards
-# (expected), not a cluster of small boards that recently failed to fetch. Steady-state staleWouldClose should
-# settle to a trickle after the first enforce. Unlike F2's atomic three-arm flip, this is a single independent
-# switch (one runtime), so no partial-flip footgun. To enable: add STALE_SWEEP = "enforce".
+# feature working, NOT a spike-bug. What to verify: the top per-board contributors are capped mega-boards or
+# boards that now list nothing (both expected), not a cluster of small boards that recently failed to fetch.
+# Steady-state staleWouldClose should settle to a trickle after the first enforce. Unlike F2's atomic
+# three-arm flip, this is a single independent switch (one runtime), so no partial-flip footgun. To enable:
+# add STALE_SWEEP = "enforce".
 STALE_SWEEP_TTL_DAYS = "21"
 
 # The control plane (apps/control, Worker `opusfinder-control`), read in SHADOW: each tick logs its stage's

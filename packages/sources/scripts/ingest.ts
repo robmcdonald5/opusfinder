@@ -1,15 +1,18 @@
 import { createDb } from "@opusfinder/db";
 import { getDatabaseUrl } from "@opusfinder/db/env";
-import { upsertCompany, upsertJobs } from "@opusfinder/db/repos";
+import { upsertCompany } from "@opusfinder/db/repos";
+import { embed } from "@opusfinder/embeddings";
 import { runScript } from "@opusfinder/shared/script";
 
 import { SOURCE_NAMES, adapters, fetchJobs, isSourceName } from "../src/adapters";
-import { embedBoard, embedPolicy } from "./ingest-shared";
+import { runIngestion } from "../src/ingest";
+import { embedPolicy, printBoard } from "./ingest-shared";
 
 /**
- * Ad-hoc single-board ingestion across any ATS: fetch + normalize one board, upsert it
- * through @opusfinder/db, and (best-effort) embed the new/changed postings. (Named `ingest`,
- * not `fetch`, to avoid pnpm's built-in `fetch` command; pairs with `ingest:all`.)
+ * Ad-hoc single-board ingestion across any ATS: record the board, then ingest it through `runIngestion`
+ * — the path `ingest:all` and the cron take (presence, revival, lifecycle sweep, best-effort embed) —
+ * under its own `ingestion-cli` run row. (Named `ingest`, not `fetch`, to avoid pnpm's built-in `fetch`
+ * command; pairs with `ingest:all`.)
  *
  *   pnpm --filter @opusfinder/sources ingest <source> <slug> [--no-embed]
  */
@@ -27,27 +30,25 @@ async function main(): Promise<void> {
     return;
   }
 
-  const jobs = await fetchJobs(source, slug);
-
-  const db = createDb(getDatabaseUrl());
-  // Seed the company from the canonical slug (not jobs[0]) so a valid-but-currently-empty
-  // board is still recorded — ingest:all then re-checks it when it later posts jobs.
-  const companyId = await upsertCompany(db, adapters[source].normalizeSlug(slug), source);
-  // upsertJobs never writes a failed hydrate's content (NormalizedJob.contentMissing — its stored row
-  // keeps its content), so those are reported apart from the duplicates it collapsed.
-  const { changed, total, contentMissing } = await upsertJobs(db, companyId, jobs);
-
-  const collapsed = jobs.length - total - contentMissing;
-  console.log(
-    `Upserted ${total} jobs for ${source}:"${slug}" (company_id=${companyId}): ` +
-      `changed ${changed}, unchanged ${total - changed}` +
-      (collapsed > 0 ? ` (collapsed ${collapsed} duplicate id${collapsed === 1 ? "" : "s"})` : "") +
-      (contentMissing > 0 ? `; ${contentMissing} not written (detail fetch failed)` : ""),
-  );
+  // Fetch the first page before recording the board, so a slug that can't be fetched (a typo) leaves no
+  // company row behind; a valid-but-currently-empty board is still recorded.
+  await fetchJobs(source, slug, { maxItems: 1 });
 
   const policy = embedPolicy(noEmbed);
   if (policy.reason) console.log(policy.reason);
-  if (policy.enabled && total > 0) await embedBoard(db, companyId);
+
+  const db = createDb(getDatabaseUrl());
+  const companyId = await upsertCompany(db, adapters[source].normalizeSlug(slug), source);
+  const counts = await runIngestion(db, {
+    // The id-keyset chunk holding exactly this board, deactivated or not.
+    afterId: companyId - 1,
+    limit: 1,
+    activeOnly: false,
+    pipeline: "ingestion-cli",
+    embed: policy.enabled ? embed : undefined,
+    onBoard: printBoard,
+  });
+  if (counts.failed > 0) process.exitCode = 1;
 }
 
 await runScript("Ingest", main);

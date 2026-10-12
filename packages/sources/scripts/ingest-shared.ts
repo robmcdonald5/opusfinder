@@ -1,10 +1,10 @@
-import type { Db } from "@opusfinder/db";
-import { backfillJobEmbeddings } from "@opusfinder/db/repos";
-import { embed, formatEmbedCost } from "@opusfinder/embeddings";
+import { formatEmbedCost } from "@opusfinder/embeddings";
+
+import type { IngestBoardResult } from "../src/ingest";
 
 /**
- * Shared ingestion helpers for the fetch / ingest-all scripts — one definition of the
- * inline-embedding policy so the two entry points can't drift.
+ * Shared helpers for the ingest / ingest-all scripts — the inline-embedding policy and the per-board
+ * console line, defined once so the two entry points can't drift.
  */
 
 /**
@@ -24,26 +24,26 @@ export function embedPolicy(noEmbed: boolean): { enabled: boolean; reason?: stri
   return { enabled: true };
 }
 
-/**
- * Best-effort inline embedding of a board's just-persisted postings: the
- * freshly-inserted jobs plus any whose content changed (upsertJobs nulls the embedding on a
- * real change). A Voyage failure is caught and warned — jobs are already persisted, so a
- * hiccup never fails the ingest; the next run's inline embed or `pnpm embeddings:backfill`
- * picks up the still-NULL rows (idempotent).
- */
-export async function embedBoard(db: Db, companyId: number): Promise<void> {
-  try {
-    const { embedded, tokens } = await backfillJobEmbeddings(db, embed, {
-      companyId,
-      inputType: "document",
-    });
-    console.log(
-      `Embedded ${embedded} job${embedded === 1 ? "" : "s"} (${formatEmbedCost(tokens)}).`,
-    );
-  } catch (err) {
-    console.warn(
-      `Warning: jobs persisted, but embedding failed: ${err instanceof Error ? err.message : String(err)}. ` +
-        "Run `pnpm embeddings:backfill` to retry.",
-    );
+/** `runIngestion`'s `onBoard` hook for the CLIs: one real-time line per board (the Worker stays quiet). */
+export function printBoard(board: IngestBoardResult): void {
+  if (board.skipped) {
+    console.log(`  ${board.source}:${board.slug} skipped (${board.skipped})`);
+    return;
   }
+  if (!board.ok) {
+    console.warn(`  ${board.source}:${board.slug} FAILED: ${board.error}`);
+    return;
+  }
+  // The not-written postings are printed so a board whose every detail fetch failed doesn't read as
+  // an empty board ("0 job(s)").
+  console.log(
+    `  ${board.source}:${board.slug} -> ${board.jobs} job(s), changed ${board.changed}` +
+      (board.hydrateSkipped > 0
+        ? `, ${board.hydrateSkipped} not written (detail fetch failed)`
+        : "") +
+      (board.embedded > 0
+        ? `, embedded ${board.embedded} (${formatEmbedCost(board.embedTokens)})`
+        : "") +
+      (board.error ? ` [embed failed: ${board.error}]` : ""),
+  );
 }

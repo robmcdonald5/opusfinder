@@ -15,9 +15,9 @@ import { companySlug, jobId, type SourceName } from "@opusfinder/shared";
 import {
   adapters,
   runIngestion,
+  type IngestBoardResult,
   type IngestEmbedFn,
   type IngestionCounts,
-  type IngestionOptions,
 } from "@opusfinder/sources";
 
 import { createTestDb } from "@test/db/pglite";
@@ -31,7 +31,7 @@ import { jsonResponse, routedFetch, textResponse, type Route } from "@test/http/
 // stamp presence/health, sweep, embed, and close on the staleness timer, all under one source_runs row.
 // Focus is the wiring NO other suite owns: per-board error ISOLATION (one bad board never fails the run),
 // the activeOnly/afterId/limit SQL chunk, the maxRunMs budget break (finishRun still reached), the capped-
-// board sweep SKIP with presence still stamped, the non-empty-fetch gate, closed-job revival, the injected
+// board sweep SKIP with presence still stamped, which empty boards are certified, closed-job revival, the injected
 // embedder (+ its failure isolation), the post-loop staleness sweep (shadow/enforce, INDEPENDENT of the per-board
 // enforce switch), same-source-only pacing (per key, Workable's slower, the caller's floor), the per-key rate-limit cooldown, the company id taken from listCompanies (no upsertCompany), and a
 // failed hydrate end to end (stored content kept, still present, hydrateSkipped counted accurately).
@@ -73,10 +73,6 @@ const repoSpies = [upsertCompany, upsertJobs, listCompanies, markJobsPresent, sw
 
 // Adapter tuning that removes real waits: no retries (a 5xx fails the board on the first attempt, no
 // `backoff` setTimeout) — paired with paceMs:0 (the stubbed sleep is a no-op anyway).
-// IngestBoardResult isn't re-exported from the sources barrel; derive it from the onBoard param so the
-// test needs no production surface change.
-type IngestBoardResult = Parameters<NonNullable<IngestionOptions["onBoard"]>>[0];
-
 const NO_RETRY = { maxRetries: 0 } as const;
 const DAY_MS = 86_400_000;
 function daysAgo(n: number): Date {
@@ -248,7 +244,7 @@ describe("runIngestion — orchestration over real PGlite (fetch stubbed)", () =
       });
       // Both postings persisted.
       expect(await jobsFor(acme)).toHaveLength(2);
-      // markCompanyIngested certified board health (a non-empty fetch) — the staleness timer's precondition.
+      // markJobsPresent certified board health — the staleness timer's precondition.
       expect((await companyById(acme)).lastIngestedAt).toBeInstanceOf(Date);
       // The run row, opened + terminalized ok with the counts bag verbatim.
       const runs = await allSourceRuns();
@@ -321,6 +317,30 @@ describe("runIngestion — orchestration over real PGlite (fetch stubbed)", () =
 
       expect(counts).toMatchObject({ companies: 2, processed: 2 });
       expect(await jobsFor(inactive)).toHaveLength(1);
+    });
+
+    it("a CLI run reactivates a deactivated board that lists postings; one that fails or lists none stays inactive", async () => {
+      const live = await seedCompany({ slug: "liveco", active: false });
+      const dead = await seedCompany({ slug: "deadco", active: false });
+      const empty = await seedCompany({ slug: "emptyco", active: false });
+      installFetch([
+        boardRoute("liveco", [ghJob(1)]),
+        failRoute("deadco", 404),
+        boardRoute("emptyco", []),
+      ]);
+
+      await runIngestion(db, {
+        activeOnly: false,
+        pipeline: "ingestion-cli",
+        paceMs: 0,
+        adapter: NO_RETRY,
+      });
+
+      // Left inactive: the cron skips liveco, and discovery's board-death close shuts its new job.
+      expect((await companyById(live)).active).toBe(true);
+      expect((await companyById(dead)).active).toBe(false);
+      expect((await companyById(empty)).active).toBe(false);
+      expect((await allSourceRuns())[0]!.pipeline).toBe("ingestion-cli");
     });
 
     it("afterId + limit fetch exactly the id-keyset slice, and lastId records the cursor", async () => {
@@ -401,13 +421,18 @@ describe("runIngestion — orchestration over real PGlite (fetch stubbed)", () =
 
   describe("capped board (partial fetch)", () => {
     it("skips the feed-absence sweep on a capped board but STILL stamps presence — the un-fetched tail is spared", async () => {
-      const capco = await seedCompany({ slug: "capco", active: true });
+      const capco = await seedCompany({ slug: "capco", source: "smartrecruiters", active: true });
       // A pre-existing active job that is ABSENT from the capped fetch: if the sweep ran, it would be
       // marked absent (streak++); the capped skip is what leaves it untouched.
-      await seedJob(capco, { externalId: "old-99", lifecycleState: "active", consecutiveAbsences: 0 });
+      await seedJob(capco, {
+        externalId: "old-99",
+        source: "smartrecruiters",
+        lifecycleState: "active",
+        consecutiveAbsences: 0,
+      });
 
-      // Board returns 2 jobs; maxItems:1 trims to 1 → normalized.length(1) >= cap(1) ⇒ capped.
-      installFetch([boardRoute("capco", [ghJob(1), ghJob(2)])]);
+      // The board lists 2 postings; maxItems:1 hydrates — and keeps — only the first ⇒ capped.
+      installFetch(srBoard("capco", ["1", "2"], (id) => jsonResponse(srDetail(id))));
       const counts = await runIngestion(db, {
         paceMs: 0,
         adapter: { maxItems: 1, maxRetries: 0 },
@@ -426,6 +451,17 @@ describe("runIngestion — orchestration over real PGlite (fetch stubbed)", () =
       expect(tail!.consecutiveAbsences).toBe(0);
       // (That markJobsPresent still RUNS on a capped board is proven by the capped-revival test below —
       // a `toBeDefined()` on the fetched row here would only prove upsertJobs ran, not markJobsPresent.)
+    });
+
+    it("never caps an unpaginated board over maxItems: it is ingested whole and swept", async () => {
+      const bigco = await seedCompany({ slug: "bigco", active: true });
+      await seedJob(bigco, { externalId: "old-99", consecutiveAbsences: 0 });
+      installFetch([boardRoute("bigco", [ghJob(1), ghJob(2), ghJob(3)])]);
+
+      const counts = await runIngestion(db, { paceMs: 0, adapter: { maxItems: 2, maxRetries: 0 } });
+
+      expect(counts).toMatchObject({ cappedBoards: 0, jobs: 3, swept: 1 });
+      expect((await jobByExt("old-99"))!.consecutiveAbsences).toBe(1);
     });
   });
 
@@ -455,22 +491,41 @@ describe("runIngestion — orchestration over real PGlite (fetch stubbed)", () =
   });
 
   describe("presence/health gate + revival", () => {
-    it("an empty fetch (total 0) stamps NEITHER presence NOR board-health — last_ingested_at stays NULL", async () => {
-      const emptyco = await seedCompany({ slug: "emptyco", active: true, lastIngestedAt: null });
-      installFetch([boardRoute("emptyco", [])]);
+    it("certifies a board that now lists nothing, so the timer closes the jobs it left; SmartRecruiters' ambiguous empty certifies nothing", async () => {
+      const goneco = await seedCompany({ slug: "goneco", active: true, lastIngestedAt: null });
+      await seedJob(goneco, { externalId: "1", lastSeenAt: daysAgo(30) });
+      // 200 + totalFound:0 is also what SmartRecruiters answers an unknown slug: certifying it would let the
+      // timer close a live board's jobs.
+      const srco = await seedCompany({
+        slug: "srco",
+        source: "smartrecruiters",
+        active: true,
+        lastIngestedAt: null,
+      });
+      await seedJob(srco, { externalId: "2", source: "smartrecruiters", lastSeenAt: daysAgo(30) });
+      installFetch([
+        boardRoute("goneco", []),
+        ...srBoard("srco", [], (id) => jsonResponse(srDetail(id))),
+      ]);
 
-      const counts = await runIngestion(db, { paceMs: 0, adapter: NO_RETRY });
+      const counts = await runIngestion(db, {
+        paceMs: 0,
+        adapter: NO_RETRY,
+        staleSweep: { enforce: true },
+      });
 
-      expect(counts).toMatchObject({ companies: 1, ok: 1, jobs: 0, changed: 0, revived: 0 });
-      // The non-empty-fetch gate held: an empty/ambiguous fetch must NOT certify the board healthy (which would
-      // then let the staleness timer close its still-live jobs).
-      expect((await companyById(emptyco)).lastIngestedAt).toBeNull();
+      expect(counts).toMatchObject({ ok: 2, jobs: 0, revived: 0, staleClosed: 1 });
+      expect((await companyById(goneco)).lastIngestedAt).toBeInstanceOf(Date);
+      expect((await jobByExt("1"))!.lifecycleState).toBe("closed");
+      expect((await companyById(srco)).lastIngestedAt).toBeNull();
+      expect((await jobByExt("2"))!.lifecycleState).toBe("active");
     });
 
     it("revives a reappearing closed job on a CAPPED board — markJobsPresent is the SOLE reviver (sweepLifecycle skipped)", async () => {
-      const revco = await seedCompany({ slug: "revco", active: true });
+      const revco = await seedCompany({ slug: "revco", source: "smartrecruiters", active: true });
       await seedJob(revco, {
-        externalId: "1", // matches ghJob(1).id → reappears in the (capped) fetch
+        externalId: "1", // the first listed posting → reappears in the (capped) fetch
+        source: "smartrecruiters",
         lifecycleState: "closed",
         closedAt: new Date("2026-01-01T00:00:00Z"),
         consecutiveAbsences: 3,
@@ -478,7 +533,7 @@ describe("runIngestion — orchestration over real PGlite (fetch stubbed)", () =
       // maxItems:1 caps the board → the feed-absence sweep is SKIPPED, so ANY revival can come only from
       // markJobsPresent. (A non-capped fixture cannot attribute it: sweepLifecycle's present-branch also
       // revives + counts `revived`, masking a broken markJobsPresent.) The trimmed present job IS the id.
-      installFetch([boardRoute("revco", [ghJob(1), ghJob(2)])]);
+      installFetch(srBoard("revco", ["1", "2"], (id) => jsonResponse(srDetail(id))));
 
       const counts = await runIngestion(db, { paceMs: 0, adapter: { maxItems: 1, maxRetries: 0 } });
 
@@ -489,6 +544,32 @@ describe("runIngestion — orchestration over real PGlite (fetch stubbed)", () =
       expect(job!.lifecycleState).toBe("active");
       expect(job!.closedAt).toBeNull();
       expect(job!.consecutiveAbsences).toBe(0);
+    });
+  });
+
+  describe("listed postings mapItem rejects (malformed)", () => {
+    it.each([
+      ["a few: the board is still swept (one that stays malformed closes)", 1, 1, 0],
+      ["many — vendor drift: the board isn't swept, so its live postings don't close", 4, 0, 1],
+    ])("%s", async (_case, malformed, streak, driftedBoards) => {
+      const driftco = await seedCompany({ slug: "driftco", active: true });
+      // A stored posting the board still lists, in a shape mapItem now rejects.
+      await seedJob(driftco, { externalId: "100", consecutiveAbsences: 0 });
+      const rejected = Array.from({ length: malformed }, (_, i) => ({
+        ...ghJob(100 + i),
+        title: null,
+      }));
+      installFetch([boardRoute("driftco", [ghJob(1), ghJob(2), ...rejected])]);
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      let counts: IngestionCounts;
+      try {
+        counts = await runIngestion(db, { paceMs: 0, adapter: NO_RETRY });
+      } finally {
+        warn.mockRestore();
+      }
+
+      expect(counts).toMatchObject({ ok: 1, jobs: 2, mapSkipped: malformed, driftedBoards });
+      expect((await jobByExt("100"))!.consecutiveAbsences).toBe(streak);
     });
   });
 
@@ -1293,6 +1374,29 @@ describe("runIngestion — orchestration over real PGlite (fetch stubbed)", () =
       expect((await jobByExt("gone-1"))!.consecutiveAbsences).toBe(1);
     });
 
+    it("a board whose detail fetches stay rate limited is still swept — once, by its first pass", async () => {
+      const sr = await seedCompany({ slug: "sr1", source: "smartrecruiters", active: true });
+      await seedCompany({ slug: "g1", active: true });
+      await seedJob(sr, { externalId: "gone-1", source: "smartrecruiters" });
+      const throttled = () => new Response(null, { status: 429, headers: { "retry-after": "60" } });
+      const fx = installFetch([
+        ...srBoard("sr1", ["h-1"], throttled),
+        ghBoard("g1", 61_000), // past sr1's 60 s cooldown: the second pass re-runs it, and it is 429'd again
+      ]);
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      let counts: IngestionCounts;
+      try {
+        counts = await runIngestion(db, clocked);
+      } finally {
+        warn.mockRestore();
+      }
+
+      expect(fx.calls.filter((u) => u.includes("/companies/sr1/"))).toHaveLength(4); // list + h-1, twice
+      // The re-run's outcome keeps the first pass's sweep.
+      expect(counts).toMatchObject({ ok: 2, hydrateSkipped: 1, swept: 1 });
+      expect((await jobByExt("gone-1"))!.consecutiveAbsences).toBe(1);
+    });
+
     it("second pass: stops once the budget is spent — the rest stay skipped", async () => {
       await seedCompany({ slug: "wa", source: "workable", active: true });
       await seedCompany({ slug: "wb", source: "workable", active: true });
@@ -1391,8 +1495,12 @@ describe("runIngestion — orchestration over real PGlite (fetch stubbed)", () =
   describe("company id from listCompanies (no per-board upsertCompany)", () => {
     it("never calls upsertCompany, lands jobs on the listed id, and leaves the companies rows unchanged", async () => {
       const full = await seedCompany({ slug: "fullco", active: true });
-      const bare = await seedCompany({ slug: "bareco", active: true });
-      installFetch([boardRoute("fullco", [ghJob(1)]), boardRoute("bareco", [])]);
+      // An ambiguous empty listing, which certifies nothing.
+      const bare = await seedCompany({ slug: "bareco", source: "smartrecruiters", active: true });
+      installFetch([
+        boardRoute("fullco", [ghJob(1)]),
+        ...srBoard("bareco", [], (id) => jsonResponse(srDetail(id))),
+      ]);
       const xminOf = async (id: number): Promise<string> => {
         const rows = await db
           .select({ xmin: sql<string>`xmin::text` })
@@ -1409,12 +1517,12 @@ describe("runIngestion — orchestration over real PGlite (fetch stubbed)", () =
       expect(vi.mocked(upsertCompany).mock.calls.length).toBe(0); // (mock.calls — see the failed-write test)
       expect((await jobsFor(full)).map((j) => j.externalId)).toEqual(["1"]);
       // The DB state the old path produced (its upsert wrote no column): no row added, nothing changed bar
-      // the last_ingested_at markCompanyIngested stamps on the non-empty board...
+      // the last_ingested_at markJobsPresent stamps on the non-empty board...
       const after = await db.select().from(companies).orderBy(companies.id);
       const sansIngested = (rows: typeof before) =>
         rows.map(({ lastIngestedAt: _stamped, ...rest }) => rest);
       expect(sansIngested(after)).toEqual(sansIngested(before));
-      // ...and the empty board's row was not written AT ALL: same tuple version. The old no-op
+      // ...and the uncertified board's row was not written AT ALL: same tuple version. The old no-op
       // `ON CONFLICT DO UPDATE SET slug = excluded.slug` wrote a new version — a dead tuple — every tick.
       expect(await xminOf(bare)).toBe(bareXmin);
     });

@@ -82,7 +82,7 @@ export const smartRecruitersAdapter: SourceAdapter = {
 
   mapItem: (raw, ctx) => toNormalizedJob(raw, ctx),
 
-  hydrate: (job, _raw, ctx, fetchJson) => hydratePosting(job, ctx, fetchJson),
+  hydrate: hydratePosting,
 };
 
 function totalFound(body: unknown): number | undefined {

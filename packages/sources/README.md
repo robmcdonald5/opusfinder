@@ -18,8 +18,7 @@ The abstraction was **extracted** from concrete Greenhouse + Lever + SmartRecrui
   `mapItem`) → the single resilient fetch (retry + exponential backoff + `Retry-After`, with a
   non-JSON-body guard) → two-tier resilience (`locate` fails LOUD on a bad envelope; `mapItem`
   fails SOFT, skipping one bad posting) → the optional bounded-concurrency hydrate pool →
-  per-board accounting. Returns `NormalizedJob[]` (no source `raw` on them — `jobs.raw` isn't stored;
-  a `hydrate` gets its list item as an argument instead).
+  per-board accounting. Returns `NormalizedJob[]` (no source `raw` on them — `jobs.raw` isn't stored).
 - **`SourceAdapter` descriptors (`src/adapters/{greenhouse,lever,ashby,workable,smartrecruiters,recruitee,pinpoint,gem,trakstar}.ts`)**
   — per-source data: `source`, `normalizeSlug`, `jobsRequest`, `locate`, `mapItem`, the Phase-7
   discovery pair `matchUrl` (REQUIRED — the URL→raw-slug inverse of `jobsRequest`; must not throw;
@@ -30,8 +29,7 @@ The abstraction was **extracted** from concrete Greenhouse + Lever + SmartRecrui
 - **`cleanHtml(input, steps)` (`src/adapters/text.ts`)** — the shared HTML→text primitive. The
   decode/strip/collapse atoms are invariant; only their ORDER varies per source, so it takes
   an ordered step list (e.g. Greenhouse's asymmetric double-encoding needs
-  `["decode","strip","decode","collapse"]`). As of Phase F5 `cleanHtml`, `htmlToText`, and the
-  `CleanStep` type are part of the package's **PUBLIC surface** (`src/index.ts`): the discovery
+  `["decode","strip","decode","collapse"]`). It is also exported (`src/index.ts`): the discovery
   `hn` lane reuses `cleanHtml(text, ["decode"])` to decode `&#x2F;`-encoded board URLs rather than
   hand-rolling a weaker copy.
 - **`htmlToText(value)` (`src/adapters/text.ts`)** — names the most common recipe once: the
@@ -53,9 +51,9 @@ The abstraction was **extracted** from concrete Greenhouse + Lever + SmartRecrui
   (e.g. `boards`) still resolves.
 
 The registry (`src/adapters/index.ts`) maps `SourceName → SourceAdapter` as a
-`Record<SourceName, SourceAdapter>`, so a forgotten adapter is a **compile error**. The public
-entry point is `fetchJobs(source, slug)`. Adding a platform is a descriptor + one `mapItem` —
-no new plumbing.
+`Record<SourceName, SourceAdapter>`, so a forgotten adapter is a **compile error**. Ingestion
+enters through `runIngestion` (`src/ingest.ts`, below). Adding a platform is a descriptor + one
+`mapItem` — no new plumbing.
 
 ## Usage
 
@@ -77,15 +75,15 @@ pnpm ingest trakstar instacart
 pnpm ingest:all                        # [--no-embed] [--source=<name>]
 ```
 
-Each board upserts via `@opusfinder/db`'s `upsertJobs` (`pnpm ingest` first get-or-creates the company
-with `upsertCompany`; `ingest:all` takes the id from the `companies` row it iterates), then embeds the
-new/changed postings via `@opusfinder/embeddings` (best-effort: a Voyage failure is warned, not
-fatal; skipped when `VOYAGE_API_KEY` is unset or `--no-embed` is passed). `ingest:all` isolates
-each board in a try/catch — one dead slug doesn't halt the run.
+Both commands are thin shells over the shared `runIngestion(db, opts)` library (`src/ingest.ts`), which
+the Worker cron also calls (`pnpm ingest` first records the board with `upsertCompany`). Each board
+upserts via `@opusfinder/db`'s `upsertJobs`, then embeds the new/changed postings via
+`@opusfinder/embeddings` (best-effort: a Voyage failure is warned, not fatal; skipped when
+`VOYAGE_API_KEY` is unset or `--no-embed` is passed); one dead slug doesn't halt the run. A CLI run is
+recorded in `source_runs` as `ingestion-cli`, apart from the cron's `ingestion` runs that health reads.
+A CLI run also visits boards discovery deactivated, and reactivates one that lists postings.
 
-`ingest:all` is now a thin CLI shell over the shared `runIngestion(db, opts)` library
-(`src/ingest.ts`), which the Phase-8 Worker cron also calls — the CLI commands are unchanged. Boards run
-one at a time. Politeness (`paceMs`, 500 ms) is per pacing key — an adapter's `pacingKey`, default its
+Boards run one at a time. Politeness (`paceMs`, 500 ms) is per pacing key — an adapter's `pacingKey`, default its
 source, since no two adapters share a request host — and by TIME: a board starts ≥ 500 ms after its
 key's previous board FINISHED, sleeping only the remainder, so alternating sources can't burst one host
 and a board after enough other work waits for nothing. A key whose adapters declare a slower `paceMs`
@@ -103,7 +101,8 @@ has passed, while the budget lasts; a re-run's outcome replaces the board's firs
 once (and reported once to `onBoard`), and `errorSample` names the first board whose FINAL outcome failed.
 The Worker also passes `boardTimeLimitMs` (120 s): past it no new request starts for that board (its list
 fetch fails the board; remaining detail fetches leave postings `contentMissing`), so one board can't run the
-tick past Cloudflare's limit. `ingest:all` omits both options and keeps the patient, unlimited retries. Known limitations: a transient blip is now
+tick past Cloudflare's limit. The CLIs omit both: they sleep out each Retry-After (capped at 30 s) for up
+to 3 retries, with no per-board limit. Known limitations: a transient blip is now
 mostly recovered in the same tick, but under persistent throttling a skipped board waits a full sweep
 (~20 h) for its next try, and meanwhile the stale sweep spares its uncertified jobs (`rateLimitSkipped`
 makes it visible); a host's burst quota can leave the tail of a huge board unhydrated while it throttles
@@ -132,17 +131,16 @@ enforces it for every caller):
   its embedding stay; a title change in the same fetch still applies. A brand-new posting is inserted as
   given, `""` included.
 
-`hydrateSkipped` (in `pnpm runs` and on each `ingest:all` board line) counts distinct postings on boards
+`hydrateSkipped` (in `pnpm runs` and on each CLI board line) counts distinct postings on boards
 whose write succeeded.
 
-Since Phase F2, `runIngestion` also runs a per-board **feed-absence lifecycle sweep** (`sweepLifecycle`, gated
-on a non-empty fetch) after each successful board: postings absent from a healthy fetch accrue a
+Since Phase F2, `runIngestion` also runs a per-board **feed-absence lifecycle sweep** (`sweepLifecycle`, only
+on a complete, non-empty fetch) after each successful board: postings absent from it accrue a
 `consecutive_absences` streak and soft-close at the threshold, reviving on reappearance — tallied onto
 `IngestionCounts` (`revived` / `swept` / `closed` / `wouldClose` / `sweepFailed`) and the `logSummary` line.
-Shipped SHADOW (count-only): the close is tallied as `wouldClose`, not yet written. Enforcement is the
-single `LIFECYCLE_CLOSE_ENFORCE` switch — `runIngestion`'s `enforceLifecycle` option, which the Worker sets from
-`parseEnforceFlag(env.LIFECYCLE_CLOSE_ENFORCE)` (the same flag flips Arm B + Arm C); set it to `enforce` once the
-shadow counters are reviewed.
+The close is written only under `runIngestion`'s `enforceLifecycle` (else tallied as `wouldClose`), which the
+Worker sets from `LIFECYCLE_CLOSE_ENFORCE` — `enforce` since 2026-06-18. The digest's 410-close (Arm C) reads
+the same flag from the Vercel/Inngest env, so a flip must land in both runtimes.
 
 ## Per-adapter quirks (institutional memory)
 

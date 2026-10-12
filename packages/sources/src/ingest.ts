@@ -16,6 +16,7 @@ import {
   listCompanies,
   markCompanyIngested,
   markJobsPresent,
+  markProbeResult,
   startRun,
   sweepLifecycle,
   sweepStaleJobs,
@@ -35,8 +36,8 @@ import {
 /**
  * The injected embedder — the structural MINIMUM that `backfillJobEmbeddings` accepts. The real
  * `embed()` returns a superset, so it satisfies this via structural subtyping. Omit `embed` to
- * skip inline embedding (the default on the Voyage free tier, whose 3 RPM a frequent tick would
- * exhaust): jobs are still upserted; the idempotent backfill fills the still-NULL vectors later.
+ * skip inline embedding (the Worker does: `@opusfinder/embeddings` can't enter its bundle): jobs are
+ * still upserted; the idempotent backfill fills the still-NULL vectors later.
  */
 export type IngestEmbedFn = (
   texts: string[],
@@ -72,9 +73,16 @@ export interface IngestionOptions {
   /**
    * Skip boards discovery has deactivated. Defaults to TRUE — the Worker cron, and any direct
    * caller that omits this, wants only live boards. The CLI passes `false` to preserve its prior
-   * "ingest every row" behavior (a manual run may want to re-check a deactivated board).
+   * "ingest every row" behavior (a manual run may want to re-check a deactivated board). A deactivated
+   * board that lists postings is reactivated, so the cron ingests — and can close — what this run wrote.
    */
   activeOnly?: boolean;
+  /**
+   * The `source_runs` pipeline label: `ingestion` (the default, the cron) or `ingestion-cli`, which the
+   * CLIs pass. Health reads only the cron's runs, and a CLI run — an hour or more over every board — gets a
+   * day before a later startRun takes it for a zombie.
+   */
+  pipeline?: "ingestion" | "ingestion-cli";
   /**
    * Chunk cursor: process only boards with `id > afterId`. Pushed into the `listCompanies` SQL
    * as an id-keyset `WHERE id > afterId` (not an in-memory filter). Omit = from the start. The
@@ -100,7 +108,7 @@ export interface IngestionOptions {
   /** Clock (epoch ms) for the `maxRunMs` budget and the per-key pacing. Defaults to `Date.now`; a test
    *  injects one to drive both deterministically. */
   clock?: () => number;
-  /** Forwarded to `fetchJobs`/`runAdapter` — a Worker may LOWER `hydrateConcurrency` for subrequests, and
+  /** Forwarded to each board's `fetchBoard` — a Worker may LOWER `hydrateConcurrency` for subrequests, and
    *  passes `maxRetryWaitMs` to fail fast on rate limits (see the cooldown in the board loop). */
   adapter?: RunAdapterOptions;
   /**
@@ -121,7 +129,7 @@ export interface IngestionOptions {
   /**
    * Lifecycle-close enforcement. Default false = SHADOW (the sweep increments the absence streak +
    * revives, but writes no `'closed'`, tallying `wouldClose`). The Worker passes
-   * `parseEnforceFlag(env.LIFECYCLE_CLOSE_ENFORCE)`; flip enforce on once the shadow counters are reviewed.
+   * `parseEnforceFlag(env.LIFECYCLE_CLOSE_ENFORCE)`.
    */
   enforceLifecycle?: boolean;
   /**
@@ -157,6 +165,7 @@ export interface IngestionCounts {
   changed: number; // inserted-or-updated postings
   hydrateSkipped: number; // listed postings whose detail fetch failed: content kept (only company_id refreshed) / new one deferred; still present
   hydrateListed: number; // postings listed by HYDRATING boards (written + hydrateSkipped) — the health ratio's denominator
+  mapSkipped: number; // listed postings mapItem rejected (malformed): not written, not present; many skip their board's sweep
   embedded: number; // postings embedded inline (0 when `embed` omitted)
   embedTokens: number; // Voyage tokens used
   embedFailed: number; // boards whose embed step threw (jobs still persisted)
@@ -168,9 +177,10 @@ export interface IngestionCounts {
   wouldClose: number; // absent postings at/over threshold NOT yet closed (shadow standing population)
   sweepFailed: number; // boards whose sweep step threw (jobs still persisted; self-heals next cycle)
   // Observability + universal staleness sweep (run-level, post-loop).
-  markFailed: number; // boards whose markJobsPresent/markCompanyIngested liveness stamp threw (jobs still persisted)
-  cappedBoards: number; // boards whose fetch hit adapter.maxItems (partial → Arm A sweep skipped → covered by the stale timer)
+  markFailed: number; // boards whose liveness stamp (presence, certification, reactivation) threw (jobs still persisted)
+  cappedBoards: number; // boards adapter.maxItems cut short (partial → Arm A sweep skipped → covered by the stale timer)
   partialBoards: number; // uncapped boards whose listing came back incomplete (see fetchBoard): Arm A sweep skipped, as for capped
+  driftedBoards: number; // boards with too many malformed postings to sweep (Arm A skipped → covered by the stale timer)
   staleClosed: number; // jobs closed by the staleness timer this run (STALE_SWEEP enforce only; always 0 in shadow)
   staleWouldClose: number; // active jobs past the TTL the timer WOULD close (shadow standing population; 0 in enforce)
   staleSweepFailed: number; // 1 if the post-loop stale sweep threw (jobs untouched; self-heals next tick), else 0
@@ -184,10 +194,12 @@ const DEFAULT_PACE_MS = 500;
 // throttling a skipped board waits a full sweep (~20 h) for its next try, and meanwhile the stale sweep
 // spares its uncertified jobs (`rateLimitSkipped` shows it). A host's burst quota can leave the tail of a
 // huge board unhydrated (in `hydrateSkipped`; content kept) unless its second-pass re-run gets through. A
-// re-run board's FINAL attempt is what's counted, so work done by its first attempt (e.g. `changed`,
-// `revived`) isn't. Discovery's prober
+// re-run board's FINAL attempt is what's counted, so work done by its first attempt (e.g. `changed`) isn't,
+// beyond its LIFECYCLE_COUNTS. Discovery's prober
 // (packages/discovery/src/probe.ts) still hits apply.workable.com at up to ~2.5 req/s (follow-up).
 const RATE_LIMIT_COOLDOWN_MAX_MS = 10 * 60_000;
+// What a board's first pass did to its jobs' lifecycle, kept when the second pass re-runs it (see there).
+const LIFECYCLE_COUNTS = ["revived", "swept", "closed", "wouldClose", "sweepFailed", "driftedBoards"] as const;
 
 /**
  * Run one ingestion pass. Per-board failures are ISOLATED — a dead slug / 5xx increments
@@ -204,7 +216,7 @@ export async function runIngestion(db: Db, opts: IngestionOptions = {}): Promise
   // Pacing key → when its most recent board FINISHED (see opts.paceMs), and, after a rate limit, the time
   // before which its boards are skipped (see RATE_LIMIT_COOLDOWN_MAX_MS).
   const keys = new Map<string, { lastFinish?: number; notBefore?: number }>();
-  const runId = await startRun(db, "ingestion", { source: opts.source });
+  const runId = await startRun(db, opts.pipeline ?? "ingestion", { source: opts.source });
   let errorSample: string | undefined;
 
   try {
@@ -228,7 +240,7 @@ export async function runIngestion(db: Db, opts: IngestionOptions = {}): Promise
 
     // One board — fetch, upsert, stamp, sweep, embed — with its failures ISOLATED. `retry`: a rate limit cost
     // it (skipped while its key cools, its list fetch 429'd, or its detail fetches stopped at one).
-    const runBoard = async (company: (typeof list)[number]): Promise<Board> => {
+    const runBoard = async (company: (typeof list)[number], sweep = true): Promise<Board> => {
       // THIS board's counts, shadowing the run's: summed into them from each board's final outcome.
       const counts = emptyCounts();
       // Recorded after the board (see the end of the loop body); the raw source until the adapter resolves.
@@ -271,19 +283,14 @@ export async function runIngestion(db: Db, opts: IngestionOptions = {}): Promise
         const board = await fetchBoard(adapter, company.slug, opts.adapter);
         const normalized = board.jobs;
         rateLimit = board.rateLimited; // a detail fetch's: the board still succeeds, but its key cools down below
-        // A capped board (adapter.maxItems truncated the fetch) is PARTIAL — its present-set is
-        // incomplete, so the F2 feed-absence sweep below MUST be skipped or it would false-close the
-        // un-fetched tail. runAdapter trims to EXACTLY maxItems, so length >= cap ⇔ capped.
-        const cap = opts.adapter?.maxItems;
-        const capped = cap !== undefined && normalized.length >= cap;
-        // A capped board is a PARTIAL fetch that skips the feed-absence sweep below (it would
-        // false-close the un-fetched tail). Count it so the sweep-exempt population is visible in
-        // source_runs.counts. These boards aren't exempt overall: the post-loop staleness timer
-        // (sweepStaleJobs) is their close path.
-        if (capped) counts.cappedBoards += 1;
+        // A capped board (adapter.maxItems cut the fetch short) is a PARTIAL fetch that skips the
+        // feed-absence sweep below (it would false-close the un-fetched tail). Count it so the sweep-exempt
+        // population is visible in source_runs.counts. These boards aren't exempt overall: the post-loop
+        // staleness timer (sweepStaleJobs) is their close path.
+        if (board.capped) counts.cappedBoards += 1;
         // Likewise an uncapped listing that came back incomplete (see fetchBoard): no sweep, the timer covers it.
-        const partial = board.partial;
-        if (partial) counts.partialBoards += 1;
+        if (board.partial) counts.partialBoards += 1;
+        counts.mapSkipped += board.mapSkipped;
         // The company id comes straight from listCompanies (`company.id`) — no per-board upsertCompany,
         // which was a no-op `ON CONFLICT DO UPDATE SET slug = excluded.slug` returning that same id (a
         // wasted neon-http round-trip plus a dead tuple per board per tick).
@@ -302,10 +309,11 @@ export async function runIngestion(db: Db, opts: IngestionOptions = {}): Promise
         counts.ok += 1;
 
         // Liveness stamp (EVERY board, capped or not — see markJobsPresent): refresh last_seen_at for
-        // the jobs this fetch returned + revive any reappearing closed ones, then certify a successful
-        // non-empty fetch (markCompanyIngested) so the staleness timer's board-health guard knows this
-        // board is fetchable. GATED on `listed` (the board listed ≥1 posting): an empty/ambiguous fetch
-        // (e.g. SmartRecruiters 200+totalFound:0 → []) must NOT stamp presence OR certify health. The gate
+        // the jobs this fetch returned + revive any reappearing closed ones, and certify the board in the
+        // same statement, so the staleness timer's board-health guard knows this board is fetchable. A board
+        // listing no postings at all is certified alone (markCompanyIngested) when its adapter trusts an
+        // empty answer: the timer then closes the jobs it no longer lists. An ambiguous empty fetch
+        // (SmartRecruiters 200+totalFound:0), or one whose every posting was malformed, does neither. The gate
         // is the LISTING, not `total` — a board whose every hydrate failed writes nothing but is live.
         // `listedIds` is every de-duplicated external_id the board listed — what upsertJobs persisted PLUS the
         // contentMissing postings it did not write: a posting whose detail fetch failed is still listed, so it
@@ -315,25 +323,25 @@ export async function runIngestion(db: Db, opts: IngestionOptions = {}): Promise
         // and hydrate_skip_ratio can't tell those not-founds from 5xx, so steady list lag can hold the ratio
         // up. Known follow-up: a separate not-found counter. See smartrecruiters.ts hydratePosting.)
         // Isolated like the sweep/embed steps: a stamp fault leaves jobs persisted and self-heals next cycle.
-        // ORDER IS LOAD-BEARING — markJobsPresent (stamp last_seen) BEFORE markCompanyIngested (certify
-        // board health): if the company were certified first and the job-stamp then threw, the timer could
-        // close jobs that were never re-stamped. This order fails SAFE (jobs stamped, board left
-        // uncertified ⇒ guard spares it).
         const listedIds = [...new Set(normalized.map((j) => j.externalId))];
         const listed = listedIds.length > 0;
-        if (listed) {
-          try {
+        try {
+          if (listed) {
             const present = await markJobsPresent(db, company.id, listedIds);
             counts.revived += present.revived; // revivals + streak resets (works for capped boards too)
+            // Listing postings proves a deactivated board live: left inactive, the cron would skip it and
+            // discovery's board-death close would shut the jobs just written or revived.
+            if (!company.active) await markProbeResult(db, [company.id], true);
+          } else if (board.empty) {
             await markCompanyIngested(db, company.id);
-          } catch (err) {
-            counts.markFailed += 1;
-            // Shape-only (no job text); company.id is a non-secret int.
-            console.warn(
-              `markJobsPresent/markCompanyIngested failed for company ${company.id}: ` +
-                describeDbError(err).slice(0, 200),
-            );
           }
+        } catch (err) {
+          counts.markFailed += 1;
+          // Shape-only (no job text); company.id is a non-secret int.
+          console.warn(
+            `liveness stamp failed for company ${company.id}: ` +
+              describeDbError(err).slice(0, 200),
+          );
         }
 
         // Soft-close postings absent from THIS board's COMPLETE fetch (streak hysteresis), in
@@ -342,21 +350,25 @@ export async function runIngestion(db: Db, opts: IngestionOptions = {}): Promise
         // those boards rely on the staleness timer (sweepStaleJobs) instead. Enforcement rides
         // parseEnforceFlag(LIFECYCLE_CLOSE_ENFORCE). Isolated like the stamp/embed steps. Revivals and streak resets
         // are owned by markJobsPresent above; sweepLifecycle.revived here counts only what a failed stamp missed.
-        // Also SKIPPED when a rate limit stopped its detail fetches: the second pass re-runs the board and sweeps
-        // it then (or, if it can't this tick, next tick — sparing its jobs). Two sweeps in one tick would count
-        // its absent postings twice.
-        if (listed && !capped && !partial && !rateLimit) {
+        // Postings mapItem rejected are missing from listedIds too, so the sweep counts them absent: a few are
+        // the streak's to absorb (one that stays malformed closes), but more is vendor drift, and the board
+        // isn't swept until it clears. A detail-fetch rate limit doesn't matter here — the list is complete —
+        // but the second pass doesn't sweep its re-run of such a board (see there).
+        const sweepable = sweep && listed && !board.capped && !board.partial;
+        const drifted = board.mapSkipped > Math.max(3, (listedIds.length + board.mapSkipped) / 10);
+        if (sweepable && drifted) counts.driftedBoards += 1;
+        if (sweepable && !drifted) {
           try {
-            const sweep = await sweepLifecycle(db, company.id, listedIds, {
+            const swept = await sweepLifecycle(db, company.id, listedIds, {
               enforce: opts.enforceLifecycle ?? false,
             });
-            counts.revived += sweep.revived;
-            counts.swept += sweep.swept;
-            counts.closed += sweep.closed;
-            counts.wouldClose += sweep.wouldClose;
+            counts.revived += swept.revived;
+            counts.swept += swept.swept;
+            counts.closed += swept.closed;
+            counts.wouldClose += swept.wouldClose;
           } catch (err) {
             counts.sweepFailed += 1;
-            // Shape-only (no job text): the count feeds item-6 health; company.id is a non-secret int.
+            // Shape-only (no job text); company.id is a non-secret int.
             console.warn(
               `sweepLifecycle failed for company ${company.id}: ` +
                 describeDbError(err).slice(0, 200),
@@ -439,10 +451,18 @@ export async function runIngestion(db: Db, opts: IngestionOptions = {}): Promise
     // Second pass: re-run — WITHOUT waiting — the boards a rate limit cost whose key has cooled off since,
     // while the budget lasts, so a short blip costs no coverage. The re-run's outcome REPLACES the board's first
     // (it is already in processed and the cursor stays where the loop left it); one still cooling keeps its first.
+    // A first pass that succeeded (only its detail fetches were rate limited) already swept the board: the
+    // re-run doesn't sweep again, which would count its absent postings twice, and keeps those counts.
     for (const company of deferred) {
+      const first = boards.get(company.id)!;
       if (opts.maxRunMs === undefined || clock() - startMs < opts.maxRunMs) {
-        const retried = await runBoard(company);
-        if (!retried.result.skipped) boards.set(company.id, retried);
+        const retried = await runBoard(company, !first.result.ok);
+        if (!retried.result.skipped) {
+          if (first.result.ok) {
+            for (const key of LIFECYCLE_COUNTS) retried.counts[key] += first.counts[key];
+          }
+          boards.set(company.id, retried);
+        }
       }
       opts.onBoard?.(boards.get(company.id)!.result);
     }
@@ -505,6 +525,7 @@ function emptyCounts(): IngestionCounts {
     changed: 0,
     hydrateSkipped: 0,
     hydrateListed: 0,
+    mapSkipped: 0,
     embedded: 0,
     embedTokens: 0,
     embedFailed: 0,
@@ -516,6 +537,7 @@ function emptyCounts(): IngestionCounts {
     markFailed: 0,
     cappedBoards: 0,
     partialBoards: 0,
+    driftedBoards: 0,
     staleClosed: 0,
     staleWouldClose: 0,
     staleSweepFailed: 0,
@@ -544,6 +566,8 @@ function logSummary(counts: IngestionCounts, embedEnabled: boolean): void {
       (counts.markFailed > 0 ? `, ${counts.markFailed} mark-failed` : "") +
       (counts.cappedBoards > 0 ? `; ${counts.cappedBoards} capped board(s)` : "") +
       (counts.partialBoards > 0 ? `; ${counts.partialBoards} partial board(s)` : "") +
+      (counts.mapSkipped > 0 ? `; ${counts.mapSkipped} malformed posting(s) skipped` : "") +
+      (counts.driftedBoards > 0 ? ` (${counts.driftedBoards} board(s) not swept)` : "") +
       (counts.hydrateSkipped > 0
         ? `; ${counts.hydrateSkipped} posting(s) not written (detail fetch failed; stored content kept)`
         : "") +
