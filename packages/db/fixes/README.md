@@ -40,11 +40,18 @@ Copy the shape of `0001-merge-case-variant-boards.sql`:
      An exception rolls the whole fix back, and nothing is recorded.
    - **Report** with `RAISE NOTICE` how many rows each step changed (`GET DIAGNOSTICS n = ROW_COUNT`).
    - **Be safe to re-run**: idempotent (`WHERE active` before setting `active = false`) or guarded.
+   - **Keep the `jobs` invariants** that only application SQL maintains. Closing a job sets
+     `lifecycle_state = 'closed'` and `closed_at = now()`; the prune never deletes a closed row without
+     `closed_at`. Reviving one sets `'active'`, `closed_at = NULL` and `consecutive_absences = 0`. Changing
+     `title` or `description_text` must also set `embedding = NULL` and recompute `content_signature` (the
+     `signatureSql` expression in `src/repos/sql.ts`). Such a change doesn't stick on a posting its board
+     still lists: the next ingest writes the board's text back.
    - **Not contain** `BEGIN`/`COMMIT`/`ROLLBACK`/`SAVEPOINT` (the runner owns the transaction),
      `CREATE`/`ALTER`/`DROP`/`TRUNCATE`/`GRANT`/`REVOKE`, or `EXECUTE` (dynamic SQL hides the real statement
      from review), or reference `data_fixes` (only the runner writes it). These words are allowed in
      comments and string literals.
-4. Run `pnpm guard:fixes` locally, then open a PR containing only the fix (plus anything it depends on).
+4. Run `pnpm guard:fixes` locally, then open a PR containing only the fix (plus anything it depends on). A
+   fix can come with a PGlite test, `src/fix-NNNN.integration.test.ts` (see 0001's), which gates the apply.
 
 Never edit a fix that has been applied. Write a new fix instead. A merged fix that **failed** is different:
 it was rolled back and never recorded, and it blocks every later fix until it applies. Correct it in place

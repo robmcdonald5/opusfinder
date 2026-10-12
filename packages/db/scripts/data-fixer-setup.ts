@@ -65,6 +65,11 @@ function ensureEnvironment(repo: string): void {
 /** Run the setup SQL in one transaction as the owner. Returns whether the role already existed. */
 async function setUpRole(ownerUrl: string, password: string): Promise<boolean> {
   const client = new Client(ownerUrl);
+  // Same as apply-fixes.ts: a dropped connection must reject the query, not crash the process.
+  let lost = false;
+  client.on("error", () => {
+    lost = true;
+  });
   await client.connect();
   try {
     const { rows } = await client.query("SELECT 1 FROM pg_roles WHERE rolname = $1", [
@@ -80,7 +85,8 @@ async function setUpRole(ownerUrl: string, password: string): Promise<boolean> {
     // eslint-disable-next-line preserve-caught-error -- no `cause` on purpose: its unredacted message could echo the password
     throw new Error(`role setup rolled back: ${redact(message, password)}`);
   } finally {
-    await client.end();
+    const ended = client.end();
+    if (!lost) await ended;
   }
 }
 

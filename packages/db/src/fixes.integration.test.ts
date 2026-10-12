@@ -236,6 +236,24 @@ INSERT INTO data_fixes (id, name, sha256) VALUES (1, 'squatter', 'y');`,
     expect(await recordedIds()).toEqual([]);
   });
 
+  it("records a fix in public.data_fixes even when the fix shadows that name with a temp table", async () => {
+    const shadows = fix(
+      1,
+      "shadows-the-record",
+      `UPDATE companies SET active = false WHERE id = 2;
+SELECT 0 AS id, ''::text AS name, ''::text AS sha256, ''::text AS git_sha INTO TEMP data_fixes WHERE false;`,
+    );
+    try {
+      expect((await applyPendingFixes(fixer, [shadows], null)).outcomes).toEqual([
+        { fix: shadows, notices: [] },
+      ]);
+      const recorded = await pg.query<{ id: number }>("SELECT id FROM public.data_fixes");
+      expect(recorded.rows).toEqual([{ id: 1 }]);
+    } finally {
+      await pg.exec("DROP TABLE IF EXISTS pg_temp.data_fixes");
+    }
+  });
+
   it("reports a failure AT COMMIT as unconfirmed, since the fix may have committed", async () => {
     // The server commits, then the connection drops before the client hears back.
     const dropsAtCommit: FixClient = {
