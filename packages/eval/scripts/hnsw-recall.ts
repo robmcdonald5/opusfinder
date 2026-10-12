@@ -45,7 +45,7 @@ import { defaultReportPath, PKG_ROOT, relativeToPkg } from "../src/runner";
 
 /** 150 = production retrieval's default fetch depth (limit 50 × overFetch 3). */
 const KS = [10, 50, 150] as const;
-/** 40 = the pgvector DEFAULT — the value production would get, since neon-http can't SET it. */
+/** 40 = the pgvector DEFAULT — what an index scan gets unless the query sets it. */
 const EF_SEARCH = [40, 100, 200] as const;
 const FETCH = Math.max(...KS);
 const HNSW_INDEX = "jobs_embedding_hnsw_idx";
