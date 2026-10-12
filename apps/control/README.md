@@ -180,12 +180,13 @@ row per email:
   outage) isn't documented: the email may be lost, so check the Email Routing activity log after an outage.
 - **Counted once, mostly.** A redelivered email (same `Message-ID`) is dropped. A second email for a
   charge already counted or still in `review` — same vendor (compared without case, punctuation or legal
-  suffixes: "Neon, LLC" is "Neon") and invoice number, or, when either has no number, same vendor and
-  amount within 3 days — is stored as `duplicate`. Different invoice numbers never merge, so the filter
-  should still forward one email per charge.
+  suffixes: "Neon, LLC" is "Neon") and invoice number (without case or punctuation: "#inv-7" is "INV7"),
+  or, when either has no number, same vendor and amount within 3 days — is stored as `duplicate`.
+  Different invoice numbers never merge, so the filter should still forward one email per charge.
 - **Filed by month.** Under the service period the invoice states, else the charge date. Prepaid credits
-  (cash, not usage) and a period starting after tomorrow (billed in advance) go by the charge date. The
-  month view groups vendor spellings into one line.
+  (cash, not usage) go by the charge date, and so does a period the model reads as starting after tomorrow
+  (billed in advance) until the owner enters it when counting. The month view groups vendor spellings into
+  one line.
 - **Gmail's forwarding confirmation** (code and/or link) is shown on the Cost page to the owner only;
   agents see neither the code nor the subject that repeats it.
 - Mail for any address other than `BILLING_ADDRESS` is rejected.

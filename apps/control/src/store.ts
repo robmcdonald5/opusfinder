@@ -1,7 +1,7 @@
 import type { StateMap } from "@opusfinder/control";
 
 import type { Caller } from "./auth";
-import { vendorKey } from "./statements";
+import { sameCharge, vendorKey, type ChargeFacts } from "./statements";
 
 /**
  * D1 access — the ONLY module that writes SQL. Every desired-state write goes through {@link applyChange},
@@ -544,37 +544,29 @@ export async function mailCountsSince(
   return row ?? { forwards: 0, confirmations: 0 };
 }
 
+/** The statements a new one may repeat: counted ones, and with alsoWaiting those still in review. */
+function chargesToMatch(db: D1Database, alsoWaiting: boolean) {
+  return db
+    .prepare(
+      `SELECT id, vendor, reference, amount_cents, charged_on FROM statement
+       WHERE (status = 'recorded' OR (?1 AND status = 'review')) AND vendor IS NOT NULL ORDER BY id`,
+    )
+    .bind(alsoWaiting ? 1 : 0);
+}
+
 /**
- * The recorded statement this one repeats, if any (with alsoWaiting, or one still in review): the same
- * vendor (compared by vendorKey, so "Neon, LLC" and "Neon" match) and invoice number, or — when either side
- * has no number — the same vendor and amount charged within 3 days. Two invoices with different numbers are
- * two charges, however alike (two domain renewals on one day); the reader asks the model for the invoice
- * number over a receipt number, so a Stripe invoice and its receipt carry the same one.
+ * The oldest recorded statement this one repeats (sameCharge), if any; with alsoWaiting, or one still in
+ * review. Matched here, not in SQL: vendor names and invoice numbers are normalised first, and a few charges
+ * a month is a small table to read.
  */
 export async function findSameCharge(
   db: D1Database,
-  s: {
-    vendor: string | null;
-    reference: string | null;
-    amount_cents: number | null;
-    charged_on: string | null;
-  },
+  s: ChargeFacts,
   { alsoWaiting = false }: { alsoWaiting?: boolean } = {},
 ): Promise<number | null> {
-  const key = vendorKey(s.vendor);
-  if (!key) return null;
-  const { results } = await db
-    .prepare(
-      `SELECT id, vendor FROM statement
-       WHERE (status = 'recorded' OR (?4 AND status = 'review'))
-         AND ((?1 IS NOT NULL AND reference = ?1)
-           OR ((?1 IS NULL OR reference IS NULL) AND ?2 IS NOT NULL AND amount_cents = ?2
-               AND ?3 IS NOT NULL AND abs(julianday(charged_on) - julianday(?3)) <= 3))
-       ORDER BY id`,
-    )
-    .bind(s.reference, s.amount_cents, s.charged_on, alsoWaiting ? 1 : 0)
-    .all<{ id: number; vendor: string | null }>();
-  return results.find((r) => vendorKey(r.vendor) === key)?.id ?? null;
+  if (!vendorKey(s.vendor)) return null;
+  const { results } = await chargesToMatch(db, alsoWaiting).all<ChargeFacts & { id: number }>();
+  return results.find((r) => sameCharge(s, r))?.id ?? null;
 }
 
 /** Insert one statement; a Message-ID seen before is ignored (returns null). */
@@ -675,8 +667,9 @@ export async function readCost(
   review: StatementRow[];
   reviewCount: number;
   notCounted: StatementRow[];
+  counted: (ChargeFacts & { id: number })[];
 }> {
-  const [totals, rows, review, reviewCount, notCounted] = await db.batch([
+  const [totals, rows, review, reviewCount, notCounted, counted] = await db.batch([
     db.prepare(
       `SELECT month, vendor, SUM(amount_cents) AS cents, COUNT(*) AS n FROM statement
        WHERE status = 'recorded' AND month IS NOT NULL GROUP BY month, vendor ORDER BY month DESC, cents DESC`,
@@ -691,6 +684,7 @@ export async function readCost(
     db.prepare(
       "SELECT * FROM statement WHERE status IN ('duplicate', 'ignored', 'excluded') ORDER BY id DESC LIMIT 20",
     ),
+    chargesToMatch(db, false),
   ]);
   return {
     totals: (totals?.results ?? []) as MonthVendorTotal[],
@@ -698,22 +692,28 @@ export async function readCost(
     review: (review?.results ?? []) as StatementRow[],
     reviewCount: ((reviewCount?.results ?? [])[0] as { n: number } | undefined)?.n ?? 0,
     notCounted: (notCounted?.results ?? []) as StatementRow[],
+    counted: (counted?.results ?? []) as (ChargeFacts & { id: number })[],
   };
 }
 
-/** The home page's Cost card, without the page's lists: one month's recorded total, the review count. */
+/**
+ * The home page's Cost card, without the page's lists: the recorded totals of one month and of the one
+ * before (a usage invoice arrives after the month it covers, and is filed there), the review count.
+ */
 export async function readCostSummary(
   db: D1Database,
   month: string,
-): Promise<{ cents: number; recorded: number; reviewCount: number }> {
+): Promise<{ cents: number; lastCents: number; recorded: number; reviewCount: number }> {
   const row = await db
     .prepare(
       `SELECT
          (SELECT COALESCE(SUM(amount_cents), 0) FROM statement WHERE status = 'recorded' AND month = ?1) AS cents,
+         (SELECT COALESCE(SUM(amount_cents), 0) FROM statement
+          WHERE status = 'recorded' AND month = strftime('%Y-%m', ?1 || '-01', '-1 month')) AS lastCents,
          (SELECT COUNT(*) FROM statement WHERE status = 'recorded') AS recorded,
          (SELECT COUNT(*) FROM statement WHERE status = 'review') AS reviewCount`,
     )
     .bind(month)
-    .first<{ cents: number; recorded: number; reviewCount: number }>();
-  return row ?? { cents: 0, recorded: 0, reviewCount: 0 };
+    .first<{ cents: number; lastCents: number; recorded: number; reviewCount: number }>();
+  return row ?? { cents: 0, lastCents: 0, recorded: 0, reviewCount: 0 };
 }

@@ -142,6 +142,7 @@ export function renderCost(view: StatusView, c: CostView, flash: string | null):
   const targetCents = c.targetUsdPerMonth * 100;
   const count = current ? current.vendors.reduce((n, v) => n + v.n, 0) : 0;
   const tone = level(current?.cents ?? 0, targetCents);
+  const lastTone = level(last?.cents ?? 0, targetCents);
 
   parts.push(
     `<div class="stats">${stat(
@@ -149,11 +150,10 @@ export function renderCost(view: StatusView, c: CostView, flash: string | null):
       usd(current?.cents ?? 0),
       `${count} charge${count === 1 ? "" : "s"}`,
       { meter: meter(current?.cents ?? 0, targetCents), ...(tone ? { tone } : {}) },
-    )}${stat(monthName(lastMonth), usd(last?.cents ?? 0), "")}${stat(
-      "Monthly target",
-      usd(targetCents),
-      "",
-    )}</div>`,
+    )}${stat(monthName(lastMonth), usd(last?.cents ?? 0), "", {
+      meter: meter(last?.cents ?? 0, targetCents),
+      ...(lastTone ? { tone: lastTone } : {}),
+    })}${stat("Monthly target", usd(targetCents), "")}</div>`,
   );
 
   if (c.reviewCount > 0)
@@ -169,6 +169,10 @@ export function renderCost(view: StatusView, c: CostView, flash: string | null):
             statementItem(s, view, {
               received: true,
               noteCls: "warn",
+              extra:
+                s.sameAs === null
+                  ? ""
+                  : `<span class="warn">Same charge as #${esc(s.sameAs)}, already counted.</span>`,
               change: owner && decideForm(s, "Review"),
             }),
           ),

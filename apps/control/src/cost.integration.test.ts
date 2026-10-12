@@ -119,9 +119,9 @@ describe("the billing mailbox", () => {
     expect(await rows()).toHaveLength(1);
   });
 
-  it("marks a second email for a charge, counted or still waiting, as its duplicate (same number, or same amount within 3 days)", async () => {
+  it("marks a second email for a charge, counted or still waiting, as its duplicate (same number however written, or same amount within 3 days)", async () => {
     await h.email(email({ answer: bill({ reference: "INV-7" }) }));
-    await h.email(email({ subject: "Your receipt", answer: bill({ reference: "INV-7" }) }));
+    await h.email(email({ subject: "Your receipt", answer: bill({ reference: "#inv 7" }) }));
     await add("owner", { vendor: "Voyage AI", amount: "20.00", chargedOn: today() });
     await h.email(
       email({
@@ -353,6 +353,14 @@ describe("statements by hand", () => {
     ).toBe(403);
   });
 
+  it("files an agent's repeat of an entry still waiting as its duplicate", async () => {
+    const entry = { vendor: "Voyage AI", amount: "120", chargedOn: "2026-10-09" };
+    const first = (await (await add("agent", entry)).json()) as Json;
+    const again = (await (await add("agent", entry)).json()) as Json;
+    expect(again.duplicateOf).toBe(first.statement.id);
+    expect((await rows()).map((r) => r.status)).toEqual(["review", "duplicate"]);
+  });
+
   it.each([
     [{ amount: "1", chargedOn: "2026-10-01" }, "invalid_vendor"],
     [{ vendor: "Neon", amount: "-1", chargedOn: "2026-10-01" }, "invalid_amount"],
@@ -398,6 +406,36 @@ describe("the Cost page", () => {
     expect(home).toContain("Spend this month");
     expect(home).toContain(">$8.42<");
     expect(home).toContain("1 charge to review");
+  });
+
+  it("flags a charge waiting for review that matches one already counted", async () => {
+    await h.email(email({ answer: bill({ reference: "INV-9" }) }));
+    const counted = (await (
+      await add("owner", { vendor: "Neon", amount: "8.42", chargedOn: today(), reference: "INV-9" })
+    ).json()) as Json;
+    expect(counted.duplicateOf).toBeNull();
+    expect((await costJson()).review[0].sameAs).toBe(counted.statement.id);
+    expect(await (await h.request("/cost", { as: "owner" })).text()).toContain(
+      `Same charge as #${counted.statement.id}, already counted.`,
+    );
+  });
+
+  it("warns on the overview when last month went over the target", async () => {
+    const last = new Date();
+    last.setUTCDate(1);
+    last.setUTCMonth(last.getUTCMonth() - 1);
+    // A usage invoice arrives after the month it covers, so it never lands in this month's total.
+    await add("owner", {
+      vendor: "Neon",
+      amount: "60.00",
+      chargedOn: today(),
+      kind: "usage",
+      periodStart: last.toISOString().slice(0, 10),
+    });
+    const name = last.toLocaleString("en-US", { month: "long", year: "numeric", timeZone: "UTC" });
+    expect(await (await h.request("/", { as: "owner" })).text()).toContain(
+      `${name} was over the monthly target`,
+    );
   });
 
   it("lets the owner count a reviewed statement with the amount they read, or exclude one", async () => {
@@ -450,6 +488,32 @@ describe("the Cost page", () => {
       period_start: null,
       month: tomorrow.slice(0, 7),
     });
+  });
+
+  it("files a charge billed in advance under the month it covers once the owner enters that period", async () => {
+    // Two months ahead: on a month's last day, the next month's first is "tomorrow", which the model may give.
+    const next = new Date();
+    next.setUTCDate(1);
+    next.setUTCMonth(next.getUTCMonth() + 2);
+    const periodStart = next.toISOString().slice(0, 10);
+    // The model's reading of a future period isn't trusted: the charge waits under its charge date.
+    await h.email(email({ answer: bill({ kind: "subscription", period_start: periodStart }) }));
+    const [row] = await rows();
+    expect(row).toMatchObject({ period_start: null, month: thisMonth() });
+    const res = await h.request(`/ui/statements/${row?.id}`, {
+      as: "owner",
+      form: {
+        action: "count",
+        vendor: "Neon",
+        amount: "8.42",
+        chargedOn: today(),
+        periodStart,
+        kind: "subscription",
+        note: "",
+      },
+    });
+    expect(res.status).toBe(303);
+    expect((await rows())[0]).toMatchObject({ status: "recorded", month: periodStart.slice(0, 7) });
   });
 
   it("counts every statement waiting for review, not just the ones it lists", async () => {
@@ -584,6 +648,11 @@ describe("the Cost page", () => {
     expect(await (await h.request("/cost?month=2026-07", { as: "owner" })).text()).toContain(
       "Pro plan",
     );
+    const again = await h.request("/ui/statements", {
+      as: "owner",
+      form: { vendor: "Vercel", amount: "20", chargedOn: "2026-07-14", kind: "subscription" },
+    });
+    expect(again.headers.get("location")).toBe("/cost?done=statement_duplicate");
   });
 
   it("shows a period of whole months picked on the calendar, and keeps ?month= working", async () => {

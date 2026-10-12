@@ -217,6 +217,40 @@ export function vendorKey(vendor: string | null | undefined): string {
     .trim();
 }
 
+/** An invoice number for comparing: case, spaces, "#" and punctuation ignored, so "#inv-7" is "INV7". */
+export function referenceKey(reference: string | null | undefined): string {
+  return (reference ?? "").toUpperCase().replace(/[^\p{L}\p{N}]/gu, "");
+}
+
+export interface ChargeFacts {
+  vendor: string | null;
+  reference: string | null;
+  amount_cents: number | null;
+  charged_on: string | null;
+}
+
+/**
+ * Whether two statements are one charge: the same vendor (vendorKey, so "Neon, LLC" and "Neon" match) and
+ * invoice number (referenceKey), or — when either has no number — the same vendor and amount charged within
+ * 3 days. Two invoices with different numbers are two charges, however alike (two domain renewals on one
+ * day); the reader asks the model for the invoice number over a receipt number, so a Stripe invoice and its
+ * receipt carry the same one.
+ */
+export function sameCharge(a: ChargeFacts, b: ChargeFacts): boolean {
+  const vendor = vendorKey(a.vendor);
+  if (!vendor || vendorKey(b.vendor) !== vendor) return false;
+  const ref = referenceKey(a.reference);
+  const otherRef = referenceKey(b.reference);
+  if (ref && otherRef) return ref === otherRef;
+  return (
+    a.amount_cents !== null &&
+    a.amount_cents === b.amount_cents &&
+    a.charged_on !== null &&
+    b.charged_on !== null &&
+    Math.abs(Date.parse(a.charged_on) - Date.parse(b.charged_on)) <= 3 * 86_400_000
+  );
+}
+
 /**
  * The email's sender-authentication verdicts, one entry per Authentication-Results, ARC copy and
  * Received-SPF header, in header order, each labelled with the server that wrote it:

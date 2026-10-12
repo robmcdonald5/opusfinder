@@ -2,7 +2,7 @@ import { RUN_OUTCOMES, type RunOutcome } from "@opusfinder/control";
 
 import type { CostSummary, StatusView } from "../service";
 import { ICON_CHECK, card, item, level, meter, rowList, stat } from "./components";
-import { ago, esc, plural, tally, usd } from "./format";
+import { ago, esc, monthName, plural, shiftMonth, tally, usd } from "./format";
 import { layout } from "./layout";
 import { isHealthCheck, modeLabel, stageHref, stageLabel } from "./vocab";
 
@@ -49,6 +49,17 @@ function attention(view: StatusView, c: CostSummary): string[] {
         spend === "bad",
         `<a href="/cost">Spend is ${spend === "bad" ? "over" : "near"} the monthly target</a>`,
         `<span class="muted">${usd(c.cents)} of ${usd(c.targetUsdPerMonth * 100)}</span>`,
+      ),
+    );
+  // Usage is billed after the month it covers, so last month's total is only complete in this one.
+  const lastMonth = shiftMonth(c.month, -1);
+  const last = level(c.lastCents, c.targetUsdPerMonth * 100);
+  if (last)
+    out.push(
+      row(
+        last === "bad",
+        `<a href="/cost?month=${esc(lastMonth)}">${esc(monthName(lastMonth))} was ${last === "bad" ? "over" : "near"} the monthly target</a>`,
+        `<span class="muted">${usd(c.lastCents)} of ${usd(c.targetUsdPerMonth * 100)}</span>`,
       ),
     );
   return out;
