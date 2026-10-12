@@ -72,12 +72,13 @@ Two example shapes coexist:
   pool-scoped labels.
 
 Build flow: profiles + owner-authoritative labels live in `data/profiles/<id>.json` (committed)
-→ `build:pool` snapshots each profile's candidate pool to `data/pools/<id>.json` (gitignored)
+→ `build:pool` snapshots each profile's candidate pool to `data/pools/<id>.json` (committed: a
+pool can't be rebuilt once the corpus moves, and its labels mean nothing without it)
 → `draft-labels` judges that pool and writes drafted `goodIds` + a review sheet
-→ `build:dataset` assembles legacy + pooled examples into `dataset.jsonl`. Rebuilding a pool
-against a changed corpus shifts pool ids; `build:dataset` then fails loud on stale labels
-(forcing a relabel) instead of silently rescoring them. A profile with no labels drafted yet is
-SKIPPED (loudly) rather than emitted as an example nothing is relevant to.
+→ `build:dataset` assembles legacy + pooled examples into `dataset.jsonl`. Rebuilding a labeled
+profile's pool needs `--force` and means relabeling it (`draft-labels --force`): `build:dataset`
+catches a good id that left the pool, not a new member nobody judged. A profile with no labels
+drafted yet is SKIPPED (loudly) rather than emitted as an example nothing is relevant to.
 
 ### Profiles, labels, and PII
 
@@ -86,8 +87,7 @@ derived from a real CV — the 2 seed profiles from the owners' own CVs, the poo
 the CC0 Kaggle "Resume Dataset" (snehaanbhawal; source-anonymized LiveCareer resumes, pulled via
 the `opensporks/resumes` HF mirror) — and is **anonymized** — no names, contact info, employers,
 schools, or URLs; only summary / skills / target roles. Raw CVs live in `data/cvs/` and are
-**gitignored** (never committed), as are the `candidates-export.json` / `data/pools/` working
-artifacts and `.env`.
+**gitignored** (never committed), as are the `candidates-export.json` working artifact and `.env`.
 
 Labels are agent-drafted; the labeling authority (the CV owner for the seed profiles, the repo
 owner for the dataset-derived ones) refines `goodIds` in `data/profiles/<id>.json` and re-runs

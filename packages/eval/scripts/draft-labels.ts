@@ -29,6 +29,7 @@ import { getFlag } from "../src/cli";
 import { PKG_ROOT, relativeToPkg } from "../src/runner";
 import { judgeCandidate, buildJudgeSystem, VERDICTS, type Verdict } from "./label-judge";
 import {
+  isLabeled,
   loadAllProfileFiles,
   loadProfileFile,
   loadPoolFile,
@@ -94,9 +95,13 @@ async function judgeAll(
   const out = new Array<JudgedCandidate>(candidates.length);
   let cursor = 0;
   let done = 0;
+  // Promise.all rejects on the first failed candidate, but the other workers would keep drawing
+  // from the cursor — paying for judgements the failed run then discards.
+  let failed = false;
 
   const worker = async (): Promise<void> => {
     for (;;) {
+      if (failed) return;
       const i = cursor++;
       if (i >= candidates.length) return;
       const candidate = candidates[i];
@@ -123,6 +128,7 @@ async function judgeAll(
         }
       }
       if (!out[i]) {
+        failed = true;
         throw new Error(
           `judging candidate #${candidate.id} failed after ${MAX_RETRIES + 1} attempts: ` +
             `${lastErr instanceof Error ? lastErr.message : String(lastErr)}`,
@@ -202,6 +208,11 @@ function renderReviewSheet(
       "`pnpm --filter @opusfinder/eval build:dataset`. **Start with the borderline section**: those " +
       "are the judgements the model itself was unsure of, so that is where your attention changes " +
       "the ground truth most.",
+  );
+  lines.push("");
+  lines.push(
+    "Editing the profile itself makes this pool and every verdict here stale, and nothing detects " +
+      `it: rebuild both (\`build:pool\`, then \`draft-labels\`, each with \`--profile ${profile.id} --force\`).`,
   );
   lines.push("");
   lines.push(
@@ -339,9 +350,9 @@ async function main(): Promise<void> {
     // Already-labeled profiles are protected, but differently by intent: naming one explicitly is a
     // request this script must not quietly ignore (fail loud), while a sweep over every profile
     // should resume where it left off rather than re-spend on finished work (skip). --force overrides.
-    if (target.goodIds.length > 0 && !force) {
+    if (isLabeled(target) && !force) {
       const msg =
-        `${target.profile.id} already has ${target.goodIds.length} label(s) — ` +
+        `${target.profile.id} is already labeled (${target.goodIds.length} good) — ` +
         `re-drafting would discard owner refinements. Pass --force to overwrite.`;
       if (only) throw new Error(msg);
       console.error(`[${target.profile.id}] SKIPPED: ${msg}`);
