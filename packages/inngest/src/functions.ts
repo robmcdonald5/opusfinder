@@ -11,9 +11,9 @@ export interface AllFunctionDeps {
 
 /**
  * EVERY Inngest function this app serves: the one list both serve routes register (apps/web
- * /api/inngest in production, scripts/serve.ts locally) and the one control-registry.test.ts checks
- * against the control registry. Add a new function group HERE, never at a serve route, so that check
- * sees it.
+ * /api/inngest in production, scripts/serve.ts locally minus the crons) and the one
+ * control-registry.test.ts checks against the control registry. Add a new function group HERE, never at
+ * a serve route, so that check sees it.
  */
 export function createAllFunctions(deps: AllFunctionDeps) {
   return [

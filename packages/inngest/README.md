@@ -136,7 +136,8 @@ integration (email ships in Phase 11 on the local dev runtime — locked at Phas
   dev server can discover + invoke the functions. It serves `createAllFunctions({ digest, backfill, health })`
   (`src/functions.ts`: digest + F8 backfill + H1b health-check alerter — the ONE list of served functions,
   which `control-registry.test.ts` checks against the control registry; add a new function group there,
-  never at a serve route). Dev-only —
+  never at a serve route) minus the crons, which the dev server would fire on schedule against your local
+  creds. Dev-only —
   the Phase-12a **production** serve home is `apps/web/src/routes/api/inngest/+server.ts`
   (`inngest/sveltekit` on Vercel), which serves the same `createAllFunctions` list; the Inngest SDK reads
   `INNGEST_SIGNING_KEY`/`INNGEST_EVENT_KEY` from the environment itself (auto-provisioned by the
@@ -157,7 +158,8 @@ integration (email ships in Phase 11 on the local dev runtime — locked at Phas
   so its reads ride that Neon wake; it was `*/30` until 2026-10 — `singleton: skip`): `checkHealth` → dedup via
   `health_alerts` → `sendHealthAlert` a named-subsystem operator alert, page-once-per-`HEALTH_ALERT_COOLDOWN_H`
   (default 24h). Served alongside the digest + F8 functions in prod (`apps/web`). The CLI and the fn share
-  `src/health-alert.ts` (`alertOnHealth` + the shape-only `formatMetric`/`checkDetail`) so they cannot drift on
+  `src/health-alert.ts` (`alertOnHealth`) and `src/health-alert-helpers.ts` (the shape-only
+  `formatMetric`/`checkDetail`) so they cannot drift on
   which checks page, the body shape, or the cooldown. Enforcing checks is env-only (`HEALTH_ENFORCE`); every
   check (eight since `hydrate_skip_ratio`) still defaults `shadow`. No-creds smoke: `pnpm --filter @opusfinder/inngest test:health-alert`.
 

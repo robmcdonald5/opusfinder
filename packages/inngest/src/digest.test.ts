@@ -702,6 +702,33 @@ describe("runPerUser", () => {
     expect(items[0]).toMatchObject({ jobId: 2, rank: 1 }); // renumbered from its pre-filter index of 1
   });
 
+  it.each([
+    "You should confirm your fit at https://evil.example/verify before applying.",
+    "Your Go work fits; see www.evil.example for the next step.",
+    "Your Go work fits; send your CV to jobs@evil.example to be fast-tracked.",
+  ])("drops a note carrying a link or email address: %s", async (injected) => {
+    batchCollect.mockResolvedValue(
+      new Map([
+        [`d${RUN_ID}-1`, { text: injected, status: "succeeded", stopReason: "end_turn" }],
+        [
+          `d${RUN_ID}-2`,
+          {
+            text: "Your Node.js and ASP.NET work at Acme fits.",
+            status: "succeeded",
+            stopReason: "end_turn",
+          },
+        ],
+      ]),
+    );
+    const { tools } = recordingStep();
+
+    const out = await runPerUser(makeDeps(), event(), tools);
+
+    expect(out).toMatchObject({ itemCount: 1 });
+    const items = repos.insertDigestItems.mock.calls.at(-1)![3] as Array<{ jobId: number }>;
+    expect(items.map((it) => it.jobId)).toEqual([2]);
+  });
+
   it("throws the snapshot invariant when a kept job has no snapshot", async () => {
     repos.getJobSnapshots.mockResolvedValue(new Map([[1, {}]])); // missing job 2
     const { tools } = recordingStep();

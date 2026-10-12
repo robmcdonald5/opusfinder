@@ -21,7 +21,6 @@ import { buildDigestSystem, renderDigestJob } from "@opusfinder/llm";
 import type { BatchPoll, BatchRequest, BatchResult } from "@opusfinder/llm";
 import type { RerankCandidate } from "@opusfinder/rerank";
 import type {
-  DigestTrigger,
   LocationMode,
   PromptPreferences,
   StructuredProfile,
@@ -30,7 +29,7 @@ import type {
 import { NonRetriableError } from "inngest";
 
 import { deliverDigestEmail, type EmailSeam } from "./delivery";
-import { inngest } from "./inngest";
+import { inngest, type DigestEvents } from "./inngest";
 import { probeDigestLiveness, type LivenessProbe } from "./probe";
 
 // Tunables (per-digest knobs)
@@ -58,9 +57,13 @@ const SYNTH_SLOW_POLLS = 138; // 10m apart — the tail out to the 24h batch exp
 const SYNTH_SLOW_INTERVAL = "10m";
 const SYNTH_MAX_POLLS = SYNTH_FAST_POLLS + SYNTH_SLOW_POLLS;
 
-/** Matches the CLI's gate — the event schema is compile-time only, so the orchestrator re-checks at
+/** Shared with the CLI's gate — the event schema is compile-time only, so the orchestrator re-checks at
  *  runtime (an empty string is falsy-shaped junk that must not widen into an all-recipients run). */
-const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+export const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** A synthesis note is written from posting text anyone can author, and its prompt forbids saying how to
+ *  apply, so a link or email address in one was injected — and would be emailed in opusfinder's voice. */
+const LINK_OR_EMAIL = /https?:\/\/|www\.|[\w.+-]+@[\w-]+\.\w/i;
 
 /** The rerank result the per-user function consumes: a global ordering, the score map (only the
  *  candidates the model actually scored), and the token and prompt-cache counters summed across the
@@ -102,21 +105,14 @@ export interface DigestDeps {
 }
 
 /** The `digest/run.requested` payload the orchestrator reads (structural — so a test drives it without the
- *  Inngest event machinery). Mirrors DigestEvents["digest/run.requested"]. */
-export interface OrchestratorEvent {
-  data: { trigger: DigestTrigger; userId?: string };
-}
+ *  Inngest event machinery). */
+export type OrchestratorEvent = DigestEvents["digest/run.requested"];
 
-/** The `digest/user.requested` payload the per-user fn reads. Mirrors DigestEvents["digest/user.requested"]. */
-export interface PerUserEvent {
-  data: { userId: string; digestRunId: number };
-}
+/** The `digest/user.requested` payload the per-user fn reads. */
+export type PerUserEvent = DigestEvents["digest/user.requested"];
 
 /** The fan-out event the orchestrator emits (one per recipient). */
-interface UserRequestedEvent {
-  name: "digest/user.requested";
-  data: { userId: string; digestRunId: number };
-}
+type UserRequestedEvent = PerUserEvent & { name: "digest/user.requested" };
 
 /**
  * Structural step tools — a test drives these with the recording fake step; Inngest's real StepTools pass
@@ -173,8 +169,8 @@ function toPromptPrefs(prefs: UserPreferencesRow): PromptPreferences {
 /** One synthesis result as carried across the collect → persist step boundary. */
 type SynthesisResult = Pick<BatchResult, "text" | "status" | "stopReason" | "error">;
 
-/** A synthesis result's note, or why it has none (an error type or stop reason, never a body). A note
- *  cut off at max_tokens or refused still arrives as `succeeded`, so only a natural stop counts. */
+/** A synthesis result's note, or why it has none (an error type, stop reason or `link`, never a body). A
+ *  note cut off at max_tokens or refused still arrives as `succeeded`, so only a natural stop counts. */
 function synthesisNote(result: SynthesisResult | undefined): { note: string } | { drop: string } {
   if (!result) return { drop: "missing" };
   if (result.status !== "succeeded") return { drop: result.error ?? result.status };
@@ -182,7 +178,8 @@ function synthesisNote(result: SynthesisResult | undefined): { note: string } | 
     return { drop: result.stopReason ?? "no-stop-reason" };
   }
   const note = result.text.trim();
-  return note ? { note } : { drop: "empty" };
+  if (!note) return { drop: "empty" };
+  return LINK_OR_EMAIL.test(note) ? { drop: "link" } : { note };
 }
 
 /**
@@ -529,9 +526,9 @@ export async function runPerUser(deps: DigestDeps, event: PerUserEvent, step: Pe
 
     if (kept.length === 0) {
       // Nothing usable out of an ATTEMPTED synthesis (every request errored/expired, was cut off or
-      // refused, or trimmed to empty) is a failure, not an empty digest — throw so Inngest surfaces
-      // it, instead of returning "ok" with no digests row and no error trace anywhere in the DB. Its
-      // inputs are memoized, so a retry could only fail the same way.
+      // refused, trimmed to empty or carried a link) is a failure, not an empty digest — throw so
+      // Inngest surfaces it, instead of returning "ok" with no digests row and no error trace anywhere
+      // in the DB. Its inputs are memoized, so a retry could only fail the same way.
       throw new NonRetriableError(
         `digest: synthesis batch ${batchId} yielded no usable reason for any of ` +
           `${reranked.items.length} item(s) (user ${userId}, run ${digestRunId}): ${droppedSummary}.`,
