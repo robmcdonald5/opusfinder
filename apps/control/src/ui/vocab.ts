@@ -187,6 +187,9 @@ export function stageLabel(id: string): string {
   return isStageId(id) ? stageDef(id).label : id;
 }
 
+/** A null `from` means "follows stage" only on a slice override; anywhere else it is a first value (the migration seed). */
 export function changeLine(target: string, from: string | null, to: string | null): string {
-  return `${targetLink(target)} ${value(from, target)} → ${value(to, target)}`;
+  const t = parseTarget(target);
+  const first = from === null && !(t.ok && t.value.kind === "dim");
+  return `${targetLink(target)} ${first ? "" : `${value(from, target)} → `}${value(to, target)}`;
 }

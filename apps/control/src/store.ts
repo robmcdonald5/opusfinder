@@ -277,19 +277,22 @@ export interface NewProposal {
  * the old proposal was filed, that one is stale (approve refuses it) and a fresh, approvable one is filed.
  * The insert is conditional in ONE statement, so two concurrent filings can't both pass a separate
  * existence check, and the row is read back in the same batch (one transaction), so a duplicate it matched
- * can't be closed before the read.
+ * can't be closed before the read. Null, with nothing filed, when the proposer already holds `maxOpen`.
  */
 export async function fileProposal(
   db: D1Database,
   input: NewProposal,
-): Promise<{ proposal: ProposalRow; duplicate: boolean }> {
+  maxOpen: number,
+): Promise<{ proposal: ProposalRow; duplicate: boolean } | null> {
   const live = `target = ?1 AND to_value IS ?2 AND from_value IS ?7 AND status = 'open' AND expires_at > ?3`;
   const [inserted, row] = await db.batch([
     db
       .prepare(
         `INSERT INTO proposal (target, to_value, created_at, expires_at, proposer_role, proposer_name, from_value, reason, status)
          SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'open'
-         WHERE NOT EXISTS (SELECT 1 FROM proposal WHERE ${live})`,
+         WHERE NOT EXISTS (SELECT 1 FROM proposal WHERE ${live})
+           AND (SELECT COUNT(*) FROM proposal WHERE proposer_role = ?5 AND proposer_name = ?6
+                AND status = 'open' AND expires_at > ?3) < ?9`,
       )
       .bind(
         input.target,
@@ -300,6 +303,7 @@ export async function fileProposal(
         input.proposer.name,
         input.from,
         input.reason,
+        maxOpen,
       ),
     db
       .prepare(
@@ -307,10 +311,8 @@ export async function fileProposal(
       )
       .bind(input.target, input.to, input.now, input.from),
   ]);
-  return {
-    proposal: row?.results[0] as ProposalRow,
-    duplicate: inserted?.meta.changes !== 1,
-  };
+  const proposal = row?.results[0] as ProposalRow | undefined;
+  return proposal ? { proposal, duplicate: inserted?.meta.changes !== 1 } : null;
 }
 
 export async function getProposal(db: D1Database, id: number): Promise<ProposalRow | null> {
@@ -534,6 +536,24 @@ export async function statementExists(db: D1Database, messageId: string): Promis
     (await db.prepare("SELECT 1 FROM statement WHERE message_id = ?").bind(messageId).first()) !==
     null
   );
+}
+
+/**
+ * Statements `by` entered by hand since `since`. One the owner has since counted or excluded carries the
+ * owner's name instead, so this can undercount; it is a runaway guard, not a quota.
+ */
+export async function manualStatementsSince(
+  db: D1Database,
+  by: string,
+  since: string,
+): Promise<number> {
+  const row = await db
+    .prepare(
+      "SELECT COUNT(*) AS n FROM statement WHERE source = 'manual' AND updated_by = ? AND received_at >= ?",
+    )
+    .bind(by, since)
+    .first<{ n: number }>();
+  return row?.n ?? 0;
 }
 
 /**

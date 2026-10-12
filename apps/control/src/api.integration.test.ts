@@ -11,7 +11,7 @@ import {
 } from "@opusfinder/control";
 import { ORIGIN, startControl, type ControlHarness } from "@test/control/harness";
 
-import { MAX_BODY_BYTES } from "./limits";
+import { MAX_BODY_BYTES, MAX_OPEN_PROPOSALS } from "./limits";
 
 // The JSON API against a real local D1: seed = registry, classify() enforced per role, the approval queue,
 // the ledger, trips — and the C3 invariant that a state change and its change_log row land together or
@@ -767,6 +767,24 @@ describe("the approval queue", () => {
     });
     expect(dup.status).toBe(200);
     expect((await body(dup)).proposal.id).toBe(p.id);
+  });
+
+  it("caps the proposals one proposer holds open, and still returns an identical open one", async () => {
+    const ask = (as: "agent" | "other-agent", i: number) =>
+      h.request("/v1/proposals", {
+        as,
+        json: {
+          target: "health.board_fail_ratio.threshold",
+          value: String((20 + i) / 100),
+          reason: "recomputed",
+        },
+      });
+    for (let i = 0; i < MAX_OPEN_PROPOSALS; i++) expect((await ask("agent", i)).status).toBe(201);
+    const over = await ask("agent", MAX_OPEN_PROPOSALS);
+    expect(over.status).toBe(429);
+    expect((await body(over)).error.code).toBe("too_many_proposals");
+    expect((await ask("agent", 0)).status).toBe(200);
+    expect((await ask("other-agent", MAX_OPEN_PROPOSALS)).status).toBe(201);
   });
 
   it("returns 404 for an unknown proposal", async () => {

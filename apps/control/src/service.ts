@@ -29,6 +29,7 @@ import {
 } from "@opusfinder/control";
 
 import type { Caller } from "./auth";
+import { DAILY_AGENT_STATEMENTS, MAX_OPEN_PROPOSALS } from "./limits";
 import {
   actorLabel,
   applyChange,
@@ -43,6 +44,7 @@ import {
   listClosedProposals,
   listProposals,
   listRuns,
+  manualStatementsSince,
   readCost,
   readCostSummary,
   readGate,
@@ -51,6 +53,7 @@ import {
   updateStatement,
   type Channel,
   type LedgerRow,
+  type NewProposal,
   type NewStatement,
   type ProposalRow,
   type StatementRow,
@@ -94,7 +97,7 @@ const RECENT_RUNS_MS = 24 * 60 * 60 * 1000;
 const LIST_DEFAULT = 50;
 const LIST_MAX = 200;
 const DETAIL_MAX = 500;
-/** A trip or a ledger write must not be lost to a concurrent change: re-read and retry this many times. */
+/** A trip must not be lost to a concurrent change: re-read and retry this many times. */
 const TRIP_ATTEMPTS = 3;
 /** The longest run a ledger row may describe. Longer = a unit bug (e.g. seconds sent as ms·1000). */
 const MAX_RUN_DURATION_MS = 7 * 24 * 60 * 60 * 1000;
@@ -459,7 +462,7 @@ export async function requestChange(
     // classify() applies whatever the owner sends, so this is an agent's proposal: its reason is required above.
     const why = reason as string;
     if (field(body, "proposeIfNeeded") === true) {
-      const filed = await fileProposal(db, {
+      const filed = await fileCapped(db, {
         proposer: caller,
         target: address,
         from,
@@ -507,6 +510,17 @@ export async function requestChange(
 
 // ---------- proposals ----------
 
+/** fileProposal, refused (429) once the proposer holds MAX_OPEN_PROPOSALS: each waits on the owner. */
+async function fileCapped(db: D1Database, input: NewProposal) {
+  const filed = await fileProposal(db, input, MAX_OPEN_PROPOSALS);
+  if (filed) return filed;
+  throw new ApiError(
+    429,
+    "too_many_proposals",
+    `at most ${MAX_OPEN_PROPOSALS} open proposals each: withdraw one, or wait for the owner to decide`,
+  );
+}
+
 export async function propose(db: D1Database, caller: Caller, body: unknown, now: string) {
   requireRole(caller, "owner", "agent");
   const target = parsedTarget(field(body, "target"));
@@ -522,7 +536,7 @@ export async function propose(db: D1Database, caller: Caller, body: unknown, now
       `${address} is already ${to ?? INHERIT}; nothing to propose`,
     );
   }
-  const filed = await fileProposal(db, {
+  const filed = await fileCapped(db, {
     proposer: caller,
     target: address,
     from,
@@ -1006,6 +1020,16 @@ function statementFields(body: unknown, now: string) {
  */
 export async function addStatement(db: D1Database, caller: Caller, body: unknown, now: string) {
   requireRole(caller, "owner", "agent");
+  const dayStart = `${now.slice(0, 10)}T00:00:00.000Z`;
+  if (
+    caller.role === "agent" &&
+    (await manualStatementsSince(db, actorLabel(caller), dayStart)) >= DAILY_AGENT_STATEMENTS
+  )
+    throw new ApiError(
+      429,
+      "too_many_statements",
+      `at most ${DAILY_AGENT_STATEMENTS} statements a UTC day from one agent`,
+    );
   const f = statementFields(body, now);
   const byAgent = caller.role !== "owner";
   // An agent's repeat of an entry still waiting is a duplicate too. The owner's entry counts at once, so it

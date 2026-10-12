@@ -46,7 +46,7 @@ import { renderStage, renderStages } from "./ui/stages";
 /**
  * opusfinder-control — the edge control plane (control-surface architecture, candidate B, slice 1).
  *
- * Two ways in, and only two:
+ * Three ways in, and only three:
  *   1. HTTP (`fetch`): the JSON API under /v1, the owner page at /, and its form posts under /ui. Every
  *      request is identified from a VERIFIED Cloudflare Access token (auth.ts) BEFORE routing, so an
  *      unidentified caller learns nothing — not even which routes exist. Each route then lists the roles
@@ -56,6 +56,9 @@ import { renderStage, renderStages } from "./ui/stages";
  *      so a binding caller IS the runtime role — the least-privileged role (read gates; record runs of,
  *      and trip off, only its own stages). A binding's plain `fetch()` lands in (1) without an Access
  *      token and is refused.
+ *   3. Email (`email`): Email Routing delivers mail for BILLING_ADDRESS. NOT behind Access: mailbox.ts admits
+ *      only the owner's envelope senders (and Gmail's forwarding confirmation) under daily caps, and all it
+ *      can write is statement rows, never desired state.
  *
  * The Worker never holds a Neon credential and imports nothing that could reach Neon (guard:worker
  * enforces an inputs allow-list on this bundle), so reading or flipping a switch can't wake the database
