@@ -143,18 +143,11 @@ async function judgeAll(
   return out;
 }
 
-/** Which arm(s) nominated a candidate, with each arm's rank — the owner's cue for WHY something is
- *  in the pool at all (a random-arm row scoring "good" is a genuinely interesting signal). */
+/** Which arm(s) nominated a candidate — the owner's cue for WHY something is in the pool at all (a
+ *  random-arm row scoring "good" is a genuinely interesting signal). Names only: showing the
+ *  ranker-under-test's own rank and distance to the labeler would anchor the ground truth toward it. */
 function provenance(c: PoolCandidate): string {
-  const parts = c.arms.map((arm) => {
-    if (arm === "voyage") {
-      const d = c.voyageDistance === undefined ? "" : ` d=${c.voyageDistance.toFixed(3)}`;
-      return `voyage #${c.voyageRank ?? "?"}${d}`;
-    }
-    if (arm === "fts") return `fts #${c.ftsRank ?? "?"}`;
-    return "random";
-  });
-  return parts.join(" · ");
+  return c.arms.join(" · ");
 }
 
 /** Collapse internal whitespace: both scraped titles and model-written reasons can contain newlines,
@@ -298,7 +291,9 @@ async function draftFor(
   if (candidates.length === 0) {
     throw new Error(`${relativeToPkg(poolPath(profile.id))} has no candidates — rebuild with build:pool.`);
   }
-  const partial = candidates.length < pool.candidates.length;
+  // Any --limit run is a smoke test, even one covering the whole pool: main() lets it past the
+  // labeled-profile guard, so it must never write labels or replace the full review sheet.
+  const partial = limit !== undefined;
 
   console.error(
     `\n[${profile.id}] judging ${candidates.length}${partial ? ` of ${pool.candidates.length}` : ""} ` +
@@ -307,7 +302,7 @@ async function draftFor(
   const judged = await judgeAll(profileFile, candidates, model, concurrency, totals);
 
   mkdirSync(REVIEWS_DIR, { recursive: true });
-  const sheetPath = join(REVIEWS_DIR, `${profile.id}.md`);
+  const sheetPath = join(REVIEWS_DIR, `${profile.id}${partial ? ".partial" : ""}.md`);
   writeFileSync(sheetPath, renderReviewSheet(profileFile, pool, judged, model, partial), "utf8");
   console.error(`  wrote ${relativeToPkg(sheetPath)}`);
 
@@ -349,8 +344,9 @@ async function main(): Promise<void> {
   for (const target of targets) {
     // Already-labeled profiles are protected, but differently by intent: naming one explicitly is a
     // request this script must not quietly ignore (fail loud), while a sweep over every profile
-    // should resume where it left off rather than re-spend on finished work (skip). --force overrides.
-    if (isLabeled(target) && !force) {
+    // should resume where it left off rather than re-spend on finished work (skip). --force overrides;
+    // a --limit smoke run writes no labels, so it needs no override.
+    if (isLabeled(target) && !force && limit === undefined) {
       const msg =
         `${target.profile.id} is already labeled (${target.goodIds.length} good) — ` +
         `re-drafting would discard owner refinements. Pass --force to overwrite.`;
