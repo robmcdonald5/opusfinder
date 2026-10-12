@@ -6,13 +6,25 @@
  */
 import { createDb } from "@opusfinder/db";
 import { getDatabaseUrl } from "@opusfinder/db/env";
-import { embed } from "@opusfinder/embeddings";
+import { embed, EmbeddingRejectedError } from "@opusfinder/embeddings";
+import { NonRetriableError } from "inngest";
 
 import type { BackfillDeps } from "./backfill";
 
 export function buildBackfillDeps(): BackfillDeps {
   return {
     db: createDb(getDatabaseUrl()),
-    embed,
+    // A rejected page fails identically on every retry, and each retry re-pays the page's earlier
+    // requests, so end the run instead (the next daily run starts over).
+    embed: async (texts, params) => {
+      try {
+        return await embed(texts, params);
+      } catch (err) {
+        if (err instanceof EmbeddingRejectedError) {
+          throw new NonRetriableError(err.message, { cause: err });
+        }
+        throw err;
+      }
+    },
   };
 }

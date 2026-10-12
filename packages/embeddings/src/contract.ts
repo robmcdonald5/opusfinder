@@ -14,9 +14,25 @@ export interface ChunkLimits {
   maxItems: number;
   /** Max estimated tokens per request (summed over the batch). */
   maxTokens: number;
-  /** Chars-per-token estimate — deliberately LOW (dense-text worst case). */
+  /**
+   * Chars-per-token estimate for ASCII text — deliberately LOW (dense-text worst case). The chunker
+   * divides UTF-8 bytes by it, so a CJK char (3 bytes, ~1 token) isn't counted as a third of a token.
+   */
   charsPerToken: number;
 }
+
+/**
+ * The provider refused the request (a 4xx other than 408/429) or its response broke the contract
+ * (count, width, finiteness, indices). Retrying the same input fails the same way.
+ */
+export class EmbeddingRejectedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "EmbeddingRejectedError";
+  }
+}
+
+const utf8 = new TextEncoder();
 
 /**
  * Split `texts` into chunks respecting BOTH the item cap and a rough token budget. A single
@@ -27,7 +43,7 @@ export function* chunkByLimits(texts: string[], limits: ChunkLimits): Generator<
   let batch: string[] = [];
   let batchTokens = 0;
   for (const text of texts) {
-    const estTokens = Math.ceil(text.length / limits.charsPerToken);
+    const estTokens = Math.ceil(utf8.encode(text).length / limits.charsPerToken);
     const wouldExceed =
       batch.length >= limits.maxItems || batchTokens + estTokens > limits.maxTokens;
     if (batch.length > 0 && wouldExceed) {
@@ -70,31 +86,42 @@ export function parseEmbeddingResponse(
 ): ParsedEmbeddings {
   const { provider, expectedDimensions, expectedCount } = opts;
   if (!isRecord(body) || !Array.isArray(body.data)) {
-    throw new Error(`${provider} embeddings response missing a \`data\` array.`);
+    throw new EmbeddingRejectedError(`${provider} embeddings response missing a \`data\` array.`);
   }
 
   const rows = body.data.map((item: unknown, i: number) => {
     if (!isRecord(item) || !Array.isArray(item.embedding)) {
-      throw new Error(`${provider} embeddings response item ${i} is missing its vector.`);
+      throw new EmbeddingRejectedError(
+        `${provider} embeddings response item ${i} is missing its vector.`,
+      );
     }
     const embedding = item.embedding as number[];
     if (embedding.length !== expectedDimensions) {
-      throw new Error(
+      throw new EmbeddingRejectedError(
         `${provider} returned a ${embedding.length}-dim vector for item ${i}; expected ${expectedDimensions}.`,
       );
     }
     if (!embedding.every((x) => typeof x === "number" && Number.isFinite(x))) {
-      throw new Error(`${provider} returned a non-finite embedding component for item ${i}.`);
+      throw new EmbeddingRejectedError(
+        `${provider} returned a non-finite embedding component for item ${i}.`,
+      );
     }
     const index = typeof item.index === "number" ? item.index : i;
     return { index, embedding };
   });
 
-  // Providers return results in request order, but sort by `index` defensively so a future
-  // out-of-order response can never misalign a vector with its input text.
+  // Providers return results in request order, but sort by `index` defensively so an out-of-order
+  // response still lines up with its inputs; indices that aren't exactly 0..n-1 are rejected.
   rows.sort((a, b) => a.index - b.index);
   if (rows.length !== expectedCount) {
-    throw new Error(`${provider} returned ${rows.length} embeddings for ${expectedCount} inputs.`);
+    throw new EmbeddingRejectedError(
+      `${provider} returned ${rows.length} embeddings for ${expectedCount} inputs.`,
+    );
+  }
+  if (!rows.every((r, i) => r.index === i)) {
+    throw new EmbeddingRejectedError(
+      `${provider} returned embedding indices that are not 0..${expectedCount - 1}.`,
+    );
   }
 
   const usage = isRecord(body.usage) ? body.usage : undefined;

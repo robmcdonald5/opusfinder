@@ -7,6 +7,7 @@ import { embeddingsEnvelope } from "@test/msw/fixtures/embeddings";
 import { server } from "@test/msw/server";
 import { rejectionOf } from "@test/rejection";
 
+import { EmbeddingRejectedError } from "./contract";
 import { embed } from "./embed";
 
 // The Voyage HTTP boundary (embed() → embedRequest() → global fetch), intercepted by MSW. This is the
@@ -163,6 +164,23 @@ describe("embed — Voyage over MSW", () => {
     expect(err.message).toContain("E".repeat(300)); // snippet is sliced to 300
     expect(err.message).not.toContain("E".repeat(301));
   });
+
+  it.each([
+    { status: 400, rejected: true },
+    { status: 401, rejected: true },
+    { status: 408, rejected: false },
+    { status: 429, rejected: false },
+    { status: 503, rejected: false },
+  ])(
+    "types a $status as a rejection only when a retry can't succeed",
+    async ({ status, rejected }) => {
+      server.use(http.post(VOYAGE_URL, () => HttpResponse.text("nope", { status })));
+
+      const err = await rejectionOf(embed(["x"], { apiKey: "pa-key" }));
+
+      expect(err instanceof EmbeddingRejectedError).toBe(rejected);
+    },
+  );
 
   it("omits the ' - snippet' suffix when the error body is empty", async () => {
     server.use(http.post(VOYAGE_URL, () => new HttpResponse(null, { status: 503 })));

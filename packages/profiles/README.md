@@ -21,9 +21,10 @@ re-throws — the cached text stands, only the profile write failed.
 ## Re-run seam (the layered cache)
 
 - `restructureProfile(db, { structure, embed, storage }, userId)` — re-structure from the cached R2
-  transcript (skips the expensive transcribe). For a structuring prompt/schema change. Re-running a
-  whole pipeline (e.g. for an embedding-model swap) is done by re-running `ingest-cv` on the original
-  PDF until the corpus is large enough to warrant a dedicated re-embed path.
+  transcript (skips the expensive transcribe), then re-embed with the current model. For a structuring
+  prompt/schema change, and for an embedding-model swap: the stored profile vector never refreshes on
+  its own, so run `pnpm profiles:restructure <email>` for every user before the next digest (see
+  `packages/db/scripts/reset-embeddings.ts`).
 
 ## Seams (and why)
 
