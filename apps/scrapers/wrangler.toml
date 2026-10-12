@@ -49,8 +49,9 @@ subrequests = 100000
 # runDiscovery({ workerOnly: true }).
 # (UTC; CF weekdays are 1=Sun..7=Sat — Sunday is "SUN", never "0"; the strings MUST match the `case`
 # literals in src/index.ts character-for-character — src/dispatch.test.ts reads this array and fails on
-# drift. USER: `wrangler deploy` to register the trigger, and set the external watchdog's expected period
-# to 2 h — an hourly-period check would page on every healthy gap.)
+# drift. USER: `wrangler deploy` to register the trigger, then confirm the NEW string fires and the old one
+# stops (README "Deploy": the deployed schedules are not proof), and set the external watchdog's expected
+# period to 2 h — an hourly-period check would page on every healthy gap.)
 crons = [
   "0 */2 * * *", # ingestion — every 2 h, at :00 of even UTC hours
   "0 3 * * SUN", # discovery — Sunday 03:00 (Workers Paid; F5f resumed) — workerSafe lanes via workerOnly:true

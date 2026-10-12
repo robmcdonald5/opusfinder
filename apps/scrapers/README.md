@@ -52,7 +52,11 @@ and the library it calls owns its own `source_runs` row (`startRun`/`finishRun`)
 > **Health & liveness (Phase F6).** On each successful ingestion tick the Worker fires a content-free
 > heartbeat to an external watchdog (`env.HEALTH_PING_URL`, an optional `wrangler secret`); the watchdog
 > emails the owner if the pings STOP — the only way to catch the cron's own death (a dead cron emits
-> nothing). The rich in-DB signals (staleness, backlogs, digest/bounce health, cost) are computed
+> nothing). A tick that throws, or that ingests no board while at least one fails, posts its cause to the
+> check's `/fail` instead, which alerts at once. Discovery heartbeats only to its own weekly check
+> (`HEALTH_PING_URL_DISCOVER`, optional); without one, a failed discovery tick posts to the ingest check's
+> `/fail`. A ping the watchdog doesn't answer with `OK` logs a `watchdog … not taken` / `not sent` warning.
+> The rich in-DB signals (staleness, backlogs, digest/bounce health, cost) are computed
 > separately by `pnpm health` (the `@opusfinder/db` checker). See `research/specs/PHASE_F6_PLAN.md`.
 
 > **Control plane, in shadow.** Each tick reads its stage's gate from the `opusfinder-control` Worker
@@ -63,7 +67,8 @@ and the library it calls owns its own `source_runs` row (`startRun`/`finishRun`)
 
 > **Cron weekday footgun:** Cloudflare numbers weekdays `1=Sun…7=Sat` (Quartz-style), so Sunday is
 > `SUN` (or `1`), **never `0`**. The cron strings in `wrangler.toml` and the `case` literals in
-> `src/index.ts` must match character-for-character or the branch silently never fires.
+> `src/index.ts` must match character-for-character: otherwise that lane never runs, and the string
+> Cloudflare fires instead fails every tick with `Unhandled cron`.
 
 ## Local development (no deploy)
 
@@ -98,6 +103,7 @@ wrangler login
 wrangler kv namespace create INGEST_CURSOR   # then uncomment the `id` line in wrangler.toml + paste it
 wrangler secret put DATABASE_URL
 wrangler secret put HEALTH_PING_URL           # Phase F6 liveness heartbeat — the watchdog ping URL (optional)
+wrangler secret put HEALTH_PING_URL_DISCOVER  # discovery's own weekly check: period 7 d, grace ~6 h (optional)
 # wrangler secret put VOYAGE_API_KEY          # ONLY if you enable inline embedding (see src/index.ts)
 pnpm --filter @opusfinder/scrapers deploy     # registers/updates the Worker + applies the current [triggers]
 wrangler tail opusfinder-scrapers             # stream live cron invocations
@@ -113,6 +119,12 @@ wrangler tail opusfinder-scrapers             # stream live cron invocations
   period, so a single missed tick alerts within ~3 h. Do it BEFORE `pnpm --filter @opusfinder/scrapers
   deploy`: an hourly-period check would page on every healthy 2-hour gap. (If `HEALTH_INGEST_MAX_AGE_H` is
   set anywhere — `packages/db/.env`, Vercel — make it 5 or unset it; the code default is 5.)
+- **After any `[triggers]` change (a new cron string, a pause or a resume), confirm what actually fires.**
+  The deploy output and the deployed schedules (`wrangler deployments list`, the dashboard Triggers page)
+  are not proof: on 2026-10-05 they showed the new `0 */2 * * *` while Cloudflare kept firing the replaced
+  `0 * * * *` for ~18 h, and every tick failed with `Unhandled cron`. Check the cron string of the next
+  runs (the Worker's Cron Events, or `workersInvocationsScheduled` analytics). If the old string still
+  fires, run `pnpm --filter @opusfinder/scrapers exec wrangler triggers deploy` and check again.
 
 ## Pause / resume the schedule
 
@@ -129,8 +141,9 @@ change to the toggle takes effect on the **next deploy**:
   `pnpm --filter @opusfinder/scrapers deploy`.
 
 The Worker code, secret, and KV binding are untouched by the toggle, so resuming is a one-step redeploy.
-Verify either way with `pnpm --filter @opusfinder/scrapers exec wrangler deployments list`, or the
-Cloudflare dashboard (Workers → opusfinder-scrapers → Settings → Triggers).
+Verify either way by what fires, not by the deployed schedules (see "Deploy" above). Pause the watchdog
+checks in the same window as a pause, and resume them with the crons: with no ticks, the ingest check
+pages within ~3 h.
 
 ## Scaling note
 

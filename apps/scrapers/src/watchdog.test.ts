@@ -20,7 +20,6 @@ describe("pingWatchdogFail", () => {
   let calls: FetchCall[];
   let waited: Array<Promise<unknown>>;
   let ctx: ExecutionContext;
-  const setEnv = { HEALTH_PING_URL: PING_URL } as unknown as Env;
 
   beforeEach(() => {
     calls = [];
@@ -30,29 +29,71 @@ describe("pingWatchdogFail", () => {
       "fetch",
       vi.fn((input: unknown, init?: RequestInit) => {
         calls.push({ url: String(input), init });
-        return Promise.resolve(new Response(null, { status: 200 }));
+        return Promise.resolve(new Response("OK"));
       }),
     );
   });
 
   afterEach(() => {
     vi.unstubAllGlobals();
+    vi.restoreAllMocks();
   });
 
   it("is a NO-OP when HEALTH_PING_URL is unset (redeploy-before-watchdog)", () => {
-    pingWatchdogFail({} as Env, ctx, "scheduled(0 * * * *) failed: boom");
+    pingWatchdogFail(undefined, ctx, "scheduled(0 * * * *) failed: boom");
 
     expect(calls).toHaveLength(0);
     expect(waited).toHaveLength(0);
   });
 
   it("fires a fire-and-forget POST to {url}/fail via ctx.waitUntil", () => {
-    pingWatchdogFail(setEnv, ctx, "scheduled(0 * * * *) failed: kaboom");
+    pingWatchdogFail(PING_URL, ctx, "scheduled(0 * * * *) failed: kaboom");
 
     expect(calls).toHaveLength(1);
     expect(calls[0]!.url).toBe(`${PING_URL}/fail`);
     expect(calls[0]!.init?.method).toBe("POST");
     expect(waited).toHaveLength(1); // scheduled, not blocking the tick
+  });
+
+  it.each([
+    ["a trailing slash", `${PING_URL}/`, `${PING_URL}/fail`],
+    ["a query string", `${PING_URL}?create=1`, `${PING_URL}/fail?create=1`],
+  ])("appends /fail to the path of a ping URL with %s", (_label, url, expected) => {
+    pingWatchdogFail(url, ctx, "boom");
+
+    expect(calls[0]!.url).toBe(expected);
+  });
+
+  it.each<[string, () => Promise<Response>, string]>([
+    ["an HTTP error", async () => new Response("not found", { status: 404 }), "HTTP 404"],
+    ["a reply other than OK", async () => new Response("OK (not found)"), "HTTP 200"],
+    [
+      "a network failure",
+      async () => Promise.reject(new TypeError(`bad ${PING_URL}`)),
+      "TypeError",
+    ],
+  ])(
+    "warns, without the URL, when the watchdog doesn't take the ping: %s",
+    async (_label, reply, shape) => {
+      vi.stubGlobal("fetch", vi.fn(reply));
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+      pingWatchdogFail(PING_URL, ctx, "boom");
+      await Promise.all(waited);
+
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn.mock.calls[0]![0]).toContain(shape);
+      expect(warn.mock.calls[0]![0]).not.toContain("abc123");
+    },
+  );
+
+  it("stays quiet when the watchdog answers OK", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    pingWatchdogFail(PING_URL, ctx, "boom");
+    await Promise.all(waited);
+
+    expect(warn).not.toHaveBeenCalled();
   });
 
   // The published body for a range of message shapes — the load-bearing shape-safety cases.
@@ -84,7 +125,7 @@ describe("pingWatchdogFail", () => {
       expected: "",
     },
   ])("body: $label", ({ message, expected }) => {
-    pingWatchdogFail(setEnv, ctx, message);
+    pingWatchdogFail(PING_URL, ctx, message);
 
     expect(calls).toHaveLength(1);
     expect(calls[0]!.init?.body).toBe(expected);
@@ -95,7 +136,7 @@ describe("pingWatchdogFail", () => {
     { label: "exactly 500 chars rides verbatim", len: 500, expectedLen: 500 },
     { label: "501 chars is truncated to 500", len: 501, expectedLen: 500 },
   ])("cap boundary: $label", ({ len, expectedLen }) => {
-    pingWatchdogFail(setEnv, ctx, "x".repeat(len));
+    pingWatchdogFail(PING_URL, ctx, "x".repeat(len));
 
     expect((calls[0]!.init?.body as string).length).toBe(expectedLen);
   });
@@ -103,7 +144,7 @@ describe("pingWatchdogFail", () => {
   it("applies the 500-char cap to the FIRST LINE, dropping a secret second line entirely", () => {
     // First line > 500 AND a secret second line: the cap and the line-1 split must compose, so the
     // body is the capped first line with no part of line 2 surviving.
-    pingWatchdogFail(setEnv, ctx, `${"a".repeat(600)}\nparams: secret-value-42`);
+    pingWatchdogFail(PING_URL, ctx, `${"a".repeat(600)}\nparams: secret-value-42`);
 
     const body = calls[0]!.init?.body as string;
     expect(body).toBe("a".repeat(500));
@@ -112,7 +153,7 @@ describe("pingWatchdogFail", () => {
 
   it("never leaks line-2 content of a multi-line message to the published surface", () => {
     pingWatchdogFail(
-      setEnv,
+      PING_URL,
       ctx,
       "scheduled(0 * * * *) failed: DrizzleQueryError\nparams: secret-value-42",
     );

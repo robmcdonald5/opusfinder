@@ -10,6 +10,8 @@ import {
   errorRun,
   firstLine,
   ingestRun,
+  ingestSummary,
+  noBoardIngested,
   recordRun,
   shadowGate,
   type ControlBinding,
@@ -34,8 +36,9 @@ import {
  * try/catch, so a failure in the KV cursor I/O or the pipeline is logged to `wrangler tail` and re-thrown
  * so Cloudflare records the invocation as errored. The `ctx.waitUntil` exceptions are the watchdog pings:
  * the liveness heartbeat ({@link pingWatchdog}, a content-free ping on a SUCCESSFUL tick) and the failure
- * ping ({@link pingWatchdogFail}, a shape-safe cause on a caught exception) — both non-blocking so a
- * watchdog hiccup can never fail the tick — and the control-plane ledger row (below).
+ * ping ({@link pingWatchdogFail}, a shape-safe cause on a caught exception, or the counts of an ingest
+ * tick that ingested no board) — both non-blocking so a watchdog hiccup can never fail the tick — and the
+ * control-plane ledger row (below).
  *
  * CONTROL PLANE, IN SHADOW (./control.ts): each tick first reads its stage's gate over the CONTROL service
  * binding (bounded at ~2 s) and logs it — `on`, or `would skip: off …` / `would skip: control plane
@@ -61,6 +64,9 @@ interface Env {
   /** External-watchdog ping URL (a `wrangler secret`) — the liveness heartbeat. OPTIONAL: unset ⇒ skipped
    *  silently (redeploy before the watchdog account exists). See {@link pingWatchdog}. */
   HEALTH_PING_URL?: string;
+  /** The discovery lane's own watchdog check (a `wrangler secret`, a weekly check). OPTIONAL: unset ⇒ discovery
+   *  sends no heartbeat and a failed discovery tick pings HEALTH_PING_URL's check instead. */
+  HEALTH_PING_URL_DISCOVER?: string;
   /** Lifecycle-close enforcement — see {@link parseEnforceFlag}. A wrangler `[vars]` value. Unset /
    *  "shadow" = count-only (the default); "enforce" flips the `'closed'` write on. THIS Worker var drives
    *  the scraper-side closes ONLY; the digest 410-close reads the digest runtime's
@@ -154,8 +160,18 @@ export default {
           });
           const counts = await runIngestionTick(db, env, limit, ttlDays);
           // Heartbeat AFTER a successful tick (a thrown tick skips this and is recorded as errored,
-          // which the watchdog also surfaces as a missing ping). Non-blocking — see pingWatchdog.
-          pingWatchdog(env, ctx);
+          // which the watchdog also surfaces as a missing ping). A tick that ingested no board completed,
+          // but it is an outage all the same: it pings the failure instead. Non-blocking — see pingWatchdog.
+          if (noBoardIngested(counts)) {
+            const summary = ingestSummary(counts);
+            pingWatchdogFail(
+              env.HEALTH_PING_URL,
+              ctx,
+              `scheduled(${controller.cron}) ingested no board: ${summary}`,
+            );
+          } else {
+            pingWatchdog(env.HEALTH_PING_URL, ctx);
+          }
           recordRun(env.CONTROL, ctx, (end) => ingestRun(tick, end, counts));
           break;
         }
@@ -176,16 +192,19 @@ export default {
             maxRunMs: MAX_RUN_MS,
             probe: { maxRetryWaitMs: MAX_RETRY_WAIT_MS },
           });
+          pingWatchdog(env.HEALTH_PING_URL_DISCOVER, ctx);
           recordRun(env.CONTROL, ctx, (end) => discoverRun(tick, end, counts));
           break;
         }
         default:
-          // A cron fired that no case matches — wrangler.toml [triggers].crons and the INGEST_CRON/
-          // DISCOVERY_CRON constants above have drifted (most likely on resume). THROW so it surfaces
-          // as a FAILED invocation in the CF Cron Events table instead of a silent no-op.
+          // A cron fired that no case matches. dispatch.test.ts keeps wrangler.toml and the constants above
+          // in sync, so the likely cause is Cloudflare still firing a trigger a cron change replaced (on
+          // 2026-10-05 the old string fired for ~18 h while the deployed schedules showed the new one). THROW
+          // so it surfaces as a FAILED invocation and a failure ping instead of a silent no-op.
           throw new Error(
-            `Unhandled cron "${controller.cron}": wrangler.toml [triggers].crons and the cron ` +
-              `constants in src/index.ts must match character-for-character.`,
+            `Unhandled cron "${controller.cron}": if wrangler.toml [triggers].crons matches the constants in ` +
+              `src/index.ts, Cloudflare is firing a stale trigger: run \`wrangler triggers deploy\`, then ` +
+              `check which cron string fires.`,
           );
       }
     } catch (err) {
@@ -203,7 +222,12 @@ export default {
       // A shape-safe failure ping so the existing watchdog DOWN alert carries WHAT broke and trips
       // IMMEDIATELY (no grace wait). It fires solely when this catch runs, so a dead cron / cold-start kill
       // (no invocation reaching our code) stays detected by ping ABSENCE via {@link pingWatchdog}.
-      pingWatchdogFail(env, ctx, message);
+      // Discovery reports to its own check when it has one; otherwise to the ingest check, its only alert.
+      const pingUrl =
+        stage === "discover"
+          ? env.HEALTH_PING_URL_DISCOVER || env.HEALTH_PING_URL
+          : env.HEALTH_PING_URL;
+      pingWatchdogFail(pingUrl, ctx, message);
       // An unhandled cron has no stage to record against.
       const failed = stage;
       if (failed) recordRun(env.CONTROL, ctx, (end) => errorRun(failed, tick, end, detail));
@@ -214,27 +238,28 @@ export default {
 
 /**
  * Fire-and-forget liveness heartbeat — a content-free ping to an external watchdog (a free
- * dead-man's-switch) on each SUCCESSFUL ingestion tick. The watchdog emails the owner when the pings
+ * dead-man's-switch) on each SUCCESSFUL tick of a stage that has a check (`url`: HEALTH_PING_URL for
+ * ingestion, HEALTH_PING_URL_DISCOVER for discovery). The watchdog emails the owner when the pings
  * STOP after its grace window — the ONLY way to detect the cron's OWN death: a paused/dead cron emits
  * nothing, so a co-located checker is silent exactly when the outage happens. Detection is by ping
  * ABSENCE, not a /fail ping.
  *
  * OPTIONAL: unset secret ⇒ skip silently (redeploy before the watchdog account exists). `ctx.waitUntil`
- * so a watchdog hiccup never fails the tick; a default GET whose response body is left unconsumed (the
- * `waitUntil`-bounded promise lets the runtime GC it — no leak).
+ * so a watchdog hiccup never fails the tick (see {@link sendPing}).
  * GUARD (author discipline — the import-scan guard won't catch a host literal): the target lives ONLY
- * in `env.HEALTH_PING_URL` (a secret); keep every provider/watchdog host literal out of this file.
+ * in the `HEALTH_PING_URL*` secrets; keep every provider/watchdog host literal out of this file.
  */
-function pingWatchdog(env: Env, ctx: ExecutionContext): void {
-  if (!env.HEALTH_PING_URL) return;
-  ctx.waitUntil(fetch(env.HEALTH_PING_URL).catch(() => {}));
+function pingWatchdog(url: string | undefined, ctx: ExecutionContext): void {
+  if (!url) return;
+  ctx.waitUntil(sendPing("heartbeat", () => fetch(url)));
 }
 
 /**
- * Fire-and-forget FAILURE ping — POST a shape-safe cause to `${HEALTH_PING_URL}/fail` on a caught tick
- * exception, so the watchdog's DOWN alert distinguishes errored-vs-vanished and carries the cause (the
- * external watchdog stores a `/fail` POST body, viewable in the check's Events). `/fail` also trips the
- * check DOWN immediately — no grace wait — unlike the absence-detected dead-cron case.
+ * Fire-and-forget FAILURE ping — POST a shape-safe cause to the check's `/fail` URL on a caught tick
+ * exception (or an ingest tick that ingested no board), so the watchdog's DOWN alert distinguishes
+ * errored-vs-vanished and carries the cause (the external watchdog stores a `/fail` POST body, viewable in
+ * the check's Events). `/fail` also trips the check DOWN immediately — no grace wait — unlike the
+ * absence-detected dead-cron case.
  *
  * SHAPE-SAFE + PUBLISHED: the body lands in an external service, so it is the error name + FIRST LINE
  * only, capped at 500 chars. A failed query arrives already formatted by the caller's describeDbError: its
@@ -245,14 +270,47 @@ function pingWatchdog(env: Env, ctx: ExecutionContext): void {
  *
  * OPTIONAL: unset secret ⇒ skip silently (no network). `ctx.waitUntil` so a watchdog hiccup never fails
  * the tick (we are already in the catch; the original error is re-thrown by the caller regardless).
- * GUARD (author discipline): the target lives ONLY in `env.HEALTH_PING_URL`; no provider/watchdog host
- * literal in this file. Exported solely for the `test:watchdog` smoke.
+ * GUARD (author discipline): the target lives ONLY in the `HEALTH_PING_URL*` secrets; no provider/watchdog
+ * host literal in this file. Exported solely for the `test:watchdog` smoke.
  */
-export function pingWatchdogFail(env: Env, ctx: ExecutionContext, message: string): void {
-  if (!env.HEALTH_PING_URL) return;
+export function pingWatchdogFail(
+  url: string | undefined,
+  ctx: ExecutionContext,
+  message: string,
+): void {
+  if (!url) return;
   // First line only + capped: drops a multi-line `params:` tail / stack from the published surface.
   const body = firstLine(message, 500);
-  ctx.waitUntil(fetch(`${env.HEALTH_PING_URL}/fail`, { method: "POST", body }).catch(() => {}));
+  ctx.waitUntil(sendPing("failure ping", () => fetch(failUrl(url), { method: "POST", body })));
+}
+
+/** The check's `/fail` URL: appended to the ping URL's path, so a trailing slash or a query string can't misroute it. */
+function failUrl(pingUrl: string): string {
+  const url = new URL(pingUrl);
+  url.pathname = `${url.pathname.replace(/\/+$/, "")}/fail`;
+  return url.href;
+}
+
+/**
+ * Send one ping and warn when the watchdog didn't take it: no response, an HTTP error, or any reply but a
+ * plain "OK" (a check the URL doesn't name can still answer 200). Otherwise a mistyped or rotated secret
+ * would turn the alerting off without a trace. Shape only: the URL is the secret, and an error message
+ * can carry it. Never throws.
+ */
+async function sendPing(kind: string, send: () => Promise<Response>): Promise<void> {
+  try {
+    const res = await send();
+    const reply = await res.text();
+    if (!res.ok || reply !== "OK") {
+      console.warn(
+        `watchdog ${kind} not taken: HTTP ${res.status}${reply === "OK" ? "" : ", reply not OK"}`,
+      );
+    }
+  } catch (err) {
+    console.warn(
+      `watchdog ${kind} not sent (${err instanceof Error ? err.name : "non-Error throw"})`,
+    );
+  }
 }
 
 /**

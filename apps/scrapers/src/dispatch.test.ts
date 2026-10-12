@@ -69,6 +69,7 @@ function makeKv(cursorRaw: string | null) {
 }
 
 interface Counts {
+  [key: string]: number;
   processed: number;
   companies: number;
   lastId: number;
@@ -266,6 +267,49 @@ describe("scheduled() dispatch", () => {
     );
     expect(fetchSpy).not.toHaveBeenCalled();
   });
+
+  it("pings /fail, not the heartbeat, after a tick in which no board ingested (each failure was isolated)", async () => {
+    const fetchSpy = vi.fn(async (_url: string, _init?: RequestInit) => new Response("OK"));
+    vi.stubGlobal("fetch", fetchSpy);
+    const { cursorWritten } = await runIngestTick({
+      env: { HEALTH_PING_URL: "https://hc.example/abc" },
+      counts: { ...FULL_CHUNK, ok: 0, failed: 250, rateLimitSkipped: 0, changed: 0 },
+    });
+    expect(cursorWritten).toBe("900"); // the tick itself completed: the cursor still moves on
+    expect(fetchSpy.mock.calls).toEqual([
+      [
+        "https://hc.example/abc/fail",
+        {
+          method: "POST",
+          body: `scheduled(${INGEST_CRON}) ingested no board: 250/250 boards · 250 failed · 0 rate-limited · 0 changed`,
+        },
+      ],
+    ]);
+  });
+
+  it("reports discovery to its own check when HEALTH_PING_URL_DISCOVER is set, else its failures to the ingest check", async () => {
+    const fetchSpy = vi.fn(async (_url: string, _init?: RequestInit) => new Response("OK"));
+    vi.stubGlobal("fetch", fetchSpy);
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const env = {
+      DATABASE_URL: "postgres://stub",
+      INGEST_CURSOR: makeKv(null),
+      HEALTH_PING_URL: "https://hc.example/abc",
+      HEALTH_PING_URL_DISCOVER: "https://hc.example/weekly",
+    };
+    mocks.runDiscovery.mockResolvedValueOnce(DISCOVERY_COUNTS);
+    await scheduled({ cron: DISCOVERY_CRON }, env, makeCtx());
+    mocks.runDiscovery.mockRejectedValueOnce(new Error("seed fetch failed"));
+    await expect(scheduled({ cron: DISCOVERY_CRON }, env, makeCtx())).rejects.toThrow(/seed/);
+    mocks.runDiscovery.mockRejectedValueOnce(new Error("seed fetch failed"));
+    const withoutOwnCheck = { ...env, HEALTH_PING_URL_DISCOVER: undefined };
+    await expect(scheduled({ cron: DISCOVERY_CRON }, withoutOwnCheck, makeCtx())).rejects.toThrow();
+    expect(fetchSpy.mock.calls.map(([url]) => url)).toEqual([
+      "https://hc.example/weekly",
+      "https://hc.example/weekly/fail",
+      "https://hc.example/abc/fail",
+    ]);
+  });
 });
 
 describe("runIngestionTick — fixed pipeline budget", () => {
@@ -411,6 +455,7 @@ const FULL_CHUNK: Counts & Record<string, number> = {
   companies: 250,
   processed: 250,
   lastId: 900,
+  ok: 235,
   failed: 3,
   rateLimitSkipped: 12,
   changed: 1969,
@@ -619,6 +664,50 @@ describe("control plane — one ledger row per tick, which can never fail it", (
       outcome: "partial",
       detail: "190/250 boards · 3 failed · 12 rate-limited · 1,969 changed · budget stop",
     });
+  });
+
+  it("records an ingest run in which no board ingested as error, though the tick itself completed", async () => {
+    const control = makeControl();
+    const { ctx } = await runIngestTick({
+      env: { CONTROL: control },
+      counts: { ...FULL_CHUNK, ok: 0, failed: 238, changed: 0 },
+    });
+    await settle(ctx);
+    expect(recorded(control)[0]).toMatchObject({
+      outcome: "error",
+      detail: "250/250 boards · 238 failed · 12 rate-limited · 0 changed",
+    });
+  });
+
+  it("names the failures a run survives in its summary: sweep, mark and stale-sweep steps, discovery lanes", async () => {
+    const control = makeControl();
+    const { ctx } = await runIngestTick({
+      env: { CONTROL: control },
+      counts: { ...FULL_CHUNK, sweepFailed: 2, markFailed: 1, staleSweepFailed: 1 },
+    });
+    await settle(ctx);
+    mocks.runDiscovery.mockResolvedValue({
+      ...DISCOVERY_COUNTS,
+      lane_hn_error: 1,
+      lane_outscal_error: 0,
+    });
+    const discoverCtx = makeCtx();
+    await scheduled(
+      { cron: DISCOVERY_CRON },
+      { DATABASE_URL: "postgres://stub", INGEST_CURSOR: makeKv(null), CONTROL: control },
+      discoverCtx,
+    );
+    await settle(discoverCtx);
+    expect(recorded(control).map((run) => [run.outcome, run.detail])).toEqual([
+      [
+        "ok",
+        "250/250 boards · 3 failed · 12 rate-limited · 1,969 changed · 2 sweep-failed · 1 mark-failed · stale sweep failed",
+      ],
+      [
+        "ok",
+        "1,234 candidates · 40 probed · 6 upserted · 500 re-probed · 2 deactivated · failed lane: hn",
+      ],
+    ]);
   });
 
   it("records a discovery run with its wall time and a one-line summary", async () => {

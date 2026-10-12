@@ -173,7 +173,33 @@ function timing(tick: TickStart, finishedMs: number) {
 
 const n = (value: number) => value.toLocaleString("en-US");
 
-/** `partial` when the run budget stopped the chunk early (the rest carries to the next tick). */
+/**
+ * No board ingested and at least one failed: an outage (a deploy ahead of its migration, a revoked grant, a
+ * broken adapter), not the few dead boards a normal tick has. runIngestion isolates every board's failure
+ * and still finishes the run, so only the counts show it.
+ */
+export function noBoardIngested(counts: IngestionCounts): boolean {
+  return counts.ok === 0 && counts.failed > 0;
+}
+
+/** The ingest run in one line: the ledger row's detail, and the failure ping's body when no board ingested. */
+export function ingestSummary(counts: IngestionCounts): string {
+  return [
+    `${n(counts.processed)}/${n(counts.companies)} boards`,
+    `${n(counts.failed)} failed`,
+    `${n(counts.rateLimitSkipped)} rate-limited`,
+    `${n(counts.changed)} changed`,
+    ...(counts.processed < counts.companies ? ["budget stop"] : []),
+    ...(counts.sweepFailed > 0 ? [`${n(counts.sweepFailed)} sweep-failed`] : []),
+    ...(counts.markFailed > 0 ? [`${n(counts.markFailed)} mark-failed`] : []),
+    ...(counts.staleSweepFailed > 0 ? ["stale sweep failed"] : []),
+  ].join(" · ");
+}
+
+/**
+ * `error` when no board ingested ({@link noBoardIngested}); `partial` when the run budget stopped the chunk
+ * early (the rest carries to the next tick).
+ */
 export function ingestRun(
   tick: TickStart,
   finishedMs: number,
@@ -183,7 +209,7 @@ export function ingestRun(
   const time = timing(tick, finishedMs);
   return {
     stage: "ingest",
-    outcome: budgetStop ? "partial" : "ok",
+    outcome: noBoardIngested(counts) ? "error" : budgetStop ? "partial" : "ok",
     ...time,
     units: {
       "cf.wall_ms": time.durationMs,
@@ -192,13 +218,7 @@ export function ingestRun(
       "ingest.boards_rate_limited": counts.rateLimitSkipped,
       "ingest.jobs_changed": counts.changed,
     },
-    detail: [
-      `${n(counts.processed)}/${n(counts.companies)} boards`,
-      `${n(counts.failed)} failed`,
-      `${n(counts.rateLimitSkipped)} rate-limited`,
-      `${n(counts.changed)} changed`,
-      ...(budgetStop ? ["budget stop"] : []),
-    ].join(" · "),
+    detail: ingestSummary(counts),
   };
 }
 
@@ -208,6 +228,11 @@ export function discoverRun(
   counts: DiscoveryCounts,
 ): RunRecord<"discover"> {
   const budgetStop = counts.budgetSkipped > 0;
+  // An isolated lane's fetch failure is only tallied (`lane_<name>_error`); the run goes on without it.
+  const failedLanes = Object.entries(counts).flatMap(([key, value]) => {
+    const lane = /^lane_(.+)_error$/.exec(key)?.[1];
+    return lane !== undefined && value > 0 ? [lane] : [];
+  });
   const time = timing(tick, finishedMs);
   return {
     stage: "discover",
@@ -221,6 +246,9 @@ export function discoverRun(
       `${n(counts.reprobed)} re-probed`,
       `${n(counts.deactivated)} deactivated`,
       ...(budgetStop ? [`${n(counts.budgetSkipped)} unprobed (budget stop)`] : []),
+      ...(failedLanes.length > 0
+        ? [`failed lane${failedLanes.length > 1 ? "s" : ""}: ${failedLanes.join(", ")}`]
+        : []),
     ].join(" · "),
   };
 }

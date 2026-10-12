@@ -101,7 +101,8 @@ The schedules live in two runtimes; a change ships per runtime, and the watchdog
    pages on every healthy 2-hour gap; ~1 h grace covers a tick's run time plus jitter yet still alerts within
    ~3 h of one missed tick.
 2. **Scrapers Worker**: `pnpm --filter @opusfinder/scrapers deploy` (`wrangler deploy` registers the
-   `[triggers]` crons and the `[vars]` such as `INGEST_LIMIT`). See `apps/scrapers/README.md`.
+   `[triggers]` crons and the `[vars]` such as `INGEST_LIMIT`). Then confirm the NEW cron string fires and
+   the old one stops; the deployed schedules are not proof (`apps/scrapers/README.md` "Deploy").
 3. **Inngest crons** (`health-check-alert` `10 */2 * * *`, `digest-cadence` `10 12 * * *`): ship with the
    next `apps/web` deploy + Inngest app sync. They are paused in the Inngest dashboard until resumed.
 4. If `HEALTH_INGEST_MAX_AGE_H` is overridden anywhere (`packages/db/.env`, Vercel), set it to 5 or unset it.
