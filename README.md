@@ -191,7 +191,7 @@ user-level on `user_preferences` (bounce → hard-suppress; complaint → suppre
 The cadence cron, Inngest Cloud keys, and production serve shipped in 12a (2026-06-17); webhooks and the
 unsubscribe endpoint remain 12b. Sending domain: `send.opusfinder.ai` (verified on Resend,
 SPF/DKIM/DMARC). Gates: `pnpm email:preview` (hostile-fixture render, no creds),
-`pnpm --filter @opusfinder/inngest test:digest-email` (stub smoke), and the live inbox gate.
+the render and delivery Vitest suites (`pnpm test`), and the live inbox gate.
 
 Phase 10 added the **per-user digest pipeline** on **Inngest** — generation only; the cadence cron is
 Phase 12. A run does deterministic filter → pgvector retrieval (top ~50 vs `user_profiles.embedding`)
