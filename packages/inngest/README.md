@@ -190,7 +190,7 @@ $env:INNGEST_DEV=1; pnpm inngest:serve
 $env:INNGEST_DEV=1; pnpm digest --user <uuid>     # or: pnpm digest --all
 ```
 
-Needs `DATABASE_URL` (packages/db/.env) + `ANTHROPIC_API_KEY` (packages/llm/.env) and a CV-ingested,
+Needs `DATABASE_URL` + `ANTHROPIC_API_KEY` (packages/llm/.env) and a CV-ingested,
 digest-enabled user; the Phase-11 send tail additionally needs `RESEND_API_KEY` (send) /
 `RESEND_API_KEY_FULL` (the delivery poll's read — full access) / `EMAIL_FROM`
 (packages/email/.env) in the SERVE process. The dev server's dashboard

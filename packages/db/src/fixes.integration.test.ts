@@ -8,7 +8,12 @@ import { pgliteFixClient } from "@test/db/fix-client";
 import { createTestDb } from "@test/db/pglite";
 import { truncate } from "@test/db/truncate";
 
-import { buildDataFixerSetupSql, DATA_FIXER_ROLE, DATA_FIXER_TABLES } from "./fixer-role";
+import {
+  buildDataFixerSetupSql,
+  DATA_FIXER_PASSWORD_SETTING,
+  DATA_FIXER_ROLE,
+  DATA_FIXER_TABLES,
+} from "./fixer-role";
 import { applyPendingFixes, fixSha256, type FixClient, type FixFile } from "./fixes";
 
 // The data-fix runner and the data_fixer role under REAL Postgres semantics, run AS that role (what the GitHub
@@ -65,9 +70,15 @@ describe("data fixes: applied once, atomically, as the data_fixer role (integrat
     );
   }
 
+  // What data-fixer:setup sends: the password bound into its setting, then the setup SQL.
+  async function setUpRole(password: string): Promise<void> {
+    await pg.query("SELECT set_config($1, $2, false)", [DATA_FIXER_PASSWORD_SETTING, password]);
+    await pg.exec(buildDataFixerSetupSql());
+  }
+
   beforeAll(async () => {
     ({ db, client: pg, close } = await createTestDb());
-    await pg.exec(buildDataFixerSetupSql("p".repeat(32)));
+    await setUpRole("p".repeat(32));
     fixer = pgliteFixClient(pg);
   });
 
@@ -133,37 +144,49 @@ describe("data fixes: applied once, atomically, as the data_fixer role (integrat
   });
 
   it("re-running the setup rotates the password and converges on the same grants", async () => {
-    await pg.exec(
-      `RESET ROLE; ${buildDataFixerSetupSql("q".repeat(32))} SET ROLE ${DATA_FIXER_ROLE};`,
-    );
+    await pg.exec("RESET ROLE");
+    await setUpRole("q".repeat(32));
+    await pg.exec(`SET ROLE ${DATA_FIXER_ROLE}`);
     await expect(pg.query("SELECT count(*) FROM jobs")).resolves.toBeDefined();
     await expect(pg.query("SELECT count(*) FROM user_profiles")).rejects.toThrow(
       /permission denied/,
     );
   });
 
-  it("setup aborts, changing nothing, when the role holds a privilege another role granted", async () => {
-    // The owner's REVOKE ALL removes only the owner's own grants; this one has another grantor.
-    await pg.exec(`
-      RESET ROLE;
-      CREATE ROLE other_admin;
-      GRANT SELECT ON "user" TO other_admin WITH GRANT OPTION;
-      SET ROLE other_admin;
-      GRANT SELECT ON "user" TO ${DATA_FIXER_ROLE};
-      RESET ROLE;
-    `);
-    try {
-      await expect(pg.exec(buildDataFixerSetupSql("q".repeat(32)))).rejects.toThrow(
-        /data_fixer holds privileges beyond its allowlist \(on: user;/,
-      );
-    } finally {
-      await pg.exec(`
-        REVOKE SELECT ON "user" FROM other_admin CASCADE;
-        DROP ROLE other_admin;
-        SET ROLE ${DATA_FIXER_ROLE};
-      `);
-    }
+  // A setting already defined in the session reads back as '' once reverted; that must not clear the password.
+  it("setup aborts when no password was bound", async () => {
+    await pg.exec("RESET ROLE");
+    await expect(setUpRole("")).rejects.toThrow(/bind a password of at least 32 characters/);
   });
+
+  it.each(["SELECT", "SELECT (email)"])(
+    "setup aborts, changing nothing, when the role holds a privilege another role granted (%s)",
+    async (grant) => {
+      // The owner's REVOKE ALL removes only the owner's own grants; this one has another grantor.
+      await pg.exec(`
+        RESET ROLE;
+        CREATE ROLE other_admin;
+        GRANT SELECT ON "user" TO other_admin WITH GRANT OPTION;
+        SET ROLE other_admin;
+        GRANT ${grant} ON "user" TO ${DATA_FIXER_ROLE};
+        RESET ROLE;
+      `);
+      try {
+        await expect(setUpRole("q".repeat(32))).rejects.toThrow(
+          /data_fixer holds privileges beyond its allowlist \(on: user;/,
+        );
+      } finally {
+        await pg.exec(`
+          SET ROLE other_admin;
+          REVOKE ${grant} ON "user" FROM ${DATA_FIXER_ROLE};
+          RESET ROLE;
+          REVOKE SELECT ON "user" FROM other_admin;
+          DROP ROLE other_admin;
+          SET ROLE ${DATA_FIXER_ROLE};
+        `);
+      }
+    },
+  );
 
   it("applies pending fixes in order, records each with the git sha, and returns their notices", async () => {
     const run = await applyPendingFixes(fixer, [deactivateAcme, tagGlobex], "abc123");
@@ -236,6 +259,24 @@ INSERT INTO data_fixes (id, name, sha256) VALUES (1, 'squatter', 'y');`,
     expect(run.outcomes[0]!.error).toMatch(/duplicate key/);
     expect((await companyState())[1]!.active).toBe(true);
     expect(await recordedIds()).toEqual([]);
+  });
+
+  it("records a fix in public.data_fixes even when the fix shadows that name with a temp table", async () => {
+    const shadows = fix(
+      1,
+      "shadows-the-record",
+      `UPDATE companies SET active = false WHERE id = 2;
+SELECT 0 AS id, ''::text AS name, ''::text AS sha256, ''::text AS git_sha INTO TEMP data_fixes WHERE false;`,
+    );
+    try {
+      expect((await applyPendingFixes(fixer, [shadows], null)).outcomes).toEqual([
+        { fix: shadows, notices: [] },
+      ]);
+      const recorded = await pg.query<{ id: number }>("SELECT id FROM public.data_fixes");
+      expect(recorded.rows).toEqual([{ id: 1 }]);
+    } finally {
+      await pg.exec("DROP TABLE IF EXISTS pg_temp.data_fixes");
+    }
   });
 
   it("reports a failure AT COMMIT as unconfirmed, since the fix may have committed", async () => {

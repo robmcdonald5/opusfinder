@@ -25,8 +25,8 @@ import { intArrayLiteral, NUL, resultRows } from "./sql";
  * not wall-clock. The streak is hysteresis against a momentarily-unparseable-but-live posting (a `mapItem`
  * soft-skip drops one posting per fetch, run-adapter.ts) looking "absent" for a single fetch; closing on
  * first absence would silently drop a live role. NB the streak counts increment-EVENTS, not
- * independent-in-time fetches — two overlapping ingests of one board advance an absent job by 2 (see the
- * runbook no-overlap rule); it cannot over-close (a closed row fails the next sweep's
+ * independent-in-time fetches — two overlapping ingests of one board advance an absent job by 2 (so don't
+ * run a manual ingest alongside the cron); it cannot over-close (a closed row fails the next sweep's
  * `lifecycle_state = 'active'` predicate).
  */
 export const ABSENCE_CLOSE_THRESHOLD = 3;

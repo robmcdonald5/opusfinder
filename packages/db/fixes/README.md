@@ -40,11 +40,18 @@ Copy the shape of `0001-merge-case-variant-boards.sql`:
      An exception rolls the whole fix back, and nothing is recorded.
    - **Report** with `RAISE NOTICE` how many rows each step changed (`GET DIAGNOSTICS n = ROW_COUNT`).
    - **Be safe to re-run**: idempotent (`WHERE active` before setting `active = false`) or guarded.
+   - **Keep the `jobs` invariants** that only application SQL maintains. Closing a job sets
+     `lifecycle_state = 'closed'` and `closed_at = now()`; the prune never deletes a closed row without
+     `closed_at`. Reviving one sets `'active'`, `closed_at = NULL` and `consecutive_absences = 0`. Changing
+     `title` or `description_text` must also set `embedding = NULL` and recompute `content_signature` (the
+     `signatureSql` expression in `src/repos/sql.ts`). Such a change doesn't stick on a posting its board
+     still lists: the next ingest writes the board's text back.
    - **Not contain** `BEGIN`/`COMMIT`/`ROLLBACK`/`SAVEPOINT` (the runner owns the transaction),
      `CREATE`/`ALTER`/`DROP`/`TRUNCATE`/`GRANT`/`REVOKE`, or `EXECUTE` (dynamic SQL hides the real statement
      from review), or reference `data_fixes` (only the runner writes it). These words are allowed in
      comments and string literals.
-4. Run `pnpm guard:fixes` locally, then open a PR containing only the fix (plus anything it depends on).
+4. Run `pnpm guard:fixes` locally, then open a PR containing only the fix (plus anything it depends on). A
+   fix can come with a PGlite test, `src/fix-NNNN.integration.test.ts`, which gates the apply.
 
 Never edit a fix that has been applied. Write a new fix instead. A merged fix that **failed** is different:
 it was rolled back and never recorded, and it blocks every later fix until it applies. Correct it in place
@@ -52,6 +59,10 @@ in a new PR. The immutability check flags that edit, and the owner merges over i
 fix is NOT in `data_fixes` (ask `neon-ops`). The summary shows `OUTCOME UNKNOWN` instead of `FAILED` when
 the connection dropped during COMMIT: then the fix may well be applied, so check `data_fixes` before
 touching anything.
+
+Two fix PRs that each add the same number can both pass CI and merge; the runner then applies nothing. Rename
+the one that is NOT in `data_fixes` to the next free number in a new PR. `guard:fixes` flags the rename, and
+the owner merges over it the same way.
 
 ## Previewing (orchestrator)
 
@@ -78,10 +89,11 @@ so the owner does this in the Neon Console.
 
 ## One-time setup (owner)
 
-In a normal terminal (outside the agent sandbox), with `gh` logged in and `packages/db/.env` holding your
-`DATABASE_URL`:
+In a normal terminal (outside the agent sandbox), with `gh` logged in and your owner `DATABASE_URL` exported
+from outside the repo (never `packages/db/.env`, which agents can read):
 
 ```sh
+set -a; . ~/.config/opusfinder/db.env; set +a          # DATABASE_URL='postgresql://…' (quoted: it contains &)
 pnpm db:migrate                                         # creates the data_fixes table (migration 0024)
 pnpm --filter @opusfinder/db run data-fixer:setup       # role + grants, Environment, secret
 ```
@@ -96,4 +108,4 @@ The setup command does the following:
 - Pipes the new connection string into `gh secret set DATA_FIX_DATABASE_URL --env data-fixes` on stdin.
 
 It never prints the password or the connection string. Re-run it any time to rotate the password. Add
-`-- --dry-run` to print the SQL (password redacted) without touching anything.
+`-- --dry-run` to print the SQL without touching anything.

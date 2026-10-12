@@ -40,9 +40,9 @@ pnpm workspaces; the package manager is pinned to pnpm 11.3.0.
 ```sh
 pnpm install
 
-# Create the db package's env file and paste your Neon connection string:
-#   copy .env.example  ->  packages/db/.env   then set DATABASE_URL
-# Use the DIRECT (non-pooled) Neon host. See .env.example for the format.
+# Export your Neon connection string (the DIRECT, non-pooled host) from a file OUTSIDE the repo, never
+# packages/db/.env, which agents can read. Single-quote it there (Neon URLs contain &):
+#   set -a; . ~/.config/opusfinder/db.env; set +a
 #
 # For the LLM package (Phase 3), paste your Anthropic key into packages/llm/.env:
 #   ANTHROPIC_API_KEY=sk-ant-...   (or export it as a shell env var)
@@ -216,8 +216,8 @@ alongside a typed **`user_preferences`** table (filter + digest/delivery setting
 `createUserWithPreferences` / `getOrCreateUserByEmail` — the one creation path the CLI now and the Phase-12
 signup form will both call — plus `pnpm user:create` / `user:set-prefs` / `user:list`. The throwaway
 email-derived `mintUserId` placeholder is retired from the live path (`ingest-cv` now resolves a real
-`user.id`), and a latent IDOR in the cv-file repo is closed. Better Auth needs a transaction-capable
-driver, so the auth adapter uses a neon-serverless client (`createAuthDb`) kept behind a subpath and
+`user.id`), and a latent IDOR in the cv-file repo is closed. The auth adapter uses a transaction-capable
+neon-serverless client (`createAuthDb`) kept behind a subpath and
 **out of the scrapers Worker** (Better Auth crashes under `nodejs_compat`, #6665) — `pnpm guard:worker`
 enforces that invariant. Shipped on branch `feat/phase-9.5-user-identity`.
 

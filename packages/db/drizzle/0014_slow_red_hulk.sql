@@ -1,4 +1,4 @@
-CREATE TABLE "health_alerts" (
+CREATE TABLE IF NOT EXISTS "health_alerts" (
 	"id" serial PRIMARY KEY NOT NULL,
 	"check_id" text NOT NULL,
 	"mode" text NOT NULL,
@@ -8,4 +8,4 @@ CREATE TABLE "health_alerts" (
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 --> statement-breakpoint
-CREATE INDEX "health_alerts_created_at_idx" ON "health_alerts" USING btree ("created_at");
+CREATE INDEX IF NOT EXISTS "health_alerts_created_at_idx" ON "health_alerts" USING btree ("created_at");

@@ -39,12 +39,27 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      # A re-run reuses its original commit, so it would apply that commit's fix files, even an old version of
+      # a failed fix that has since been corrected in place. Only main's current fix files may apply.
+      - name: Check the fix files match main
+        run: |
+          git fetch --no-tags --depth=1 origin main
+          git diff --quiet HEAD FETCH_HEAD -- packages/db/fixes || {
+            echo "::error::packages/db/fixes has changed on main since this commit. Start a new run from main (Run workflow) instead of re-running this one."
+            exit 1
+          }
+
       - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 24 # engines.node >=24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+
+      # The data-fix suites (lint, runner, role, and any fix's own fix-NNNN test) gate the apply, so a fix whose
+      # tests fail never applies, even when its PR was merged before ci.yml finished. Secret-free: PGlite only.
+      - run: pnpm test packages/db/src/fix
 
       # The secret is scoped to this one step: install scripts and other steps never see it.
       - name: Apply pending data fixes

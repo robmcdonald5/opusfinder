@@ -124,34 +124,60 @@ export function lintFixSql(sql: string): string[] {
   if (/\bdata_fixes\b/i.test(code)) {
     problems.push("references data_fixes: only the runner writes the applied-fix record");
   }
+  if (code.includes("$")) {
+    problems.push(
+      "has a `$` that is not a dollar-quote delimiter (e.g. `x$$` or `$1`): put a space before `$$`, and keep `$` out of names",
+    );
+  }
+  if (/\bU&["']/i.test(code)) {
+    problems.push("uses a U& escape: spell the name or string out plainly");
+  }
+  if (code.includes("\\")) {
+    problems.push("has a backslash outside an E'...' string: write that string as E'...'");
+  }
   return problems;
 }
 
+/** Postgres identifier characters: ASCII letters, digits, `_`, `$`, and every non-ASCII character. */
+const isWordChar = (ch: string | undefined) => ch !== undefined && /[\w$\P{ASCII}]/u.test(ch);
+
+/** A dollar-quote delimiter: `$$`, or `$tag$` where the tag is an identifier without `$`. */
+const DOLLAR_TAG_RE = /\$(?:[A-Za-z_\P{ASCII}][\w\P{ASCII}]*)?\$/uy;
+
+/** The dollar-quote delimiter starting at `i`, if any. A `$` right after an identifier character is part of
+ * that identifier (`x$$` is a name), as in Postgres. */
+function dollarTagAt(sql: string, i: number): string | undefined {
+  if (isWordChar(sql[i - 1])) return undefined;
+  DOLLAR_TAG_RE.lastIndex = i;
+  return DOLLAR_TAG_RE.exec(sql)?.[0];
+}
+
 /**
- * Reduce SQL to its code: comments and string literals are blanked, so a keyword inside a RAISE message or a
- * comment can't trip {@link lintFixSql}. Quoted identifiers are kept (so `"data_fixes"` is still seen), and so
- * are dollar-quoted bodies (a DO block's body is PL/pgSQL and is checked too). As in Postgres, a dollar quote
- * ends only at its own opening tag; any other `$tag$` inside it is text. Also returns the top-level statements
- * (split on `;` outside dollar quotes), blank ones dropped. A lint aid, not a full SQL lexer: the `data_fixer`
- * role's grants are the real boundary.
+ * Reduce SQL to its code the way Postgres reads it: comments are blanked and string literals emptied to `''`,
+ * so a keyword inside a RAISE message or a comment can't trip {@link lintFixSql}. Quoted identifiers are kept
+ * (so `"data_fixes"` is still seen). A dollar quote runs to the next copy of its own tag, whatever lies between
+ * (quotes, comments, other tags); its body is scanned on its own and kept as code (a DO block's body is
+ * PL/pgSQL and is checked too). Also returns the top-level statements (split on `;`, dollar-quoted bodies left
+ * out), blank ones dropped. Not a full SQL lexer, so the lint rejects what it could misread (a stray `$`, a U&
+ * escape, a backslash outside an E'...' string). It is the only automated check on transaction control and on
+ * the applied-fix record: the `data_fixer` role's grants can't stop either.
  */
 export function scanSql(sql: string): { code: string; statements: string[] } {
   let code = "";
   let stmt = "";
   const statements: string[] = [];
-  let open: string | null = null; // the open dollar-quote tag, e.g. "$$"
   const emit = (s: string) => {
     code += s;
     stmt += s;
   };
-  const isWordChar = (ch: string | undefined) => ch !== undefined && /[\w$]/.test(ch);
 
   let i = 0;
   while (i < sql.length) {
     const ch = sql.charAt(i);
+    const tag = ch === "$" ? dollarTagAt(sql, i) : undefined;
     if (ch === "-" && sql[i + 1] === "-") {
-      const eol = sql.indexOf("\n", i);
-      i = eol === -1 ? sql.length : eol;
+      const eol = sql.slice(i).search(/[\n\r]/); // Postgres ends a line comment at either
+      i = eol === -1 ? sql.length : i + eol;
       emit(" ");
     } else if (ch === "/" && sql[i + 1] === "*") {
       let depth = 1; // Postgres block comments nest
@@ -169,8 +195,11 @@ export function scanSql(sql: string): { code: string; statements: string[] } {
       }
       emit(" ");
     } else if (ch === "'") {
-      // '' escapes a quote; an E'...' string also takes backslash escapes.
+      // '' escapes a quote; an E'...' string also takes backslash escapes. Postgres may read a backslash in any
+      // other string as an escape too (standard_conforming_strings off, or a string continued on a new line
+      // from an E'...' one), so that backslash is kept in code for the lint to reject.
       const backslash = /[eE]/.test(sql[i - 1] ?? "") && !isWordChar(sql[i - 2]);
+      const start = i;
       i++;
       while (i < sql.length) {
         if (backslash && sql[i] === "\\") i += 2;
@@ -179,28 +208,23 @@ export function scanSql(sql: string): { code: string; statements: string[] } {
         else i++;
       }
       i++;
-      emit(" ");
+      emit(!backslash && sql.slice(start, i).includes("\\") ? "'\\'" : "''");
     } else if (ch === '"') {
-      // A quoted identifier: its name stays code, so a quoted "data_fixes" is still seen. "" escapes a quote.
+      // A quoted identifier stays code, so a quoted "data_fixes" is still seen. "" escapes a quote.
       let j = i + 1;
       while (j < sql.length) {
         if (sql[j] === '"' && sql[j + 1] === '"') j += 2;
         else if (sql[j] === '"') break;
         else j++;
       }
-      emit(` ${sql.slice(i + 1, j)} `);
+      emit(sql.slice(i, j + 1));
       i = j + 1;
-    } else if (ch === "$" && !isWordChar(sql[i - 1])) {
-      const tag = /^\$(?:[A-Za-z_][A-Za-z0-9_]*)?\$/.exec(sql.slice(i, i + 64))?.[0];
-      if (tag === undefined || (open !== null && tag !== open)) {
-        emit(ch);
-        i++;
-      } else {
-        open = open === null ? tag : null;
-        emit(" ");
-        i += tag.length;
-      }
-    } else if (ch === ";" && open === null) {
+    } else if (tag !== undefined) {
+      const end = sql.indexOf(tag, i + tag.length);
+      code += ` ${scanSql(sql.slice(i + tag.length, end === -1 ? sql.length : end)).code} `;
+      stmt += " ";
+      i = end === -1 ? sql.length : end + tag.length;
+    } else if (ch === ";") {
       code += ch;
       statements.push(stmt);
       stmt = "";
@@ -253,7 +277,7 @@ export async function applyPendingFixes(
 ): Promise<FixRun> {
   const recorded = new Map<number, string>();
   const gone: string[] = [];
-  for (const row of await db.query("SELECT id, name, sha256 FROM data_fixes ORDER BY id")) {
+  for (const row of await db.query("SELECT id, name, sha256 FROM public.data_fixes ORDER BY id")) {
     recorded.set(Number(row.id), String(row.sha256));
     if (!fixes.some((f) => f.id === Number(row.id))) gone.push(String(row.name));
   }
@@ -280,12 +304,11 @@ export async function applyPendingFixes(
     try {
       await db.query("BEGIN");
       await db.query(fix.sql);
-      await db.query("INSERT INTO data_fixes (id, name, sha256, git_sha) VALUES ($1, $2, $3, $4)", [
-        fix.id,
-        fix.name,
-        fix.sha256,
-        gitSha,
-      ]);
+      // Schema-qualified: a bare name would resolve to a temp table the fix created first.
+      await db.query(
+        "INSERT INTO public.data_fixes (id, name, sha256, git_sha) VALUES ($1, $2, $3, $4)",
+        [fix.id, fix.name, fix.sha256, gitSha],
+      );
       committing = true;
       await db.query("COMMIT");
       outcomes.push({ fix, notices: db.takeNotices() });

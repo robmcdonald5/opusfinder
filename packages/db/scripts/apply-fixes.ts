@@ -27,6 +27,12 @@ async function applyAll(): Promise<FixRun> {
   const client = new Client(getDataFixDatabaseUrl());
   const notices: string[] = [];
   client.on("notice", (n) => notices.push(n.message ?? ""));
+  // Without an 'error' listener, a dropped connection is an uncaught exception that kills the process before
+  // the failed query reaches the report.
+  let lost = false;
+  client.on("error", () => {
+    lost = true;
+  });
   await client.connect();
   try {
     const db: FixClient = {
@@ -40,7 +46,9 @@ async function applyAll(): Promise<FixRun> {
     };
     return await applyPendingFixes(db, fixes, process.env.GITHUB_SHA ?? null);
   } finally {
-    await client.end();
+    // After a drop, end() still closes the socket, but its promise waits for an 'end' that already fired.
+    const ended = client.end();
+    if (!lost) await ended;
   }
 }
 

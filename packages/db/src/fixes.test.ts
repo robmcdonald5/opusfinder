@@ -37,6 +37,8 @@ BEGIN
   RAISE NOTICE 'deactivated %', n;
 END $$;
 UPDATE jobs SET title = CASE WHEN title = '' THEN 'untitled' ELSE title END WHERE "Title" IS NULL;
+UPDATE jobs SET title = $$it's$$ WHERE id = 2;
+DO $$ BEGIN RAISE NOTICE 'we never ALTER anything'; END $$;
 SELECT E'it\\'s fine; COMMIT';`;
     expect(lintFixSql(sql)).toEqual([]);
   });
@@ -82,6 +84,51 @@ SELECT E'it\\'s fine; COMMIT';`;
       `DO $$ BEGIN INSERT INTO public."data_fixes" VALUES (2, 'x', 'y'); END $$;`,
       /references data_fixes/,
     ],
+    // Spellings Postgres reads differently than a naive scan: each hides the statement after it.
+    [
+      "COMMIT after a dollar-quoted quote",
+      "SELECT $$'$$; COMMIT; SELECT $$'$$;",
+      /contains COMMIT/,
+    ],
+    [
+      "statements after a `--` inside a dollar quote",
+      "DO $$ BEGIN NULL; END -- $$; ALTER ROLE data_fixer PASSWORD 'x'; DO $$ BEGIN NULL; END\n$$;",
+      /contains ALTER/,
+    ],
+    [
+      "data_fixes between two dollar-quoted quotes",
+      "SELECT $q$'$q$; INSERT INTO data_fixes (id) VALUES (2); SELECT $q$'$q$;",
+      /references data_fixes/,
+    ],
+    [
+      "a top-level ABORT after a dollar-quoted `--`",
+      "UPDATE jobs SET title = $n$tier -- low$n$ WHERE id = 2;\nABORT;",
+      /starts a statement with ABORT/,
+    ],
+    ["a line comment ended by a bare CR", "SELECT 1; -- note\rCOMMIT;", /contains COMMIT/],
+    [
+      "a long dollar-quote tag",
+      `SELECT $${"t".repeat(70)}$ -- $${"t".repeat(70)}$; COMMIT;`,
+      /contains COMMIT/,
+    ],
+    ["a non-ASCII dollar-quote tag", "SELECT $é$ -- $é$; COMMIT;", /contains COMMIT/],
+    [
+      "`$$` that is part of a non-ASCII name",
+      "SELECT 1 AS é$$; END; SELECT 1 AS é$$;",
+      /starts a statement with END/,
+    ],
+    ["a `$` outside a dollar-quote delimiter", "UPDATE jobs SET title = $1;", /has a `\$`/],
+    ["a U& escaped name", `INSERT INTO U&"data\\005ffixes" (id) VALUES (2);`, /uses a U& escape/],
+    [
+      "a plain-string backslash read as an escape once standard_conforming_strings is off",
+      "SET standard_conforming_strings = off;\nDO $$ BEGIN PERFORM 'a\\'' ; INSERT INTO data_fixes VALUES (2); --'\nEND $$;",
+      /has a backslash/,
+    ],
+    [
+      "a backslash in a string continuing an E'...' one",
+      "SELECT E'x'\n'\\'' ; COMMIT; --';",
+      /has a backslash/,
+    ],
   ])("rejects %s", (_label, apply, expected) => {
     expect(lintFixSql(`${PREVIEW}${apply}`).join("\n")).toMatch(expected);
   });
@@ -95,11 +142,11 @@ SELECT E'it\\'s fine; COMMIT';`;
 });
 
 describe("scanSql", () => {
-  it("keeps dollar-quoted bodies as code and splits only top-level statements", () => {
+  it("keeps dollar-quoted bodies as code but out of the top-level statements", () => {
     const { code, statements } = scanSql(
       "DO $$ BEGIN PERFORM 1; END $$; /* x; */ SELECT 'a;b'; -- c;\n",
     );
-    expect(statements.map((s) => s.trim())).toEqual(["DO   BEGIN PERFORM 1; END", "SELECT"]);
+    expect(statements.map((s) => s.trim())).toEqual(["DO", "SELECT ''"]);
     expect(code).toContain("PERFORM 1");
     expect(code).not.toContain("a;b");
   });

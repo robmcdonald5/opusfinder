@@ -86,4 +86,4 @@ pnpm embeddings:backfill            # or: pnpm --filter @opusfinder/embeddings b
 pnpm embeddings:search "senior backend engineer, Go, remote"
 ```
 
-Both need `DATABASE_URL` (in `packages/db/.env`) and `VOYAGE_API_KEY` (here).
+Both need `DATABASE_URL` (see `packages/db/README.md`) and `VOYAGE_API_KEY` (here).
