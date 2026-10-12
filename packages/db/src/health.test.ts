@@ -1,12 +1,15 @@
-import { describe, expect, it } from "vitest";
+import type { SQL } from "drizzle-orm";
+import { describe, expect, it, vi } from "vitest";
 
 import { render } from "@test/db/render";
+import { stubExecDb } from "@test/db/stub-exec-db";
 
 import type { Db } from "./client";
 import {
   BOARD_FAIL_MIN_COUNT,
   DEFAULT_HEALTH_THRESHOLDS,
   evaluateHealth,
+  gatherHealthSignals,
   healthOptionsFromEnv,
   type HealthCheck,
   type HealthCheckId,
@@ -39,7 +42,6 @@ const HEALTHY: HealthSignals = {
   discoveryLaneErrors: 0,
   embeddingBacklog: 0,
   digestErrors: 0,
-  hardBounces: 0,
   suppressed: 0,
   cost: { digestsConsidered: 3, rerankCacheReadTokens: 900, rerankCacheCreationTokens: 100 },
 };
@@ -59,7 +61,7 @@ const BREACHES: Array<{ id: HealthCheckId; signalOverride: Partial<HealthSignals
   { id: "discovery_window", signalOverride: { discoveryAgeD: 30 } },
   { id: "embedding_backlog", signalOverride: { embeddingBacklog: 5000 } },
   { id: "digest_health", signalOverride: { digestErrors: 2 } },
-  { id: "bounce_suppression", signalOverride: { hardBounces: 1 } },
+  { id: "bounce_suppression", signalOverride: { suppressed: 1 } },
   { id: "discovery_lane_errors", signalOverride: { discoveryLaneErrors: 2 } },
 ];
 Object.freeze(BREACHES);
@@ -327,6 +329,17 @@ describe("healthOptionsFromEnv — HEALTH_* env → options (explicit env record
     expect("discoveryMaxAgeD" in (opts.thresholds ?? {})).toBe(false);
   });
 
+  it("accepts any case and the panel's health.<id> spelling, and warns about an id it can't match", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const parsed = healthOptionsFromEnv({
+      HEALTH_ENFORCE: "health.ingestion_staleness, Board_Fail_Ratio, discovery-window",
+    });
+    expect(parsed.modes).toEqual({ ingestion_staleness: "enforce", board_fail_ratio: "enforce" });
+    expect(warn).toHaveBeenCalledOnce();
+    expect(warn.mock.calls[0]?.[0]).toContain("HEALTH_ENFORCE: discovery-window");
+    warn.mockRestore();
+  });
+
   it("enforce wins over off when an id appears in both lists", () => {
     const both = healthOptionsFromEnv({
       HEALTH_OFF: "embedding_backlog",
@@ -337,6 +350,16 @@ describe("healthOptionsFromEnv — HEALTH_* env → options (explicit env record
 
   it("the parsed opts drive evaluateHealth: backlog 150 > 100 fires + enforces → unhealthy", () => {
     expect(evaluateHealth({ ...HEALTHY, embeddingBacklog: 150 }, opts).unhealthy).toBe(true);
+  });
+});
+
+describe("gatherHealthSignals — window sizes", () => {
+  it("binds whole-number LIMITs, so a fractional HEALTH_*_N can't fail the query every check shares", async () => {
+    const { db, calls } = stubExecDb(() => []);
+    await gatherHealthSignals(db, { digestWindowN: 2.5, costRollupN: 12.5 });
+    const params = calls.flatMap((q) => render(q as SQL).params);
+    expect(params).toEqual(expect.arrayContaining([2, 12]));
+    expect(params.filter((p) => typeof p === "number" && !Number.isInteger(p))).toEqual([]);
   });
 });
 
