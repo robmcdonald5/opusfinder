@@ -927,7 +927,11 @@ function statementFields(body: unknown, now: string) {
   const periodRaw = field(body, "periodStart");
   const periodStart = periodRaw === undefined || periodRaw === "" ? null : validDay(periodRaw, now);
   if (periodRaw !== undefined && periodRaw !== "" && !periodStart)
-    throw new ApiError(400, "invalid_date", "periodStart, when given, is a real YYYY-MM-DD date");
+    throw new ApiError(
+      400,
+      "invalid_date",
+      "periodStart, when given, is a real YYYY-MM-DD date, from 2020 on, not after tomorrow: leave a period billed in advance empty",
+    );
   const kindRaw = field(body, "kind") ?? "other";
   if (typeof kindRaw !== "string" || !(STATEMENT_KINDS as readonly string[]).includes(kindRaw))
     throw new ApiError(400, "invalid_kind", `kind is one of: ${STATEMENT_KINDS.join(", ")}`);

@@ -263,12 +263,16 @@ export function authSummary(headers: readonly { key: string; value: string }[]):
   return entries.length > 0 ? entries.join(" | ").toLowerCase().slice(0, 1000) : null;
 }
 
-/** "8.42", "$1,234.5", "USD 5" → cents; anything else (negative, huge, words) → null. */
+/**
+ * "8.42", "$1,234.5", "USD 5" → cents; anything else (negative, huge, words) → null. A comma only ever
+ * separates thousands: "8,42" is a decimal comma, never $842.
+ */
 export function cents(raw: unknown): number | null {
   if (typeof raw !== "string" && typeof raw !== "number") return null;
-  const s = String(raw)
-    .replace(/[$,\s]/g, "")
+  let s = String(raw)
+    .replace(/[$\s]/g, "")
     .replace(/^(USD|US)/i, "");
+  if (/^\d{1,3}(,\d{3})+(\.\d{1,2})?$/.test(s)) s = s.replace(/,/g, "");
   if (!/^\d{1,7}(\.\d{1,2})?$/.test(s)) return null;
   return Math.round(Number(s) * 100);
 }

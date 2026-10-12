@@ -184,7 +184,8 @@ row per email:
   amount within 3 days — is stored as `duplicate`. Different invoice numbers never merge, so the filter
   should still forward one email per charge.
 - **Filed by month.** Under the service period the invoice states, else the charge date. Prepaid credits
-  always go by the charge date (cash, not usage). The month view groups vendor spellings into one line.
+  (cash, not usage) and a period starting after tomorrow (billed in advance) go by the charge date. The
+  month view groups vendor spellings into one line.
 - **Gmail's forwarding confirmation** (code and/or link) is shown on the Cost page to the owner only;
   agents see neither the code nor the subject that repeats it.
 - Mail for any address other than `BILLING_ADDRESS` is rejected.

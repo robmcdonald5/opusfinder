@@ -70,7 +70,7 @@ export async function receiveEmail(
   now: string,
 ): Promise<void> {
   const expected = env.BILLING_ADDRESS?.trim().toLowerCase();
-  if (expected && message.to.trim().toLowerCase() !== expected) {
+  if (!expected || message.to.trim().toLowerCase() !== expected) {
     message.setReject("Unknown recipient");
     return;
   }
