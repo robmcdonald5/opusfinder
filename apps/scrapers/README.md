@@ -98,20 +98,30 @@ These require the Cloudflare account / real secrets / billing:
 
 ```bash
 wrangler login
-wrangler secret put DATABASE_URL
 wrangler secret put HEALTH_PING_URL           # Phase F6 liveness heartbeat — the watchdog ping URL (optional)
 wrangler secret put HEALTH_PING_URL_DISCOVER  # discovery's own weekly check: period 7 d, grace ~6 h (optional)
-pnpm --filter @opusfinder/scrapers deploy     # registers/updates the Worker + applies the current [triggers]
+pnpm --filter @opusfinder/scrapers run deploy # registers/updates the Worker + applies the current [triggers]
+pnpm --filter @opusfinder/db run worker-role:setup  # once: DATABASE_URL, the Worker's own database login (below)
 wrangler tail opusfinder-scrapers             # stream live cron invocations
 ```
 
+- **The Worker's `DATABASE_URL` is its own limited login, not yours.** With your owner `DATABASE_URL`
+  exported (`packages/db/README.md` "Environment"), `worker-role:setup` creates the `scrapers_worker` role
+  (SELECT/INSERT/UPDATE on `companies`, `jobs` and `source_runs` only: `packages/db/src/roles.ts`) or rotates
+  its password, then pipes its connection string into this Worker's `DATABASE_URL` on stdin; it applies at
+  once. Run it while no tick is running (not the first ~15 min of an even UTC hour, nor Sunday 03:00 UTC):
+  the old password stops working immediately. To go back to your owner login, with it exported:
+  `printf %s "$DATABASE_URL" | pnpm --filter @opusfinder/scrapers exec wrangler secret put DATABASE_URL`.
+- **A migration that adds a table or sequence the Worker uses** (add it to `SCRAPERS_WORKER` in
+  `packages/db/src/roles.ts`) ships as ONE chain, or every tick fails with `permission denied`:
+  `pnpm db:migrate && pnpm --filter @opusfinder/db run worker-role:setup && pnpm --filter @opusfinder/scrapers run deploy`.
 - **Workers Paid is required** (active): the Free plan caps an invocation at 50 subrequests, far below
   an ingestion tick (~1,500; see `[limits]` in `wrangler.toml`) or a discovery run.
 - **When the ingestion cadence changes, retune the external watchdog in the SAME deploy window.** The
   heartbeat (`HEALTH_PING_URL`) pings once per successful ingestion tick, so the watchdog check's period
   must equal the cron period. For the current `0 */2 * * *`, set the healthchecks.io check to **period
   2 h, grace ~1 h** — the grace covers a tick's run time (≤ ~10 min) plus cron jitter yet stays under one
-  period, so a single missed tick alerts within ~3 h. Do it BEFORE `pnpm --filter @opusfinder/scrapers
+  period, so a single missed tick alerts within ~3 h. Do it BEFORE `pnpm --filter @opusfinder/scrapers run
   deploy`: an hourly-period check would page on every healthy 2-hour gap. (If `HEALTH_INGEST_MAX_AGE_H` is
   set anywhere — `packages/db/.env`, Vercel — make it 5 or unset it; the code default is 5.)
 - **After any `[triggers]` change (a new cron string, a pause or a resume), confirm what actually fires.**
@@ -129,11 +139,11 @@ Phase F5 **discovery** is **active** weekly on Sunday (`0 3 * * SUN`, Workers Pa
 change to the toggle takes effect on the **next deploy**:
 
 - **Pause** (stop all scheduled runs): set `crons = []`, then
-  `pnpm --filter @opusfinder/scrapers deploy`. Deploying with `crons = []` is the documented way to
+  `pnpm --filter @opusfinder/scrapers run deploy`. Deploying with `crons = []` is the documented way to
   _remove_ the deployed triggers. (Omitting `[triggers]` entirely would instead _leave_ them untouched,
   so always set the empty array — don't just delete the block.)
 - **Resume**: restore the cron array in `wrangler.toml` in place of `crons = []`, then
-  `pnpm --filter @opusfinder/scrapers deploy`.
+  `pnpm --filter @opusfinder/scrapers run deploy`.
 
 The Worker code, secret, and KV binding are untouched by the toggle, so resuming is a one-step redeploy.
 Verify either way by what fires, not by the deployed schedules (see "Deploy" above). Pause the watchdog

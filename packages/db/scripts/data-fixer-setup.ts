@@ -1,23 +1,16 @@
 import { execFileSync } from "node:child_process";
 
-import { Client } from "@neondatabase/serverless";
 import { runScript } from "@opusfinder/shared/script";
 
 import { getDatabaseUrl } from "../src/env";
-import {
-  buildDataFixerSetupSql,
-  buildDataFixerUrl,
-  DATA_FIXER_PASSWORD_SETTING,
-  DATA_FIXER_ROLE,
-  generateDataFixerPassword,
-  redact,
-} from "../src/fixer-role";
+import { buildRoleSetupSql, buildRoleUrl, DATA_FIXER, generateRolePassword } from "../src/roles";
+import { setUpRole } from "./lib/role-setup";
 
 // OWNER, one time (and again to rotate the password), from a normal terminal with `gh` logged in:
 //   pnpm --filter @opusfinder/db run data-fixer:setup            (add -- --dry-run to only print the SQL)
 // 1. Creates/updates the `data-fixes` GitHub Environment so only `main` can deploy to it.
 // 2. With DATABASE_URL (the owner's role, exported from outside the repo): creates the data_fixer role or
-//    rotates its password, and resets its grants (src/fixer-role.ts), in one transaction.
+//    rotates its password, and resets its grants (src/roles.ts), in one transaction.
 // 3. Pipes data_fixer's connection string into `gh secret set DATA_FIX_DATABASE_URL --env data-fixes` on stdin.
 // Never prints the password or the connection string. Safe to re-run: if a step fails, run it again.
 
@@ -63,46 +56,17 @@ function ensureEnvironment(repo: string): void {
   }
 }
 
-/** Run the setup SQL in one transaction as the owner. Returns whether the role already existed. */
-async function setUpRole(ownerUrl: string, password: string): Promise<boolean> {
-  const client = new Client(ownerUrl);
-  // Same as apply-fixes.ts: a dropped connection must reject the query, not crash the process.
-  let lost = false;
-  client.on("error", () => {
-    lost = true;
-  });
-  await client.connect();
-  try {
-    const { rows } = await client.query("SELECT 1 FROM pg_roles WHERE rolname = $1", [
-      DATA_FIXER_ROLE,
-    ]);
-    await client.query("BEGIN");
-    await client.query("SELECT set_config($1, $2, true)", [DATA_FIXER_PASSWORD_SETTING, password]);
-    await client.query(buildDataFixerSetupSql());
-    await client.query("COMMIT");
-    return rows.length > 0;
-  } catch (err) {
-    await client.query("ROLLBACK").catch(() => undefined);
-    const message = err instanceof Error ? err.message : String(err);
-    // eslint-disable-next-line preserve-caught-error -- no `cause` on purpose: its unredacted message could echo the password
-    throw new Error(`role setup rolled back: ${redact(message, password)}`);
-  } finally {
-    const ended = client.end();
-    if (!lost) await ended;
-  }
-}
-
 await runScript("data-fixer setup", async () => {
-  const password = generateDataFixerPassword();
+  const password = generateRolePassword();
 
   if (process.argv.includes("--dry-run")) {
     console.log(
       "Dry run: nothing is changed. The role SQL (one transaction; the password is bound separately):\n",
     );
-    console.log(buildDataFixerSetupSql());
+    console.log(buildRoleSetupSql(DATA_FIXER));
     console.log(
       `Then: GitHub Environment "${ENVIRONMENT}" with deployments from main only, and its ${SECRET} secret ` +
-        `set from stdin to DATABASE_URL with the user and password replaced by ${DATA_FIXER_ROLE}'s.`,
+        `set from stdin to DATABASE_URL with the user and password replaced by ${DATA_FIXER.name}'s.`,
     );
     return;
   }
@@ -112,15 +76,15 @@ await runScript("data-fixer setup", async () => {
   console.log(`GitHub Environment ${ENVIRONMENT} on ${repo}: deployments from main only.`);
 
   const ownerUrl = getDatabaseUrl();
-  const existed = await setUpRole(ownerUrl, password);
+  const existed = await setUpRole(ownerUrl, DATA_FIXER, password);
   console.log(
-    `Role ${DATA_FIXER_ROLE}: ${existed ? "password rotated" : "created"}; grants reset.`,
+    `Role ${DATA_FIXER.name}: ${existed ? "password rotated" : "created"}; grants reset.`,
   );
 
   try {
     gh(
       ["secret", "set", SECRET, "--env", ENVIRONMENT, "--repo", repo],
-      buildDataFixerUrl(ownerUrl, password),
+      buildRoleUrl(ownerUrl, DATA_FIXER, password),
     );
   } catch (err) {
     // The role's password is already changed, so the stored secret is now stale until this succeeds.

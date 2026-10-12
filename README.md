@@ -109,7 +109,7 @@ The schedules live in two runtimes; a change ships per runtime, and the watchdog
    the ingestion cron's. For the current `0 */2 * * *`, set **period 2 h, grace ~1 h** — an hourly period
    pages on every healthy 2-hour gap; ~1 h grace covers a tick's run time plus jitter yet still alerts within
    ~3 h of one missed tick.
-2. **Scrapers Worker**: `pnpm --filter @opusfinder/scrapers deploy` (`wrangler deploy` registers the
+2. **Scrapers Worker**: `pnpm --filter @opusfinder/scrapers run deploy` (`wrangler deploy` registers the
    `[triggers]` crons and the `[vars]` such as `INGEST_LIMIT`). Then confirm the NEW cron string fires and
    the old one stops; the deployed schedules are not proof (`apps/scrapers/README.md` "Deploy").
 3. **Inngest crons** (`health-check-alert` `10 */2 * * *`, `digest-cadence` `10 12 * * *`): ship with the
