@@ -199,7 +199,7 @@ describe("discovery repo — companies lifecycle field semantics (integration: r
   });
 
   describe("deactivateStale — the multi-clause staleness guard", () => {
-    it("sweeps only ACTIVE, non-zero-streak, past-window rows (COALESCE(last_live_at, created_at)); returns their ids; leaves every other class untouched", async () => {
+    it("sweeps only ACTIVE, non-zero-streak, past-window rows (COALESCE(GREATEST(last_live_at, last_ingested_at), created_at)); returns their ids; leaves every other class untouched", async () => {
       // SWEPT: active, streak>0, last_live_at 40d ago (past the 30d default window).
       const swept = await seedCompany({
         slug: "swept",
@@ -245,9 +245,9 @@ describe("discovery repo — companies lifecycle field semantics (integration: r
       expect([...ids].sort((a, b) => a - b)).toEqual([swept, sweptByCreated].sort((a, b) => a - b));
       expect((await readCompany(swept)).active).toBe(false);
       expect((await readCompany(sweptByCreated)).active).toBe(false);
-      // updated_at WAS stamped now() on the swept row: seeded at SENTINEL_2020 (which is NOT part of the
-      // COALESCE(last_live_at, created_at) staleness predicate, so it cannot change qualification), so a
-      // dropped `updatedAt: sql`now()`` SET member is caught here — matching the markProbeResult/markProbed siblings.
+      // updated_at WAS stamped now() on the swept row: seeded at SENTINEL_2020 (NOT part of the staleness
+      // clock, so it cannot change qualification), so a dropped `updatedAt: sql`now()`` SET member is caught
+      // here — matching the markProbeResult/markProbed siblings.
       expect((await readCompany(swept)).updatedAt.getTime()).toBeGreaterThan(SENTINEL_2020.getTime());
       // The spared rows keep their pre-sweep active flag.
       expect((await readCompany(neverFailed)).active).toBe(true);
