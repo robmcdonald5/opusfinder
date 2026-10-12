@@ -29,6 +29,7 @@ import {
 } from "@opusfinder/control";
 
 import type { Caller } from "./auth";
+import { DAILY_AGENT_STATEMENTS, MAX_OPEN_PROPOSALS } from "./limits";
 import {
   actorLabel,
   applyChange,
@@ -43,15 +44,16 @@ import {
   listClosedProposals,
   listProposals,
   listRuns,
+  manualStatementsSince,
   readCost,
   readCostSummary,
   readGate,
   readState,
   readStatus,
   updateStatement,
-  type ChangeRow,
   type Channel,
   type LedgerRow,
+  type NewProposal,
   type NewStatement,
   type ProposalRow,
   type StatementRow,
@@ -95,10 +97,12 @@ const RECENT_RUNS_MS = 24 * 60 * 60 * 1000;
 const LIST_DEFAULT = 50;
 const LIST_MAX = 200;
 const DETAIL_MAX = 500;
-/** A trip or a ledger write must not be lost to a concurrent change: re-read and retry this many times. */
+/** A trip must not be lost to a concurrent change: re-read and retry this many times. */
 const TRIP_ATTEMPTS = 3;
 /** The longest run a ledger row may describe. Longer = a unit bug (e.g. seconds sent as ms·1000). */
 const MAX_RUN_DURATION_MS = 7 * 24 * 60 * 60 * 1000;
+/** How far past this Worker's clock a run's times may be: a runtime's clock may run slightly ahead. */
+const CLOCK_SKEW_MS = 5 * 60 * 1000;
 
 /**
  * An error as one safe line: its name and the first line of its message, capped. A D1 error can quote SQL
@@ -161,9 +165,10 @@ function changeReason(caller: Caller, raw: unknown): string | null {
 }
 
 /** First line only, capped — the same shape-safety rule as the scrapers Worker's /fail ping. */
-function oneLine(raw: unknown, max: number): string | null {
+function oneLine(raw: unknown, name: string, max: number): string | null {
   if (raw === undefined || raw === null || raw === "") return null;
-  if (typeof raw !== "string") throw new ApiError(400, "invalid_detail", "detail must be a string");
+  if (typeof raw !== "string")
+    throw new ApiError(400, `invalid_${name}`, `${name} must be a string`);
   const line = (raw.split(/\r?\n/)[0] ?? "").trim().slice(0, max);
   return line.length > 0 ? line : null;
 }
@@ -180,7 +185,7 @@ export type ProposalView = Omit<ProposalRow, "status"> & {
 export type OpenProposalView = ProposalView & {
   /** The target's desired value right now (null = no override). */
   current: string | null;
-  /** True when `current` is no longer the value the proposal was made from: approve will refuse it. */
+  /** True when approve would refuse it and close it as stale (see {@link approvable}). */
   stale: boolean;
 };
 
@@ -211,6 +216,27 @@ function currentValue(state: StateMap, address: string): string | null | undefin
   return t.ok ? desiredValue(state, t.value) : undefined;
 }
 
+/**
+ * What approving an open proposal would apply now, or why it is stale: a deploy since filing may have
+ * removed its target or value from the registry, or the target has moved off the value it was proposed
+ * from (or already holds the proposed one). The one rule behind status's `stale`, approve and reject.
+ */
+function approvable(
+  state: StateMap,
+  p: ProposalRow,
+): { ok: true; from: string | null; to: string | null } | { ok: false; why: string } {
+  const stale = (why: string) => ({ ok: false as const, why: `stale: ${why}; nothing applied` });
+  const t = parseTarget(p.target);
+  if (!t.ok) return stale(`${p.target} is no longer a valid target (${t.error})`);
+  const v = parseValue(t.value, p.to_value ?? INHERIT);
+  if (!v.ok)
+    return stale(`${p.to_value ?? INHERIT} is no longer valid for ${p.target} (${v.error})`);
+  const from = desiredValue(state, t.value);
+  if (from !== p.from_value || v.value === from)
+    return stale(`${p.target} is now ${from ?? INHERIT}, proposed from ${p.from_value ?? INHERIT}`);
+  return { ok: true, from, to: v.value };
+}
+
 export async function status(db: D1Database, caller: Caller, now: string) {
   const nowMs = Date.parse(now);
   const since = new Date(nowMs - RECENT_RUNS_MS).toISOString();
@@ -231,21 +257,23 @@ export async function status(db: D1Database, caller: Caller, now: string) {
         .filter((t) => t !== undefined)
         .sort()
         .at(-1);
+      // Off pauses a stage only once its runtime obeys the switch; until then the stage keeps running, so it
+      // can still miss a tick.
+      const paused = v.gate === "enforced" && v.effective === "off";
       return {
         ...v,
         lastRun: last,
-        ...cadence(v.expect, v.effective, last?.started_at, resumed, nowMs),
+        ...cadence(v.expect, paused ? "off" : "on", last?.started_at, resumed, nowMs),
       };
     }),
     policies: views.policies,
-    openProposals: s.proposals.map((p): OpenProposalView => {
-      const current = currentValue(s.state, p.target);
-      return {
+    openProposals: s.proposals.map(
+      (p): OpenProposalView => ({
         ...proposalView(p, now),
-        current: current ?? null,
-        stale: current === undefined || current !== p.from_value,
-      };
-    }),
+        current: currentValue(s.state, p.target) ?? null,
+        stale: !approvable(s.state, p).ok,
+      }),
+    ),
     closedProposals: s.closedProposals.map((p) => proposalView(p, now)),
     recentChanges: s.changes,
     /** Runs that started in the last 24 h, per stage and outcome. */
@@ -368,7 +396,8 @@ export async function gate(
   return {
     ...gateView(state, stage, narrowed),
     since: last?.at ?? null,
-    by: last ? `${last.actor_role}:${last.actor_name}` : null,
+    // Runtimes log `by` every tick, and an owner's name is their login email: give them only the role.
+    by: last && (last.actor_role === "owner" ? "owner" : `${last.actor_role}:${last.actor_name}`),
     because: last?.reason ?? null,
   };
 }
@@ -417,6 +446,11 @@ export async function requestChange(
   // Nothing to write when the store already says this (or holds no row and the default already is it).
   if (to === expected || (expected === null && to === from))
     return { result: "noop", target: address, value: to };
+  // `from` is the value the caller last saw (the panel's controls send it). Moved since: apply nothing, or
+  // a page loaded before an agent's change or a trip would silently undo it.
+  const seen = field(body, "from");
+  if (seen !== undefined && String(seen ?? INHERIT) !== (from ?? INHERIT))
+    throw new ApiError(409, "moved", `${address} is now ${from ?? INHERIT}; nothing applied`);
 
   const decision = classify({ kind: "set", target, from, to }, caller.role);
   if (field(body, "dryRun") === true)
@@ -428,7 +462,7 @@ export async function requestChange(
     // classify() applies whatever the owner sends, so this is an agent's proposal: its reason is required above.
     const why = reason as string;
     if (field(body, "proposeIfNeeded") === true) {
-      const filed = await fileProposal(db, {
+      const filed = await fileCapped(db, {
         proposer: caller,
         target: address,
         from,
@@ -476,6 +510,17 @@ export async function requestChange(
 
 // ---------- proposals ----------
 
+/** fileProposal, refused (429) once the proposer holds MAX_OPEN_PROPOSALS: each waits on the owner. */
+async function fileCapped(db: D1Database, input: NewProposal) {
+  const filed = await fileProposal(db, input, MAX_OPEN_PROPOSALS);
+  if (filed) return filed;
+  throw new ApiError(
+    429,
+    "too_many_proposals",
+    `at most ${MAX_OPEN_PROPOSALS} open proposals each: withdraw one, or wait for the owner to decide`,
+  );
+}
+
 export async function propose(db: D1Database, caller: Caller, body: unknown, now: string) {
   requireRole(caller, "owner", "agent");
   const target = parsedTarget(field(body, "target"));
@@ -491,7 +536,7 @@ export async function propose(db: D1Database, caller: Caller, body: unknown, now
       `${address} is already ${to ?? INHERIT}; nothing to propose`,
     );
   }
-  const filed = await fileProposal(db, {
+  const filed = await fileCapped(db, {
     proposer: caller,
     target: address,
     from,
@@ -503,13 +548,19 @@ export async function propose(db: D1Database, caller: Caller, body: unknown, now
   return { proposal: proposalView(filed.proposal, now), duplicate: filed.duplicate };
 }
 
-export async function proposals(db: D1Database, which: string | null, now: string) {
+export async function proposals(db: D1Database, which: string | null, q: ListQuery, now: string) {
   if (which !== null && which !== "open" && which !== "all") {
     throw new ApiError(400, "invalid_status", 'status must be "open", "all" or "closed"');
   }
-  return (await listProposals(db, which === "all" ? "all" : "open", now)).map((p) =>
-    proposalView(p, now),
-  );
+  const limit = listLimit(q.limit);
+  const rows = await listProposals(db, which === "all" ? "all" : "open", now, {
+    beforeId: beforeId(q.before),
+    limit: limit + 1,
+  });
+  return {
+    proposals: rows.slice(0, limit).map((p) => proposalView(p, now)),
+    more: rows.length > limit,
+  };
 }
 
 /** "expired" isn't stored: it is an open proposal past its expiry. */
@@ -556,8 +607,9 @@ async function openProposal(db: D1Database, id: number, now: string): Promise<Pr
 /**
  * Owner approval: apply the proposed change and close the proposal in ONE batch (store.applyChange).
  *
- * Refused as STALE when the target has moved off the value the proposal was made from — the owner would
- * be approving "off → on" against a store that now says "shadow" (or already says "on"). The proposal is
+ * Refused as STALE when approving would no longer apply what was proposed: the target has moved off the
+ * value the proposal was made from — the owner would be approving "off → on" against a store that now says
+ * "shadow" (or already says "on") — or today's registry no longer has its target or value. The proposal is
  * closed as 'stale' with the reason, nothing is applied or logged as a change, and the proposer can file
  * a fresh one against the current value.
  */
@@ -571,46 +623,27 @@ export async function approve(
 ) {
   requireRole(caller, "owner");
   const p = await openProposal(db, id, now);
-  // Re-validate against TODAY's registry: a deploy since filing may have removed the target or the value.
-  const t = parseTarget(p.target);
-  if (!t.ok)
-    throw new ApiError(
-      409,
-      "invalid_now",
-      `proposal #${id} no longer names a valid target: ${t.error}`,
-    );
-  const v = parseValue(t.value, p.to_value ?? INHERIT);
-  if (!v.ok)
-    throw new ApiError(
-      409,
-      "invalid_now",
-      `proposal #${id} no longer holds a valid value: ${v.error}`,
-    );
-
   const state = await readState(db);
-  const expected = state.get(p.target) ?? null;
-  const from = desiredValue(state, t.value);
+  const a = approvable(state, p);
   const decidedBy = actorLabel(caller);
-  if (from !== p.from_value || v.value === from) {
-    const why =
-      `stale: ${p.target} is now ${from ?? INHERIT}, proposed from ${p.from_value ?? INHERIT}; ` +
-      `nothing applied`;
-    if (!(await closeProposal(db, id, "stale", decidedBy, why, now))) {
+  if (!a.ok) {
+    if (!(await closeProposal(db, id, "stale", decidedBy, a.why, now))) {
       throw new ApiError(
         409,
         "conflict",
         `proposal #${id} changed while approving; re-read and retry`,
       );
     }
-    throw new ApiError(409, "stale_proposal", `proposal #${id} is ${why}`, {
+    throw new ApiError(409, "stale_proposal", `proposal #${id} is ${a.why}`, {
       proposal: await proposal(db, id, now),
     });
   }
+  const { from, to } = a;
   const res = await applyChange(db, {
     target: p.target,
-    expected,
+    expected: state.get(p.target) ?? null,
     from,
-    to: v.value,
+    to,
     actor: caller,
     channel,
     reason: p.reason,
@@ -628,11 +661,15 @@ export async function approve(
     result: "applied" as const,
     changeId: res.changeId,
     from,
-    to: v.value,
+    to,
     proposal: await proposal(db, id, now),
   };
 }
 
+/**
+ * Owner rejection. A stale proposal (one approve would refuse) closes as 'stale' with the reason instead:
+ * when the owner made the change by hand, "rejected" would tell the proposer the owner said no.
+ */
 export async function reject(
   db: D1Database,
   caller: Caller,
@@ -641,8 +678,12 @@ export async function reject(
   now: string,
 ) {
   requireRole(caller, "owner");
-  await openProposal(db, id, now);
-  if (!(await closeProposal(db, id, "rejected", actorLabel(caller), note, now))) {
+  const p = await openProposal(db, id, now);
+  const a = approvable(await readState(db), p);
+  const closed = a.ok
+    ? await closeProposal(db, id, "rejected", actorLabel(caller), note, now)
+    : await closeProposal(db, id, "stale", actorLabel(caller), a.why, now);
+  if (!closed) {
     throw new ApiError(
       409,
       "conflict",
@@ -674,21 +715,24 @@ export async function withdraw(db: D1Database, caller: Caller, id: number, now: 
 }
 
 export function proposalNote(raw: unknown): string | null {
-  return oneLine(raw, 300);
+  return oneLine(raw, "note", 300);
 }
 
 // ---------- runtime: ledger + trip ----------
 
-function isoTime(raw: unknown, name: string, required: boolean): string | null {
+function isoTime(raw: unknown, name: string, required: boolean, nowMs: number): string | null {
   if (raw === undefined || raw === null) {
     if (required) throw new ApiError(400, "invalid_run", `${name} is required (ISO-8601)`);
     return null;
   }
   const ms = typeof raw === "string" && raw.length <= 40 ? Date.parse(raw) : Number.NaN;
-  // Years 2000–9999: Date#toISOString() of anything outside a 4-digit year isn't the sortable shape
-  // every other timestamp in the store has.
-  if (!Number.isFinite(ms) || ms < Date.UTC(2000, 0, 1) || ms >= Date.UTC(10000, 0, 1))
+  // From 2000: Date#toISOString() of anything outside a 4-digit year isn't the sortable shape every other
+  // timestamp in the store has.
+  if (!Number.isFinite(ms) || ms < Date.UTC(2000, 0, 1))
     throw new ApiError(400, "invalid_run", `${name} must be an ISO-8601 time`);
+  // A future start would stay its stage's latest run, so the stage could never read as overdue.
+  if (ms > nowMs + CLOCK_SKEW_MS)
+    throw new ApiError(400, "invalid_run", `${name} is in the future`);
   return new Date(ms).toISOString();
 }
 
@@ -751,8 +795,9 @@ export async function recordRun(db: D1Database, caller: Caller, body: unknown, n
     }
     units[unit] = n;
   }
-  const startedAt = isoTime(field(body, "startedAt"), "startedAt", true) as string;
-  const finishedAt = isoTime(field(body, "finishedAt"), "finishedAt", false);
+  const nowMs = Date.parse(now);
+  const startedAt = isoTime(field(body, "startedAt"), "startedAt", true, nowMs) as string;
+  const finishedAt = isoTime(field(body, "finishedAt"), "finishedAt", false, nowMs);
   if (finishedAt !== null && finishedAt < startedAt) {
     throw new ApiError(400, "invalid_run", "finishedAt is before startedAt");
   }
@@ -764,7 +809,7 @@ export async function recordRun(db: D1Database, caller: Caller, body: unknown, n
     outcome,
     gateMode: gateMode as string | null,
     units,
-    detail: oneLine(field(body, "detail"), DETAIL_MAX),
+    detail: oneLine(field(body, "detail"), "detail", DETAIL_MAX),
     recordedAt: now,
     recordedBy: actorLabel(caller),
   });
@@ -794,7 +839,7 @@ export async function trip(
   if (typeof why !== "string" || !(TRIP_REASONS as readonly string[]).includes(why)) {
     throw new ApiError(400, "invalid_trip", `reason must be one of: ${TRIP_REASONS.join(", ")}`);
   }
-  const detail = oneLine(field(body, "detail"), 200);
+  const detail = oneLine(field(body, "detail"), "detail", 200);
   const reason = parsedReason(`trip: ${why}${detail ? ` — ${detail}` : ""}`);
   const target: Target = { kind: "mode", entry: { type: "stage", id: stage } };
 
@@ -825,8 +870,6 @@ export async function trip(
     `${stage} kept changing; trip not recorded after ${TRIP_ATTEMPTS} attempts`,
   );
 }
-
-export type { ChangeRow };
 
 // ---------- cost: statements from the vendors' own invoice emails ----------
 
@@ -965,8 +1008,8 @@ function statementFields(body: unknown, now: string) {
     charged_on: chargedOn,
     period_start: periodStart,
     kind: kindRaw as StatementKind,
-    reference: oneLine(field(body, "reference"), 80),
-    note: oneLine(field(body, "note"), 300),
+    reference: oneLine(field(body, "reference"), "reference", 80),
+    note: oneLine(field(body, "note"), "note", 300),
   };
 }
 
@@ -977,6 +1020,16 @@ function statementFields(body: unknown, now: string) {
  */
 export async function addStatement(db: D1Database, caller: Caller, body: unknown, now: string) {
   requireRole(caller, "owner", "agent");
+  const dayStart = `${now.slice(0, 10)}T00:00:00.000Z`;
+  if (
+    caller.role === "agent" &&
+    (await manualStatementsSince(db, actorLabel(caller), dayStart)) >= DAILY_AGENT_STATEMENTS
+  )
+    throw new ApiError(
+      429,
+      "too_many_statements",
+      `at most ${DAILY_AGENT_STATEMENTS} statements a UTC day from one agent`,
+    );
   const f = statementFields(body, now);
   const byAgent = caller.role !== "owner";
   // An agent's repeat of an entry still waiting is a duplicate too. The owner's entry counts at once, so it

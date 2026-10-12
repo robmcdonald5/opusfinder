@@ -146,8 +146,8 @@ describe("overview", () => {
     html = await page("/");
     expect(html).not.toContain("Nothing needs you right now.");
     expect(html).toContain('<a href="/approvals">1 proposal waiting</a>');
-    expect(html).toContain(
-      'href="/runs?stage=ingest&amp;outcome=error">Ingest job boards: 1 failed run</a>',
+    expect(html).toMatch(
+      /href="\/runs\?stage=ingest&amp;outcome=error&amp;from=\d{4}-\d{2}-\d{2}">Ingest job boards: 1 failed run<\/a>/,
     );
     expect(html).toContain('<span class="bad">1 failed</span>');
     expect(html).toContain("8 checks: 8 logs only");
@@ -282,6 +282,29 @@ describe("stages", () => {
     expect(select).toContain('<option value="off">off</option>');
     expect(select).toContain('<option value="on" selected>on</option>');
     expect(select).not.toContain("shadow");
+  });
+
+  it("reads an unreadable mode as the off in force, and lets the owner save that off", async () => {
+    await h.db
+      .prepare("UPDATE state SET value = 'garbage' WHERE key IN ('ingest', 'stale_sweep')")
+      .run();
+    const select = (html: string, name: string) => {
+      const at = html.slice(html.indexOf(`<select name="value" aria-label="${name}">`));
+      return at.slice(0, at.indexOf("</select>"));
+    };
+    // Nothing settable is picked, so no Confirm shows until the owner picks, off included.
+    expect(select(await page("/stages"), "Close stale jobs")).toContain(
+      '<option value="off" selected disabled hidden>off</option><option value="shadow">logs only</option><option value="enforce">on</option>',
+    );
+    expect(select(await page("/stages/ingest"), "Ingest job boards")).toContain(
+      '<option value="off" selected disabled hidden>off</option><option value="off">off</option><option value="on">on</option>',
+    );
+    const res = await h.request("/ui/change", {
+      as: "owner",
+      form: { target: "ingest", value: "off", from: "off", back: "/stages/ingest" },
+    });
+    expect(res.headers.get("location")).toBe("/stages/ingest?done=applied");
+    expect(await stateValue("ingest")).toBe("off");
   });
 
   it("puts a stage's knobs, slices, policies, checks, runs and changes on its page", async () => {
@@ -549,6 +572,33 @@ describe("owner forms", () => {
       .first();
     expect(log).toEqual({ channel: "panel", actor_role: "owner", reason: null });
     expect(await page("/activity")).toContain(">you</span>");
+  });
+
+  it("sends the value each control showed, so a change made since the page loaded applies nothing", async () => {
+    const html = await page("/stages/embed");
+    const form = (target: string, value: string) => {
+      const at = html.indexOf(`name="target" value="${target}"`);
+      const own = html.slice(html.lastIndexOf("<form", at), html.indexOf("</form>", at));
+      const fields = [...own.matchAll(/<input type="hidden" name="(\w+)" value="([^"]*)">/g)];
+      return { ...Object.fromEntries(fields.map((m) => [m[1], m[2]])), value };
+    };
+    // The raw value (10000000), not the "10,000,000" the field shows.
+    let res = await h.request("/ui/change", {
+      as: "owner",
+      form: form("embed.tokensPerRun", "9000000"),
+    });
+    expect(res.headers.get("location")).toBe("/stages/embed?done=applied");
+
+    await h.request("/v1/changes", {
+      as: "agent",
+      json: { target: "embed.pagesPerRun", value: "50", reason: "429 storm" },
+    });
+    res = await h.request("/ui/change", { as: "owner", form: form("embed.pagesPerRun", "150") });
+    expect(res.headers.get("location")).toBe("/stages/embed?done=moved");
+    expect(await stateValue("embed.pagesPerRun")).toBe("50");
+    expect(await page("/stages/embed?done=moved")).toContain(
+      "It changed since this page loaded, so nothing was applied.",
+    );
   });
 
   it.each(["https://evil.example/", "//evil.example", "/runs", "/stages/../x", ""])(

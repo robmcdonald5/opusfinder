@@ -158,7 +158,11 @@ function dimCard(s: StageRow, dim: string, values: readonly string[], edit: stri
           name: v,
           value: `${
             edit
-              ? sliceControl(s, { target, label: v, override: o?.override ?? null }, edit)
+              ? sliceControl(
+                  s,
+                  { target, label: v, override: o?.override ?? null, source: o?.source },
+                  edit,
+                )
               : mode(o?.override, "stage")
           }${o ? sourceNote(o.source) : ""}${
             o && o.effective !== o.override ? ` → ${mode(o.effective, "stage")}` : ""
@@ -176,8 +180,8 @@ function relatedRows(view: StatusView, s: StageRow): string[] {
       .map((p) =>
         item({
           title: `<a href="${esc(targetHref(p.id) ?? "/stages")}" title="${esc(p.id)}">${esc(p.label)}</a>`,
-          lines: ["policy it reads"],
-          end: mode(p.effective, "policy"),
+          lines: [isHealthCheck(p.id) ? "health check it runs" : "policy it reads"],
+          end: mode(p.effective, isHealthCheck(p.id) ? "check" : "policy"),
         }),
       ),
     ...view.policies
@@ -185,9 +189,7 @@ function relatedRows(view: StatusView, s: StageRow): string[] {
       .map((p) =>
         item({
           title: `<a href="/health" title="${esc(p.id)}">${esc(p.label)}</a>`,
-          lines: [
-            `health check watching it${p.watchedStageOff ? " · skipped while this stage is off" : ""}`,
-          ],
+          lines: ["health check watching it"],
           end: mode(p.effective, "check"),
         }),
       ),

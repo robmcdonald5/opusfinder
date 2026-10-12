@@ -46,7 +46,7 @@ import { renderStage, renderStages } from "./ui/stages";
 /**
  * opusfinder-control — the edge control plane (control-surface architecture, candidate B, slice 1).
  *
- * Two ways in, and only two:
+ * Three ways in, and only three:
  *   1. HTTP (`fetch`): the JSON API under /v1, the owner page at /, and its form posts under /ui. Every
  *      request is identified from a VERIFIED Cloudflare Access token (auth.ts) BEFORE routing, so an
  *      unidentified caller learns nothing — not even which routes exist. Each route then lists the roles
@@ -56,6 +56,9 @@ import { renderStage, renderStages } from "./ui/stages";
  *      so a binding caller IS the runtime role — the least-privileged role (read gates; record runs of,
  *      and trip off, only its own stages). A binding's plain `fetch()` lands in (1) without an Access
  *      token and is refused.
+ *   3. Email (`email`): Email Routing delivers mail for BILLING_ADDRESS. NOT behind Access: mailbox.ts admits
+ *      only the owner's envelope senders (and Gmail's forwarding confirmation) under daily caps, and all it
+ *      can write is statement rows, never desired state.
  *
  * The Worker never holds a Neon credential and imports nothing that could reach Neon (guard:worker
  * enforces an inputs allow-list on this bundle), so reading or flipping a switch can't wake the database
@@ -357,11 +360,19 @@ const ROUTES: readonly Route[] = [
     ui: true,
     handler: async ({ request, env, caller, url, now }) => {
       const form = await formBody(request, url);
-      const body = { target: form.get("target"), value: form.get("value") };
-      const res = await requestChange(env.DB, caller, body, "panel", now);
-      return redirect(
-        `${backPath(form.get("back"))}?done=${res.result === "noop" ? "noop" : "applied"}`,
-      );
+      const back = backPath(form.get("back"));
+      const body = {
+        target: form.get("target"),
+        value: form.get("value"),
+        from: form.get("from") ?? undefined,
+      };
+      try {
+        const res = await requestChange(env.DB, caller, body, "panel", now);
+        return redirect(`${back}?done=${res.result === "noop" ? "noop" : "applied"}`);
+      } catch (err) {
+        if (err instanceof ApiError && err.code === "moved") return redirect(`${back}?done=moved`);
+        throw err;
+      }
     },
   },
   {
@@ -373,20 +384,23 @@ const ROUTES: readonly Route[] = [
       // Only for its same-origin check: Approve and Reject post no fields.
       await formBody(request, url);
       const id = rowId(params[0] ?? "");
-      if (params[1] === "reject") {
-        await reject(env.DB, caller, id, null, now);
-        return redirect("/approvals?done=rejected");
-      }
       try {
+        if (params[1] === "reject") {
+          const p = await reject(env.DB, caller, id, null, now);
+          return redirect(`/approvals?done=${p.status === "stale" ? "stale" : "rejected"}`);
+        }
         await approve(env.DB, caller, id, null, "panel", now);
+        return redirect("/approvals?done=approved");
       } catch (err) {
-        // Not an error from the owner's point of view: the page says the proposal went stale and why
-        // (it is now listed under recently closed), nothing was applied.
-        if (err instanceof ApiError && err.code === "stale_proposal")
-          return redirect("/approvals?done=stale");
+        // Not errors from the owner's point of view, so a flash rather than an error page: the proposal
+        // went stale (listed under recently closed with why, nothing applied), or something closed it
+        // first — a double click, a second tab, the CLI, its expiry.
+        if (!(err instanceof ApiError)) throw err;
+        if (err.code === "stale_proposal") return redirect("/approvals?done=stale");
+        if (err.status === 409 && (await proposal(env.DB, id, now)).status !== "open")
+          return redirect("/approvals?done=closed");
         throw err;
       }
-      return redirect("/approvals?done=approved");
     },
   },
   {
@@ -449,10 +463,11 @@ const ROUTES: readonly Route[] = [
     roles: OWNER_AGENT,
     handler: async ({ env, url, now }) => {
       const status = url.searchParams.get("status");
-      // Closed proposals are paged like the other lists ({ proposals, more }); open and all keep their shape.
-      return status === "closed"
-        ? json(await closedProposals(env.DB, listQuery(url), now))
-        : json({ proposals: await proposals(env.DB, status, now) });
+      return json(
+        status === "closed"
+          ? await closedProposals(env.DB, listQuery(url), now)
+          : await proposals(env.DB, status, listQuery(url), now),
+      );
     },
   },
   {

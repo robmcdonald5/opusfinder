@@ -11,7 +11,7 @@ import {
 } from "@opusfinder/control";
 import { ORIGIN, startControl, type ControlHarness } from "@test/control/harness";
 
-import { MAX_BODY_BYTES } from "./limits";
+import { MAX_BODY_BYTES, MAX_OPEN_PROPOSALS } from "./limits";
 
 // The JSON API against a real local D1: seed = registry, classify() enforced per role, the approval queue,
 // the ledger, trips — and the C3 invariant that a state change and its change_log row land together or
@@ -190,6 +190,30 @@ describe("POST /v1/changes", () => {
     expect(res.status).toBe(200);
     expect(await stateValue("embed")).toBe("on");
     expect(await lastLog()).toMatchObject({ actor_role: "owner", actor_name: "owner@example.com" });
+    const gate = await body(await h.request("/v1/gate/embed", { as: "runtime" }));
+    expect(gate.by).toBe("owner");
+  });
+
+  it("applies nothing when the target moved off the `from` the caller saw", async () => {
+    // The owner's page loaded at 250; an agent then cut the knob to 50.
+    await change("agent", "ingest.boardsPerTick", "50");
+    const before = await changeCount();
+    const res = await h.request("/ui/change", {
+      as: "owner",
+      form: { target: "ingest.boardsPerTick", value: "200", from: "250", back: "/stages/ingest" },
+    });
+    expect(res.headers.get("location")).toBe("/stages/ingest?done=moved");
+    const api = await change("owner", "ingest.boardsPerTick", "200", { from: 250 });
+    expect(api.status).toBe(409);
+    expect((await body(api)).error.code).toBe("moved");
+    expect(await stateValue("ingest.boardsPerTick")).toBe("50");
+    expect(await changeCount()).toBe(before);
+
+    expect((await change("owner", "ingest.boardsPerTick", "200", { from: 50 })).status).toBe(200);
+    // An unset slice override is seen as `inherit`.
+    expect((await change("owner", "ingest@source=gem", "off", { from: "inherit" })).status).toBe(
+      200,
+    );
   });
 
   it("narrows one source with an override (agent-safe) and refuses removing it (needs approval)", async () => {
@@ -568,12 +592,13 @@ describe("the approval queue", () => {
     expect(await stateValue("embed")).toBe("off");
   });
 
-  it("lists closed proposals newest first, paged, filtered by stage and outcome (status=closed)", async () => {
+  it("lists closed proposals newest close first, paged, filtered by stage and outcome (status=closed)", async () => {
     const a = await fileProposal("embed", "on");
     const b = await fileProposal("digest", "shadow");
     const c = await fileProposal("ingest.boardsPerTick", "400");
     await h.request(`/v1/proposals/${a.id}/reject`, { as: "owner", json: {} });
     await h.request(`/v1/proposals/${b.id}/approve`, { as: "owner", json: {} });
+    // c was filed last but closed first: it lapsed long ago.
     await h.db
       .prepare("UPDATE proposal SET expires_at = '2000-01-01T00:00:00.000Z' WHERE id = ?")
       .bind(c.id)
@@ -582,18 +607,27 @@ describe("the approval queue", () => {
       body(await h.request(`/v1/proposals?status=closed${q}`, { as: "agent" }));
 
     const all = await closed("");
-    expect(all.proposals.map((p: { id: number }) => p.id)).toEqual([c.id, b.id, a.id]);
+    expect(all.proposals.map((p: { id: number }) => p.id)).toEqual([b.id, a.id, c.id]);
     expect(all.proposals.map((p: { status: string }) => p.status)).toEqual([
-      "expired",
       "approved",
       "rejected",
+      "expired",
     ]);
     expect(all.more).toBe(false);
+    const s = await body(await h.request("/v1/status", { as: "agent" }));
+    expect(s.closedProposals.map((p: { id: number }) => p.id)).toEqual([b.id, a.id, c.id]);
 
     const page1 = await closed("&limit=2");
     expect(page1.more).toBe(true);
     const page2 = await closed(`&limit=2&before=${page1.proposals[1].id}`);
-    expect(page2.proposals.map((p: { id: number }) => p.id)).toEqual([a.id]);
+    expect(page2.proposals.map((p: { id: number }) => p.id)).toEqual([c.id]);
+    // Every status pages the same way, so a long history is never cut off silently.
+    const all1 = await body(await h.request("/v1/proposals?status=all&limit=2", { as: "agent" }));
+    expect(all1.more).toBe(true);
+    const all2 = await body(
+      await h.request(`/v1/proposals?status=all&before=${b.id}`, { as: "agent" }),
+    );
+    expect(all2).toEqual({ proposals: [expect.objectContaining({ id: a.id })], more: false });
 
     expect((await closed("&outcome=expired")).proposals.map((p: { id: number }) => p.id)).toEqual([
       c.id,
@@ -672,6 +706,54 @@ describe("the approval queue", () => {
     expect(await changeCount()).toBe(before);
   });
 
+  it.each([
+    ["value", "to_value = '900'", /900 is no longer valid for ingest.boardsPerTick/],
+    ["target", "target = 'retired.knob'", /retired.knob is no longer a valid target/],
+  ])(
+    "re-checks against today's registry: a %s it dropped is stale in status and on approve",
+    async (_what, rewrite, why) => {
+      // A deploy since filing narrowed the knob or removed it: what the proposal holds is no longer valid.
+      const p = await fileProposal("ingest.boardsPerTick", "450");
+      await h.db.prepare(`UPDATE proposal SET ${rewrite} WHERE id = ?`).bind(p.id).run();
+      const s = await body(await h.request("/v1/status", { as: "agent" }));
+      expect(s.openProposals[0]).toMatchObject({ id: p.id, stale: true });
+      const before = await changeCount();
+      const res = await h.request(`/v1/proposals/${p.id}/approve`, { as: "owner", json: {} });
+      expect(res.status).toBe(409);
+      expect(await body(res)).toMatchObject({
+        error: { code: "stale_proposal" },
+        proposal: { status: "stale", decision_note: expect.stringMatching(why) },
+      });
+      expect(await stateValue("ingest.boardsPerTick")).toBeNull();
+      expect(await changeCount()).toBe(before);
+    },
+  );
+
+  it("closes a superseded proposal as stale on reject, not as the owner's no", async () => {
+    const p = await fileProposal("embed", "shadow");
+    await change("owner", "embed", "shadow");
+    const res = await h.request(`/ui/proposals/${p.id}/reject`, { as: "owner", form: {} });
+    expect(res.headers.get("location")).toBe("/approvals?done=stale");
+    const closed = await body(await h.request(`/v1/proposals/${p.id}`, { as: "agent" }));
+    expect(closed.proposal).toMatchObject({
+      status: "stale",
+      decision_note: expect.stringMatching(/embed is now shadow, proposed from off/),
+    });
+  });
+
+  it("answers a panel click on a proposal something else closed first with a flash, not an error", async () => {
+    const p = await fileProposal();
+    const first = await h.request(`/ui/proposals/${p.id}/approve`, { as: "owner", form: {} });
+    expect(first.headers.get("location")).toBe("/approvals?done=approved");
+    // A double click: the browser shows the second response.
+    for (const action of ["approve", "reject"]) {
+      const again = await h.request(`/ui/proposals/${p.id}/${action}`, { as: "owner", form: {} });
+      expect(again.status).toBe(303);
+      expect(again.headers.get("location")).toBe("/approvals?done=closed");
+    }
+    expect(await stateValue("embed")).toBe("on");
+  });
+
   it("refuses to propose what is already in effect, and dedupes identical open proposals", async () => {
     const same = await h.request("/v1/proposals", {
       as: "agent",
@@ -685,6 +767,24 @@ describe("the approval queue", () => {
     });
     expect(dup.status).toBe(200);
     expect((await body(dup)).proposal.id).toBe(p.id);
+  });
+
+  it("caps the proposals one proposer holds open, and still returns an identical open one", async () => {
+    const ask = (as: "agent" | "other-agent", i: number) =>
+      h.request("/v1/proposals", {
+        as,
+        json: {
+          target: "health.board_fail_ratio.threshold",
+          value: String((20 + i) / 100),
+          reason: "recomputed",
+        },
+      });
+    for (let i = 0; i < MAX_OPEN_PROPOSALS; i++) expect((await ask("agent", i)).status).toBe(201);
+    const over = await ask("agent", MAX_OPEN_PROPOSALS);
+    expect(over.status).toBe(429);
+    expect((await body(over)).error.code).toBe("too_many_proposals");
+    expect((await ask("agent", 0)).status).toBe(200);
+    expect((await ask("other-agent", MAX_OPEN_PROPOSALS)).status).toBe(201);
   });
 
   it("returns 404 for an unknown proposal", async () => {
@@ -788,6 +888,7 @@ describe("runtime: ledger + trip", () => {
       },
     ],
     ["a year-0 start time", { stage: "ingest", outcome: "ok", startedAt: "0000-01-01T00:00:00Z" }],
+    ["a future start time", { stage: "ingest", outcome: "ok", startedAt: "2099-01-01T00:00:00Z" }],
     [
       "a finish before the start",
       {
@@ -1174,6 +1275,15 @@ describe("status: last run and due times (review fixes)", () => {
     const resumed = await ingest();
     expect(resumed.overdue).toBe(false);
     expect(Date.parse(resumed.nextDueAt)).toBeGreaterThan(Date.now());
+  });
+
+  it("still flags a missed tick while off when the runtime doesn't obey the switch yet", async () => {
+    await run({ stage: "ingest", outcome: "ok", startedAt: hoursAgo(5) });
+    await h.request("/v1/changes", {
+      as: "owner",
+      json: { target: "ingest", value: "off", reason: "pause" },
+    });
+    expect(await ingest()).toMatchObject({ effective: "off", gate: "shadow", overdue: true });
   });
 
   it("pages exactly: a full last page says there is no more", async () => {

@@ -265,6 +265,17 @@ describe("requests", () => {
     expect(h.stdout()).toBe("no proposals");
   });
 
+  it("follows every page of the list, so a long history isn't cut off", async () => {
+    const [open] = STATUS.openProposals;
+    const h = harness([
+      { status: 200, body: { proposals: [{ ...open, id: 9 }], more: true } },
+      { status: 200, body: { proposals: [{ ...open, id: 4 }], more: false } },
+    ]);
+    await h.run(["proposals", "--all"]);
+    expect(h.sent[1]?.url).toBe(`${URL_BASE}/v1/proposals?status=all&before=9`);
+    expect(h.stdout()).toMatch(/^#9 embed[^\n]*\n#4 embed/);
+  });
+
   it("withdraws by id (a leading # is fine)", async () => {
     const h = harness([{ status: 200, body: { proposal: { id: 4, status: "withdrawn" } } }]);
     expect(await h.run(["withdraw", "#4"])).toBe(EXIT.ok);

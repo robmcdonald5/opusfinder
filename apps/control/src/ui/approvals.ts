@@ -22,9 +22,11 @@ function closedItem(c: ProposalView, view: StatusView): string {
 
 function openCard(p: StatusView["openProposals"][number], view: StatusView): string {
   const now = view.generatedAt;
-  const stale = p.stale
-    ? `<p class="banner warn">Stale: it is now ${value(p.current, p.target)}, not ${value(p.from_value, p.target)}.</p>`
-    : "";
+  const stale = !p.stale
+    ? ""
+    : p.current === p.from_value
+      ? `<p class="banner warn">Stale: ${value(p.to_value, p.target)} is no longer allowed.</p>`
+      : `<p class="banner warn">Stale: it is now ${value(p.current, p.target)}, not ${value(p.from_value, p.target)}.</p>`;
   const form = isOwner(view)
     ? `<form class="actions" method="post" action="/ui/proposals/${esc(p.id)}/${p.stale ? "reject" : "approve"}">${
         p.stale

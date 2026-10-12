@@ -22,3 +22,9 @@ export const DAILY_MAIL_CAP = 100;
  * write that From header, so junk "confirmations" must never use up the owner's quota.
  */
 export const DAILY_CONFIRMATION_CAP = 5;
+/**
+ * Statements one agent may enter by hand per UTC day, and proposals one proposer may hold open at once.
+ * Each lands in the owner's queue, so past either the API answers 429: a looping agent can't bury it.
+ */
+export const DAILY_AGENT_STATEMENTS = 20;
+export const MAX_OPEN_PROPOSALS = 20;

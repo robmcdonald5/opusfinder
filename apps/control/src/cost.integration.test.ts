@@ -2,7 +2,12 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import { BILLING_ADDRESS, ORIGIN, startControl, type ControlHarness } from "@test/control/harness";
 
-import { DAILY_CONFIRMATION_CAP, DAILY_MAIL_CAP, DAILY_MODEL_READS } from "./limits";
+import {
+  DAILY_AGENT_STATEMENTS,
+  DAILY_CONFIRMATION_CAP,
+  DAILY_MAIL_CAP,
+  DAILY_MODEL_READS,
+} from "./limits";
 
 // The billing mailbox and the Cost page, end to end: a raw email through Miniflare's email trigger into the
 // real email() handler (the model is the harness's FakeAi), the statement rows it writes, the cost read
@@ -403,6 +408,26 @@ describe("statements by hand", () => {
     const res = await add("owner", json);
     expect(res.status).toBe(400);
     expect(((await res.json()) as Json).error.code).toBe(code);
+  });
+
+  it("caps one agent's hand entries per UTC day; the owner's still go in", async () => {
+    const entry = (i: number) => ({
+      vendor: "Voyage AI",
+      amount: String(i + 1),
+      chargedOn: today(),
+    });
+    const ids: number[] = [];
+    for (let i = 0; i < DAILY_AGENT_STATEMENTS; i++) {
+      const res = await add("agent", entry(i));
+      expect(res.status).toBe(201);
+      ids.push(((await res.json()) as Json).statement.id);
+    }
+    // One the owner has since dealt with still counts against the agent.
+    await h.request(`/ui/statements/${ids[0]}`, { as: "owner", form: { action: "exclude" } });
+    const over = await add("agent", entry(DAILY_AGENT_STATEMENTS));
+    expect(over.status).toBe(429);
+    expect(((await over.json()) as Json).error.code).toBe("too_many_statements");
+    expect((await add("owner", entry(DAILY_AGENT_STATEMENTS))).status).toBe(201);
   });
 
   it("is not readable by runtimes", async () => {

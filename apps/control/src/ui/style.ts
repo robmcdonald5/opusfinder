@@ -39,7 +39,7 @@ h1{margin:0;font-size:24px;line-height:1.25;font-weight:600;color:var(--strong)}
 .card{margin:0 0 16px;background:var(--surface);border:1px solid var(--line);border-radius:8px}
 .card-h{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:4px 12px;padding:12px 16px;border-bottom:1px solid var(--line)}
 .card-h h2{margin:0;font-size:14px;font-weight:600;color:var(--strong)}
-.card-b{padding:16px}
+.card-b{padding:16px;overflow-wrap:break-word}
 .card-b>*+*{margin-top:12px}
 .card-f{padding:10px 16px;border-top:1px solid var(--line);color:var(--muted);font-size:13px}
 details.fold>summary{cursor:pointer;list-style:none}
@@ -141,7 +141,6 @@ details.more>summary{border:0;padding:0;height:auto;background:none;color:var(--
 .form.two{display:grid;grid-template-columns:1fr 1fr;align-content:start;max-width:640px}
 .form.two>.full,.form.two>.actions{grid-column:1/-1}
 label{display:grid;align-content:start;gap:4px;color:var(--muted);font-size:13px;font-weight:500}
-.hint{color:var(--muted);font-size:12px;font-weight:400}
 input,select{width:100%;height:36px;padding:0 10px;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--fg);font:inherit}
 button{display:inline-flex;align-items:center;justify-content:center;height:36px;padding:0 14px;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--fg);font:inherit;font-weight:500;cursor:pointer}
 button:hover{background:var(--tint)}

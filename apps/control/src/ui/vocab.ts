@@ -27,7 +27,7 @@ export function modeLabel(value: string, kind: ModeKind): string {
   return MODE_LABELS[kind][value] ?? (value === INHERIT ? "follows stage" : value);
 }
 
-export function targetKind(address: string): ModeKind {
+function targetKind(address: string): ModeKind {
   const t = parseTarget(address);
   if (!t.ok || t.value.kind === "dim") return "stage";
   const e = t.value.entry;
@@ -119,13 +119,13 @@ export function trigger(t: StageDef["trigger"]): string {
 }
 
 /** A stage's wiring (the registry's `gate`). Never worded "shadow": that is only ever a mode. */
-export const GATE_SHORT: Record<StageDef["gate"], string> = {
+const GATE_SHORT: Record<StageDef["gate"], string> = {
   unwired: "not wired",
   shadow: "logs only",
   enforced: "wired",
 };
 
-export const GATE_LONG: Record<StageDef["gate"], string> = {
+const GATE_LONG: Record<StageDef["gate"], string> = {
   unwired:
     "Not wired: the runtime ignores this switch, so a change here is recorded but its env vars still rule.",
   shadow:
@@ -159,7 +159,7 @@ export function targetHref(address: string): string | null {
 }
 
 /** A stage's knob reads "ingest › Boards per tick"; a policy's knob by its own label (the health thresholds name themselves). */
-export function targetName(address: string): string {
+function targetName(address: string): string {
   const t = parseTarget(address);
   if (!t.ok) return address;
   const v = t.value;
@@ -187,6 +187,9 @@ export function stageLabel(id: string): string {
   return isStageId(id) ? stageDef(id).label : id;
 }
 
+/** A null `from` means "follows stage" only on a slice override; anywhere else it is a first value (the migration seed). */
 export function changeLine(target: string, from: string | null, to: string | null): string {
-  return `${targetLink(target)} ${value(from, target)} → ${value(to, target)}`;
+  const t = parseTarget(target);
+  const first = from === null && !(t.ok && t.value.kind === "dim");
+  return `${targetLink(target)} ${first ? "" : `${value(from, target)} → `}${value(to, target)}`;
 }

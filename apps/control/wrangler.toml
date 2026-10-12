@@ -1,8 +1,9 @@
 name = "opusfinder-control"
 main = "src/index.ts"
 compatibility_date = "2026-06-03"
-# No compatibility_flags: the Worker imports only @opusfinder/control (pure TS) and the runtime's own
-# `cloudflare:workers` module — no Node API, so no nodejs_compat. `pnpm guard:worker` enforces it.
+# No compatibility_flags: the Worker imports only @opusfinder/control (pure TS), postal-mime (a
+# dependency-free MIME parser) and the runtime's own `cloudflare:workers` module — no Node API, so no
+# nodejs_compat. `pnpm guard:worker` enforces it.
 
 # The panel + API live on the workers.dev hostname, behind "Protect this Worker behind Access" (README).
 # Preview URLs are switched off: one public hostname is one fewer thing to keep behind Access.

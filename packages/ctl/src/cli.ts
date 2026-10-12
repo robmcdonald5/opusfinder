@@ -347,10 +347,22 @@ function command(p: Parsed, deps: CliDeps): (call: Call) => Promise<number> {
     case "proposals":
       if (p.positionals.length > 0) throw new UsageError("proposals takes no arguments");
       return async (call) => {
-        const res = await call("GET", `/v1/proposals${p.all ? "?status=all" : ""}`);
-        if (res.status !== 200) throw apiError(res);
-        const list = (res.body as { proposals: Proposal[] }).proposals;
-        emit(res.body, list.length === 0 ? "no proposals" : list.map(proposalLine).join("\n"));
+        const query = p.all ? "?status=all" : "?status=open";
+        const list: Proposal[] = [];
+        // The list is paged ({ proposals, more }): follow it to the end.
+        for (let before = ""; ; ) {
+          const res = await call("GET", `/v1/proposals${query}${before}`);
+          if (res.status !== 200) throw apiError(res);
+          const page = res.body as { proposals: Proposal[]; more?: boolean };
+          list.push(...page.proposals);
+          const last = page.proposals.at(-1);
+          if (!page.more || !last) break;
+          before = `&before=${last.id}`;
+        }
+        emit(
+          { proposals: list },
+          list.length === 0 ? "no proposals" : list.map(proposalLine).join("\n"),
+        );
         return EXIT.ok;
       };
 

@@ -43,7 +43,8 @@ export interface ProposalRow {
   from_value: string | null;
   to_value: string | null;
   reason: string;
-  /** "stale": closed unapplied because the target moved off the value it was proposed from. */
+  /** "stale": closed unapplied because the target moved off the value it was proposed from, or the
+   *  registry no longer has its target or value. */
   status: "open" | "approved" | "rejected" | "withdrawn" | "stale";
   decided_at: string | null;
   decided_by: string | null;
@@ -98,7 +99,7 @@ export async function readStatus(
   state: StateMap;
   changes: ChangeRow[];
   proposals: ProposalRow[];
-  /** The latest proposals that are no longer open (decided, stale or lapsed), newest first. */
+  /** The proposals closed (decided, stale or lapsed) most recently, newest first. */
   closedProposals: ProposalRow[];
   /** Each stage's latest run by START (a row is written when its run ends). */
   lastRuns: LedgerRow[];
@@ -117,7 +118,8 @@ export async function readStatus(
       .bind(now),
     db
       .prepare(
-        "SELECT * FROM proposal WHERE status <> 'open' OR expires_at <= ? ORDER BY id DESC LIMIT 10",
+        `SELECT * FROM proposal WHERE status <> 'open' OR expires_at <= ?
+         ORDER BY COALESCE(decided_at, expires_at) DESC, id DESC LIMIT 10`,
       )
       .bind(now),
     // One index seek per stage on (stage, started_at, id), instead of scanning the whole ledger.
@@ -274,40 +276,43 @@ export interface NewProposal {
  * back instead of stacking duplicates for the owner. `from` is part of identity: if the target moved since
  * the old proposal was filed, that one is stale (approve refuses it) and a fresh, approvable one is filed.
  * The insert is conditional in ONE statement, so two concurrent filings can't both pass a separate
- * existence check.
+ * existence check, and the row is read back in the same batch (one transaction), so a duplicate it matched
+ * can't be closed before the read. Null, with nothing filed, when the proposer already holds `maxOpen`.
  */
 export async function fileProposal(
   db: D1Database,
   input: NewProposal,
-): Promise<{ proposal: ProposalRow; duplicate: boolean }> {
+  maxOpen: number,
+): Promise<{ proposal: ProposalRow; duplicate: boolean } | null> {
   const live = `target = ?1 AND to_value IS ?2 AND from_value IS ?7 AND status = 'open' AND expires_at > ?3`;
-  const inserted = await db
-    .prepare(
-      `INSERT INTO proposal (target, to_value, created_at, expires_at, proposer_role, proposer_name, from_value, reason, status)
-       SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'open'
-       WHERE NOT EXISTS (SELECT 1 FROM proposal WHERE ${live})
-       RETURNING *`,
-    )
-    .bind(
-      input.target,
-      input.to,
-      input.now,
-      input.expiresAt,
-      input.proposer.role,
-      input.proposer.name,
-      input.from,
-      input.reason,
-    )
-    .first<ProposalRow>();
-  if (inserted) return { proposal: inserted, duplicate: false };
-  const existing = await db
-    .prepare(
-      `SELECT * FROM proposal WHERE target = ?1 AND to_value IS ?2 AND from_value IS ?4 AND status = 'open' AND expires_at > ?3 ORDER BY id DESC LIMIT 1`,
-    )
-    .bind(input.target, input.to, input.now, input.from)
-    .first<ProposalRow>();
-  if (!existing) throw new Error("proposal insert matched an open duplicate that then vanished");
-  return { proposal: existing, duplicate: true };
+  const [inserted, row] = await db.batch([
+    db
+      .prepare(
+        `INSERT INTO proposal (target, to_value, created_at, expires_at, proposer_role, proposer_name, from_value, reason, status)
+         SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'open'
+         WHERE NOT EXISTS (SELECT 1 FROM proposal WHERE ${live})
+           AND (SELECT COUNT(*) FROM proposal WHERE proposer_role = ?5 AND proposer_name = ?6
+                AND status = 'open' AND expires_at > ?3) < ?9`,
+      )
+      .bind(
+        input.target,
+        input.to,
+        input.now,
+        input.expiresAt,
+        input.proposer.role,
+        input.proposer.name,
+        input.from,
+        input.reason,
+        maxOpen,
+      ),
+    db
+      .prepare(
+        `SELECT * FROM proposal WHERE target = ?1 AND to_value IS ?2 AND from_value IS ?4 AND status = 'open' AND expires_at > ?3 ORDER BY id DESC LIMIT 1`,
+      )
+      .bind(input.target, input.to, input.now, input.from),
+  ]);
+  const proposal = row?.results[0] as ProposalRow | undefined;
+  return proposal ? { proposal, duplicate: inserted?.meta.changes !== 1 } : null;
 }
 
 export async function getProposal(db: D1Database, id: number): Promise<ProposalRow | null> {
@@ -318,17 +323,17 @@ export async function listProposals(
   db: D1Database,
   which: "open" | "all",
   now: string,
-  limit = 100,
+  f: { beforeId?: number | undefined; limit: number },
 ): Promise<ProposalRow[]> {
-  const stmt =
-    which === "open"
-      ? db
-          .prepare(
-            "SELECT * FROM proposal WHERE status = 'open' AND expires_at > ? ORDER BY id DESC LIMIT ?",
-          )
-          .bind(now, limit)
-      : db.prepare("SELECT * FROM proposal ORDER BY id DESC LIMIT ?").bind(limit);
-  return (await stmt.all<ProposalRow>()).results;
+  const { results } = await db
+    .prepare(
+      `SELECT * FROM proposal
+       WHERE (?1 = 'all' OR (status = 'open' AND expires_at > ?2)) AND (?3 IS NULL OR id < ?3)
+       ORDER BY id DESC LIMIT ?4`,
+    )
+    .bind(which, now, f.beforeId ?? null, f.limit)
+    .all<ProposalRow>();
+  return results;
 }
 
 export interface ClosedProposalFilter extends TimeRange {
@@ -339,6 +344,10 @@ export interface ClosedProposalFilter extends TimeRange {
   limit: number;
 }
 
+/**
+ * Closed proposals, newest close (decision or lapse) first: a proposal can stay open for days, so id order
+ * isn't close order. Paging is by the last row of the previous page, as in {@link listRuns}.
+ */
 export async function listClosedProposals(
   db: D1Database,
   now: string,
@@ -351,10 +360,11 @@ export async function listClosedProposals(
        WHERE (status <> 'open' OR expires_at <= ?1)
          AND (?2 IS NULL OR target = ?2 OR substr(target, 1, length(?2) + 1) IN (?2 || '.', ?2 || '@'))
          AND (?3 IS NULL OR (?3 = 'expired' AND status = 'open') OR (?3 <> 'expired' AND status = ?3))
-         AND (?4 IS NULL OR id < ?4)
+         AND (?4 IS NULL OR (COALESCE(decided_at, expires_at), id) <
+                            (SELECT COALESCE(decided_at, expires_at), id FROM proposal WHERE id = ?4))
          AND (?6 IS NULL OR COALESCE(decided_at, expires_at) >= ?6)
          AND (?7 IS NULL OR COALESCE(decided_at, expires_at) < ?7)
-       ORDER BY id DESC LIMIT ?5`,
+       ORDER BY COALESCE(decided_at, expires_at) DESC, id DESC LIMIT ?5`,
     )
     .bind(
       now,
@@ -423,10 +433,13 @@ export interface RunFilter extends TimeRange {
  * everything that sorts after it on (started_at, id). Every filter is a bound parameter (NULL = no filter).
  */
 export async function listRuns(db: D1Database, f: RunFilter): Promise<LedgerRow[]> {
+  // The stage filter stands alone: inside `?1 IS NULL OR …` SQLite can't seek (stage, started_at, id), and
+  // walks the whole ledger for a stage with few or no runs.
+  const stage = f.stage === undefined ? "?1 IS NULL" : "stage = ?1";
   const { results } = await db
     .prepare(
       `SELECT * FROM ledger
-       WHERE (?1 IS NULL OR stage = ?1) AND (?2 IS NULL OR outcome = ?2)
+       WHERE ${stage} AND (?2 IS NULL OR outcome = ?2)
          AND (?3 IS NULL OR (started_at, id) < (SELECT started_at, id FROM ledger WHERE id = ?3))
          AND (?5 IS NULL OR started_at >= ?5) AND (?6 IS NULL OR started_at < ?6)
        ORDER BY started_at DESC, id DESC LIMIT ?4`,
@@ -523,6 +536,21 @@ export async function statementExists(db: D1Database, messageId: string): Promis
     (await db.prepare("SELECT 1 FROM statement WHERE message_id = ?").bind(messageId).first()) !==
     null
   );
+}
+
+/** Statements `by` entered by hand since `since` (a hand entry's sender is who entered it). */
+export async function manualStatementsSince(
+  db: D1Database,
+  by: string,
+  since: string,
+): Promise<number> {
+  const row = await db
+    .prepare(
+      "SELECT COUNT(*) AS n FROM statement WHERE source = 'manual' AND sender = ? AND received_at >= ?",
+    )
+    .bind(by, since)
+    .first<{ n: number }>();
+  return row?.n ?? 0;
 }
 
 /**

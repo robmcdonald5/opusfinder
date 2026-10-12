@@ -14,7 +14,7 @@ const TABS = [
   { id: "proposals", path: "/proposals", label: "Proposals" },
 ] as const;
 
-export type LogTab = (typeof TABS)[number]["id"];
+type LogTab = (typeof TABS)[number]["id"];
 
 /** The tab bar. The stage and the period carry across tabs; a tab's own outcome filter doesn't. */
 export function logTabs(current: LogTab, q: Pick<LogQuery, "stage" | "from" | "to">): string {

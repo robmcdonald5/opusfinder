@@ -50,7 +50,9 @@ result.cache; // { creationInputTokens, readInputTokens } — prompt-cache accou
 `cacheSystem: true` sends the system prompt as a cache-marked system message (a plain
 `system` string cannot carry a cache breakpoint). The first call with a given system
 prompt **writes** the cache (`cache.creationInputTokens > 0`); subsequent calls within
-the ~5-minute TTL **read** it (`cache.readInputTokens > 0`).
+the ~5-minute TTL **read** it (`cache.readInputTokens > 0`). The marker and the write
+counter are Anthropic provider fields (`src/cache-plumbing.ts`): another provider ignores
+them, so a provider swap must port them or caching silently stops.
 
 > Anthropic only caches a prefix once it clears a per-model minimum (a few thousand
 > input tokens; model-dependent and highest for the Haiku 4.x tier — confirm against

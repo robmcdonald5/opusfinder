@@ -3,11 +3,11 @@ import { icon } from "./components";
 import { esc, stamp } from "./format";
 import { STYLE } from "./style";
 
-/** No script: every page renders from the same reads the JSON API returns, so a page can't show what the API doesn't. */
+/** No script: every page renders from the same data the JSON API returns, so a page can't show what the API doesn't. */
 
-export type SectionId = "overview" | "approvals" | "stages" | "health" | "cost" | "log";
+type SectionId = "overview" | "approvals" | "stages" | "health" | "cost" | "log";
 
-export interface Section {
+interface Section {
   id: SectionId;
   path: string;
   title: string;
@@ -15,7 +15,7 @@ export interface Section {
   icon: string;
 }
 
-export const SECTIONS: readonly Section[] = [
+const SECTIONS: readonly Section[] = [
   {
     id: "overview",
     path: "/",
@@ -54,16 +54,18 @@ export const SECTIONS: readonly Section[] = [
   },
 ];
 
-export function section(id: SectionId): Section {
+function section(id: SectionId): Section {
   return SECTIONS.find((s) => s.id === id) as Section;
 }
 
 const FLASH: Record<string, string> = {
   applied: "Change applied.",
   noop: "Nothing to change — it already had that value.",
+  moved: "It changed since this page loaded, so nothing was applied.",
   approved: "Proposal approved and applied.",
   rejected: "Proposal rejected.",
   stale: "That proposal was stale, so nothing was applied.",
+  closed: "That proposal was already closed.",
   statement_added: "Charge added.",
   statement_duplicate: "Matches a charge already counted, so it's under Not counted.",
   statement_counted: "Charge counted.",
@@ -95,7 +97,7 @@ export function layout(view: StatusView, page: PageOpts): string {
       }</a>`,
   ).join("");
   const flash =
-    page.flash && FLASH[page.flash]
+    page.flash && Object.hasOwn(FLASH, page.flash)
       ? `<p class="banner ok" role="status">${esc(FLASH[page.flash])}</p>`
       : "";
   const masterOff =
@@ -121,7 +123,7 @@ export function renderError(status: number, code: string, message: string): stri
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>opusfinder control: ${esc(status)}</title><style>${STYLE}</style></head>
-<body><main class="main"><header class="head"><h1>${esc(status)} — ${esc(code)}</h1><p class="lede">${esc(
+<body><main class="main"><header class="head"><h1>${esc(status)} — ${esc(code)}</h1><p>${esc(
     message,
   )}</p></header><p><a href="/">Back to the control panel</a></p></main></body></html>`;
 }
