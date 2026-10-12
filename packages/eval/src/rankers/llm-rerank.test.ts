@@ -77,8 +77,8 @@ describe("llmRerankRanker", () => {
   it("the default stub call is deterministic — same inputs yield the frozen order", async () => {
     const a = await llmRerankRanker()(profile, [...candidates]);
     const b = await llmRerankRanker()(profile, [...candidates]);
-    expect(a).toEqual([4, 1, 3, 2]);
-    expect(b).toEqual([4, 1, 3, 2]);
+    expect(a).toEqual([2, 3, 1, 4]);
+    expect(b).toEqual([2, 3, 1, 4]);
   });
 
   it("the stub ordering depends on the profile (a different profile reorders)", async () => {
@@ -86,7 +86,7 @@ describe("llmRerankRanker", () => {
     const forFrontend = await llmRerankRanker()(other, [...candidates]);
     // The stub keys on the `system` (which embeds the profile), so a different profile produces a
     // genuinely different ordering — not just a coincidental permutation of the same ids.
-    expect(forFrontend).toEqual([2, 1, 4, 3]);
-    expect(forFrontend).not.toEqual([4, 1, 3, 2]);
+    expect(forFrontend).toEqual([4, 3, 1, 2]);
+    expect(forFrontend).not.toEqual([2, 3, 1, 4]);
   });
 });

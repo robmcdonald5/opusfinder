@@ -19,7 +19,6 @@
     "@anthropic-ai/sdk": "^0.102.0",
     "@opusfinder/shared": "workspace:*",
     "ai": "^5",
-    "dotenv": "^17",
     "zod": "^4"
   },
   "devDependencies": {

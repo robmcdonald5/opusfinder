@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { jobText, TITLE_CHARS } from "./job-text";
+
 /**
  * The OUTPUT contract + candidate renderer for the rerank call. The scoring RUBRIC and the
  * chunk/merge/backfill orchestration live in `@opusfinder/rerank` (shared with the eval harness); this
@@ -24,21 +26,21 @@ export const RerankScoresSchema = z.object({
 export type RerankScores = z.infer<typeof RerankScoresSchema>;
 
 /**
- * Render a candidate chunk into the rerank user message — a compact numbered list the system rubric
- * scores. Each description is truncated (ranking needs the title + a description excerpt, not full JD
- * fidelity) to keep the variable tail small relative to the cached system+profile prefix.
+ * Render a candidate chunk into the rerank user message — one `<job id="…">` block per candidate (title,
+ * then description) for the system rubric to score. Each description is truncated (ranking needs the
+ * title + a description excerpt, not full JD fidelity) to keep the variable tail small relative to the
+ * cached system+profile prefix.
  */
 export function renderRerankCandidates(
   candidates: { id: number; title: string; descriptionText: string }[],
   opts: { descriptionChars?: number } = {},
 ): string {
   const max = opts.descriptionChars ?? 1500;
-  const lines = candidates.map((c) => {
-    const desc =
-      c.descriptionText.length > max ? `${c.descriptionText.slice(0, max)}…` : c.descriptionText;
-    return `[job ${c.id}] ${c.title}\n${desc}`;
-  });
-  return `Score each of the following ${candidates.length} job posting(s) for this candidate. Return a score for every job id.\n\n${lines.join(
-    "\n\n---\n\n",
+  const blocks = candidates.map(
+    (c) =>
+      `<job id="${c.id}">\n${jobText(c.title, TITLE_CHARS)}\n${jobText(c.descriptionText, max)}\n</job>`,
+  );
+  return `Score each of the following ${candidates.length} job posting(s) for this candidate. Return a score for every job id.\n\n${blocks.join(
+    "\n\n",
   )}`;
 }

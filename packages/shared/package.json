@@ -16,8 +16,5 @@
   },
   "dependencies": {
     "dotenv": "^17"
-  },
-  "devDependencies": {
-    "tsx": "^4"
   }
 }

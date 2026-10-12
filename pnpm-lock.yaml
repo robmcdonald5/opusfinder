@@ -221,9 +221,6 @@ importers:
       '@opusfinder/shared':
         specifier: workspace:*
         version: link:../shared
-      dotenv:
-        specifier: ^17
-        version: 17.4.2
       resend:
         specifier: ^6.12.4
         version: 6.12.4
@@ -240,9 +237,6 @@ importers:
       '@opusfinder/shared':
         specifier: workspace:*
         version: link:../shared
-      dotenv:
-        specifier: ^17
-        version: 17.4.2
     devDependencies:
       tsx:
         specifier: ^4
@@ -265,9 +259,6 @@ importers:
       '@opusfinder/shared':
         specifier: workspace:*
         version: link:../shared
-      dotenv:
-        specifier: ^17
-        version: 17.4.2
       zod:
         specifier: ^4
         version: 4.4.3
@@ -318,9 +309,6 @@ importers:
       ai:
         specifier: ^5
         version: 5.0.192(zod@4.4.3)
-      dotenv:
-        specifier: ^17
-        version: 17.4.2
       zod:
         specifier: ^4
         version: 4.4.3
@@ -359,20 +347,12 @@ importers:
       '@opusfinder/shared':
         specifier: workspace:*
         version: link:../shared
-    devDependencies:
-      tsx:
-        specifier: ^4
-        version: 4.22.3
 
   packages/shared:
     dependencies:
       dotenv:
         specifier: ^17
         version: 17.4.2
-    devDependencies:
-      tsx:
-        specifier: ^4
-        version: 4.22.3
 
   packages/sources:
     dependencies:
@@ -398,10 +378,6 @@ importers:
       '@opusfinder/shared':
         specifier: workspace:*
         version: link:../shared
-    devDependencies:
-      tsx:
-        specifier: ^4
-        version: 4.22.3
 
 packages:
 

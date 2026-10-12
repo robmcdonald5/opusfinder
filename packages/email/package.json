@@ -15,7 +15,6 @@
   "dependencies": {
     "@opusfinder/db": "workspace:*",
     "@opusfinder/shared": "workspace:*",
-    "dotenv": "^17",
     "resend": "^6.12.4"
   },
   "devDependencies": {

@@ -12,8 +12,5 @@
   },
   "dependencies": {
     "@opusfinder/shared": "workspace:*"
-  },
-  "devDependencies": {
-    "tsx": "^4"
   }
 }
