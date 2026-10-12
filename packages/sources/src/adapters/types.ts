@@ -70,6 +70,13 @@ export interface SourceAdapter {
   /** Build the request for page `cursor` (`null` ⇒ first page). Pure URL/init construction. */
   jobsRequest(ctx: SourceContext, cursor: Cursor | null): JobsRequest;
 
+  /**
+   * The discovery probe's request: the same first page as `jobsRequest`, minus the params that only
+   * add posting content (descriptions), so `locate` and `classifyProbe` read the same envelope from a
+   * far smaller body. OMIT ⇒ the probe sends `jobsRequest(ctx, null)`.
+   */
+  probeRequest?(ctx: SourceContext): JobsRequest;
+
   /** Pull the untrusted jobs array out of one page's parsed body. Throws on a bad envelope. */
   locate(body: unknown, ctx: SourceContext): unknown[];
 

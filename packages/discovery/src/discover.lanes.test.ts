@@ -4,15 +4,14 @@ import { emptyCounts, resolveLanes, selectLanes, type DiscoveryCounts } from "./
 import type { CompanyRecord, SeedLane } from "./seed";
 
 // Unit tests for the per-lane discovery loop (`selectLanes` + `resolveLanes`) over stub lanes —
-// offline, deterministic, no network, no db. Ports scripts/test-lanes.ts to describe/it/expect and
-// adds the empty-lane, multi-isolated-failure, intra-lane-dedupe, and drop-tally-SUM edges. Covers: lane
+// offline, deterministic, no network, no db, with the empty-lane, multi-isolated-failure,
+// intra-lane-dedupe, and drop-tally-SUM edges. Covers: lane
 // SELECTION ([]/omit = all, NOT zero; unknown name → empty; workerOnly → workerSafe only; compose);
 // the two N>1 RESOLUTION traps (cross-lane dedupe collapses a shared (source,slug); named drop
 // tallies SUM, not clobber); per-lane counters accumulate; opts.source scope-through; ISOLATED vs
 // FAIL-LOUD lane failures; and emptyCounts field init + per-call independence.
 
-// Stub lanes (no network). laneA and laneB both emit greenhouse:acme — it must collapse to ONE. Board
-// URLs copied verbatim from scripts/test-lanes.ts.
+// Stub lanes (no network). laneA and laneB both emit greenhouse:acme — it must collapse to ONE.
 const laneA: SeedLane = {
   name: "a",
   workerSafe: true,

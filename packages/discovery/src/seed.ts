@@ -10,7 +10,7 @@ import { fetchHnAlgoliaLane } from "./lanes/hn";
  * resolve to no adapter (expected).
  */
 const SEED_SHA = "cdcc533521afb61f4e60657b3dbe06e484ccddcf"; // outscal/OpenJobs main @ 2026-04-22
-export const SEED_URL = `https://raw.githubusercontent.com/outscal/OpenJobs/${SEED_SHA}/data/companies_v2.json`;
+const SEED_URL = `https://raw.githubusercontent.com/outscal/OpenJobs/${SEED_SHA}/data/companies_v2.json`;
 
 /**
  * One seed record — only the fields discovery reads (`name` for logging, `ats_links` for resolution);

@@ -6,7 +6,7 @@
  * (no Node clock, no read-modify-write). Company INSERTs reuse `upsertCompany` from ./jobs; this
  * module only adds the run audit + the probe-result/staleness transitions.
  */
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 
 import type { CompanySlug, SourceName } from "@opusfinder/shared";
 
@@ -141,9 +141,11 @@ export function listCompanyStates(
  * `active` untouched, so the staleness window keeps counting. Keeping it
  * one statement means the shared stamping can't drift between the live and failed paths; the
  * increment is SQL-side (`failures + 1`) → race-free. ONLY call on a definitive live/absent
- * verdict; an `indeterminate` probe must skip this so it can't drift a healthy row.
+ * verdict; an `indeterminate` probe must skip this so it can't drift a healthy row. Takes every
+ * company with the same outcome, so a reprobe pass writes hundreds of rows in one round trip.
  */
-export async function markProbeResult(db: Db, companyId: number, live: boolean): Promise<void> {
+export async function markProbeResult(db: Db, companyIds: number[], live: boolean): Promise<void> {
+  if (companyIds.length === 0) return;
   await db
     .update(companies)
     .set({
@@ -153,7 +155,7 @@ export async function markProbeResult(db: Db, companyId: number, live: boolean):
       // LIVE-only fields: omitted on a FAILED probe so they stay untouched (no self-assign).
       ...(live ? { lastLiveAt: sql`now()`, active: true } : {}),
     })
-    .where(eq(companies.id, companyId));
+    .where(inArray(companies.id, companyIds));
 }
 
 /**
@@ -163,11 +165,12 @@ export async function markProbeResult(db: Db, companyId: number, live: boolean):
  * the oldest-probed-first reprobe queue forever, starving every row behind it. A definitive
  * live/absent verdict uses `markProbeResult` instead.
  */
-export async function markProbed(db: Db, companyId: number): Promise<void> {
+export async function markProbed(db: Db, companyIds: number[]): Promise<void> {
+  if (companyIds.length === 0) return;
   await db
     .update(companies)
     .set({ lastProbedAt: sql`now()`, updatedAt: sql`now()` })
-    .where(eq(companies.id, companyId));
+    .where(inArray(companies.id, companyIds));
 }
 
 /**

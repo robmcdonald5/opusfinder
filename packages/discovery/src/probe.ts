@@ -119,12 +119,14 @@ function contextOf(c: Candidate): SourceContext {
   return { slug: c.slug, rawSlug: c.rawSlug };
 }
 
-/** The probe request for a candidate — reuses `jobsRequest` (first page, no cursor). */
+/** The probe request for a candidate — the adapter's `probeRequest`, else `jobsRequest` (first page). */
 function requestOf(c: Candidate): JobsRequest {
-  return adapters[c.source].jobsRequest(contextOf(c), null);
+  const adapter = adapters[c.source];
+  const ctx = contextOf(c);
+  return adapter.probeRequest?.(ctx) ?? adapter.jobsRequest(ctx, null);
 }
 
-/** The host a probe will hit (its `jobsRequest` URL host); falls back to the raw URL if unparseable. */
+/** The host a probe will hit (its request URL host); falls back to the raw URL if unparseable. */
 function hostOf(req: JobsRequest): string {
   try {
     return new URL(req.url).hostname;
@@ -145,14 +147,6 @@ async function probeWith(
   const outcome =
     adapter.classifyProbe?.(status, body) ?? defaultClassify(adapter, status, body, ctx);
   return { candidate: c, status, outcome };
-}
-
-/** Probe ONE candidate (build its `jobsRequest`, fetch, classify). The single-candidate entry point. */
-export function probeCandidate(
-  c: Candidate,
-  maxRetries = DEFAULT_MAX_RETRIES,
-): Promise<ProbeResult> {
-  return probeWith(c, requestOf(c), maxRetries);
 }
 
 /**

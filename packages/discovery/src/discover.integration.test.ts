@@ -71,7 +71,7 @@ const hnRoutes = (slugs: string[]): Route[] => [
       }),
   },
 ];
-// greenhouse.jobsRequest → boards-api.greenhouse.io/v1/boards/{slug}/jobs?content=true
+// greenhouse.probeRequest → boards-api.greenhouse.io/v1/boards/{slug}/jobs
 const probeMatch = (slug: string) => (url: string) => url.includes(`/v1/boards/${slug}/jobs`);
 const liveRoute = (slug: string): Route => ({
   match: probeMatch(slug),
@@ -767,7 +767,7 @@ describe("runDiscovery — orchestration over real PGlite (fetch stubbed)", () =
       expect((await jobsFor(zombieId))[0]!.lifecycleState).toBe("active");
     });
 
-    it("coerces a non-positive olderThanDays to the 30-day default — a within-window failing board is NOT swept", async () => {
+    it.each([0, 0.5])("coerces olderThanDays %s to the 30-day default — a within-window failing board is NOT swept", async (olderThanDays) => {
       await seedCompany({
         slug: "recentfail",
         active: true,
@@ -777,9 +777,9 @@ describe("runDiscovery — orchestration over real PGlite (fetch stubbed)", () =
       });
       installFetch([absentRoute("recentfail")]);
 
-      // olderThanDays:0 must coerce to 30. A plain `?? DEFAULT` would keep 0 → `< now() - 0` sweeps every
-      // failing row, deactivating recentfail wrongly.
-      const counts = await runDiscovery(db, { lanes: ["__none__"], olderThanDays: 0, probe: PROBE_OPTS });
+      // A window under one day must coerce to 30. A plain `?? DEFAULT` would keep 0, and deactivateStale
+      // truncates 0.5 to 0 → `< now() - 0` sweeps every failing row, deactivating recentfail wrongly.
+      const counts = await runDiscovery(db, { lanes: ["__none__"], olderThanDays, probe: PROBE_OPTS });
 
       expect(counts).toMatchObject({ markedFailed: 1, deactivated: 0 });
       expect((await companyBySlug("recentfail"))!.active).toBe(true);

@@ -11,7 +11,7 @@ import { probeFetch } from "./probe";
 // transient retry: a 429/5xx is retried through the shared `backoff`, and a `Retry-After` header
 // wins over the default exponential wait. `fetch` is stubbed (no network) and the backoff sleeps
 // are driven with FAKE timers via the ASYNC advance api — the sync advance would not flush the
-// awaited fetch/backoff promises. Ports scripts/test-probe.ts (the probeFetch half).
+// awaited fetch/backoff promises.
 
 const req = (url: string): JobsRequest => ({ url });
 

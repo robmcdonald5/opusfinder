@@ -44,9 +44,9 @@ and the library it calls owns its own `source_runs` row (`startRun`/`finishRun`)
   loads its env from disk at import, which crashes a Worker at module load and which `pnpm guard:worker`
   keeps out of this bundle. Jobs are upserted regardless; the still-NULL vectors are filled by
   `pnpm embeddings:backfill`.
-- **Discovery** runs `runDiscovery({ ..., workerOnly: true })` bounded by `limit`/`reprobeLimit` to stay
-  under the subrequest budget. `workerOnly` restricts the run to fetch-only `workerSafe` lanes (the
-  F5-LANES-2 guard that keeps a future Node-only lane out of the isolate).
+- **Discovery** runs `runDiscovery({ ..., workerOnly: true })` bounded by `limit`/`reprobeLimit`.
+  `workerOnly` restricts the run to fetch-only `workerSafe` lanes (the F5-LANES-2 guard that keeps a
+  future Node-only lane out of the isolate).
 
 > **Health & liveness (Phase F6).** On each successful ingestion tick the Worker fires a content-free
 > heartbeat to an external watchdog (`env.HEALTH_PING_URL`, an optional `wrangler secret`); the watchdog

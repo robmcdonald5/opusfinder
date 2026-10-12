@@ -108,10 +108,10 @@ export interface DiscoveryCounts {
  */
 export async function runDiscovery(db: Db, opts: DiscoveryOptions = {}): Promise<DiscoveryCounts> {
   const dryRun = opts.dryRun ?? false;
-  // Coerce a non-positive window to the default: a 0/negative `olderThanDays` makes deactivateStale
-  // sweep EVERY failing row (COALESCE(...) < now() - 0), which a plain `?? DEFAULT` would not catch.
+  // Coerce a window under one day to the default: deactivateStale truncates to whole days, and a 0-day
+  // window sweeps EVERY failing row (COALESCE(...) < now() - 0), which a plain `?? DEFAULT` would not catch.
   const olderThanDays =
-    opts.olderThanDays !== undefined && opts.olderThanDays > 0
+    opts.olderThanDays !== undefined && opts.olderThanDays >= 1
       ? opts.olderThanDays
       : DEFAULT_OLDER_THAN_DAYS;
   const counts = emptyCounts();
@@ -227,7 +227,7 @@ async function probeAndUpsert(
     if (r.outcome === "live" || r.outcome === "live-empty") {
       if (!dryRun) {
         const id = await upsertCompany(db, c.slug, c.source);
-        await markProbeResult(db, id, true); // insert-or-reactivate; stamps last_live_at
+        await markProbeResult(db, [id], true); // insert-or-reactivate; stamps last_live_at
       }
       counts.upserted += 1; // upsert is get-or-create + reactivate, so this is "live-and-written", not strictly new
     }
@@ -257,6 +257,10 @@ async function reprobeActive(
     sourceUrl: "",
   }));
   const results = await probeCandidates(candidates, probeOpts);
+  // One UPDATE per outcome, not per row: each write is a neon-http round trip.
+  const live: number[] = [];
+  const absent: number[] = [];
+  const inconclusive: number[] = [];
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i];
     const r = results[i];
@@ -267,17 +271,16 @@ async function reprobeActive(
     }
     counts.reprobed += 1;
     tallyStatus(counts, r.status);
-    if (r.outcome === "live" || r.outcome === "live-empty") {
-      await markProbeResult(db, row.id, true);
-      counts.refreshedLive += 1;
-    } else if (r.outcome === "absent") {
-      await markProbeResult(db, row.id, false);
-      counts.markedFailed += 1;
-    } else {
-      await markProbed(db, row.id); // inconclusive: advance the probe cursor, don't drift the streak
-      counts.reprobeInconclusive += 1;
-    }
+    if (r.outcome === "live" || r.outcome === "live-empty") live.push(row.id);
+    else if (r.outcome === "absent") absent.push(row.id);
+    else inconclusive.push(row.id);
   }
+  await markProbeResult(db, live, true);
+  counts.refreshedLive = live.length;
+  await markProbeResult(db, absent, false);
+  counts.markedFailed = absent.length;
+  await markProbed(db, inconclusive); // inconclusive: advance the probe cursor, don't drift the streak
+  counts.reprobeInconclusive = inconclusive.length;
 }
 
 /** Tally one probe outcome. status 0 (network-exhausted) is `transientFailed`, NOT a real outcome. */

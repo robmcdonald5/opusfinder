@@ -2,16 +2,14 @@ import { describe, expect, it } from "vitest";
 
 import { parseHnThread, type HnItem } from "./hn";
 
-// Leaf pure-unit port of scripts/test-lane-hn.ts. `parseHnThread` is the offline, network-free half of
-// the HN "Who is hiring?" lane: it entity-decodes each comment's HTML (HN encodes `/` as `&#x2F;` and `&`
-// as `&amp;`), regex-extracts http(s) URLs, strips trailing prose punctuation, keeps ONLY URLs a covered
-// adapter claims (resolveUrl), and dedupes by the resolved (source, rawSlug). This suite locks that
-// contract against a captured-shape /items tree plus hand-built punctuation/entity edge cases. The live
-// `fetchHnAlgoliaLane` check is gated behind HN_LIVE_TEST=1 (unit project has no MSW, so the opt-in fetch
-// can reach the network).
+// `parseHnThread` is the offline, network-free half of the HN "Who is hiring?" lane: it entity-decodes
+// each comment's HTML (HN encodes `/` as `&#x2F;` and `&` as `&amp;`), regex-extracts http(s) URLs, strips
+// trailing prose punctuation, keeps ONLY URLs a covered adapter claims (resolveUrl), and dedupes by the
+// resolved (source, rawSlug). This suite locks that contract against a captured-shape /items tree plus
+// hand-built punctuation/entity edge cases. The live `fetchHnAlgoliaLane` gate is hn.live.test.ts.
 
 describe("parseHnThread — offline captured fixture", () => {
-  // Captured-shape /items tree (trimmed), copied VERBATIM from scripts/test-lane-hn.ts. URLs are HN-ENCODED
+  // Captured-shape /items tree (trimmed). URLs are HN-ENCODED
   // exactly as the Algolia API returns them — `/` as `&#x2F;` (so the parser MUST entity-decode before
   // matching) and `&` as `&amp;`. Mixes covered ATS boards (greenhouse/lever/ashby), an uncovered ATS
   // (bamboohr), a vanity homepage, a GitHub link, an href with &amp; in the query, a URL with trailing prose

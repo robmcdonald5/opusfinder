@@ -128,7 +128,6 @@ const MAX_RETRY_WAIT_MS = 5_000;
 // clock starts (≤ 2 s, GATE_TIMEOUT_MS in ./control): ≈ 2 + 600 + 120 + 5 + 10 + 1 ≈ 738 s ≈ 12.3 min,
 // leaving ~2.7 min for that board's DB writes, the stale sweep and finishRun.
 const BOARD_TIME_LIMIT_MS = 120_000;
-// limit + reprobeLimit sized to the subrequest budget (REQUIRES Workers Paid).
 const DISCOVERY_LIMIT = 400;
 const DISCOVERY_REPROBE_LIMIT = 500;
 
