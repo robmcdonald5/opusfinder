@@ -37,11 +37,9 @@ export type ConfigResult =
   | { ok: true; config: CtlConfig; path: string; warnings: string[] }
   | { ok: false; error: string };
 
+/** Not XDG_CONFIG_HOME: the agent sandbox points that at a scratch dir, away from the provisioned file. */
 export function configPath(deps: Pick<ConfigDeps, "env" | "home">): string {
-  const explicit = deps.env[ENV_VARS.file];
-  if (explicit) return explicit;
-  const base = deps.env.XDG_CONFIG_HOME || join(deps.home, ".config");
-  return join(base, "opusfinder-agent", "ctl.json");
+  return deps.env[ENV_VARS.file] || join(deps.home, ".config", "opusfinder-agent", "ctl.json");
 }
 
 /** https only — the service token rides in request headers — except a loopback URL for `wrangler dev`. */

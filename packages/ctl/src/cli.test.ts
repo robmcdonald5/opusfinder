@@ -71,22 +71,26 @@ function harness(replies: Reply[], opts: { isTTY?: boolean; answer?: string } = 
 const STATUS = {
   generatedAt: "2026-10-04T18:00:00.000Z",
   caller: { role: "agent", name: "observer" },
-  global: { desired: "on" },
+  global: { desired: "on", source: "set" },
   stages: [
     {
       id: "ingest",
       desired: "on",
+      source: "set",
       effective: "on",
       cappedBy: null,
-      overrides: [{ target: "ingest@source=gem", override: "off" }],
+      gate: "shadow",
+      overrides: [{ target: "ingest@source=gem", override: "off", source: "set" }],
       knobs: [{ target: "ingest.boardsPerTick", value: 75, source: "set" }],
       lastRun: { outcome: "ok", started_at: "2026-10-04T17:00:00.000Z" },
+      overdue: false,
     },
   ],
   policies: [
     {
       id: "health.digest_health",
       desired: "shadow",
+      source: "set",
       effective: "shadow",
       agent: "approval",
       knobs: [],
@@ -160,6 +164,9 @@ describe("argument handling (offline)", () => {
     [["withdraw", "abc"]],
     [["status", "extra"]],
     [["status", "--bogus"]],
+    [["propose", "ingest.boardsPerTick", "500", "--reason", "preview", "--dry-run"]],
+    [["withdraw", "5", "--dry-run"]],
+    [["proposals", "--reason", "x"]],
   ])("rejects %j as a usage error without any network call", async (argv) => {
     const h = harness([]);
     expect(await h.run(argv)).toBe(EXIT.usage);
@@ -209,12 +216,46 @@ describe("requests", () => {
     const h = harness([{ status: 200, body: STATUS }]);
     await h.run(["status"]);
     const text = h.stdout();
-    expect(text).toMatch(/ingest\s+on\s+on\s+ok 2026-10-04 17:00Z/);
+    expect(text).toMatch(/^ingest\s+on\s+on\s+logs only\s+ok 2026-10-04 17:00Z$/m);
     expect(text).toContain("overrides: ingest@source=gem=off");
     expect(text).toContain("knobs (non-default): ingest.boardsPerTick=75");
     expect(text).toContain("#4 embed: off → on by agent:observer [open]");
     expect(text).toContain("resume");
     expect(text).toMatch(/embed: on → off by owner:o@x \(panel\)$/m);
+  });
+
+  it("flags what a value alone doesn't say: unreadable, overdue, failing", async () => {
+    const [ingest] = STATUS.stages;
+    const h = harness([
+      {
+        status: 200,
+        body: {
+          ...STATUS,
+          stages: [
+            {
+              ...ingest,
+              desired: "off",
+              effective: "off",
+              source: "invalid",
+              overdue: true,
+              knobs: [{ target: "ingest.boardsPerTick", value: 1, source: "invalid" }],
+            },
+          ],
+          recentRuns: {
+            since: "2026-10-03T18:00:00.000Z",
+            byStage: { ingest: { ok: 2, error: 5 } },
+          },
+        },
+      },
+    ]);
+    await h.run(["status"]);
+    const text = h.stdout();
+    expect(text).toMatch(
+      /^ingest\s+off \(unreadable, so the safe value is used\)\s+off\s+logs only\s+ok 2026-10-04 17:00Z \(5 failed in 24 h\) OVERDUE$/m,
+    );
+    expect(text).toContain(
+      "knobs (non-default): ingest.boardsPerTick=1 (unreadable, so the safe value is used)",
+    );
   });
 
   it("lists proposals, all statuses with --all", async () => {
@@ -251,7 +292,19 @@ describe("set", () => {
       body: { target: "ingest", value: "off", reason: "token spike, investigating" },
     });
     expect(h.sent[0]?.body).not.toHaveProperty("proposeIfNeeded");
-    expect(h.stdout()).toBe("applied: ingest on → off (change #12)");
+    expect(h.stdout()).toBe(
+      "applied: ingest on → off (change #12) — not enforced yet (ingest: logs only)",
+    );
+  });
+
+  it("says which readers don't enforce a policy yet, on a no-op too", async () => {
+    const h = harness([
+      { status: 200, body: { result: "noop", target: "close", value: "enforce" } },
+    ]);
+    expect(await h.run(["set", "close", "enforce", "--reason", "x"])).toBe(EXIT.ok);
+    expect(h.stdout()).toBe(
+      "no change: close is already enforce — not enforced yet (ingest, discover: logs only; digest: not wired)",
+    );
   });
 
   it("files the proposal in one call when unattended and prints its id (exit 3)", async () => {
@@ -324,6 +377,53 @@ describe("set", () => {
   });
 });
 
+describe("propose", () => {
+  const proposal = {
+    id: 9,
+    target: "embed",
+    from_value: "off",
+    to_value: "on",
+    reason: "drain",
+    status: "open",
+    proposer: "agent:observer",
+    expires_at: "2026-10-11T00:00:00.000Z",
+  };
+  it.each<[string, Reply, number, RegExp]>([
+    [
+      "files",
+      { status: 201, body: { proposal, duplicate: false } },
+      EXIT.proposed,
+      /^filed proposal #9/,
+    ],
+    [
+      "finds a duplicate",
+      { status: 200, body: { proposal, duplicate: true } },
+      EXIT.proposed,
+      /^already proposed #9/,
+    ],
+    [
+      "is already so",
+      { status: 409, body: { error: { code: "no_change", message: "embed is already on" } } },
+      EXIT.ok,
+      /^no change: embed is already on$/,
+    ],
+    [
+      "is refused",
+      { status: 403, body: { error: { code: "forbidden", message: "no" } } },
+      EXIT.error,
+      /^error \(forbidden\): no$/,
+    ],
+  ])("%s", async (_label, reply, code, message) => {
+    const h = harness([reply]);
+    expect(await h.run(["propose", "embed", "on", "--reason", "drain"])).toBe(code);
+    expect(h.sent[0]).toMatchObject({
+      url: `${URL_BASE}/v1/proposals`,
+      body: { target: "embed", value: "on", reason: "drain" },
+    });
+    expect(h.output()).toMatch(message);
+  });
+});
+
 describe("failures never leak the secret", () => {
   it.each<[string, Reply, RegExp]>([
     [
@@ -354,6 +454,7 @@ describe("failures never leak the secret", () => {
       new TypeError(`Headers.append: "${SECRET}" is an invalid header value.`),
       /could not reach https:\/\/opusfinder-control/,
     ],
+    ["a truncated JSON body", { status: 200, body: '{"result": "app' }, /^error: SyntaxError/],
   ])("exits 1 on %s", async (_label, reply, message) => {
     const h = harness([reply]);
     expect(await h.run(["set", "ingest", "off", "--reason", "x"])).toBe(EXIT.error);

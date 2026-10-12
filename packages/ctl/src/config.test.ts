@@ -31,11 +31,9 @@ const goodFile = JSON.stringify({
 });
 
 describe("configPath", () => {
-  it("defaults to ~/.config/opusfinder-agent/ctl.json, honouring XDG_CONFIG_HOME and an explicit override", () => {
+  it("defaults to ~/.config/opusfinder-agent/ctl.json whatever XDG_CONFIG_HOME says, unless overridden", () => {
     expect(configPath({ env: {}, home: HOME })).toBe(DEFAULT_PATH);
-    expect(configPath({ env: { XDG_CONFIG_HOME: "/xdg" }, home: HOME })).toBe(
-      join("/xdg", "opusfinder-agent", "ctl.json"),
-    );
+    expect(configPath({ env: { XDG_CONFIG_HOME: "/xdg" }, home: HOME })).toBe(DEFAULT_PATH);
     expect(configPath({ env: { OPUSFINDER_CTL_CONFIG: "/elsewhere.json" }, home: HOME })).toBe(
       "/elsewhere.json",
     );

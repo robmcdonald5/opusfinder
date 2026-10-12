@@ -49,6 +49,8 @@ export async function callApi(
       headers,
       body: body === undefined ? undefined : JSON.stringify(body),
       redirect: "manual",
+      // Bounds the body read too. A timed-out POST may still have landed: a rerun answers noop or duplicate.
+      signal: AbortSignal.timeout(30_000),
     });
   } catch (err) {
     // Only the error's code: fetch's message can quote a header value, and the headers hold the secret.

@@ -308,7 +308,7 @@ nano ~/.config/opusfinder-agent/ctl.json
 ```
 
 (`OPUSFINDER_CTL_URL` / `OPUSFINDER_CTL_CLIENT_ID` / `OPUSFINDER_CTL_CLIENT_SECRET` override the
-file per field.)
+file per field; `OPUSFINDER_CTL_CONFIG` names another file.)
 
 **7. Verify**
 
@@ -333,7 +333,8 @@ Applications → Add → Self-hosted), with the same two policies; use that app'
 - Add Claude Code `deny`/`ask` rules for `wrangler d1`, `wrangler deploy`, `wrangler secret` and
   `wrangler kv` — your wrangler login could otherwise bypass the API and its rules.
 - Agents run `pnpm ctl` in their sandbox: it must be able to read `~/.config/opusfinder-agent` and
-  reach the `workers.dev` hostname (add it to the sandbox network allowlist).
+  reach the `workers.dev` hostname (add it to the sandbox network allowlist). Behind the sandbox's
+  proxy, Node's fetch needs `NODE_USE_ENV_PROXY=1`.
 - Don't grant the browser extension the panel's hostname.
 
 **Break-glass** (Access locks you out): edit D1 directly as yourself and log it by hand —
