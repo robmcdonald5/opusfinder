@@ -78,10 +78,10 @@ prompt pieces.
 
 ### Swapping providers
 
-All provider-specific wiring lives in `src/provider.ts` (provider construction + the
-model-ID map) plus the key guard in `src/env.ts`. Swapping to OpenAI (e.g.
-`@ai-sdk/openai`) is contained to those two spots — `generate()` / `batchGenerate()`
-stay provider-agnostic. opusfinder ships only the Anthropic provider.
+Provider construction and the model-ID map for `generate()` / `generateObject()` live in
+`src/provider.ts`, plus the key guard in `src/env.ts`. The batch path
+(`src/batch.ts`) talks to the Anthropic SDK directly, so it does not swap. opusfinder ships only
+the Anthropic provider.
 
 ## Test
 

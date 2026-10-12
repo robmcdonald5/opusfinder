@@ -153,6 +153,7 @@ describe("batch — Anthropic Message Batches over MSW", () => {
       customId: "ok1",
       status: "succeeded",
       text: "the answer",
+      stopReason: "end_turn",
       // absent cache_creation_input_tokens -> 0; cache_read_input_tokens camelCased through
       usage: { inputTokens: 10, outputTokens: 4, cacheCreationInputTokens: 0, cacheReadInputTokens: 7 },
     });

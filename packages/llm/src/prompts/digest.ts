@@ -33,9 +33,10 @@ Output ONLY the note text — no preamble, no heading, no quotation marks, no ma
 /**
  * Compose the cached synthesis `system`: the rubric, then the candidate's profile via the shared
  * {@link composeProfileText} (the same representation retrieval + rerank used). The job is NOT here —
- * it's the per-request variable tail ({@link renderDigestJob}). NOTE: at Sonnet 4.6's 2048-token cache
- * minimum a thin rubric+profile may not engage caching (synthesis caching is best-effort regardless);
- * the 50% batch discount is the load-bearing saving, not the cache.
+ * it's the per-request variable tail ({@link renderDigestJob}). NOTE: Sonnet 4.6 caches a prefix from
+ * 1024 tokens, so a skill-dense profile on this ~450-token rubric can pay the 1h-TTL cache write (2x
+ * base input) while reads within a batch are best-effort; the `synthesisCache*` counters on
+ * `digests.counts` show whether it pays. The 50% batch discount is the load-bearing saving, not the cache.
  */
 export function buildDigestSystem(profile: StructuredProfile, prefs?: PromptPreferences): string {
   const base = `${DIGEST_SYNTHESIS_SYSTEM}\n\n=== Candidate profile ===\n${composeProfileText(profile)}`;

@@ -106,14 +106,27 @@ beforeEach(() => {
       [1, 0.9],
       [2, 0.8],
     ]),
+    usage: { inputTokens: 300, outputTokens: 40 },
     cache: { creationInputTokens: 10, readInputTokens: 20 },
   });
   batchSubmit.mockResolvedValue("batch-1");
   batchPoll.mockResolvedValue({ status: "ended" });
+  const synthUsage = {
+    inputTokens: 100,
+    outputTokens: 30,
+    cacheCreationInputTokens: 5,
+    cacheReadInputTokens: 7,
+  };
   batchCollect.mockResolvedValue(
     new Map([
-      [`d${RUN_ID}-1`, { text: "reason one", status: "succeeded" }],
-      [`d${RUN_ID}-2`, { text: "reason two", status: "succeeded" }],
+      [
+        `d${RUN_ID}-1`,
+        { text: "reason one", status: "succeeded", stopReason: "end_turn", usage: synthUsage },
+      ],
+      [
+        `d${RUN_ID}-2`,
+        { text: "reason two", status: "succeeded", stopReason: "end_turn", usage: synthUsage },
+      ],
     ]),
   );
   probeMod.probeDigestLiveness.mockResolvedValue({ survivors: 2, counts: {} });
@@ -284,6 +297,20 @@ describe("runPerUser", () => {
       "collect-synthesis",
       "persist",
     ]);
+    // Per-digest spend: rerank usage as reported, synthesis usage summed over the batch's results.
+    expect(repos.insertDigest.mock.calls[0]![1].counts).toEqual({
+      candidates: 2,
+      reranked: 2,
+      rerankScored: 2,
+      rerankInputTokens: 300,
+      rerankOutputTokens: 40,
+      rerankCacheReadTokens: 20,
+      rerankCacheCreationTokens: 10,
+      synthesisInputTokens: 200,
+      synthesisOutputTokens: 60,
+      synthesisCacheReadTokens: 14,
+      synthesisCacheCreationTokens: 10,
+    });
     expect(sleeps).toEqual(["synthesis-initial-wait"]); // poll ended first tick → no synthesis-wait
     expect(probeMod.probeDigestLiveness).toHaveBeenCalledWith(
       expect.anything(),
@@ -470,6 +497,7 @@ describe("runPerUser", () => {
         [1, 0.4],
         [2, 0.3],
       ]),
+      usage: { inputTokens: 300, outputTokens: 40 },
       cache: { creationInputTokens: 10, readInputTokens: 20 },
     });
     const { runs, tools } = recordingStep();
@@ -478,6 +506,22 @@ describe("runPerUser", () => {
 
     expect(out).toEqual({ userId: USER, skipped: "no-strong-matches" });
     expect(runs).toEqual(["load", "retrieve", "rerank", "mark-considered-no-strong"]);
+    expect(batchSubmit).not.toHaveBeenCalled();
+  });
+
+  it("throws, without backing the user off, when the rerank scored no candidate", async () => {
+    rerank.mockResolvedValue({
+      orderedIds: [1, 2], // the core's backfilled permutation, with nothing scored
+      scores: new Map(),
+      usage: { inputTokens: 300, outputTokens: 40 },
+      cache: { creationInputTokens: 10, readInputTokens: 20 },
+    });
+    const { tools } = recordingStep();
+
+    await expect(runPerUser(makeDeps(), event(), tools)).rejects.toThrow(
+      /rerank scored none of 2 candidate/,
+    );
+    expect(repos.markDigestConsidered).not.toHaveBeenCalled();
     expect(batchSubmit).not.toHaveBeenCalled();
   });
 
@@ -516,6 +560,7 @@ describe("runPerUser", () => {
     rerank.mockResolvedValue({
       orderedIds: [999],
       scores: new Map([[999, 0.9]]),
+      usage: { inputTokens: 0, outputTokens: 0 },
       cache: { creationInputTokens: 0, readInputTokens: 0 },
     });
     const { tools } = recordingStep();
@@ -555,17 +600,38 @@ describe("runPerUser", () => {
     expect(durationById.get("synthesis-wait-30")).toBe("10m"); // first slow (i=30, not < 30)
   });
 
-  it("throws when synthesis yields no usable reason for any item", async () => {
+  it("throws when synthesis yields no usable reason for any item, naming each drop reason", async () => {
     batchCollect.mockResolvedValue(
       new Map([
-        [`d${RUN_ID}-1`, { text: "  ", status: "succeeded" }], // whitespace → trimmed empty
-        [`d${RUN_ID}-2`, { text: "x", status: "errored" }], // non-succeeded → dropped
+        [`d${RUN_ID}-1`, { text: "  ", status: "succeeded", stopReason: "end_turn" }], // trimmed empty
+        [`d${RUN_ID}-2`, { text: "", status: "errored", error: "overloaded_error" }], // non-succeeded
       ]),
     );
     const { tools } = recordingStep();
 
-    await expect(runPerUser(makeDeps(), event(), tools)).rejects.toThrow(/no usable reason/);
+    await expect(runPerUser(makeDeps(), event(), tools)).rejects.toThrow(
+      /no usable reason for any of 2 item\(s\) .*: empty=1, overloaded_error=1\.$/,
+    );
     expect(repos.insertDigest).not.toHaveBeenCalled();
+  });
+
+  it("drops a note cut off at max_tokens even though its request succeeded", async () => {
+    batchCollect.mockResolvedValue(
+      new Map([
+        [
+          `d${RUN_ID}-1`,
+          { text: "You match because your Go and", status: "succeeded", stopReason: "max_tokens" },
+        ],
+        [`d${RUN_ID}-2`, { text: "reason two", status: "succeeded", stopReason: "end_turn" }],
+      ]),
+    );
+    const { tools } = recordingStep();
+
+    const out = await runPerUser(makeDeps(), event(), tools);
+
+    expect(out).toMatchObject({ itemCount: 1 });
+    const items = repos.insertDigestItems.mock.calls.at(-1)![3] as Array<{ jobId: number }>;
+    expect(items.map((it) => it.jobId)).toEqual([2]);
   });
 
   it("partial synthesis: drops the reason-less item and renumbers the lone survivor to rank 1", async () => {
@@ -575,7 +641,7 @@ describe("runPerUser", () => {
     batchCollect.mockResolvedValue(
       new Map([
         [`d${RUN_ID}-1`, { text: "reason one", status: "errored" }], // non-succeeded → dropped
-        [`d${RUN_ID}-2`, { text: "reason two", status: "succeeded" }], // survives
+        [`d${RUN_ID}-2`, { text: "reason two", status: "succeeded", stopReason: "end_turn" }], // survives
       ]),
     );
     const { tools } = recordingStep();
