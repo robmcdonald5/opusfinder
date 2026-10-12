@@ -1,8 +1,7 @@
 /**
  * Persistence for the digest pipeline: the eligible-recipient query, the already-shown anti-join, and the
- * run/header/item writes. The Drizzle client is injected, every mutation is a single neon-http round-trip,
- * and time math is SQL-side (`now()`). The run helpers mirror ./discovery's `startRun`/`finishRun` against
- * `digest_runs`.
+ * run/header/item writes. The Drizzle client is injected and time math is SQL-side (`now()`). The run
+ * helpers mirror ./discovery's `startRun`/`finishRun` against `digest_runs`.
  */
 import { and, desc, eq, gt, inArray, isNotNull, isNull, sql, type SQL } from "drizzle-orm";
 
@@ -34,19 +33,32 @@ export interface DigestRecipient {
 /**
  * The cadence "due now" predicate, applied ONLY for the cadence cron (trigger='cron', via
  * `listDigestRecipients`'s `cadenceDue`). A user is due when enough time has elapsed since their last send
- * for their cadence. `last_digest_sent_at` is stamped `now()` on every successful send (`recordDigestSent`),
- * so NULL = never-sent = always due. The windows sit a little UNDER the nominal period (daily 20h / weekly
- * 6d / monthly 28d) so a fixed-time daily cron reliably catches each user once per period without skipping a
- * tick; the per-user `singleton` (digest-user) guards the double-send edge. Tunable in this one place. The
- * cadence/interval literals are hardcoded (not user input) — safe inline SQL.
+ * for their cadence. `last_digest_sent_at` holds the START of the run that last emailed or considered the
+ * user ({@link cadenceStamp}), not the send time, which trails the cron by the synthesis batch wait. NULL =
+ * never-sent = always due. Each window sits 4h under a whole number of days (daily 20h / weekly 6d 20h /
+ * monthly 28d 20h), so the fixed-time daily cron catches each user exactly every 1 / 7 / 29 ticks: a stamp
+ * taken at a tick is never due before the last tick of its period and always due at it. Because the clock
+ * starts at the tick, a digest whose batch ran late can be followed by the next one within hours (the
+ * shown-history keeps their jobs apart); the per-user `singleton` (digest-user) guards the double-send
+ * edge. Tunable in this one place. The cadence/interval literals are hardcoded (not user input) — safe
+ * inline SQL.
  */
 function cadenceDuePredicate(): SQL {
   const sent = userPreferences.lastDigestSentAt;
   const cadence = userPreferences.digestCadence;
   return sql`(
     (${cadence} = 'daily' AND (${sent} IS NULL OR ${sent} < now() - interval '20 hours'))
-    OR (${cadence} = 'weekly' AND (${sent} IS NULL OR ${sent} < now() - interval '6 days'))
-    OR (${cadence} = 'monthly' AND (${sent} IS NULL OR ${sent} < now() - interval '28 days'))
+    OR (${cadence} = 'weekly' AND (${sent} IS NULL OR ${sent} < now() - interval '6 days 20 hours'))
+    OR (${cadence} = 'monthly' AND (${sent} IS NULL OR ${sent} < now() - interval '28 days 20 hours'))
+  )`;
+}
+
+/** The `last_digest_sent_at` value for a run that emailed or considered the user: the run's start. GREATEST
+ *  keeps a dashboard rerun of an older run from moving the clock back. */
+function cadenceStamp(digestRunId: number): SQL {
+  return sql`GREATEST(
+    ${userPreferences.lastDigestSentAt},
+    (SELECT ${digestRuns.startedAt} FROM ${digestRuns} WHERE ${digestRuns.id} = ${digestRunId})
   )`;
 }
 
@@ -399,9 +411,9 @@ export async function dropDigestItemsAndRecount(
 // --- Email delivery: the render read + the per-send / user-level state writes -----------
 
 /**
- * Everything the email render needs for one digest — ONE round trip:
- * `digests ⋈ user ⋈ digest_items ⋈ jobs ⋈ companies`, ORDER BY rank. INNER JOINs are safe: the
- * persist step throws on zero kept items, so an existing digest always has ≥1 item row here.
+ * Everything the email render needs for one digest — ONE round trip, ORDER BY rank: `digests ⋈ user ⋈
+ * user_preferences ⋈ digest_items`, LEFT-joined to `jobs`/`companies` so a pruned job's item still reads
+ * its snapshot. The persist step throws on zero kept items, so an existing digest always has ≥1 item row.
  * `companySlug` is `companies.slug` — there is NO name column (metadata jsonb is unpopulated).
  * `items` may be EMPTY when every item's job was lifecycle-closed after persist (see
  * `getDigestEmailPayload`); the send step treats that as a clean no-send.
@@ -418,6 +430,10 @@ export interface DigestEmailPayload {
    *  un-approved); it is DELIBERATELY NOT passed to `renderDigestEmail`, so it never enters the rendered
    *  bytes and the Resend idempotency-key replay contract is untouched. */
   approvedAt: Date | null;
+  /** The other recipient gates, re-read at the send boundary like `approvedAt` and GATE-ONLY too: digests
+   *  on, a verified email, not suppressed. False once the user opted out, was suppressed or lost
+   *  verification during the synthesis wait. */
+  eligible: boolean;
   items: {
     rank: number;
     reason: string;
@@ -487,6 +503,8 @@ export async function getDigestEmailPayload(
       // the 1:1 row is created at user creation and is a hard invariant for any enrolled user (its absence
       // yields the same null-payload invariant break the send step already throws on).
       approvedAt: userPreferences.digestApprovedAt,
+      eligible: sql<boolean>`(${userPreferences.digestEnabled} AND ${user.emailVerified}
+        AND ${userPreferences.digestSuppressedAt} IS NULL)`,
     })
     .from(digests)
     .innerJoin(user, eq(user.id, digests.userId))
@@ -504,6 +522,7 @@ export async function getDigestEmailPayload(
     recipient: { email: first.email, name: first.name },
     createdAt: first.createdAt,
     approvedAt: first.approvedAt,
+    eligible: first.eligible,
     items: rows
       .filter((r) => r.lifecycleState === "active")
       .map((r) => ({
@@ -529,17 +548,21 @@ export async function recordDigestSent(db: Db, digestId: number, emailId: string
     .update(digests)
     .set({ emailId, deliveryStatus: "sent", sentAt: sql`now()` })
     .where(eq(digests.id, digestId))
-    .returning({ userId: digests.userId });
+    .returning({ userId: digests.userId, digestRunId: digests.digestRunId });
   const row = rows[0];
   if (!row) throw new Error(`recordDigestSent matched no digest (id ${digestId})`);
   await db
     .update(userPreferences)
-    .set({ lastDigestSentAt: sql`now()`, lastDigestEmailId: emailId, updatedAt: sql`now()` })
+    .set({
+      lastDigestSentAt: cadenceStamp(row.digestRunId),
+      lastDigestEmailId: emailId,
+      updatedAt: sql`now()`,
+    })
     .where(eq(userPreferences.userId, row.userId));
 }
 
 /**
- * Cadence backoff: stamp `last_digest_sent_at = now()` WITHOUT an email id, for a user a cadence run
+ * Cadence backoff: stamp `last_digest_sent_at` (the run's start) WITHOUT an email id, for a user a cadence run
  * CONSIDERED but did not email (no candidates / nothing above the score floor / all apply-URLs dead / the
  * send permit was revoked mid-run). This backs the user off until their next cadence period, so the daily
  * cadence cron does NOT re-run the full (paid) pipeline for a perpetually-thin or just-un-approved user
@@ -550,10 +573,18 @@ export async function recordDigestSent(db: Db, digestId: number, emailId: string
  * (the only reader is the show-digest-delivery diagnostic; no pipeline logic branches on the id).
  * Idempotent single write. Pairs with {@link cadenceDuePredicate}, which reads `last_digest_sent_at`.
  */
-export async function markDigestConsidered(db: Db, userId: UserId): Promise<void> {
+export async function markDigestConsidered(
+  db: Db,
+  userId: UserId,
+  digestRunId: number,
+): Promise<void> {
   await db
     .update(userPreferences)
-    .set({ lastDigestSentAt: sql`now()`, lastDigestEmailId: null, updatedAt: sql`now()` })
+    .set({
+      lastDigestSentAt: cadenceStamp(digestRunId),
+      lastDigestEmailId: null,
+      updatedAt: sql`now()`,
+    })
     .where(eq(userPreferences.userId, userId));
 }
 
@@ -598,9 +629,14 @@ export async function recordDigestDeliveryOutcome(
 
 /**
  * Terminal send failure (the send step exhausted its retries): `delivery_status='failed'`;
- * `email_id`/`sent_at` stay NULL. Deliberately does NOT throw on a missing digest row — this runs in
- * the failure path (a missing row may be the very cause), and a second error would mask the original.
+ * `email_id`/`sent_at` stay NULL. A digest already recorded as sent (`email_id` set) is left alone, so a
+ * later failed attempt never relabels an email that went out. Deliberately does NOT throw on a missing
+ * digest row — this runs in the failure path (a missing row may be the very cause), and a second error
+ * would mask the original.
  */
 export async function recordDigestSendFailure(db: Db, digestId: number): Promise<void> {
-  await db.update(digests).set({ deliveryStatus: "failed" }).where(eq(digests.id, digestId));
+  await db
+    .update(digests)
+    .set({ deliveryStatus: "failed" })
+    .where(and(eq(digests.id, digestId), isNull(digests.emailId)));
 }

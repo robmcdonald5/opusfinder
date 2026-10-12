@@ -98,8 +98,8 @@ export async function deliverDigestEmail(
   db: Db,
   email: EmailSeam,
   digestId: number,
-): Promise<DigestDeliveryStatus | "skipped-unapproved" | "skipped-empty"> {
-  let sent: SendDigestResult | { skipped: "empty" | "unapproved" };
+): Promise<DigestDeliveryStatus | "skipped-unapproved" | "skipped-ineligible" | "skipped-empty"> {
+  let sent: SendDigestResult | { skipped: "empty" | "unapproved" | "ineligible" };
   try {
     sent = await step.run("send-email", async () => {
       const payload = await getDigestEmailPayload(db, digestId);
@@ -110,6 +110,13 @@ export async function deliverDigestEmail(
       // job must never reach an inbox) and skip the poll. A clean no-send, distinct from the null invariant
       // break above; the orchestrator backs the user off the cadence.
       if (payload.items.length === 0) return { skipped: "empty" as const };
+      // The load step's other eligibility gates, re-read: an opt-out, suppression or lost verification
+      // that landed during the synthesis wait must not be emailed. No cadence backoff: while a gate
+      // fails, the recipient query and the load step skip the user anyway.
+      if (!payload.eligible) {
+        console.log(`digest: recipient no longer eligible — skipping send for digest ${digestId}`);
+        return { skipped: "ineligible" as const };
+      }
       // DB-native SEND PERMIT: re-read at the send boundary as defense-in-depth. Falsy approvedAt
       // (NULL = un-approved) ⇒ no send. EXPLICIT branch BEFORE email.send — an un-approved user returns a
       // NON-null payload WITH items, so this must NOT be folded into the null-invariant or empty-items shapes
@@ -127,7 +134,7 @@ export async function deliverDigestEmail(
     await step.run("record-send-failure", () => recordDigestSendFailure(db, digestId));
     throw err; // rethrow so Inngest records the failed run
   }
-  if ("skipped" in sent) return sent.skipped === "empty" ? "skipped-empty" : "skipped-unapproved";
+  if ("skipped" in sent) return `skipped-${sent.skipped}`;
   const emailId = sent.emailId;
 
   // Poll steps are PURE (return the last_event string); the single record step does the mapped writes.

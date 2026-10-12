@@ -35,6 +35,7 @@ function makePayload(items: Item[], overrides: Partial<DigestEmailPayload> = {})
     recipient: { email: "preview@example.com", name: "Preview User" },
     createdAt: CREATED_AT,
     approvedAt: new Date("2026-06-10T00:00:00Z"),
+    eligible: true,
     items,
     ...overrides,
   };

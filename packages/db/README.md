@@ -13,8 +13,8 @@ the Phase-9 profiles repo — `insertCvFile` / `patchCvFileExtracted` / `markCvF
 `upsertUserProfile` / `getProfileTextKey`; and the Phase-9.5 preferences repo — `getPreferences` /
 `getOrCreatePreferences` / `updatePreferences`; the Phase-10 retrieval repo —
 `retrieveCandidatesForProfile`; and the Phase-10 digests repo — `listDigestRecipients` (gained an
-opt-in `cadenceDue` cadence-window predicate — daily 20h / weekly 6d / monthly 28d off
-`last_digest_sent_at`; default no-filter, set true only on a cron run) /
+opt-in `cadenceDue` cadence-window predicate off `last_digest_sent_at`; default no-filter, set true
+only on a cron run) /
 `alreadyShownJobIds` / `startDigestRun` / `finishDigestRun` / `insertDigest` / `insertDigestItems` /
 `deleteUserDigestForRun` / `getLatestDigestForUser` / `markDigestConsidered` (the Phase-12a no-send
 backoff — stamps `last_digest_sent_at` on the skip paths so a due-but-empty user doesn't re-run the paid
