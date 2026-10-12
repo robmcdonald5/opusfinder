@@ -10,7 +10,7 @@ export type {
   BatchPoll,
   BatchProcessingStatus,
 } from "./batch";
-export { generateObject } from "./generate-object";
+export { generateObject, ObjectGenerationError } from "./generate-object";
 export type { GenerateObjectParams, GenerateObjectResult } from "./generate-object";
 export { pdfPart } from "./file-part";
 export { CV_TRANSCRIBE_SYSTEM, CV_STRUCTURE_SYSTEM, CvProfileSchema } from "./prompts/cv-extract";

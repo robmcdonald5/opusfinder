@@ -24,7 +24,6 @@
     "@opusfinder/llm": "workspace:*",
     "@opusfinder/rerank": "workspace:*",
     "@opusfinder/shared": "workspace:*",
-    "dotenv": "^17",
     "zod": "^4"
   },
   "devDependencies": {

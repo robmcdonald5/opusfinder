@@ -15,8 +15,7 @@
   },
   "dependencies": {
     "@opusfinder/db": "workspace:*",
-    "@opusfinder/shared": "workspace:*",
-    "dotenv": "^17"
+    "@opusfinder/shared": "workspace:*"
   },
   "devDependencies": {
     "tsx": "^4"

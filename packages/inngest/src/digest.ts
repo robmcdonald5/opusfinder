@@ -61,11 +61,13 @@ const SYNTH_MAX_POLLS = SYNTH_FAST_POLLS + SYNTH_SLOW_POLLS;
  *  runtime (an empty string is falsy-shaped junk that must not widen into an all-recipients run). */
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-/** The rerank result the per-user function consumes: a global ordering, the score map, and the
- *  aggregated prompt-cache counters across the rerank's chunk calls (the "cache hit rate >0" gate). */
+/** The rerank result the per-user function consumes: a global ordering, the score map (only the
+ *  candidates the model actually scored), and the token and prompt-cache counters summed across the
+ *  rerank's chunk calls (the cache counters feed the "cache hit rate >0" gate). */
 export interface RerankOutcome {
   orderedIds: number[];
   scores: Map<number, number>;
+  usage: { inputTokens: number; outputTokens: number };
   cache: { creationInputTokens: number; readInputTokens: number };
 }
 
@@ -165,6 +167,21 @@ function toPromptPrefs(prefs: UserPreferencesRow): PromptPreferences {
     maxSalary: prefs.maxSalary,
     dealbreakers: prefs.dealbreakers,
   };
+}
+
+/** One synthesis result as carried across the collect → persist step boundary. */
+type SynthesisResult = Pick<BatchResult, "text" | "status" | "stopReason" | "error">;
+
+/** A synthesis result's note, or why it has none (an error type or stop reason, never a body). A note
+ *  cut off at max_tokens or refused still arrives as `succeeded`, so only a natural stop counts. */
+function synthesisNote(result: SynthesisResult | undefined): { note: string } | { drop: string } {
+  if (!result) return { drop: "missing" };
+  if (result.status !== "succeeded") return { drop: result.error ?? result.status };
+  if (result.stopReason !== "end_turn" && result.stopReason !== "stop_sequence") {
+    return { drop: result.stopReason ?? "no-stop-reason" };
+  }
+  const note = result.text.trim();
+  return note ? { note } : { drop: "empty" };
 }
 
 /**
@@ -369,12 +386,21 @@ export async function runPerUser(deps: DigestDeps, event: PerUserEvent, step: Pe
   //    would go stale the moment synthesis drops an item.
   const reranked = await step.run("rerank", async () => {
     const rerankResult = await deps.rerank(loaded.structured, candidates, loaded.promptPrefs);
+    // Nothing scored is a broken rerank (a model or prompt regression), not weak matches — throw
+    // instead of taking the no-strong-matches path, which would back the user off for the period.
+    if (rerankResult.scores.size === 0) {
+      throw new Error(
+        `digest: rerank scored none of ${candidates.length} candidate(s) (user ${userId}).`,
+      );
+    }
     // Apply the MIN_SCORE floor, then take up to TOP_K (orderedIds is score-desc).
     const topIds = rerankResult.orderedIds
       .filter((id) => (rerankResult.scores.get(id) ?? 0) >= MIN_SCORE)
       .slice(0, TOP_K);
     return {
       items: topIds.map((id) => ({ jobId: id, score: rerankResult.scores.get(id) ?? 0 })),
+      scored: rerankResult.scores.size,
+      usage: rerankResult.usage,
       cache: rerankResult.cache,
     };
   });
@@ -445,13 +471,25 @@ export async function runPerUser(deps: DigestDeps, event: PerUserEvent, step: Pe
     );
   }
 
-  // 6. Collect results into a serializable record (Map can't cross a step boundary).
-  const reasons = await step.run("collect-synthesis", async () => {
+  // 6. Collect results into a serializable record (Map can't cross a step boundary), summing the
+  //    batch's token usage for digests.counts.
+  const synthesis = await step.run("collect-synthesis", async () => {
     const map = await deps.batch.collect(batchId);
-    const reasonsById: Record<string, { text: string; status: BatchResult["status"] }> = {};
-    for (const [customId, result] of map)
-      reasonsById[customId] = { text: result.text, status: result.status };
-    return reasonsById;
+    const reasons: Record<string, SynthesisResult> = {};
+    const usage = {
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheCreationInputTokens: 0,
+      cacheReadInputTokens: 0,
+    };
+    for (const [customId, { text, status, stopReason, error, usage: u }] of map) {
+      reasons[customId] = { text, status, stopReason, error };
+      usage.inputTokens += u?.inputTokens ?? 0;
+      usage.outputTokens += u?.outputTokens ?? 0;
+      usage.cacheCreationInputTokens += u?.cacheCreationInputTokens ?? 0;
+      usage.cacheReadInputTokens += u?.cacheReadInputTokens ?? 0;
+    }
+    return { reasons, usage };
   });
 
   // 7. Persist (retry-idempotent: delete any prior digest for this (user, run) — the FK cascade
@@ -459,21 +497,30 @@ export async function runPerUser(deps: DigestDeps, event: PerUserEvent, step: Pe
   //    (the gate requires non-empty reasons) and re-rank the survivors 1..N.
   const persisted = await step.run("persist", async () => {
     await deleteUserDigestForRun(deps.db, userId, digestRunId);
-    const kept = reranked.items
-      .map((it) => {
-        const reasonRecord = reasons[synthId(it.jobId)];
-        const reason = reasonRecord?.status === "succeeded" ? reasonRecord.text.trim() : "";
-        return { jobId: it.jobId, score: it.score, reason };
-      })
-      .filter((it) => it.reason.length > 0);
+    const kept: { jobId: number; score: number; reason: string }[] = [];
+    const dropped: Record<string, number> = {};
+    for (const it of reranked.items) {
+      const out = synthesisNote(synthesis.reasons[synthId(it.jobId)]);
+      if ("note" in out) kept.push({ jobId: it.jobId, score: it.score, reason: out.note });
+      else dropped[out.drop] = (dropped[out.drop] ?? 0) + 1;
+    }
+    const droppedSummary = Object.entries(dropped)
+      .map(([why, n]) => `${why}=${n}`)
+      .join(", ");
 
     if (kept.length === 0) {
-      // Nothing usable out of an ATTEMPTED synthesis (every request errored/expired or trimmed to
-      // empty) is a failure, not an empty digest — throw so Inngest surfaces it, instead of
-      // returning "ok" with no digests row and no error trace anywhere in the DB.
+      // Nothing usable out of an ATTEMPTED synthesis (every request errored/expired, was cut off or
+      // refused, or trimmed to empty) is a failure, not an empty digest — throw so Inngest surfaces
+      // it, instead of returning "ok" with no digests row and no error trace anywhere in the DB.
       throw new Error(
         `digest: synthesis batch ${batchId} yielded no usable reason for any of ` +
-          `${reranked.items.length} item(s) (user ${userId}, run ${digestRunId}).`,
+          `${reranked.items.length} item(s) (user ${userId}, run ${digestRunId}): ${droppedSummary}.`,
+      );
+    }
+    if (droppedSummary) {
+      console.warn(
+        `digest: synthesis batch ${batchId} dropped ${reranked.items.length - kept.length} of ` +
+          `${reranked.items.length} item(s) (user ${userId}, run ${digestRunId}): ${droppedSummary}`,
       );
     }
 
@@ -484,8 +531,15 @@ export async function runPerUser(deps: DigestDeps, event: PerUserEvent, step: Pe
       counts: {
         candidates: candidates.length,
         reranked: reranked.items.length,
+        rerankScored: reranked.scored,
+        rerankInputTokens: reranked.usage.inputTokens,
+        rerankOutputTokens: reranked.usage.outputTokens,
         rerankCacheReadTokens: reranked.cache.readInputTokens,
         rerankCacheCreationTokens: reranked.cache.creationInputTokens,
+        synthesisInputTokens: synthesis.usage.inputTokens,
+        synthesisOutputTokens: synthesis.usage.outputTokens,
+        synthesisCacheReadTokens: synthesis.usage.cacheReadInputTokens,
+        synthesisCacheCreationTokens: synthesis.usage.cacheCreationInputTokens,
       },
     });
     // Snapshot the kept jobs' display fields onto digest_items — one small SELECT over the ~12 kept ids,

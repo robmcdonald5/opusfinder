@@ -15,7 +15,7 @@ import { modelId, type ModelAlias } from "./provider";
  *     for a DURABLE caller (the Inngest digest function drives them across `step.run` + `step.sleep`,
  *     so the hours-long batch wait suspends at zero compute cost).
  *   - {@link batchGenerate} — a blocking submit→poll→collect convenience composing the primitives, for
- *     non-durable callers (the eval harness, the CLI smoke).
+ *     a non-durable caller (only the `test:batch` live smoke uses it).
  *
  * The API key comes from `getAnthropicApiKey()` (env) and the client is memoized for the process
  * (mirrors provider.ts). NODE-only by design — the digest is Node-hosted and `guard:worker` keeps this
@@ -51,11 +51,14 @@ export interface BatchUsage {
 
 /** One batch result, correlated back to its request by `customId`. `text` is the completion on success
  *  ("" otherwise); `status` distinguishes success from the per-request failure modes (a batch can
- *  partially fail); `error` carries a SECRET-free error type for non-success. */
+ *  partially fail); `error` carries a SECRET-free error type for non-success. `stopReason` is set on
+ *  success only: anything but `end_turn` / `stop_sequence` (e.g. `max_tokens`, `refusal`) means `text`
+ *  is not a complete answer. */
 export interface BatchResult {
   customId: string;
   status: BatchResultStatus;
   text: string;
+  stopReason?: Anthropic.StopReason | null;
   error?: string;
   usage?: BatchUsage;
 }
@@ -192,6 +195,7 @@ function mapResult(customId: string, result: Anthropic.Messages.MessageBatchResu
         customId,
         status: "succeeded",
         text: extractText(result.message),
+        stopReason: result.message.stop_reason,
         usage: extractUsage(result.message),
       };
     case "errored": {

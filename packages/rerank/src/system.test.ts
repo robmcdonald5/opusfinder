@@ -7,7 +7,7 @@ import { buildRerankSystem, RERANK_RUBRIC } from "./index";
 // the prompt-cache key, so the prefs block MUST ride a labeled tail that only appears when a field is set
 // — an un-answered user's prefix stays byte-identical to the no-prefs path (no per-user cache bust), and a
 // set field renders exactly once with its bound. A regression here silently busts the cache or drops a
-// judgment-context signal. Ports the buildRerankSystem half of scripts/test-rerank-prefs.ts.
+// judgment-context signal.
 const PROFILE: StructuredProfile = {
   summary: "Software engineer with a few internships; recent CS grad looking for a first full-time role.",
   skills: ["TypeScript", "Node.js", "PostgreSQL"],

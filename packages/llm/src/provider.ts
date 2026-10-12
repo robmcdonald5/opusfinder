@@ -20,8 +20,6 @@ const MODEL_IDS: Record<ModelAlias, string> = {
   sonnet: "claude-sonnet-4-6",
 };
 
-// All provider-specific wiring lives in this file (createAnthropic, getProvider, MODEL_IDS) plus the
-// key guard in env.ts; generate.ts/batch.ts stay provider-agnostic via resolveModel().
 let provider: ReturnType<typeof createAnthropic> | undefined;
 
 function getProvider(): ReturnType<typeof createAnthropic> {

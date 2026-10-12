@@ -6,19 +6,21 @@ import { anthropicMessage } from "@test/msw/fixtures/anthropic";
 import { server } from "@test/msw/server";
 import { rejectionOf } from "@test/rejection";
 
-import { generateObject } from "./generate-object";
+import { generateObject, ObjectGenerationError } from "./generate-object";
 
-// generateObject() over @ai-sdk/anthropic (STABLE tool mode), intercepted by MSW. Asserts the forced-tool
-// request shape (tool name + tool_choice, NOT the brittle serialized zod->json schema) and the two error
-// branches the wrapper adds: a truncation (max_tokens) message vs a generic schema-invalid message, with the
-// SDK's NoObjectGeneratedError kept as `cause`; a provider (non-200) error stays UNWRAPPED. Zero live egress.
+// generateObject() over @ai-sdk/anthropic, intercepted by MSW. Asserts the constrained structured-output
+// request shape (output_config.format, no forced tool; NOT the brittle serialized zod->json schema) and the
+// two error branches the wrapper adds: a truncation (max_tokens) message vs a generic schema-invalid message,
+// with the SDK's NoObjectGeneratedError kept as `cause`; a provider (non-200) error stays UNWRAPPED. Zero
+// live egress.
 
 const MESSAGES_URL = "https://api.anthropic.com/v1/messages";
 const schema = z.object({ name: z.string(), age: z.number() });
 
 type CapturedBody = {
-  tools?: { name?: string }[];
-  tool_choice?: { type?: string; name?: string };
+  tools?: unknown[];
+  tool_choice?: unknown;
+  output_config?: { format?: { type?: string } };
   max_tokens?: number;
 };
 
@@ -26,13 +28,13 @@ describe("generateObject — Anthropic Messages over MSW", () => {
   beforeAll(() => vi.stubEnv("ANTHROPIC_API_KEY", "sk-ant-test"));
   afterAll(() => vi.unstubAllEnvs());
 
-  it("sends a forced 'json' tool and returns the validated object", async () => {
+  it("constrains decoding to the schema (output_config.format) and returns the validated object", async () => {
     let body: CapturedBody | undefined;
     server.use(
       http.post(MESSAGES_URL, async ({ request }) => {
         body = (await request.json()) as CapturedBody;
         return HttpResponse.json(
-          anthropicMessage({ toolUse: { name: "json", input: { name: "Ada", age: 36 } } }),
+          anthropicMessage({ text: JSON.stringify({ name: "Ada", age: 36 }) }),
         );
       }),
     );
@@ -44,10 +46,42 @@ describe("generateObject — Anthropic Messages over MSW", () => {
     });
 
     expect(result.object).toEqual({ name: "Ada", age: 36 });
-    expect(result.finishReason).toBe("stop"); // tool_use -> stop
-    expect(body?.tools?.[0]?.name).toBe("json");
-    expect(body?.tool_choice).toMatchObject({ type: "tool", name: "json" });
+    expect(result.finishReason).toBe("stop"); // end_turn -> stop
+    expect(body?.output_config?.format?.type).toBe("json_schema");
+    expect(body?.tools).toBeUndefined();
+    expect(body?.tool_choice).toBeUndefined();
     expect(body?.max_tokens).toBe(2048); // DEFAULT_MAX_OUTPUT_TOKENS for generateObject
+  });
+
+  it("keeps the schema constraint on a model id the provider has no capability entry for", async () => {
+    vi.resetModules();
+    vi.doMock("./provider", async () => {
+      const { createAnthropic } = await import("@ai-sdk/anthropic");
+      return { resolveModel: () => createAnthropic({ apiKey: "sk-ant-test" })("claude-haiku-5-5") };
+    });
+    try {
+      const { generateObject: generateOnNewerModel } = await import("./generate-object");
+      let body: CapturedBody | undefined;
+      server.use(
+        http.post(MESSAGES_URL, async ({ request }) => {
+          body = (await request.json()) as CapturedBody;
+          return HttpResponse.json(
+            anthropicMessage({ text: JSON.stringify({ name: "Ada", age: 36 }) }),
+          );
+        }),
+      );
+
+      await generateOnNewerModel({
+        model: "haiku",
+        schema,
+        messages: [{ role: "user", content: "x" }],
+      });
+
+      expect(body?.output_config?.format?.type).toBe("json_schema");
+      expect(body?.tool_choice).toBeUndefined();
+    } finally {
+      vi.doUnmock("./provider");
+    }
   });
 
   it("wraps a truncated (max_tokens) response as an actionable error, keeping the SDK error as cause", async () => {
@@ -62,7 +96,7 @@ describe("generateObject — Anthropic Messages over MSW", () => {
     );
 
     expect(err.message).toBe(
-      "generateObject(): output was truncated at maxOutputTokens=2048; raise maxOutputTokens (set by the caller, e.g. scripts/seams.ts).",
+      "generateObject(): output was truncated at maxOutputTokens=2048; raise the caller's maxOutputTokens.",
     );
     expect(err.cause).toBeDefined(); // the SDK's NoObjectGeneratedError is preserved
   });
@@ -81,6 +115,7 @@ describe("generateObject — Anthropic Messages over MSW", () => {
     expect(err.message).toBe(
       "generateObject(): the model did not return schema-valid JSON (finishReason=stop).",
     );
+    expect(err).toBeInstanceOf(ObjectGenerationError);
   });
 
   it("propagates a provider (non-200) error UNWRAPPED, not as a generateObject() message", async () => {
@@ -98,5 +133,6 @@ describe("generateObject — Anthropic Messages over MSW", () => {
     );
 
     expect(err.message).not.toMatch(/^generateObject\(\):/); // the wrapper only catches NoObjectGeneratedError
+    expect(err).not.toBeInstanceOf(ObjectGenerationError);
   });
 });

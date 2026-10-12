@@ -101,7 +101,7 @@ describe("generate — Anthropic Messages over MSW", () => {
     expect(result.cache).toEqual({ creationInputTokens: 512, readInputTokens: 4096 });
   });
 
-  it("resolves the sonnet alias to its dated model id", async () => {
+  it("sends the sonnet tier as its floating model alias", async () => {
     let body: CapturedBody | undefined;
     server.use(
       http.post(MESSAGES_URL, async ({ request }) => {

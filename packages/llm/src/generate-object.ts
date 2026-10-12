@@ -55,6 +55,15 @@ export interface GenerateObjectResult<T> {
 
 const DEFAULT_MAX_OUTPUT_TOKENS = 2048;
 
+/** The model replied, but its output could not be parsed or validated against the schema (truncated,
+ *  refused, or off-schema). Provider and network errors are never this class. */
+export class ObjectGenerationError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "ObjectGenerationError";
+  }
+}
+
 /**
  * Structured generation over the Vercel AI SDK + Anthropic — the {@link generate} sibling for
  * schema-validated output. Same cache plumbing and cache accounting; returns the validated object.
@@ -63,10 +72,16 @@ const DEFAULT_MAX_OUTPUT_TOKENS = 2048;
  * path: on the pinned major `generateObject` is not deprecated while `experimental_output` is
  * experimental, so the stable call is the safer choice. This wrapper isolates the SDK surface.
  *
+ * Decoding is constrained to the schema (Anthropic structured outputs); the provider's default is an
+ * unconstrained forced tool call, whose input can break the schema. The mode is "outputFormat", not
+ * "auto": "auto" falls back to that forced tool on any model newer than the pinned provider version,
+ * and Sonnet 5.5 rejects forced tool use.
+ *
  * TRUNCATION: the SDK's generateObject THROWS `NoObjectGeneratedError` when the output can't be
- * parsed/validated (the usual symptom of hitting `maxOutputTokens` mid-JSON) — it does NOT return
- * `finishReason: "length"`. We re-throw it as a plain `Error` with an actionable message (the SDK
- * error is kept as `cause`); other provider errors propagate unwrapped (same posture as {@link generate}).
+ * parsed/validated (the usual symptom of hitting `maxOutputTokens` mid-JSON, or a refusal) — it does NOT
+ * return `finishReason: "length"`. We re-throw it as an {@link ObjectGenerationError} with an actionable
+ * message (the SDK error is kept as `cause`); other provider errors propagate unwrapped (same posture as
+ * {@link generate}).
  */
 export async function generateObject<T>(
   params: GenerateObjectParams<T>,
@@ -86,14 +101,15 @@ export async function generateObject<T>(
     ...req.extra,
     maxOutputTokens: effectiveMax,
     ...(temperature === undefined ? {} : { temperature }),
+    providerOptions: { anthropic: { structuredOutputMode: "outputFormat" } },
   }).catch((err: unknown) => {
     if (NoObjectGeneratedError.isInstance(err)) {
       const finishReason = err.finishReason;
       const why =
         finishReason === "length"
-          ? `output was truncated at maxOutputTokens=${effectiveMax}; raise maxOutputTokens (set by the caller, e.g. scripts/seams.ts)`
+          ? `output was truncated at maxOutputTokens=${effectiveMax}; raise the caller's maxOutputTokens`
           : `the model did not return schema-valid JSON (finishReason=${finishReason ?? "unknown"})`;
-      throw new Error(`generateObject(): ${why}.`, { cause: err });
+      throw new ObjectGenerationError(`generateObject(): ${why}.`, { cause: err });
     }
     throw err;
   });
