@@ -1,6 +1,6 @@
 # The secret-free regression gate for the repo. A single lane runs the three structural guards
-# (test-isolation + Worker-isolation + data-fix files), both typecheck graphs (shippable + test), and the
-# unit+integration suite on every PR and every push to main. Deliberately SECRET-FREE: PGlite is in-process,
+# (test-isolation + Worker-isolation + data-fix files), ESLint, both typecheck graphs (shippable + test), and
+# the unit+integration suite on every PR and every push to main. Deliberately SECRET-FREE: PGlite is in-process,
 # all HTTP boundaries are MSW-mocked, and every real-network gate is a `*.live.test.ts` in the `live` project
 # that `pnpm test` excludes and every `skipIf` flag leaves off; live-integration.yml runs those nightly.
 name: ci
@@ -55,6 +55,9 @@ jobs:
       - if: github.ref != 'refs/heads/main'
         run: git fetch --no-tags --depth=1 origin "+refs/heads/main:refs/remotes/origin/main"
       - run: pnpm guard:fixes
+
+      # Also enforces the ban on importing the MSW setup module (see eslint.config.js).
+      - run: pnpm lint
 
       # Type-check the shippable packages/* library graph (root tsconfig.json) — production source with NO
       # other CI type gate (typecheck:test globs only *.test.ts under packages; deployed apps are checked below).

@@ -9,12 +9,32 @@ export default tseslint.config(
       "**/dist/**",
       "**/.svelte-kit/**",
       "**/.wrangler/**",
+      "**/coverage/**",
       "packages/db/drizzle/**",
+      "apps/scrapers/worker-configuration.d.ts",
       "research/**",
+      ".claude/**",
     ],
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,
+  {
+    rules: {
+      "@typescript-eslint/no-unused-vars": [
+        "error",
+        {
+          argsIgnorePattern: "^_",
+          varsIgnorePattern: "^_",
+          caughtErrorsIgnorePattern: "^_",
+          destructuredArrayIgnorePattern: "^_",
+        },
+      ],
+    },
+  },
+  {
+    files: ["scripts/**/*.mjs"],
+    languageOptions: { globals: { console: "readonly", process: "readonly" } },
+  },
   {
     files: ["**/*.ts"],
     languageOptions: { ecmaVersion: 2023, sourceType: "module" },

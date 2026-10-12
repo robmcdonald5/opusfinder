@@ -41,8 +41,8 @@ rules on the adapter, never here.
 
 ## Escape hatches
 
-`unsafeCompanySlug(value)` / `unsafeJobId(value)` brand a value **without validating** — only for
-already-trusted values, e.g. rows read back from the DB.
+`unsafeCompanySlug(value)` brands a value **without validating** — only for already-trusted values,
+e.g. a test fixture.
 
 ## Normalized job shape
 

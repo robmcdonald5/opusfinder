@@ -2,9 +2,12 @@ packages:
   - "apps/*"
   - "packages/*"
 
+# Which deps may run install/build scripts; pnpm 11 fails the install on any unlisted dep that has one.
 allowBuilds:
   esbuild: true
+  # wrangler's Workers runtime (apps/scrapers).
   workerd: true
+  # An optional wrangler image dep our cron-only Worker never uses.
   sharp: false
   # Transitive via inngest's `connect` feature; we use the HTTP `serve` path (inngest/node), which never
   # loads protobufjs. Its postinstall is a no-op version-warn helper (produces no artifact), and the
@@ -13,11 +16,3 @@ allowBuilds:
   # msw ships a browser service-worker artifact via its postinstall; we use only `msw/node` (request
   # interception in tests), which needs no artifact — so unbuilt is safe (like sharp/protobufjs).
   msw: false
-
-# Allowlist of deps permitted to run install/build scripts (pnpm 10+ blocks by
-# default). Moved here from package.json's "pnpm" field, which pnpm 11 ignores.
-# workerd is wrangler's Workers runtime (apps/scrapers); sharp is an optional
-# wrangler image dep our cron-only Worker never uses, so it stays unbuilt.
-onlyBuiltDependencies:
-  - esbuild
-  - workerd

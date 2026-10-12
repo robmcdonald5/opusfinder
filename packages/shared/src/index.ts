@@ -56,11 +56,8 @@ export function safeJobId(value: unknown): JobId | null {
   }
 }
 
-/** Escape hatch for already-trusted values (e.g. read back from the DB). */
+/** Escape hatch for already-trusted values (e.g. a test fixture). */
 export const unsafeCompanySlug = (value: string): CompanySlug => value as CompanySlug;
-
-/** Escape hatch for already-trusted values (e.g. read back from the DB). */
-export const unsafeJobId = (value: string): JobId => value as JobId;
 
 /**
  * A stable per-user identifier (a UUID string), supplied by auth. Branded so a raw string can't be
