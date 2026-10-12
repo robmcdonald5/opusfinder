@@ -576,7 +576,7 @@ export default {
 } satisfies ExportedHandler<Env>;
 
 /** Props a service binding may attach (wrangler `services = [{ …, props = { name = "…" } }]`). The name is
- *  only an audit label; the role is always "runtime". */
+ *  the audit label and the registry runtime id whose stages it may trip; the role is always "runtime". */
 interface BindingProps {
   name?: unknown;
 }

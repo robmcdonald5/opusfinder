@@ -37,5 +37,6 @@ BILLING_ADDRESS = "billing@opusfinder.ai"
 #   ACCESS_TEAM_DOMAIN  https://<team>.cloudflareaccess.com
 #   ACCESS_AUD          the Access application's AUD tag
 #   OWNER_EMAILS        comma-separated owner login email(s)
-#   SERVICE_TOKENS      JSON {"<client-id>": {"role": "agent"|"runtime", "name": "<label>"}}
+#   SERVICE_TOKENS      JSON {"<client-id>": {"role": "agent"|"runtime", "name": "<label>"}}; a runtime's
+#                       name is its registry runtime id (e.g. inngest:opusfinder): the stages it may trip
 # Until ACCESS_TEAM_DOMAIN + ACCESS_AUD are set every request gets 503 auth_not_configured (fail closed).

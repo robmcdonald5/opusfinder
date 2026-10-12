@@ -30,7 +30,7 @@ export const AGENT_CLIENT_ID = "agent-client.access";
 export const AGENT_NAME = "observer";
 export const OTHER_AGENT_CLIENT_ID = "other-agent-client.access";
 export const RUNTIME_CLIENT_ID = "runtime-client.access";
-export const RUNTIME_NAME = "runtime-inngest";
+export const RUNTIME_NAME = "cf:opusfinder-scrapers";
 export const ORIGIN = "https://control.test";
 
 export const BILLING_ADDRESS = "billing@control.test";

@@ -56,9 +56,10 @@ What each role may change is decided by `classify()` in `packages/control`:
   add a narrowing override); anything else must be proposed. Entries declared `agent: "approval"` in
   the registry need approval for **any** change, quieter or louder, knobs included: the **master
   switch** (an agent may stop any single spending stage, not everything at once), the **alerts**
-  stage (an agent may not silence alerting) and the **8 health checks**. Posture repairs
-  (re-enabling a platform schedule) are agent-safe.
-- **runtime** — read gates, write ledger rows, `trip(stage, reason)` which can only set a stage off.
+  stage (an agent may not silence alerting) and the **8 health checks**.
+- **runtime** — read gates, write ledger rows, `trip(stage, reason)` which can only set **its own**
+  stage off: one whose registry `runtime` is the caller's name (the token's `name`, the binding's
+  `props.name`).
 
 **Why there is no local identity shortcut.** The Worker has exactly one way to learn who is
 calling — the verified JWT — and no code path that trusts anything else (no header, cookie, env flag
@@ -103,7 +104,8 @@ top mode caps nothing, so it is stored as no override — setting one where none
 Every registry dimension is also a `/v1/gate` query parameter.
 
 RPC (`ControlRpc`, for a service binding): `gate(stage, dims?)`, `recordRun(run)`,
-`trip(stage, reason, detail?)`. A binding may pass `props = { name = "…" }` as its audit label.
+`trip(stage, reason, detail?)`. A binding passes `props = { name = "<registry runtime id>" }`: its audit
+label and the stages it may trip.
 
 ## Storage and the fail-closed rules
 

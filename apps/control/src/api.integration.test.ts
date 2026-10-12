@@ -725,7 +725,7 @@ describe("runtime: ledger + trip", () => {
       started_at: "2026-10-04T10:00:00.000Z",
       units,
       detail: "250/250 boards · 3 failed",
-      recorded_by: "runtime:runtime-inngest",
+      recorded_by: "runtime:cf:opusfinder-scrapers",
     });
   });
 
@@ -823,7 +823,7 @@ describe("runtime: ledger + trip", () => {
     expect(await stateValue("ingest")).toBe("off");
     expect(await lastLog()).toMatchObject({
       actor_role: "runtime",
-      actor_name: "runtime-inngest",
+      actor_name: "cf:opusfinder-scrapers",
       to_value: "off",
       reason: "trip: error-storm — 40 of 40 boards failed",
     });
@@ -841,6 +841,16 @@ describe("runtime: ledger + trip", () => {
     });
     expect(res.status).toBe(400);
     expect(await stateValue("ingest")).toBe("on");
+  });
+
+  it("refuses a trip of a stage another runtime owns (no silencing alerts from the scrapers)", async () => {
+    expect((await change("owner", "alerts", "on")).status).toBe(200);
+    const res = await h.request("/v1/trip", {
+      as: "runtime",
+      json: { stage: "alerts", reason: "error-storm" },
+    });
+    expect(res.status).toBe(403);
+    expect(await stateValue("alerts")).toBe("on");
   });
 });
 

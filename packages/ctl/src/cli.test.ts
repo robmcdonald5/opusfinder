@@ -349,6 +349,11 @@ describe("failures never leak the secret", () => {
       new TypeError("fetch failed"),
       /could not reach https:\/\/opusfinder-control/,
     ],
+    [
+      "a fetch error that quotes a header value",
+      new TypeError(`Headers.append: "${SECRET}" is an invalid header value.`),
+      /could not reach https:\/\/opusfinder-control/,
+    ],
   ])("exits 1 on %s", async (_label, reply, message) => {
     const h = harness([reply]);
     expect(await h.run(["set", "ingest", "off", "--reason", "x"])).toBe(EXIT.error);

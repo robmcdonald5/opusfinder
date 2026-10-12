@@ -58,6 +58,15 @@ describe("gateView", () => {
     expect(g.policies["health.board_fail_ratio"]).toEqual({
       mode: "shadow",
       knobs: { threshold: 0.5 },
+      watchedStageOff: false,
+    });
+  });
+
+  it("tells the alerts stage which checks watch a stage that is off (C6: skipped)", () => {
+    const g = gateView(state({ "health.embedding_backlog": "enforce" }), "alerts");
+    expect(g.policies["health.embedding_backlog"]).toMatchObject({
+      mode: "enforce",
+      watchedStageOff: true,
     });
   });
 });

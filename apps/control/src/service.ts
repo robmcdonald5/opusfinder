@@ -763,8 +763,10 @@ export async function recordRun(db: D1Database, caller: Caller, body: unknown, n
 }
 
 /**
- * The runtime's one write (§7.3): turn its stage OFF on a runaway or an error storm. It can only ever set
- * off (classify enforces that), so a leaked runtime credential's worst case is an outage, never spend.
+ * The runtime's one write (§7.3): turn its OWN stage OFF on a runaway or an error storm. The caller's name
+ * must be the stage's registry runtime, so one runtime can't stop another's or silence alerting. It can
+ * only ever set off (classify enforces that), so a leaked runtime credential's worst case is an outage of
+ * its own stages, never spend.
  * Retries a lost compare-and-set race: a guard firing must not be dropped because something else wrote.
  */
 export async function trip(
@@ -778,6 +780,8 @@ export async function trip(
   const stage = field(body, "stage");
   if (typeof stage !== "string" || !isStageId(stage))
     throw new ApiError(400, "invalid_trip", "stage must be a registry stage id");
+  if (stageDef(stage).runtime !== caller.name)
+    throw new ApiError(403, "forbidden", `only ${stageDef(stage).runtime} may trip ${stage}`);
   const why = field(body, "reason");
   if (typeof why !== "string" || !(TRIP_REASONS as readonly string[]).includes(why)) {
     throw new ApiError(400, "invalid_trip", `reason must be one of: ${TRIP_REASONS.join(", ")}`);

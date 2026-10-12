@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { agentRule, classify, direction, type Change, type Role } from "./classify";
+import { agentRule, classify, direction, type Change } from "./classify";
 import { MODE_RANK, POLICY_IDS, STAGE_IDS, type Mode } from "./registry";
 import { desiredValue, type StateMap } from "./resolve";
 import {
@@ -262,21 +262,6 @@ describe("runtime", () => {
   it("can't turn the master switch off or propose anything", () => {
     expect(classify(set(t("global"), "on", "off"), "runtime").outcome).toBe("deny");
     expect(classify(set(t("embed"), "off", "on"), "runtime").outcome).toBe("deny");
-  });
-});
-
-describe("posture repairs", () => {
-  const repair: Change = {
-    kind: "posture",
-    stage: "live_integration",
-    action: "gh workflow enable",
-  };
-  it.each<[Role, string]>([
-    ["owner", "apply"],
-    ["agent", "apply"],
-    ["runtime", "deny"],
-  ])("%s → %s", (role, outcome) => {
-    expect(classify(repair, role).outcome).toBe(outcome);
   });
 });
 

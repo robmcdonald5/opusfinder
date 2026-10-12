@@ -136,7 +136,10 @@ export interface StageDef {
   units: readonly UnitId[];
   dims?: readonly DimKey[];
   knobs?: Readonly<Record<string, Knob>>;
-  /** Advisory only (T4). Shown, never enforced, in slice 1; prices/month-to-date are a later slice. */
+  /**
+   * Advisory only (T4): the panel shows the monthly target. `runaway` is the per-day limit the stage's
+   * runtime will trip on; nothing meters or trips on it yet, so the panel doesn't show it.
+   */
   budget?: { targetUsdPerMonth?: number; runaway?: { unit: UnitId | "usd"; perDay: number } };
   /** S2/C6: missed-tick detection (later slice). Every tick writes a ledger row, even when off. */
   expect?: { everyMin: number; graceMin: number };

@@ -229,7 +229,11 @@ export interface GateView {
   cappedBy: CappedBy;
   global: GlobalMode;
   knobs: Record<string, number>;
-  policies: Record<string, { mode: PolicyMode; knobs: Record<string, number> }>;
+  /** `watchedStageOff`: a health check whose watched stage is off reports "skipped (stage off)" (C6). */
+  policies: Record<
+    string,
+    { mode: PolicyMode; knobs: Record<string, number>; watchedStageOff?: boolean }
+  >;
   /** Effective mode for every slice that has an override set, per dimension. */
   overrides: Partial<Record<DimKey, Record<string, StageMode>>>;
   onUnreadable: "skip";
@@ -258,7 +262,11 @@ export function gateView(
     const p = policyView(state, id);
     const pk: Record<string, number> = {};
     for (const k of p.knobs) pk[k.name] = k.value;
-    policiesOut[id] = { mode: p.effective, knobs: pk };
+    policiesOut[id] = {
+      mode: p.effective,
+      knobs: pk,
+      ...(p.watches ? { watchedStageOff: p.watchedStageOff } : {}),
+    };
   }
   const overrides: GateView["overrides"] = {};
   for (const o of view.overrides) (overrides[o.dim] ??= {})[o.value] = o.effective;

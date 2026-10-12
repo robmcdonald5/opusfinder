@@ -15,11 +15,9 @@
 // Roles (credential = role, §11.1):
 //   owner   — applies anything (a human Access login; the person whose decision this is).
 //   agent   — applies "down"/no-op moves on safe-direction entries; everything else becomes a proposal.
-//             Posture repairs are agent-safe: re-asserting platform posture (re-enabling an auto-disabled
-//             GitHub workflow, un-pausing an Inngest function) changes no desired state, and under
-//             fire-and-check the gate still decides whether anything runs.
-//   runtime — may only TRIP a stage off (runaway / error-storm guard). It can't propose, and it can't
-//             touch global, policies, knobs or overrides.
+//   runtime — may only TRIP a stage off (runaway / error-storm guard), and only its own: the service's
+//             trip() checks that, since this sees the role, not the caller. It can't propose, and it
+//             can't touch global, policies, knobs or overrides.
 import {
   MODE_RANK,
   TOP_RANK,
@@ -28,7 +26,6 @@ import {
   stageDef,
   type AgentRule,
   type Mode,
-  type StageId,
 } from "./registry";
 import { formatTarget, knobDef, type Target } from "./targets";
 
@@ -39,9 +36,7 @@ export const ROLES: readonly Role[] = ["owner", "agent", "runtime"];
  * A proposed change. `from`/`to` are the RESOLVED desired values (resolve.desiredValue), canonical
  * strings; `null` means "no override" and is only meaningful for a dimension target.
  */
-export type Change =
-  | { kind: "set"; target: Target; from: string | null; to: string | null }
-  | { kind: "posture"; stage: StageId; action: string };
+export type Change = { kind: "set"; target: Target; from: string | null; to: string | null };
 
 export type Direction = "down" | "up" | "none";
 
@@ -92,17 +87,6 @@ export function agentRule(target: Target): AgentRule {
 }
 
 export function classify(change: Change, role: Role): Classification {
-  if (change.kind === "posture") {
-    if (role === "runtime") {
-      return { outcome: "deny", direction: "none", rule: "runtimes don't repair platform posture" };
-    }
-    return {
-      outcome: "apply",
-      direction: "none",
-      rule: "posture repair re-asserts platform posture; desired state is unchanged",
-    };
-  }
-
   const { target, from, to } = change;
   const dir = direction(target, from, to);
   const name = formatTarget(target);
