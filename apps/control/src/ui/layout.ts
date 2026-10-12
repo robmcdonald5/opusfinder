@@ -64,6 +64,7 @@ const FLASH: Record<string, string> = {
   approved: "Proposal approved and applied.",
   rejected: "Proposal rejected.",
   stale: "That proposal was stale, so nothing was applied.",
+  closed: "That proposal was already closed.",
   statement_added: "Charge added.",
   statement_duplicate: "Matches a charge already counted, so it's under Not counted.",
   statement_counted: "Charge counted.",

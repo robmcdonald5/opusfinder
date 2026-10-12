@@ -596,6 +596,13 @@ describe("the approval queue", () => {
     expect(page1.more).toBe(true);
     const page2 = await closed(`&limit=2&before=${page1.proposals[1].id}`);
     expect(page2.proposals.map((p: { id: number }) => p.id)).toEqual([a.id]);
+    // Every status pages the same way, so a long history is never cut off silently.
+    const all1 = await body(await h.request("/v1/proposals?status=all&limit=2", { as: "agent" }));
+    expect(all1.more).toBe(true);
+    const all2 = await body(
+      await h.request(`/v1/proposals?status=all&before=${b.id}`, { as: "agent" }),
+    );
+    expect(all2).toEqual({ proposals: [expect.objectContaining({ id: a.id })], more: false });
 
     expect((await closed("&outcome=expired")).proposals.map((p: { id: number }) => p.id)).toEqual([
       c.id,
@@ -672,6 +679,54 @@ describe("the approval queue", () => {
       proposal: { status: "stale", decision_note: expect.stringMatching(/embed is now on/) },
     });
     expect(await changeCount()).toBe(before);
+  });
+
+  it.each([
+    ["value", "to_value = '900'", /900 is no longer valid for ingest.boardsPerTick/],
+    ["target", "target = 'retired.knob'", /retired.knob is no longer a valid target/],
+  ])(
+    "re-checks against today's registry: a %s it dropped is stale in status and on approve",
+    async (_what, rewrite, why) => {
+      // A deploy since filing narrowed the knob or removed it: what the proposal holds is no longer valid.
+      const p = await fileProposal("ingest.boardsPerTick", "450");
+      await h.db.prepare(`UPDATE proposal SET ${rewrite} WHERE id = ?`).bind(p.id).run();
+      const s = await body(await h.request("/v1/status", { as: "agent" }));
+      expect(s.openProposals[0]).toMatchObject({ id: p.id, stale: true });
+      const before = await changeCount();
+      const res = await h.request(`/v1/proposals/${p.id}/approve`, { as: "owner", json: {} });
+      expect(res.status).toBe(409);
+      expect(await body(res)).toMatchObject({
+        error: { code: "stale_proposal" },
+        proposal: { status: "stale", decision_note: expect.stringMatching(why) },
+      });
+      expect(await stateValue("ingest.boardsPerTick")).toBeNull();
+      expect(await changeCount()).toBe(before);
+    },
+  );
+
+  it("closes a superseded proposal as stale on reject, not as the owner's no", async () => {
+    const p = await fileProposal("embed", "shadow");
+    await change("owner", "embed", "shadow");
+    const res = await h.request(`/ui/proposals/${p.id}/reject`, { as: "owner", form: {} });
+    expect(res.headers.get("location")).toBe("/approvals?done=stale");
+    const closed = await body(await h.request(`/v1/proposals/${p.id}`, { as: "agent" }));
+    expect(closed.proposal).toMatchObject({
+      status: "stale",
+      decision_note: expect.stringMatching(/embed is now shadow, proposed from off/),
+    });
+  });
+
+  it("answers a panel click on a proposal something else closed first with a flash, not an error", async () => {
+    const p = await fileProposal();
+    const first = await h.request(`/ui/proposals/${p.id}/approve`, { as: "owner", form: {} });
+    expect(first.headers.get("location")).toBe("/approvals?done=approved");
+    // A double click: the browser shows the second response.
+    for (const action of ["approve", "reject"]) {
+      const again = await h.request(`/ui/proposals/${p.id}/${action}`, { as: "owner", form: {} });
+      expect(again.status).toBe(303);
+      expect(again.headers.get("location")).toBe("/approvals?done=closed");
+    }
+    expect(await stateValue("embed")).toBe("on");
   });
 
   it("refuses to propose what is already in effect, and dedupes identical open proposals", async () => {

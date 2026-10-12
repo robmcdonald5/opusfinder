@@ -43,7 +43,8 @@ export interface ProposalRow {
   from_value: string | null;
   to_value: string | null;
   reason: string;
-  /** "stale": closed unapplied because the target moved off the value it was proposed from. */
+  /** "stale": closed unapplied because the target moved off the value it was proposed from, or the
+   *  registry no longer has its target or value. */
   status: "open" | "approved" | "rejected" | "withdrawn" | "stale";
   decided_at: string | null;
   decided_by: string | null;
@@ -318,17 +319,17 @@ export async function listProposals(
   db: D1Database,
   which: "open" | "all",
   now: string,
-  limit = 100,
+  f: { beforeId?: number | undefined; limit: number },
 ): Promise<ProposalRow[]> {
-  const stmt =
-    which === "open"
-      ? db
-          .prepare(
-            "SELECT * FROM proposal WHERE status = 'open' AND expires_at > ? ORDER BY id DESC LIMIT ?",
-          )
-          .bind(now, limit)
-      : db.prepare("SELECT * FROM proposal ORDER BY id DESC LIMIT ?").bind(limit);
-  return (await stmt.all<ProposalRow>()).results;
+  const { results } = await db
+    .prepare(
+      `SELECT * FROM proposal
+       WHERE (?1 = 'all' OR (status = 'open' AND expires_at > ?2)) AND (?3 IS NULL OR id < ?3)
+       ORDER BY id DESC LIMIT ?4`,
+    )
+    .bind(which, now, f.beforeId ?? null, f.limit)
+    .all<ProposalRow>();
+  return results;
 }
 
 export interface ClosedProposalFilter extends TimeRange {
