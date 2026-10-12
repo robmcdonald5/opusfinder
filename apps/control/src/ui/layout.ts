@@ -61,6 +61,7 @@ export function section(id: SectionId): Section {
 const FLASH: Record<string, string> = {
   applied: "Change applied.",
   noop: "Nothing to change — it already had that value.",
+  moved: "It changed since this page loaded, so nothing was applied.",
   approved: "Proposal approved and applied.",
   rejected: "Proposal rejected.",
   stale: "That proposal was stale, so nothing was applied.",

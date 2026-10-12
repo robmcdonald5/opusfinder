@@ -357,11 +357,19 @@ const ROUTES: readonly Route[] = [
     ui: true,
     handler: async ({ request, env, caller, url, now }) => {
       const form = await formBody(request, url);
-      const body = { target: form.get("target"), value: form.get("value") };
-      const res = await requestChange(env.DB, caller, body, "panel", now);
-      return redirect(
-        `${backPath(form.get("back"))}?done=${res.result === "noop" ? "noop" : "applied"}`,
-      );
+      const back = backPath(form.get("back"));
+      const body = {
+        target: form.get("target"),
+        value: form.get("value"),
+        from: form.get("from") ?? undefined,
+      };
+      try {
+        const res = await requestChange(env.DB, caller, body, "panel", now);
+        return redirect(`${back}?done=${res.result === "noop" ? "noop" : "applied"}`);
+      } catch (err) {
+        if (err instanceof ApiError && err.code === "moved") return redirect(`${back}?done=moved`);
+        throw err;
+      }
     },
   },
   {

@@ -194,6 +194,28 @@ describe("POST /v1/changes", () => {
     expect(gate.by).toBe("owner");
   });
 
+  it("applies nothing when the target moved off the `from` the caller saw", async () => {
+    // The owner's page loaded at 250; an agent then cut the knob to 50.
+    await change("agent", "ingest.boardsPerTick", "50");
+    const before = await changeCount();
+    const res = await h.request("/ui/change", {
+      as: "owner",
+      form: { target: "ingest.boardsPerTick", value: "200", from: "250", back: "/stages/ingest" },
+    });
+    expect(res.headers.get("location")).toBe("/stages/ingest?done=moved");
+    const api = await change("owner", "ingest.boardsPerTick", "200", { from: 250 });
+    expect(api.status).toBe(409);
+    expect((await body(api)).error.code).toBe("moved");
+    expect(await stateValue("ingest.boardsPerTick")).toBe("50");
+    expect(await changeCount()).toBe(before);
+
+    expect((await change("owner", "ingest.boardsPerTick", "200", { from: 50 })).status).toBe(200);
+    // An unset slice override is seen as `inherit`.
+    expect((await change("owner", "ingest@source=gem", "off", { from: "inherit" })).status).toBe(
+      200,
+    );
+  });
+
   it("narrows one source with an override (agent-safe) and refuses removing it (needs approval)", async () => {
     expect((await change("agent", "ingest@source=smartrecruiters", "off")).status).toBe(200);
     const gate = await body(await h.request("/v1/gate/ingest", { as: "runtime" }));
@@ -570,12 +592,13 @@ describe("the approval queue", () => {
     expect(await stateValue("embed")).toBe("off");
   });
 
-  it("lists closed proposals newest first, paged, filtered by stage and outcome (status=closed)", async () => {
+  it("lists closed proposals newest close first, paged, filtered by stage and outcome (status=closed)", async () => {
     const a = await fileProposal("embed", "on");
     const b = await fileProposal("digest", "shadow");
     const c = await fileProposal("ingest.boardsPerTick", "400");
     await h.request(`/v1/proposals/${a.id}/reject`, { as: "owner", json: {} });
     await h.request(`/v1/proposals/${b.id}/approve`, { as: "owner", json: {} });
+    // c was filed last but closed first: it lapsed long ago.
     await h.db
       .prepare("UPDATE proposal SET expires_at = '2000-01-01T00:00:00.000Z' WHERE id = ?")
       .bind(c.id)
@@ -584,18 +607,20 @@ describe("the approval queue", () => {
       body(await h.request(`/v1/proposals?status=closed${q}`, { as: "agent" }));
 
     const all = await closed("");
-    expect(all.proposals.map((p: { id: number }) => p.id)).toEqual([c.id, b.id, a.id]);
+    expect(all.proposals.map((p: { id: number }) => p.id)).toEqual([b.id, a.id, c.id]);
     expect(all.proposals.map((p: { status: string }) => p.status)).toEqual([
-      "expired",
       "approved",
       "rejected",
+      "expired",
     ]);
     expect(all.more).toBe(false);
+    const s = await body(await h.request("/v1/status", { as: "agent" }));
+    expect(s.closedProposals.map((p: { id: number }) => p.id)).toEqual([b.id, a.id, c.id]);
 
     const page1 = await closed("&limit=2");
     expect(page1.more).toBe(true);
     const page2 = await closed(`&limit=2&before=${page1.proposals[1].id}`);
-    expect(page2.proposals.map((p: { id: number }) => p.id)).toEqual([a.id]);
+    expect(page2.proposals.map((p: { id: number }) => p.id)).toEqual([c.id]);
     // Every status pages the same way, so a long history is never cut off silently.
     const all1 = await body(await h.request("/v1/proposals?status=all&limit=2", { as: "agent" }));
     expect(all1.more).toBe(true);

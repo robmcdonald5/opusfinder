@@ -49,7 +49,6 @@ import {
   readState,
   readStatus,
   updateStatement,
-  type ChangeRow,
   type Channel,
   type LedgerRow,
   type NewStatement,
@@ -439,6 +438,11 @@ export async function requestChange(
   // Nothing to write when the store already says this (or holds no row and the default already is it).
   if (to === expected || (expected === null && to === from))
     return { result: "noop", target: address, value: to };
+  // `from` is the value the caller last saw (the panel's controls send it). Moved since: apply nothing, or
+  // a page loaded before an agent's change or a trip would silently undo it.
+  const seen = field(body, "from");
+  if (seen !== undefined && String(seen ?? INHERIT) !== (from ?? INHERIT))
+    throw new ApiError(409, "moved", `${address} is now ${from ?? INHERIT}; nothing applied`);
 
   const decision = classify({ kind: "set", target, from, to }, caller.role);
   if (field(body, "dryRun") === true)
@@ -843,8 +847,6 @@ export async function trip(
     `${stage} kept changing; trip not recorded after ${TRIP_ATTEMPTS} attempts`,
   );
 }
-
-export type { ChangeRow };
 
 // ---------- cost: statements from the vendors' own invoice emails ----------
 
