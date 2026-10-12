@@ -331,7 +331,7 @@ export async function runIngestion(db: Db, opts: IngestionOptions = {}): Promise
             counts.revived += present.revived; // revivals + streak resets (works for capped boards too)
             // Listing postings proves a deactivated board live: without this, no close path would ever
             // reach the jobs just written or revived (the cron skips inactive boards).
-            if (!company.active) await markProbeResult(db, company.id, true);
+            if (!company.active) await markProbeResult(db, [company.id], true);
           } else if (board.empty) {
             await markCompanyIngested(db, company.id);
           }
