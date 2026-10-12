@@ -4,7 +4,7 @@ import { runScript } from "@opusfinder/shared/script";
 
 import { getDatabaseUrl } from "../src/env";
 import { buildRoleSetupSql, buildRoleUrl, DATA_FIXER, generateRolePassword } from "../src/roles";
-import { setUpRole } from "./lib/role-setup";
+import { isDryRun, setUpRole } from "./lib/role-setup";
 
 // OWNER, one time (and again to rotate the password), from a normal terminal with `gh` logged in:
 //   pnpm --filter @opusfinder/db run data-fixer:setup            (add -- --dry-run to only print the SQL)
@@ -57,9 +57,10 @@ function ensureEnvironment(repo: string): void {
 }
 
 await runScript("data-fixer setup", async () => {
+  const dryRun = isDryRun();
   const password = generateRolePassword();
 
-  if (process.argv.includes("--dry-run")) {
+  if (dryRun) {
     console.log(
       "Dry run: nothing is changed. The role SQL (one transaction; the password is bound separately):\n",
     );

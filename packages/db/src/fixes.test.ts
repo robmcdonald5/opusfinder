@@ -13,7 +13,8 @@ import {
 // Pure-unit suite for the data-fix file rules (the same checks `pnpm guard:fixes` and the runner apply): the
 // committed fixes directory is valid, the SQL lint flags transaction control / DDL / privilege / dynamic SQL in
 // CODE but not in comments or strings, and numbering has no gap or duplicate. Applying fixes against a real
-// Postgres (transaction, record, guards, the data_fixer grants) is fixes.integration.test.ts.
+// Postgres (transaction, record, guards) is fixes.integration.test.ts; the data_fixer grants are
+// roles.integration.test.ts.
 
 const PREVIEW = "/* preview\nSELECT 1;\n*/\n";
 

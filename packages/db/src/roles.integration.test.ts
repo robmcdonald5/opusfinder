@@ -8,11 +8,20 @@ import { createTestDb } from "@test/db/pglite";
 import { DATA_FIXER, SCRAPERS_WORKER, type LimitedRole } from "./roles";
 
 // Each limited role's setup SQL under REAL Postgres semantics: it confines the role to exactly its grants,
-// converges on re-run, and aborts rather than leave a privilege it didn't grant. What each role can actually
-// RUN is its user's suite: fixes.integration.test.ts (data_fixer) and
+// converges on re-run, and aborts rather than leave a table privilege it didn't grant. What each role can
+// actually RUN is its user's suite: fixes.integration.test.ts (data_fixer) and
 // packages/discovery/src/worker-role.integration.test.ts (scrapers_worker).
 
-const PRIVILEGES = ["SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER"];
+const PRIVILEGES = [
+  "SELECT",
+  "INSERT",
+  "UPDATE",
+  "DELETE",
+  "TRUNCATE",
+  "REFERENCES",
+  "TRIGGER",
+  "MAINTAIN",
+];
 
 describe.each([DATA_FIXER, SCRAPERS_WORKER])(
   "$name role setup (integration: real PGlite semantics)",
@@ -44,10 +53,13 @@ describe.each([DATA_FIXER, SCRAPERS_WORKER])(
         FROM pg_tables
         WHERE schemaname = 'public'
         ORDER BY tablename`);
+      const sorted = (privileges: readonly string[]) => [...privileges].sort().join(",");
       const granted = new Map(
-        role.grants.flatMap((g) => g.tables.map((t) => [getTableName(t), g.privileges.join(",")])),
+        role.grants.flatMap((g) => g.tables.map((t) => [getTableName(t), sorted(g.privileges)])),
       );
-      const actual = Object.fromEntries(rows.map((r) => [r.table_name, r.privs]));
+      const actual = Object.fromEntries(
+        rows.map((r) => [r.table_name, sorted(r.privs.split(",").filter(Boolean))]),
+      );
       expect(actual).toEqual(
         Object.fromEntries(rows.map((r) => [r.table_name, granted.get(r.table_name) ?? ""])),
       );
@@ -89,13 +101,13 @@ describe.each([DATA_FIXER, SCRAPERS_WORKER])(
       );
     });
 
-    it.each(["SELECT", "SELECT (email)"])(
+    it.each(["SELECT", "SELECT (email)", "MAINTAIN"])(
       "setup aborts, changing nothing, when the role holds a privilege another role granted (%s)",
       async (grant) => {
         // The owner's REVOKE ALL removes only the owner's own grants; this one has another grantor.
         await pg.exec(`
           CREATE ROLE other_admin;
-          GRANT SELECT ON "user" TO other_admin WITH GRANT OPTION;
+          GRANT ${grant} ON "user" TO other_admin WITH GRANT OPTION;
           SET ROLE other_admin;
           GRANT ${grant} ON "user" TO ${role.name};
           RESET ROLE;
@@ -109,7 +121,7 @@ describe.each([DATA_FIXER, SCRAPERS_WORKER])(
             SET ROLE other_admin;
             REVOKE ${grant} ON "user" FROM ${role.name};
             RESET ROLE;
-            REVOKE SELECT ON "user" FROM other_admin;
+            REVOKE ${grant} ON "user" FROM other_admin;
             DROP ROLE other_admin;
           `);
         }

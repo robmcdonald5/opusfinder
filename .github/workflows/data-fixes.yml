@@ -57,9 +57,10 @@ jobs:
           node-version: 24 # engines.node >=24
       - run: pnpm install --frozen-lockfile
 
-      # The data-fix suites (lint, runner, role, and any fix's own fix-NNNN test) gate the apply, so a fix whose
-      # tests fail never applies, even when its PR was merged before ci.yml finished. Secret-free: PGlite only.
-      - run: pnpm test packages/db/src/fix
+      # The data-fix suites (lint, runner, role setup, and any fix's own fix-NNNN test) gate the apply, so a
+      # fix whose tests fail never applies, even when its PR was merged before ci.yml finished. Secret-free:
+      # PGlite only.
+      - run: pnpm test packages/db/src/fix packages/db/src/roles
 
       # The secret is scoped to this one step: install scripts and other steps never see it.
       - name: Apply pending data fixes

@@ -61,13 +61,14 @@ export function passwordSetting(role: LimitedRole): string {
 
 /** The privileges Postgres can grant on single columns (which has_table_privilege doesn't see). */
 const COLUMN_PRIVILEGES = ["SELECT", "INSERT", "UPDATE", "REFERENCES"];
-const TABLE_ONLY_PRIVILEGES = ["DELETE", "TRUNCATE", "TRIGGER"];
+// MAINTAIN is Postgres 17+ (prod Neon and PGlite both run 18).
+const TABLE_ONLY_PRIVILEGES = ["DELETE", "TRUNCATE", "TRIGGER", "MAINTAIN"];
 
 /** The sequences behind a table's serial columns, as Postgres names them. */
 function serialSequences(table: PgTable): string[] {
   return Object.values(getTableColumns(table))
     .filter((column) => is(column, PgSerial))
-    .map((column) => `${getTableName(table)}_${column.name}_seq`);
+    .map((column) => `public.${getTableName(table)}_${column.name}_seq`);
 }
 
 /**
@@ -77,7 +78,9 @@ function serialSequences(table: PgTable): string[] {
  * a granted table is missing (run the migration first), if the role has elevated attributes or any role
  * membership (e.g. it was created in the Neon Console), or if the role still holds any privilege on a public
  * table beyond `grants` afterwards. That last check matters because the owner's REVOKE only removes the
- * owner's own grants, so a grant made by another role would survive it.
+ * owner's own grants, so a grant made by another role would survive it. The audit covers tables in schema
+ * public plus the role's attributes and memberships; sequences, functions, views, other schemas and default
+ * privileges are not audited.
  */
 export function buildRoleSetupSql(role: LimitedRole): string {
   const name = role.name;
@@ -128,7 +131,7 @@ END $$;
 REVOKE ALL ON ALL TABLES IN SCHEMA public FROM ${name};
 REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM ${name};
 GRANT USAGE ON SCHEMA public TO ${name};
-${groups.map((g) => `GRANT ${g.privileges.join(", ")} ON ${g.tables.join(", ")} TO ${name};`).join("\n")}
+${groups.map((g) => `GRANT ${g.privileges.join(", ")} ON ${g.tables.map((t) => `public.${t}`).join(", ")} TO ${name};`).join("\n")}
 ${sequences.length > 0 ? `GRANT USAGE ON SEQUENCE ${sequences.join(", ")} TO ${name};` : ""}
 DO $$
 DECLARE
@@ -160,6 +163,13 @@ export function buildRoleUrl(ownerUrl: string, role: LimitedRole, password: stri
   const url = new URL(ownerUrl);
   url.username = role.name;
   url.password = password;
+  // A `user` / `password` query parameter would override the credentials above. Filtered as text, because
+  // searchParams would re-encode the other parameters.
+  url.search = url.search
+    .slice(1)
+    .split("&")
+    .filter((param) => !/^(user|password)(=|$)/.test(param))
+    .join("&");
   return url.toString();
 }
 

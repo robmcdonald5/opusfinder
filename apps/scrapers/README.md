@@ -110,8 +110,12 @@ wrangler tail opusfinder-scrapers             # stream live cron invocations
   (SELECT/INSERT/UPDATE on `companies`, `jobs` and `source_runs` only: `packages/db/src/roles.ts`) or rotates
   its password, then pipes its connection string into this Worker's `DATABASE_URL` on stdin; it applies at
   once. Run it while no tick is running (not the first ~15 min of an even UTC hour, nor Sunday 03:00 UTC):
-  the old password stops working immediately. To go back to your owner login, with it exported:
-  `printf %s "$DATABASE_URL" | pnpm --filter @opusfinder/scrapers exec wrangler secret put DATABASE_URL`.
+  the old password stops working immediately. Never run two at once: the role could keep one run's password
+  while the secret gets the other's. To go back to your owner login, with it exported:
+  `printf %s "$DATABASE_URL" | pnpm --filter @opusfinder/scrapers exec wrangler secret put DATABASE_URL`,
+  then `psql "$DATABASE_URL" -c 'ALTER ROLE scrapers_worker NOLOGIN'` (a later setup run turns LOGIN back
+  on). Don't `wrangler rollback` to a Worker version from before the switch: older versions carry the owner
+  `DATABASE_URL`.
 - **A migration that adds a table or sequence the Worker uses** (add it to `SCRAPERS_WORKER` in
   `packages/db/src/roles.ts`) ships as ONE chain, or every tick fails with `permission denied`:
   `pnpm db:migrate && pnpm --filter @opusfinder/db run worker-role:setup && pnpm --filter @opusfinder/scrapers run deploy`.

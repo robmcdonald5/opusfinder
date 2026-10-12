@@ -21,13 +21,12 @@ describe("buildRoleSetupSql", () => {
     expect(sql).toContain("ALTER ROLE data_fixer WITH LOGIN PASSWORD %L");
     expect(sql).toContain("CREATE ROLE data_fixer WITH LOGIN PASSWORD %L");
     expect(sql).toContain("REVOKE ALL ON ALL TABLES IN SCHEMA public FROM data_fixer;");
-    expect(sql).toContain(
-      "GRANT SELECT, INSERT, UPDATE, DELETE ON companies, jobs, source_runs TO data_fixer;",
-    );
-    expect(sql).toContain("GRANT SELECT, INSERT ON data_fixes TO data_fixer;");
-    expect(sql).toContain(
-      "GRANT USAGE ON SEQUENCE companies_id_seq, jobs_id_seq, source_runs_id_seq TO data_fixer;",
-    );
+    expect(sql.match(/^GRANT .*$/gm)).toEqual([
+      "GRANT USAGE ON SCHEMA public TO data_fixer;",
+      "GRANT SELECT, INSERT, UPDATE, DELETE ON public.companies, public.jobs, public.source_runs TO data_fixer;",
+      "GRANT SELECT, INSERT ON public.data_fixes TO data_fixer;",
+      "GRANT USAGE ON SEQUENCE public.companies_id_seq, public.jobs_id_seq, public.source_runs_id_seq TO data_fixer;",
+    ]);
   });
 
   it("scrapers_worker: read/insert/update on the ingestion tables, no DELETE", () => {
@@ -36,8 +35,8 @@ describe("buildRoleSetupSql", () => {
     expect(sql).toContain("REVOKE ALL ON ALL TABLES IN SCHEMA public FROM scrapers_worker;");
     expect(sql.match(/^GRANT .*$/gm)).toEqual([
       "GRANT USAGE ON SCHEMA public TO scrapers_worker;",
-      "GRANT SELECT, INSERT, UPDATE ON companies, jobs, source_runs TO scrapers_worker;",
-      "GRANT USAGE ON SEQUENCE companies_id_seq, jobs_id_seq, source_runs_id_seq TO scrapers_worker;",
+      "GRANT SELECT, INSERT, UPDATE ON public.companies, public.jobs, public.source_runs TO scrapers_worker;",
+      "GRANT USAGE ON SEQUENCE public.companies_id_seq, public.jobs_id_seq, public.source_runs_id_seq TO scrapers_worker;",
     ]);
   });
 });
@@ -51,9 +50,9 @@ describe("generateRolePassword", () => {
 });
 
 describe("buildRoleUrl", () => {
-  it("swaps in the role's user and password and keeps host, database and params", () => {
+  it("swaps in the role's user and password, drops user/password params, keeps host, database and params", () => {
     const url = buildRoleUrl(
-      "postgresql://neondb_owner:owner-secret@ep-x-123.us-east-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require",
+      "postgresql://neondb_owner:owner-secret@ep-x-123.us-east-1.aws.neon.tech/neondb?sslmode=require&user=neondb_owner&password=owner-secret&channel_binding=require",
       SCRAPERS_WORKER,
       PASSWORD,
     );

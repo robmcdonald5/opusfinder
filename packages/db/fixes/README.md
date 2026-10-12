@@ -103,7 +103,7 @@ The setup command does the following:
 - Creates or updates the `data-fixes` Environment so only `main` may deploy to it.
 - Creates `data_fixer` with plain SQL, or rotates its password if it exists. It does not use the Neon
   Console, because Console/API roles join `neon_superuser`. It then resets the role's grants, and aborts
-  (changing nothing) if the role still holds any privilege beyond the list, such as one granted by
+  (changing nothing) if the role still holds any table privilege beyond the list, such as one granted by
   another role.
 - Pipes the new connection string into `gh secret set DATA_FIX_DATABASE_URL --env data-fixes` on stdin.
 
