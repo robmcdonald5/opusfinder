@@ -200,8 +200,6 @@ tail finishes (watch the dashboard before checking the delivery columns).
 
 ## Agent-can-do vs User-must-do (deploy split)
 
-Per CLAUDE.md (external-platform integration), the work splits cleanly:
-
 | Step | Who |
 |---|---|
 | All package code, the local dev server (`pnpm inngest:dev` — keyless), the end-to-end gate | **Agent** |

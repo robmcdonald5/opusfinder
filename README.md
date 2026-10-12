@@ -10,14 +10,14 @@ pipeline, and delivers a personalized digest on a regular cadence. See
 | Path                   | What                                                                                                                                                                                              |
 | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `apps/web/`            | SvelteKit headless production runtime — `/api/inngest` + `/api/health` on Vercel + Inngest Cloud (Phase 12a) ([README](apps/web/README.md))                                                        |
-| `apps/control/`        | Cloudflare control-plane Worker + D1 — desired state, change log, approval queue, run ledger behind Cloudflare Access; JSON API + one owner page (control plane slice 1) ([README](apps/control/README.md)) |
+| `apps/control/`        | Cloudflare control-plane Worker + D1 — desired state, change log, approval queue, run ledger behind Cloudflare Access; JSON API + owner panel (control plane slice 1) ([README](apps/control/README.md)) |
 | `apps/scrapers/`       | Cloudflare Workers cron runtime — scheduled ingestion + discovery against Neon (Phase 8) ([README](apps/scrapers/README.md))                                                                      |
 | `packages/auth/`       | Better Auth (email+password) — `user`/`session`/`account` schema + user-creation service + management CLIs (Phase 9.5; node/server-only, never in the Worker) ([README](packages/auth/README.md)) |
 | `packages/control/`    | The control plane's pure core — stage registry, fail-closed `effectiveMode()`, `classify(change, role)`; Worker-safe, dependency-free ([README](apps/control/README.md)) |
 | `packages/ctl/`        | `pnpm ctl` — the agent CLI for the control Worker (status / set / propose / proposals / withdraw) ([README](apps/control/README.md)) |
 | `packages/db/`         | Drizzle ORM over Neon Postgres + pgvector ([README](packages/db/README.md))                                                                                                                       |
 | `packages/discovery/`  | Slug-discovery pipeline — seed lanes (outscal + HN) → probe → upsert + staleness (Phase 7; F5 lane registry) ([README](packages/discovery/README.md))                                                                                    |
-| `packages/embeddings/` | Voyage `voyage-3-large` embeddings + HNSW retrieval ([README](packages/embeddings/README.md))                                                                                                     |
+| `packages/embeddings/` | Voyage `voyage-4-large` embeddings + HNSW retrieval ([README](packages/embeddings/README.md))                                                                                                     |
 | `packages/eval/`       | Matching-quality eval harness — metrics, rankers, reports ([README](packages/eval/README.md))                                                                                                     |
 | `packages/inngest/`    | Per-user digest pipeline on Inngest — orchestrator + per-user fn + cadence cron + F8 backfills, serve + trigger CLI (Phase 10; cadence/backfills Phase 12a) ([README](packages/inngest/README.md)) |
 | `packages/llm/`        | Vercel AI SDK + Anthropic wrapper, prompt caching, structured output, Message Batches (Phase 10) ([README](packages/llm/README.md))                                                               |
@@ -28,12 +28,10 @@ pipeline, and delivers a personalized digest on a regular cadence. See
 | `packages/storage/`    | S3-compatible Cloudflare R2 client for CV artifacts (Phase 9) ([README](packages/storage/README.md))                                                                                              |
 | `research/`            | Specs + source-discovery catalog (local planning docs — see below)                                                                                                                                |
 
-pnpm workspaces; the package manager is pinned to pnpm 11.3.0.
-
 ## Prerequisites
 
 - Node >= 24
-- pnpm >= 11 (pinned to 11.3.0 via the `packageManager` field)
+- pnpm at the exact version `packageManager` pins in `package.json`
 
 ## Setup
 
@@ -66,13 +64,19 @@ pnpm db:ping      # round-trips SELECT 1 against Neon
 | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `pnpm lint` / `lint:fix`                  | ESLint over the repo                                                                                                                                                           |
 | `pnpm format` / `format:check`            | Prettier write / check                                                                                                                                                         |
-| `pnpm typecheck`                          | `tsc --noEmit` (covers `packages/*`; apps excluded until they gain code)                                                                                                       |
+| `pnpm typecheck`                          | `tsc --noEmit` over `packages/*` (tests and `apps/*` excluded)                                                                                                                 |
 | `pnpm typecheck:scrapers`                 | `tsc --noEmit` for `apps/scrapers` (the root typecheck excludes `apps/*`)                                                                                                      |
+| `pnpm typecheck:test`                     | Type-check the tests, the scrapers tests, the control Worker and `apps/web` (svelte-check)                                                                                     |
+| `pnpm test`                               | Vitest unit + integration suites, secret-free (PGlite + MSW); `test:unit` / `test:integration` run one, `test:watch` / `test:cov` extend it                                    |
+| `pnpm test:live`                          | Live-service suites (`*.live.test.ts`); each runs only with its own opt-in flag + credentials                                                                                  |
 | `pnpm db:migrate`                         | Run Neon migrations (`@opusfinder/db`)                                                                                                                                         |
 | `pnpm db:backfill-signatures`             | Backfill `jobs.content_signature` for unsigned rows (idempotent; Phase F1d)                                                                                                    |
+| `pnpm db:backfill-snapshots`              | Backfill the `digest_items` display snapshot on rows that predate it (idempotent)                                                                                              |
+| `pnpm db:prune`                           | Dry-run the closed-job TTL prune; `pnpm --filter @opusfinder/db run prune-stale -- --apply` deletes                                                                            |
+| `pnpm db:prune-oplog`                     | Dry-run the operational-log retention prune; `pnpm --filter @opusfinder/db run prune-oplog -- --apply` deletes                                                                 |
 | `pnpm db:ping`                            | Connectivity check against Neon                                                                                                                                                |
 | `pnpm runs`                               | Print the most recent `source_runs` rows (pipeline health at a glance)                                                                                                         |
-| `pnpm health`                             | Run the pipeline health checker over Neon — print 8 checks + a cost rollup; on an enforce-mode firing email `ALERT_TO` + exit non-zero (Phase F6)                              |
+| `pnpm health`                             | Run the pipeline health checker over Neon — print every check + a cost rollup; on an enforce-mode firing email `ALERT_TO` + exit non-zero (Phase F6)                           |
 | `pnpm ingest <source> <slug>`             | Fetch + normalize one ATS board, upsert to Neon, embed new postings (`--no-embed` to skip)                                                                                     |
 | `pnpm ingest:all`                         | Ingest every seeded company across all sources (`[--no-embed] [--source=<name>]`)                                                                                              |
 | `pnpm discover`                           | Discover + validate + upsert company slugs from the seed lanes (`[--source=<name>] [--lanes=<a,b>] [--limit=<n>] [--dry-run]`)                                                  |
@@ -81,6 +85,7 @@ pnpm db:ping      # round-trips SELECT 1 against Neon
 | `pnpm embeddings:search "<q>"`            | Embed a query and print the nearest jobs by cosine distance (HNSW)                                                                                                             |
 | `pnpm eval`                               | Score a ranker over the labeled set; write a report + diff vs last run                                                                                                         |
 | `pnpm eval:compare`                       | Voyage vs OpenAI embedding retrieval, side-by-side                                                                                                                             |
+| `pnpm eval:hnsw`                          | Measure HNSW recall against the exact cosine top-k on the real Neon corpus (read-only)                                                                                         |
 | `pnpm ingest-cv <cv.pdf> <email>`         | Ingest a CV PDF → R2 + `user_cv_files` + `user_profiles` (transcribe → structure → embed)                                                                                      |
 | `pnpm profiles:restructure <email>`       | Re-structure a profile from the cached R2 transcript (skips transcribe)                                                                                                        |
 | `pnpm user:create --email … --password …` | Create a verified user + default prefs (`[--name] [--location-mode] [--locations] [--min-salary] [--max-salary] [--min-yoe] [--max-yoe] [--dealbreakers] [--exclusions] [--recency-days] [--cadence] [--enabled]`) |
@@ -90,7 +95,10 @@ pnpm db:ping      # round-trips SELECT 1 against Neon
 | `pnpm digest`                             | Trigger a per-user digest run + poll for the result (`--user <uuid>` or `--all`; `[--timeout-ms] [--poll-ms]`)                                                                 |
 | `pnpm inngest:serve`                      | Local Inngest serve endpoint for the digest functions (bare Node http, port 3000; dev-only)                                                                                    |
 | `pnpm inngest:dev`                        | Local Inngest dev server (keyless; registers the serve URL for discovery + invocation)                                                                                         |
+| `pnpm email:preview`                      | Render the digest email from a hostile fixture to `email-preview.html` (no creds, no network)                                                                                  |
 | `pnpm guard:worker`                       | Assert auth / neon-serverless / the Inngest digest stack (`inngest`, `@opusfinder/llm`, `@opusfinder/rerank`, `@anthropic-ai/sdk`) never leak into the scrapers Worker (#6665); the control Worker bundles only its src, the pure `packages/control` and postal-mime |
+| `pnpm guard:tests`                        | Assert every `*.live.test.ts` has an explicit opt-in flag and every test file runs in the Vitest project its suffix names                                                      |
+| `pnpm guard:fixes`                        | Lint `packages/db/fixes` (names, SQL rules, merged fixes unchanged); the data-fix PR check                                                                                     |
 | `pnpm ctl <command>`                      | Read and flip the control plane as an agent: `status [--json]`, `set <target> <value> --reason …`, `propose`, `proposals`, `withdraw` (see [apps/control](apps/control/README.md)) |
 
 ## Deploying a schedule change
@@ -137,7 +145,7 @@ with a new `markDigestConsidered` repo fn stamping the no-send skip paths for ca
 backfill drain** (`embed-backlog-drain` `0 4 * * *` cursorless, `singleton:skip`,
 `MAX_PAGES_PER_RUN=200`, paged per `step.run`), replacing the dropped
 GitHub Actions bridge; and the new `health_alerts` append-only incident table (migration
-`0014_slow_red_hulk`, additive, no writer yet — forward-provisioned for the 12b dev panel). 12b (auth +
+`0014_slow_red_hulk`, additive; since Phase H1 the health alerter records each page there). 12b (auth +
 prefs/CV forms + history + the interactive dev panel) is deferred. **Deployed live on Vercel + Inngest
 Cloud 2026-06-17** — the `/api/inngest` serve route, the cadence cron (`0 13 * * *`), and the F8
 `embed-backlog-drain` (`0 4 * * *`) all run in prod; migration 0014 applied; the Inngest↔Vercel integration
@@ -235,8 +243,8 @@ in Phase 12); the embedding is high-signal only (contact details dropped). Shipp
 
 Phase 8 promoted `apps/scrapers` from a placeholder into a real Cloudflare Worker — a `scheduled()`
 handler that dispatches on `controller.cron` into two crons: **ingestion** (`*/30 * * * *`) and
-**discovery** (`0 3 * * SUN`). It is deployed and verified end-to-end, but currently **PAUSED**
-(`crons = []`) behind a documented pause/resume toggle in `wrangler.toml`. `runIngestion(db, opts)`
+**discovery** (`0 3 * * SUN`). It is deployed and verified end-to-end; pausing and resuming the
+crons is documented in `apps/scrapers/README.md`. `runIngestion(db, opts)`
 was extracted into `packages/sources/src/ingest.ts` (`ingest-all.ts` is now a thin shell over it),
 wiring the previously-unused `"ingestion"` arm of `source_runs`. `listCompanies` gained `activeOnly`
 plus an `afterId`/`limit` id-keyset cursor (the chunked-cron lane), and a new `pnpm runs` monitor and a
@@ -271,8 +279,9 @@ retrieval is validated on the seed set (2 profiles anonymized from real CVs × 8
 the Voyage-vs-OpenAI head-to-head (`pnpm eval:compare`) ran and Voyage won (NDCG@10 83.2% vs
 66.9%), so Voyage is the chosen provider — and the harness proved provider-agnostic, so the
 choice is cheap to revisit as the labeled set scales. Phase 4 before it shipped
-`packages/embeddings` (Voyage `voyage-3-large`; jobs embedded inline + via
-`pnpm embeddings:backfill`; `pnpm embeddings:search "<query>"` over an HNSW cosine index).
+`packages/embeddings` (Voyage `voyage-3-large`, since replaced by `voyage-4-large`; jobs embedded
+inline + via `pnpm embeddings:backfill`; `pnpm embeddings:search "<query>"` over an HNSW cosine
+index).
 Phase 3 shipped `packages/llm` (Vercel AI SDK + Anthropic wrapper with first-class prompt
 caching; `pnpm llm:test` proves a cache write-then-read). Phases 0–2 scaffolded the monorepo +
 Neon/pgvector db package, shipped the first ATS adapter (Greenhouse),
