@@ -5,7 +5,7 @@ import type { AuthDb } from "@opusfinder/db/auth-client";
 import { createAuth, type Auth } from "./auth";
 
 // Creds-free unit pin of the Better Auth construction (always-on counterpart to the AUTH_LIVE_TEST
-// gate in auth.integration.test.ts, which skips everywhere except the owner's manual live run).
+// gate in auth.live.test.ts, which skips everywhere except the owner's manual live run).
 //
 // Deliberately does NOT import ./env: that module runs loadPackageEnv at import, which would load
 // the dev box's real packages/auth/.env into process.env and break hermeticity. Everything here is

@@ -25,7 +25,7 @@ discipline): importing the barrel never requires a key.
 - **The output is byte-deterministic per payload.** Resend's `Idempotency-Key` replay (24h window)
   rejects a CHANGED payload with 409 `invalid_idempotent_request`, so a retried send step must
   re-render identical bytes: the only date shown is `payload.createdAt` (UTC), and the module has no
-  `Date.now()`/randomness. The stub smoke renders twice and asserts byte-equality.
+  `Date.now()`/randomness. `render.test.ts` renders twice and asserts byte-equality.
 
 ## Public surface (`src/index.ts`)
 
@@ -39,7 +39,7 @@ discipline): importing the barrel never requires a key.
 - `getEmailLastEvent(emailId)` — `GET /emails/:id` → `last_event` passthrough. The event→status
   POLICY lives in `@opusfinder/inngest` (`mapDeliveryEvent`), not here.
 - `emailIdempotencyKey(digestId)` — the ONE key definition (the `synthId` discipline), exported so
-  the smoke locks its shape.
+  the tests lock its shape.
 - `sendHealthAlert(subject, text)` → `{ emailId }` (Phase F6) — a plain-text operator alert for the `pnpm health`
   CLI. Reuses the lazy SEND client (`RESEND_API_KEY`) + `EMAIL_FROM`, but goes to a dedicated `ALERT_TO` operator
   address — a **DEDICATED operator address** (the owner as operator) so the alert can never be the silently-broken thing F6 exists to
@@ -61,7 +61,8 @@ discipline): importing the barrel never requires a key.
 
 - `pnpm email:preview` (root alias) — renders a built-in fixture (including the hostile item) to
   `packages/email/email-preview.html` + prints the text part. Zero creds, zero DB, zero network.
-- The behavioral smoke lives with its consumer: `pnpm --filter @opusfinder/inngest test:digest-email`.
+- Tests run under the root `pnpm test`; the send/poll/suppress flow is tested with its consumer
+  (`packages/inngest/src/delivery.test.ts`).
 
 ## Phase 12 (what changes here)
 
@@ -70,4 +71,6 @@ headers activate `user_preferences.unsubscribe_token` (the Phase-11 footer delib
 unsubscribe link — a dead link is worse than none at one-recipient volume), the `digest_approved_at` operator permit either retires (drop the one
 enrollment predicate) or becomes an operator-override lane once a real signup makes `email_verified` a true
 consent signal, Better Auth's `sendVerificationEmail` wires to this package, and the template gets its
-design pass with the frontend.
+design pass with the frontend. Landmine for that switch: `user:create` and `ingest-cv` set
+`email_verified = true` without verifying anything, so those rows must be reset first, or the permit
+must stay a required AND term (`email_verified OR approved` would enrol every operator-made user).

@@ -9,7 +9,7 @@ import { findUserIdByEmail } from "../src/index";
 import { maskEmail, prefsFromFlags } from "./cli-utils";
 
 const USAGE =
-  "Usage: pnpm user:set-prefs --email <email> [--location-mode any|remote_only|onsite_only] [--locations a,b] " +
+  "Usage: pnpm user:set-prefs --email <email> [--location-mode any|remote_only|onsite_only] [--locations 'a; b'] " +
   "[--min-salary N|clear] [--max-salary N|clear] [--min-yoe N|clear] [--max-yoe N|clear] " +
   "[--dealbreakers a,b] [--exclusions a,b] [--recency-days 14] [--cadence daily|weekly|monthly] [--enabled true|false]";
 
@@ -58,7 +58,7 @@ async function main(): Promise<void> {
   console.log(`updated prefs for ${maskEmail(email)} (${userId})`);
   // Free-text arrays (dealbreakers/exclusions) may carry company names — echo COUNTS, not contents (PII).
   console.log(
-    `  location_mode=${row.locationMode} locations=[${row.locations.join(",")}] ` +
+    `  location_mode=${row.locationMode} locations=${JSON.stringify(row.locations)} ` +
       `salary=[${row.minSalary ?? "—"}..${row.maxSalary ?? "—"}] yoe=[${row.yoeMin ?? "—"}..${row.yoeMax ?? "—"}] ` +
       `recency_days=${row.recencyDays} ` +
       `dealbreakers=${row.dealbreakers.length} exclusions=${row.exclusions.length} ` +

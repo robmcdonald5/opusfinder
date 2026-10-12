@@ -22,11 +22,9 @@ email)` (the CV-ingest path — creates a verified user with a throwaway random 
   normalized email); `findUserIdByEmail`.
 - `src/env.ts` — node-only `getAuthSecret()` / `getAuthBaseURL()` behind the `./env` subpath (never
   bundled into the Worker, same discipline as `@opusfinder/storage/env`).
-- `scripts/` — `user:create` / `user:set-prefs` / `user:list` CLIs. (The old `test:auth` and
-  `test:create-user` smokes moved to co-located Vitest: `src/auth.integration.test.ts` — the
-  `AUTH_LIVE_TEST=1` neon-serverless live gate — and `src/service.integration.test.ts` on PGlite;
-  wiring/env pins live in `src/auth.test.ts` + `src/env.test.ts`, prefs flag-parsing in
-  `src/cli-utils.test.ts` + `src/prefs-flags.test.ts`.)
+- `scripts/` — `user:create` / `user:set-prefs` / `user:approve` / `user:list` CLIs.
+- Tests are co-located; `src/auth.live.test.ts` is the neon-serverless gate PGlite can't fake
+  (`AUTH_LIVE_TEST=1 pnpm test:live` against a Neon branch).
 - `better-auth.ts` — the entrypoint `pnpm dlx @better-auth/cli generate` introspects to emit the schema.
 
 The `user` / `session` / `account` / `verification` + `user_preferences` tables live in the unified
@@ -43,8 +41,12 @@ Put a self-generated signing secret in `packages/auth/.env` (gitignored — neve
 
 ## CLIs
 
+Onboarding: `user:create` → `pnpm ingest-cv <cv.pdf> <email>` → `user:set-prefs` → `user:approve`. A new user's
+send permit (`digest_approved_at`) is NULL, and digests skip them until `user:approve` grants it.
+
 ```sh
 pnpm user:create --email me@example.com --password "<pw>" --location-mode remote_only --min-yoe 2 --max-yoe 5 --cadence daily
 pnpm user:set-prefs --email me@example.com --max-salary 180000 --dealbreakers crypto,gambling --min-salary clear
+pnpm user:approve --email me@example.com   # --revoke clears it
 pnpm user:list
 ```

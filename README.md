@@ -85,7 +85,8 @@ pnpm db:ping      # round-trips SELECT 1 against Neon
 | `pnpm profiles:restructure <email>`       | Re-structure a profile from the cached R2 transcript (skips transcribe)                                                                                                        |
 | `pnpm user:create --email … --password …` | Create a verified user + default prefs (`[--name] [--location-mode] [--locations] [--min-salary] [--max-salary] [--min-yoe] [--max-yoe] [--dealbreakers] [--exclusions] [--recency-days] [--cadence] [--enabled]`) |
 | `pnpm user:set-prefs --email … [flags]`   | Patch a user's preferences (same pref flags)                                                                                                                                   |
-| `pnpm user:list`                          | List users — masked email, verified, cadence, enabled, has-profile, id                                                                                                         |
+| `pnpm user:approve --email …`             | Grant the fail-closed digest send permit (`digest_approved_at`); a new user gets no digest until this runs (`[--revoke]`)                                                      |
+| `pnpm user:list`                          | List users — masked email, verified, approved, suppressed + bounce, cadence, enabled, has-profile, id                                                                          |
 | `pnpm digest`                             | Trigger a per-user digest run + poll for the result (`--user <uuid>` or `--all`; `[--timeout-ms] [--poll-ms]`)                                                                 |
 | `pnpm inngest:serve`                      | Local Inngest serve endpoint for the digest functions (bare Node http, port 3000; dev-only)                                                                                    |
 | `pnpm inngest:dev`                        | Local Inngest dev server (keyless; registers the serve URL for discovery + invocation)                                                                                         |
@@ -191,7 +192,7 @@ user-level on `user_preferences` (bounce → hard-suppress; complaint → suppre
 The cadence cron, Inngest Cloud keys, and production serve shipped in 12a (2026-06-17); webhooks and the
 unsubscribe endpoint remain 12b. Sending domain: `send.opusfinder.ai` (verified on Resend,
 SPF/DKIM/DMARC). Gates: `pnpm email:preview` (hostile-fixture render, no creds),
-`pnpm --filter @opusfinder/inngest test:digest-email` (stub smoke), and the live inbox gate.
+the render and delivery Vitest suites (`pnpm test`), and the live inbox gate.
 
 Phase 10 added the **per-user digest pipeline** on **Inngest** — generation only; the cadence cron is
 Phase 12. A run does deterministic filter → pgvector retrieval (top ~50 vs `user_profiles.embedding`)

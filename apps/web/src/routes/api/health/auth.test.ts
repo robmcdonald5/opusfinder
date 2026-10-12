@@ -27,6 +27,11 @@ describe("isAuthorized", () => {
     expect(isAuthorized(req({ authorization: "Bearer s3cret" }), url())).toBe(true);
   });
 
+  it("ignores surrounding whitespace in the stored token (a pasted trailing newline)", () => {
+    vi.stubEnv("HEALTH_PING_TOKEN", "s3cret\n");
+    expect(isAuthorized(req({ authorization: "Bearer s3cret" }), url())).toBe(true);
+  });
+
   it("rejects a wrong Bearer token", () => {
     vi.stubEnv("HEALTH_PING_TOKEN", "s3cret");
     expect(isAuthorized(req({ authorization: "Bearer nope" }), url())).toBe(false);

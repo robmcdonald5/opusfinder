@@ -82,10 +82,6 @@ export default defineConfig({
         "**/test/**", // fixtures, setup, helpers
         "**/drizzle/**",
         "**/*.d.ts",
-        // apps/web: the health route (auth.ts + its +server.ts) now has a node-pool suite and IS covered;
-        // only the Inngest serve endpoint stays excluded — its lazy `serve()` memoization is a cold-start
-        // perf detail (heavy scaffolding, ~0 mutation yield) deliberately left untested (Phase 4 decision).
-        "apps/web/src/routes/api/inngest/**",
       ],
       // CAVEAT: v8 coverage does NOT work under workerd. A future @cloudflare/vitest-pool-workers
       // project (a true in-isolate scrapers Worker suite) must use provider:"istanbul" and merge

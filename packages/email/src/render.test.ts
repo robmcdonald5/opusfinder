@@ -171,8 +171,23 @@ describe("renderDigestEmail — location line (formatWhere)", () => {
     { locations: ["  ", ""], remote: false, expected: "Location unlisted" }, // whitespace-only entries are dropped
     { locations: ["  Berlin  "], remote: false, expected: "Berlin" }, // each entry is trimmed
     { locations: ["  ", "Remote (EU)"], remote: false, expected: "Remote (EU)" },
+    { locations: ["Remote"], remote: true, expected: "Remote" }, // a location already saying Remote isn't repeated
+    { locations: ["Remote (EU)"], remote: true, expected: "Remote (EU)" },
   ])("$locations + remote=$remote → $expected", ({ locations, remote, expected }) => {
     expect(whereLine(locations, remote)).toBe(expected);
+  });
+});
+
+describe("renderDigestEmail — item numbering", () => {
+  it("numbers items 1..n by position, not by stored rank (dropped items leave rank gaps)", () => {
+    const { html, text } = renderDigestEmail(
+      makePayload([
+        { ...BENIGN_ITEM, rank: 1, title: "First" },
+        { ...BENIGN_ITEM, rank: 4, title: "Second" },
+      ]),
+    );
+    expect(text).toContain("\n2. Second — acme-robotics\n");
+    expect(html).toContain(">2. Second — acme-robotics</div>");
   });
 });
 

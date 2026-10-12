@@ -31,7 +31,11 @@ async function main(): Promise<void> {
     const bytes = await readFile(pdfPath);
     // Resolve a REAL user.id — creates a verified user + default prefs on first sight, idempotent on
     // email.
-    const { userId } = await getOrCreateUserByEmail(db, auth, email);
+    const { userId, created } = await getOrCreateUserByEmail(db, auth, email);
+    if (created)
+      console.warn(
+        "NEW user created: no account had this email. If you ran user:create first, check it for a typo.",
+      );
     const result = await ingestCv(db, {
       userId,
       bytes,

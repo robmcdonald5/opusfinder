@@ -7,8 +7,9 @@ import { runScript } from "@opusfinder/shared/script";
 
 import { maskEmail } from "./cli-utils";
 
-// pnpm user:list — one line per user: masked email, verified, approved (the send permit), cadence, enabled,
-// has-profile, id. db-only (no auth/secret needed). Emails are masked (PII discipline); the id is the join key.
+// pnpm user:list — one line per user: masked email, verified, approved (the send permit), suppressed + bounce
+// (set by the delivery poll on a bounce/complaint), cadence, enabled, has-profile, id. db-only (no
+// auth/secret needed). Emails are masked (PII discipline); the id is the join key.
 async function main(): Promise<void> {
   const db = createDb(getDatabaseUrl());
   const rows = await db
@@ -18,6 +19,8 @@ async function main(): Promise<void> {
       verified: user.emailVerified,
       // The DB-native send permit — NULL = un-approved = fail-closed (no send).
       approvedAt: userPreferences.digestApprovedAt,
+      suppressedAt: userPreferences.digestSuppressedAt,
+      bounce: userPreferences.digestBounceStatus,
       cadence: userPreferences.digestCadence,
       enabled: userPreferences.digestEnabled,
       profileId: userProfiles.id,
@@ -35,6 +38,7 @@ async function main(): Promise<void> {
   for (const row of rows) {
     console.log(
       `  ${maskEmail(row.email)}  verified=${row.verified}  approved=${row.approvedAt !== null}  ` +
+        `suppressed=${row.suppressedAt !== null}  bounce=${row.bounce ?? "—"}  ` +
         `cadence=${row.cadence ?? "—"}  enabled=${row.enabled ?? "—"}  profile=${row.profileId !== null}  id=${row.id}`,
     );
   }
