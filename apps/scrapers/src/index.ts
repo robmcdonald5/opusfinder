@@ -26,9 +26,9 @@ import {
  * library (`runIngestion` / `runDiscovery`) that owns its own `source_runs` row.
  *
  * The Worker imports ONLY fetch-based libraries — no Node-targeted package enters the bundle — so it
- * needs no `nodejs_compat`. Inline embedding is intentionally NOT wired here: wiring
- * `@opusfinder/embeddings` would drag its dotenv env-module into the Worker (and require nodejs_compat).
- * Jobs are upserted regardless; the still-NULL vectors are filled by `pnpm embeddings:backfill`.
+ * needs no `nodejs_compat`. Inline embedding is intentionally NOT wired here: the embeddings package
+ * loads its env from disk at import (dotenv, node:url), which `pnpm guard:worker` keeps out of this
+ * bundle. Jobs are upserted regardless; the still-NULL vectors are filled by `pnpm embeddings:backfill`.
  *
  * The cron strings below MUST match wrangler.toml [triggers].crons CHARACTER-FOR-CHARACTER — in
  * particular the discovery weekday: Cloudflare numbers weekdays 1=Sun..7=Sat, so it is "SUN", never
@@ -314,25 +314,25 @@ async function sendPing(kind: string, send: () => Promise<Response>): Promise<vo
 }
 
 /**
- * Boards per ingestion tick, from INGEST_LIMIT. A non-numeric / non-positive value falls back to the
- * default rather than stalling the cron on LIMIT 0 (zero boards every tick) or erroring on LIMIT NaN.
+ * Boards per ingestion tick, from INGEST_LIMIT truncated to an integer. A non-numeric value or one under 1
+ * falls back to the default rather than stalling the cron on LIMIT 0 (zero boards every tick) or erroring
+ * on LIMIT NaN.
  */
 function ingestLimit(env: Env): number {
-  const limitRaw = env.INGEST_LIMIT ? Number(env.INGEST_LIMIT) : DEFAULT_INGEST_LIMIT;
-  return Number.isFinite(limitRaw) && limitRaw > 0
-    ? Math.min(Math.trunc(limitRaw), MAX_INGEST_LIMIT)
+  const limit = env.INGEST_LIMIT ? Math.trunc(Number(env.INGEST_LIMIT)) : DEFAULT_INGEST_LIMIT;
+  return Number.isFinite(limit) && limit >= 1
+    ? Math.min(limit, MAX_INGEST_LIMIT)
     : DEFAULT_INGEST_LIMIT;
 }
 
 /**
- * Staleness-close TTL in days, from STALE_SWEEP_TTL_DAYS. A non-numeric / non-positive value is undefined:
- * sweepStaleJobs then uses its default (DEFAULT_STALE_TTL_DAYS) rather than closing on a NaN/0 horizon.
+ * Staleness-close TTL in days, from STALE_SWEEP_TTL_DAYS truncated to an integer. A non-numeric value or
+ * one under 1 is undefined: sweepStaleJobs then uses its default (DEFAULT_STALE_TTL_DAYS) rather than
+ * closing on a NaN/0 horizon.
  */
 function staleTtlDays(env: Env): number | undefined {
-  const ttlRaw = env.STALE_SWEEP_TTL_DAYS ? Number(env.STALE_SWEEP_TTL_DAYS) : undefined;
-  return ttlRaw !== undefined && Number.isFinite(ttlRaw) && ttlRaw > 0
-    ? Math.trunc(ttlRaw)
-    : undefined;
+  const ttl = Math.trunc(Number(env.STALE_SWEEP_TTL_DAYS));
+  return Number.isFinite(ttl) && ttl >= 1 ? ttl : undefined;
 }
 
 /** A close switch's mode as the control registry names it (`close` / `stale_sweep`: shadow | enforce). */

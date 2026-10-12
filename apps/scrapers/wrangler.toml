@@ -6,6 +6,11 @@ compatibility_date = "2026-06-03"
 # inline embedding later re-introduces @opusfinder/embeddings' dotenv env-module and would need
 # `compatibility_flags = ["nodejs_compat"]` — see src/index.ts.
 
+# Cron-only (no fetch handler), so no public hostname: a request to one could only throw. Crons and the
+# outbound CONTROL binding need none, and local `wrangler dev` triggers are unaffected.
+workers_dev = false
+preview_urls = false
+
 [observability]
 enabled = true
 

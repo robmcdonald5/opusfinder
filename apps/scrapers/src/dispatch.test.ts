@@ -367,6 +367,7 @@ describe("runIngestionTick — limit parse/clamp (a misconfigured INGEST_LIMIT c
     ["0", DEFAULT_INGEST_LIMIT],
     ["-3", DEFAULT_INGEST_LIMIT],
     ["abc", DEFAULT_INGEST_LIMIT],
+    ["0.5", DEFAULT_INGEST_LIMIT],
     ["75.9", 75],
   ])("INGEST_LIMIT %j → limit %d", async (value, expected) => {
     const env = value === undefined ? {} : { INGEST_LIMIT: value };
@@ -382,6 +383,7 @@ describe("runIngestionTick — stale-sweep TTL parse (falls back to the sweep de
     ["0", undefined],
     ["-1", undefined],
     ["abc", undefined],
+    ["0.5", undefined],
     ["21.8", 21],
   ])("STALE_SWEEP_TTL_DAYS %j → ttlDays %j", async (value, expected) => {
     const env = value === undefined ? {} : { STALE_SWEEP_TTL_DAYS: value };
