@@ -39,12 +39,11 @@ and the library it calls owns its own `source_runs` row (`startRun`/`finishRun`)
   using an id-keyset cursor stored in the `INGEST_CURSOR` KV namespace; the corpus drains across ticks.
   Boards run one at a time; politeness starts a board ≥ 500 ms after the previous board of its source
   (its adapter's `pacingKey`) finished, sleeping only the remainder, so alternating sources can't burst
-  one host. A posting
-  whose detail fetch failed is kept as stored, never overwritten (`hydrateSkipped` in `pnpm runs`).
-  Inline embedding is **not wired** — the Voyage free tier throttles to 3 RPM, and importing the
-  embeddings package would pull a Node env-module into the Worker (and require `nodejs_compat`). Jobs
-  are upserted regardless; the still-NULL vectors are filled by `pnpm embeddings:backfill`. See the
-  enable steps in `src/index.ts`.
+  one host. A posting whose detail fetch failed is kept as stored, never overwritten (`hydrateSkipped`
+  in `pnpm runs`). Inline embedding is **not wired**, and no flag turns it on: the embeddings package
+  loads its env from disk at import, which crashes a Worker at module load and which `pnpm guard:worker`
+  keeps out of this bundle. Jobs are upserted regardless; the still-NULL vectors are filled by
+  `pnpm embeddings:backfill`.
 - **Discovery** runs `runDiscovery({ ..., workerOnly: true })` bounded by `limit`/`reprobeLimit` to stay
   under the subrequest budget. `workerOnly` restricts the run to fetch-only `workerSafe` lanes (the
   F5-LANES-2 guard that keeps a future Node-only lane out of the isolate).
@@ -89,8 +88,7 @@ mode), so a local trigger writes a real `source_runs` row to Neon.
 ### Secrets / config
 
 Copy `.dev.vars.example` → `.dev.vars` (gitignored) and fill in `DATABASE_URL` — that is all the Worker
-needs. `VOYAGE_API_KEY` is required only if you enable inline embedding (see `src/index.ts`).
-`worker-configuration.d.ts` holds only the Workers runtime types; regenerate it with
+needs. `worker-configuration.d.ts` holds only the Workers runtime types; regenerate it with
 `pnpm --filter @opusfinder/scrapers types:generate` when `compatibility_date` changes. Bindings and vars
 are typed by the `Env` interface in `src/index.ts`: update it whenever `wrangler.toml` adds or changes one.
 
@@ -100,18 +98,15 @@ These require the Cloudflare account / real secrets / billing:
 
 ```bash
 wrangler login
-wrangler kv namespace create INGEST_CURSOR   # then uncomment the `id` line in wrangler.toml + paste it
 wrangler secret put DATABASE_URL
 wrangler secret put HEALTH_PING_URL           # Phase F6 liveness heartbeat — the watchdog ping URL (optional)
 wrangler secret put HEALTH_PING_URL_DISCOVER  # discovery's own weekly check: period 7 d, grace ~6 h (optional)
-# wrangler secret put VOYAGE_API_KEY          # ONLY if you enable inline embedding (see src/index.ts)
 pnpm --filter @opusfinder/scrapers deploy     # registers/updates the Worker + applies the current [triggers]
 wrangler tail opusfinder-scrapers             # stream live cron invocations
 ```
 
-- **Workers Paid is required for the weekly discovery cron** (now **active** as of Phase F5) — the Free
-  plan caps at 50 subrequests per invocation, which the seed fetch + a handful of probes exhaust.
-  Ingestion's `INGEST_LIMIT` keeps a tick under budget either way.
+- **Workers Paid is required** (active): the Free plan caps an invocation at 50 subrequests, far below
+  an ingestion tick (~1,500; see `[limits]` in `wrangler.toml`) or a discovery run.
 - **When the ingestion cadence changes, retune the external watchdog in the SAME deploy window.** The
   heartbeat (`HEALTH_PING_URL`) pings once per successful ingestion tick, so the watchdog check's period
   must equal the cron period. For the current `0 */2 * * *`, set the healthchecks.io check to **period
@@ -137,7 +132,7 @@ change to the toggle takes effect on the **next deploy**:
   `pnpm --filter @opusfinder/scrapers deploy`. Deploying with `crons = []` is the documented way to
   _remove_ the deployed triggers. (Omitting `[triggers]` entirely would instead _leave_ them untouched,
   so always set the empty array — don't just delete the block.)
-- **Resume**: uncomment the cron array in `wrangler.toml` (and delete `crons = []`), then
+- **Resume**: restore the cron array in `wrangler.toml` in place of `crons = []`, then
   `pnpm --filter @opusfinder/scrapers deploy`.
 
 The Worker code, secret, and KV binding are untouched by the toggle, so resuming is a one-step redeploy.

@@ -269,9 +269,9 @@ function pingWatchdog(url: string | undefined, ctx: ExecutionContext): void {
  * the published surface past its first newline.
  *
  * OPTIONAL: unset secret ⇒ skip silently (no network). `ctx.waitUntil` so a watchdog hiccup never fails
- * the tick (we are already in the catch; the original error is re-thrown by the caller regardless).
+ * the tick.
  * GUARD (author discipline): the target lives ONLY in the `HEALTH_PING_URL*` secrets; no provider/watchdog
- * host literal in this file. Exported solely for the `test:watchdog` smoke.
+ * host literal in this file. Exported solely for watchdog.test.ts.
  */
 export function pingWatchdogFail(
   url: string | undefined,
