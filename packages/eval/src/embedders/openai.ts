@@ -20,7 +20,7 @@ import { getOpenAiApiKey } from "../env";
 import type { Embedder } from "./types";
 
 const OPENAI_URL = "https://api.openai.com/v1/embeddings";
-const MODEL = "text-embedding-3-small";
+export const OPENAI_MODEL = "text-embedding-3-small";
 
 // Conservative chars/token estimate (dense text) — keeps each input under OpenAI's 8192-token
 // per-input hard limit and budgets tokens per request, mirroring the embeddings chunker.
@@ -54,7 +54,7 @@ async function embedBatch(input: string[]): Promise<number[][]> {
       Authorization: `Bearer ${getOpenAiApiKey()}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ model: MODEL, input, dimensions: EMBED_DIMENSIONS }),
+    body: JSON.stringify({ model: OPENAI_MODEL, input, dimensions: EMBED_DIMENSIONS }),
   });
 
   if (!res.ok) {

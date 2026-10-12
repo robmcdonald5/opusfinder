@@ -107,9 +107,8 @@ boards as adapters land.
 ## Status (Phase 5)
 
 - Harness, metrics, random baseline, embedding ranker, `pnpm eval` + reports: **done**.
-- Voyage `voyage-3-large` retrieval validated on the real seed set (NDCG@10 ≈ 83% vs random ≈ 9%).
-  Not re-run since the `voyage-4-large` swap: `reports/embedding-voyage.dataset.json` is still the
-  3-large run, so the next Voyage run's delta includes the model change.
+- Voyage `voyage-3-large` retrieval validated on the real seed set (NDCG@10 ≈ 83% vs random ≈ 9%);
+  the committed Voyage report is still that run.
 - **Voyage-vs-OpenAI comparison: done → Voyage wins** (NDCG@10 83.2% vs OpenAI
   `text-embedding-3-small` 66.9% on the seed set), so Voyage is the chosen provider. The harness
   is provider-agnostic — `pnpm eval:compare` reproduces the head-to-head, and `--embedder` swaps

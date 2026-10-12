@@ -11,7 +11,7 @@ import { join } from "node:path";
 import { runScript } from "@opusfinder/shared/script";
 
 import { getFlag } from "../src/cli";
-import { loadDataset } from "../src/dataset";
+import { datasetSha256, loadDataset } from "../src/dataset";
 import { resolveEmbedder } from "../src/embedders";
 import { embeddingRanker } from "../src/rankers/embedding";
 import {
@@ -38,6 +38,7 @@ async function main(): Promise<void> {
     process.exitCode = 1;
     return;
   }
+  const sha = datasetSha256(datasetPath);
 
   // Providers fail independently (e.g. one account out of quota), so a failure in one must not
   // discard the other's results — catch per provider and report what succeeded.
@@ -46,12 +47,14 @@ async function main(): Promise<void> {
   const failures: { provider: string; message: string }[] = [];
   for (const provider of PROVIDERS) {
     try {
-      const embedder = await resolveEmbedder(provider);
+      const { embedder, model } = await resolveEmbedder(provider);
       const perExample = await scoreRanker(embeddingRanker(embedder), examples);
       const report: EvalReport = {
         ranker: "embedding",
         embedder: provider,
+        model,
         dataset: relativeToPkg(datasetPath),
+        datasetSha256: sha,
         exampleCount: examples.length,
         metrics: aggregate(perExample),
       };

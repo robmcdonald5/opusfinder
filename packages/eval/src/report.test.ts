@@ -99,6 +99,32 @@ describe("diffReports", () => {
     const out = diffReports(REPORT, { ...REPORT, exampleCount: 3 });
     expect(out.split("\n")[0]).toContain("dataset changed (d, 1 examples → d, 3)");
   });
+
+  it("names a model change and a same-size dataset whose contents changed", () => {
+    const saved = { ...REPORT, model: "voyage-3-large", datasetSha256: "a".repeat(64) };
+    vi.mocked(readFileSync).mockReturnValue(JSON.stringify(saved));
+    const prev = readReport("reports/x.json"); // the identity fields survive the round-trip
+    const out = diffReports(prev, {
+      ...REPORT,
+      model: "voyage-4-large",
+      datasetSha256: "b".repeat(64),
+    });
+    expect(out.split("\n")[0]).toBe(
+      "  model voyage-3-large → voyage-4-large; dataset changed (d@aaaaaaaa, 1 examples → " +
+        "d@bbbbbbbb, 1) — these deltas are not comparable",
+    );
+  });
+
+  it("a baseline without model or fingerprint reads as unknown, not as a dataset change", () => {
+    const out = diffReports(REPORT, {
+      ...REPORT,
+      model: "voyage-4-large",
+      datasetSha256: "b".repeat(64),
+    });
+    expect(out.split("\n")[0]).toBe(
+      "  model unknown → voyage-4-large; dataset fingerprint unknown — can't tell if its contents changed",
+    );
+  });
 });
 
 describe("formatReport", () => {

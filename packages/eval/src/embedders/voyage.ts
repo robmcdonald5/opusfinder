@@ -2,6 +2,8 @@ import { embed } from "@opusfinder/embeddings";
 
 import type { Embedder } from "./types";
 
+export { EMBED_MODEL as VOYAGE_MODEL } from "@opusfinder/embeddings";
+
 /**
  * Voyage embedder for eval — delegates to the shipped `@opusfinder/embeddings` `embed()`, so
  * the comparison's Voyage side is byte-identical to production retrieval (same model, dims,
