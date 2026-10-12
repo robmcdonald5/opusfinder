@@ -1,3 +1,5 @@
+import { parseArgs } from "node:util";
+
 import { createDb } from "@opusfinder/db";
 import { getDatabaseUrl } from "@opusfinder/db/env";
 import { runScript } from "@opusfinder/shared/script";
@@ -15,65 +17,39 @@ import { SEED_LANES } from "../src/seed";
  * `--dry-run` is a read-only preview (writes nothing).
  */
 async function main(): Promise<void> {
-  const args = process.argv.slice(2);
-  const dryRun = args.includes("--dry-run");
+  // Strict (the parseArgs default): an unknown or value-less flag throws instead of falling through to the
+  // broad all-source pass, whose deactivateStale sweep is UNSCOPED.
+  const { values } = parseArgs({
+    args: process.argv.slice(2),
+    options: {
+      source: { type: "string" },
+      limit: { type: "string" },
+      lanes: { type: "string" },
+      "dry-run": { type: "boolean" },
+    },
+  });
+  const dryRun = values["dry-run"] ?? false;
 
-  // Accept BOTH `--flag=value` and `--flag value`. `present` stays true when the value is missing,
-  // so a bare `--source` (or the space form `--source greenhouse`) is handled explicitly instead of
-  // silently falling back to the broad all-source pass — which would run the UNSCOPED
-  // deactivateStale sweep the operator never intended.
-  const flagValue = (name: string): { present: boolean; value: string | undefined } => {
-    const eqPrefix = `--${name}=`;
-    for (let i = 0; i < args.length; i++) {
-      const arg = args[i];
-      if (arg === undefined) continue;
-      if (arg === `--${name}`) {
-        const next = args[i + 1];
-        return {
-          present: true,
-          value: next !== undefined && !next.startsWith("--") ? next : undefined,
-        };
-      }
-      if (arg.startsWith(eqPrefix)) return { present: true, value: arg.slice(eqPrefix.length) };
-    }
-    return { present: false, value: undefined };
-  };
-
-  const sourceFlag = flagValue("source");
-  if (sourceFlag.present && sourceFlag.value === undefined) {
-    console.error("--source needs a value, e.g. --source=greenhouse");
+  const rawSource = values.source;
+  if (rawSource !== undefined && !isSourceName(rawSource)) {
+    console.error(`Unknown --source=${rawSource}`);
     process.exitCode = 1; // NOT process.exit() — Windows libuv teardown crash
     return;
   }
-  // Narrow a plain `string | undefined` so isSourceName's type guard applies (a compound guard on
-  // sourceFlag.value would not carry the SourceName narrowing through to runDiscovery's arg).
-  const rawSource = sourceFlag.value;
-  if (rawSource !== undefined && !isSourceName(rawSource)) {
-    console.error(`Unknown --source=${rawSource}`);
-    process.exitCode = 1;
-    return;
-  }
 
-  const limitFlag = flagValue("limit");
   let limit: number | undefined;
-  if (limitFlag.present) {
-    limit = Number(limitFlag.value);
-    if (limitFlag.value === undefined || !Number.isFinite(limit) || limit <= 0) {
+  if (values.limit !== undefined) {
+    limit = Number(values.limit);
+    if (!Number.isFinite(limit) || limit <= 0) {
       console.error("--limit must be a positive number");
       process.exitCode = 1;
       return;
     }
   }
 
-  const lanesFlag = flagValue("lanes");
   let lanes: string[] | undefined;
-  if (lanesFlag.present) {
-    if (lanesFlag.value === undefined) {
-      console.error("--lanes needs a value, e.g. --lanes=outscal,hn");
-      process.exitCode = 1;
-      return;
-    }
-    lanes = lanesFlag.value
+  if (values.lanes !== undefined) {
+    lanes = values.lanes
       .split(",")
       .map((s) => s.trim())
       .filter((s) => s.length > 0);

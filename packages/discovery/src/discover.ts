@@ -27,9 +27,9 @@ export interface DiscoveryOptions {
   source?: SourceName;
   /**
    * Cap the NEW/INACTIVE-candidate probe worklist (omit = no cap — probe every resolved candidate).
-   * A fixed seed-ordered PREFIX slice, NOT a cursor: repeated capped runs re-probe the same head
-   * (live candidates reactivate and drop out, so progress is throttled, not zero). For ad-hoc/test
-   * runs — the broad pass is uncapped.
+   * A fixed lane-ordered PREFIX slice, NOT a cursor: repeated capped runs re-probe the same head (live
+   * candidates reactivate and drop out, never-live ones stay). The weekly Worker run is capped, which is
+   * why SEED_LANES lists fresh-supply lanes first.
    */
   limit?: number;
   /** Preview only: probe + classify + tally, but write NOTHING (no upsert, reprobe, sweep, or run row). */
@@ -88,6 +88,10 @@ export interface DiscoveryCounts {
   reprobeInconclusive: number;
   deactivated: number;
   budgetSkipped: number; // candidates of either pass left unprobed once opts.maxRunMs ran out
+  // BOTH passes: probes whose final attempt was a 429 / 5xx. They already sit in indeterminate /
+  // reprobeInconclusive; broken out so vendor throttling can't hide among SmartRecruiters' routine 200-empty.
+  rateLimited: number;
+  serverError: number;
   // Board-death close: count-only/shadow → wouldCloseOnDeactivation; enforce writes closed.
   jobsClosedOnDeactivation: number; // active jobs of inactive boards flipped to 'closed' (enforce; 0 in shadow)
   wouldCloseOnDeactivation: number; // active jobs of inactive boards that WOULD close (shadow; 0 in enforce)
@@ -262,6 +266,7 @@ async function reprobeActive(
       continue;
     }
     counts.reprobed += 1;
+    tallyStatus(counts, r.status);
     if (r.outcome === "live" || r.outcome === "live-empty") {
       await markProbeResult(db, row.id, true);
       counts.refreshedLive += 1;
@@ -281,10 +286,16 @@ function tally(counts: DiscoveryCounts, r: ProbeResult): void {
     counts.transientFailed += 1;
     return;
   }
+  tallyStatus(counts, r.status);
   if (r.outcome === "live") counts.live += 1;
   else if (r.outcome === "live-empty") counts.liveEmpty += 1;
   else if (r.outcome === "absent") counts.absent += 1;
   else counts.indeterminate += 1;
+}
+
+function tallyStatus(counts: DiscoveryCounts, status: number): void {
+  if (status === 429) counts.rateLimited += 1;
+  else if (status >= 500) counts.serverError += 1;
 }
 
 /**
@@ -391,6 +402,8 @@ export function emptyCounts(): DiscoveryCounts {
     reprobeInconclusive: 0,
     deactivated: 0,
     budgetSkipped: 0,
+    rateLimited: 0,
+    serverError: 0,
     jobsClosedOnDeactivation: 0,
     wouldCloseOnDeactivation: 0,
   };
@@ -407,6 +420,7 @@ function logSummary(counts: DiscoveryCounts, dryRun: boolean): void {
       `indet ${counts.indeterminate}, transient ${counts.transientFailed}; upserted ${counts.upserted}, ` +
       `reprobed ${counts.reprobed}, refreshed ${counts.refreshedLive}, marked-failed ${counts.markedFailed}, ` +
       `inconclusive ${counts.reprobeInconclusive}, deactivated ${counts.deactivated} ` +
-      `(board-close: ${counts.jobsClosedOnDeactivation} closed, ${counts.wouldCloseOnDeactivation} would-close).`,
+      `(board-close: ${counts.jobsClosedOnDeactivation} closed, ${counts.wouldCloseOnDeactivation} would-close). ` +
+      `Final 429 ${counts.rateLimited}, 5xx ${counts.serverError}.`,
   );
 }

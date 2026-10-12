@@ -153,15 +153,19 @@ describe("probeFetch", () => {
     }
   });
 
-  it("a 2xx whose body read fails (e.g. the timeout firing mid-stream) → status 0, never a throw", async () => {
+  it("a 2xx whose body read fails (cut stream, or the timeout mid-stream) is retried, then status 0 — never a throw", async () => {
     handler = () =>
       ({
         status: 200,
         headers: { get: () => null },
-        text: () => Promise.reject(new Error("aborted")),
+        text: () => Promise.reject(new TypeError("terminated")),
       }) as unknown as Response;
 
-    expect(await probeFetch(req("https://x/y"), 0)).toEqual({ status: 0, body: undefined });
+    const promise = probeFetch(req("https://x/y"), 1);
+    await vi.runAllTimersAsync();
+
+    expect(await promise).toEqual({ status: 0, body: undefined });
+    expect(fetchCalls).toHaveLength(2);
   });
 
   it("a network throw with maxRetries 0 → status 0 (network-exhausted)", async () => {

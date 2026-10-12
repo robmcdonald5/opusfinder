@@ -327,6 +327,8 @@ describe("emptyCounts", () => {
       reprobeInconclusive: 0,
       deactivated: 0,
       budgetSkipped: 0,
+      rateLimited: 0,
+      serverError: 0,
       jobsClosedOnDeactivation: 0,
       wouldCloseOnDeactivation: 0,
     });

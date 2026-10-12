@@ -56,6 +56,21 @@ const seedRoute = (slugs: string[]): Route => ({
   match: (url) => url.includes("companies_v2.json"),
   respond: () => jsonResponse(seedRecords(slugs)),
 });
+// The hn lane: Algolia finds the newest "Who is hiring?" story, then its comment tree carries the board URLs.
+const hnRoutes = (slugs: string[]): Route[] => [
+  {
+    match: (url) => url.includes("hn.algolia.com/api/v1/search_by_date"),
+    respond: () =>
+      jsonResponse({ hits: [{ objectID: "1", title: "Ask HN: Who is hiring? (October 2026)" }] }),
+  },
+  {
+    match: (url) => url.includes("hn.algolia.com/api/v1/items/1"),
+    respond: () =>
+      jsonResponse({
+        children: slugs.map((s) => ({ text: `Apply: https://boards.greenhouse.io/${s}` })),
+      }),
+  },
+];
 // greenhouse.jobsRequest → boards-api.greenhouse.io/v1/boards/{slug}/jobs?content=true
 const probeMatch = (slug: string) => (url: string) => url.includes(`/v1/boards/${slug}/jobs`);
 const liveRoute = (slug: string): Route => ({
@@ -210,6 +225,8 @@ describe("runDiscovery — orchestration over real PGlite (fetch stubbed)", () =
         absent: 1,
         indeterminate: 1,
         transientFailed: 1,
+        serverError: 1, // the indeterminate one was a final 500
+        rateLimited: 0,
         upserted: 2, // live + live-empty both write
         reprobed: 0, // the reprobe pass ran first, before the 2 rows existed
         deactivated: 0,
@@ -257,6 +274,20 @@ describe("runDiscovery — orchestration over real PGlite (fetch stubbed)", () =
       // The slice really bounds the network: a2/a3 are never fetched (a dropped slice would probe all 3).
       expect(fx.calls.some((u) => probeMatch("a2")(u))).toBe(false);
       expect(fx.calls.some((u) => probeMatch("a3")(u))).toBe(false);
+    });
+
+    it("puts the HN lane's fresh supply ahead of the static seed, so a cap cuts the seed's tail", async () => {
+      const fx = installFetch([
+        seedRoute(["seed1", "seed2"]),
+        ...hnRoutes(["hnco"]),
+        liveRoute("hnco"),
+      ]);
+
+      const counts = await runDiscovery(db, { limit: 1, probe: PROBE_OPTS });
+
+      expect(counts).toMatchObject({ candidates: 3, probeWorklist: 1, live: 1, upserted: 1 });
+      expect(await companyBySlug("hnco")).toBeDefined();
+      expect(fx.calls.some((u) => probeMatch("seed1")(u))).toBe(false);
     });
   });
 
@@ -505,7 +536,7 @@ describe("runDiscovery — orchestration over real PGlite (fetch stubbed)", () =
       installFetch([
         liveRoute("refreshme"),
         absentRoute("failme"),
-        indeterminateRoute("inconclusiveme"),
+        { match: probeMatch("inconclusiveme"), respond: () => textResponse("slow down", 429) },
       ]);
 
       const counts = await runDiscovery(db, { lanes: ["__none__"], probe: PROBE_OPTS });
@@ -516,6 +547,7 @@ describe("runDiscovery — orchestration over real PGlite (fetch stubbed)", () =
         refreshedLive: 1,
         markedFailed: 1,
         reprobeInconclusive: 1,
+        rateLimited: 1, // the inconclusive one was a final 429
         deactivated: 0,
       });
 
@@ -532,6 +564,32 @@ describe("runDiscovery — orchestration over real PGlite (fetch stubbed)", () =
       const inc = await companyBySlug("inconclusiveme");
       expect(inc!.consecutiveProbeFailures).toBe(1);
       expect(inc!.lastProbedAt!.getTime()).toBeGreaterThan(new Date("2020-03-01T00:00:00Z").getTime());
+    });
+
+    it("a row whose stored source has no adapter is inconclusive, not run-fatal: its cursor advances", async () => {
+      const staleProbe = new Date("2019-01-01T00:00:00Z");
+      await seedCompany({
+        slug: "renamed",
+        source: "trakstar2" as SourceName,
+        active: true,
+        lastProbedAt: staleProbe,
+      });
+      await seedCompany({
+        slug: "healthy",
+        active: true,
+        lastLiveAt: SENTINEL_2020,
+        lastProbedAt: staleProbe,
+      });
+      installFetch([liveRoute("healthy")]);
+
+      const counts = await runDiscovery(db, { lanes: ["__none__"], probe: PROBE_OPTS });
+
+      expect(counts).toMatchObject({ reprobed: 2, refreshedLive: 1, reprobeInconclusive: 1 });
+      // Advanced, so it can't sit at the head of the oldest-probed queue and fail every later run.
+      expect((await companyBySlug("renamed"))!.lastProbedAt!.getTime()).toBeGreaterThan(
+        staleProbe.getTime(),
+      );
+      expect((await allSourceRuns())[0]!.status).toBe("ok");
     });
 
     it("honors reprobeLimit over the oldest-probed-first queue — the newest active row is a bystander", async () => {
@@ -778,7 +836,7 @@ describe("runDiscovery — orchestration over real PGlite (fetch stubbed)", () =
       installFetch([
         {
           match: (url) => url.includes("companies_v2.json"),
-          respond: () => new Response("boom", { status: 500, statusText: "E".repeat(500) }),
+          respond: () => new Response("boom", { status: 404, statusText: "E".repeat(500) }),
         },
       ]);
 
@@ -791,7 +849,7 @@ describe("runDiscovery — orchestration over real PGlite (fetch stubbed)", () =
       const run = runs[0]!;
       expect(run.status).toBe("error"); // opened running → terminalized error in the catch
       expect(run.finishedAt).toBeInstanceOf(Date);
-      expect(run.errorSample).toContain("Seed fetch failed: 500");
+      expect(run.errorSample).toContain("Seed fetch failed: 404");
       // Exactly 500: the message is 523 chars pre-slice, so dropping `.slice(0, 500)` in discover.ts makes
       // this !== 500 — the truncation (secret-free shape sample) is now genuinely protected.
       expect(run.errorSample!.length).toBe(500);

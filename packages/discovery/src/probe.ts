@@ -218,7 +218,8 @@ export interface ProbeOptions {
  * Probe many candidates through a bounded, polite pool: a global concurrency cap PLUS a per-host gate
  * (≤ `hostConcurrency` in flight AND ≥ `hostMinIntervalMs` between starts), so a shared API host (all
  * greenhouse boards hit boards-api.greenhouse.io) isn't hammered while unique subdomain hosts still
- * run in parallel. Results preserve input order; past `opts.deadline` the unstarted candidates are left
+ * run in parallel. Results preserve input order, and the batch never rejects: a candidate whose probe
+ * throws resolves as status 0 / `indeterminate`. Past `opts.deadline` the unstarted candidates are left
  * as holes (`results[i]` undefined).
  */
 export async function probeCandidates(
@@ -240,15 +241,25 @@ export async function probeCandidates(
       if (i >= candidates.length) return;
       const c = candidates[i];
       if (!c) continue;
-      const req = requestOf(c);
-      const host = hostOf(req);
-      await throttle.acquire(host);
       try {
-        // Checked after the host slot, which can take a while: this worker stops, leaving `i` a hole.
-        if (opts.deadline !== undefined && Date.now() >= opts.deadline) return;
-        results[i] = await probeWith(c, req, maxRetries, opts.maxRetryWaitMs);
-      } finally {
-        throttle.release(host);
+        const req = requestOf(c);
+        const host = hostOf(req);
+        await throttle.acquire(host);
+        try {
+          // Checked after the host slot, which can take a while: this worker stops, leaving `i` a hole.
+          if (opts.deadline !== undefined && Date.now() >= opts.deadline) return;
+          results[i] = await probeWith(c, req, maxRetries, opts.maxRetryWaitMs);
+        } finally {
+          throttle.release(host);
+        }
+      } catch (err) {
+        // E.g. a stored source no adapter knows. Status 0 is inconclusive: never a live/absent verdict, and
+        // the reprobe pass still advances the row so it can't pin the head of the queue.
+        console.error(
+          `[discovery] probe of a "${c.source}" candidate threw: ` +
+            (err instanceof Error ? err.message : String(err)).slice(0, 200),
+        );
+        results[i] = { candidate: c, status: 0, outcome: "indeterminate" };
       }
     }
   };

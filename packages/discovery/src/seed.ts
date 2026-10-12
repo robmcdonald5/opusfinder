@@ -1,3 +1,5 @@
+import { backoff } from "@opusfinder/shared/async";
+
 import { fetchHnAlgoliaLane } from "./lanes/hn";
 
 /**
@@ -20,23 +22,53 @@ export interface CompanyRecord {
   ats_links?: string[];
 }
 
+// Per attempt, body included: the weekly Worker run must not hang on the seed GET.
+const SEED_FETCH_TIMEOUT_MS = 30_000;
+const SEED_MAX_RETRIES = 2;
+
 /**
  * Fetch + parse the pinned seed into records. Validates only the top-level array shape; per-record
- * fields are validated downstream by the resolver. A non-2xx or non-array body THROWS — a broken seed
- * should fail the run loudly, not silently yield zero candidates. Streams the whole file into memory
- * (a few MB for ~12k records), which is fine for a local bootstrap script.
+ * fields are validated downstream by the resolver. A transient failure (network error or cut body, 429,
+ * 5xx) is retried with the shared `backoff`; past that, a non-2xx or non-array body THROWS — a broken
+ * seed should fail the run loudly, not silently yield zero candidates.
  */
 export async function loadSeed(url: string = SEED_URL): Promise<CompanyRecord[]> {
-  const res = await fetch(url);
-  if (!res.ok) {
-    await res.body?.cancel().catch(() => {});
-    throw new Error(`Seed fetch failed: ${res.status} ${res.statusText}`);
+  for (let attempt = 0; ; attempt++) {
+    let res: Response;
+    try {
+      res = await fetch(url, { signal: AbortSignal.timeout(SEED_FETCH_TIMEOUT_MS) });
+    } catch (err) {
+      if (attempt < SEED_MAX_RETRIES) {
+        await backoff(attempt);
+        continue;
+      }
+      throw err;
+    }
+    if (!res.ok) {
+      await res.body?.cancel().catch(() => {});
+      if ((res.status === 429 || res.status >= 500) && attempt < SEED_MAX_RETRIES) {
+        await backoff(attempt, res.headers.get("retry-after"));
+        continue;
+      }
+      throw new Error(`Seed fetch failed: ${res.status} ${res.statusText}`);
+    }
+    // A body cut mid-stream (or timed out) is a network failure, not a broken seed: retry it like one.
+    let text: string;
+    try {
+      text = await res.text();
+    } catch (err) {
+      if (attempt < SEED_MAX_RETRIES) {
+        await backoff(attempt);
+        continue;
+      }
+      throw err;
+    }
+    const data: unknown = JSON.parse(text);
+    if (!Array.isArray(data)) {
+      throw new Error("Seed is not a JSON array of company records");
+    }
+    return data as CompanyRecord[];
   }
-  const data: unknown = await res.json();
-  if (!Array.isArray(data)) {
-    throw new Error("Seed is not a JSON array of company records");
-  }
-  return data as CompanyRecord[];
 }
 
 /**
@@ -62,9 +94,11 @@ export interface SeedLane {
 /**
  * The lane registry — discovery supply's single extension point. Node runs every lane; the Worker filters
  * to `workerSafe` ones via `runDiscovery`'s `opts.workerOnly`. Grow supply by adding a lane HERE, not by
- * touching the pipeline.
+ * touching the pipeline. ORDER MATTERS: the worklist follows it and a capped run (`opts.limit`) keeps only
+ * its head, so fresh-supply lanes go first. The frozen outscal seed's never-live slugs are re-probed every
+ * run and would otherwise fill the cap ahead of them.
  */
 export const SEED_LANES: SeedLane[] = [
-  { name: "outscal", workerSafe: true, failLoud: true, fetch: () => loadSeed() },
   { name: "hn", workerSafe: true, fetch: fetchHnAlgoliaLane }, // isolated (no failLoud): an Algolia hiccup tallies lane_hn_error, never zeroes a run
+  { name: "outscal", workerSafe: true, failLoud: true, fetch: () => loadSeed() },
 ];
