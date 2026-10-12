@@ -13,8 +13,12 @@ describe("scrubProfilePii", () => {
   it.each([
     { label: "email address", text: "reach me at jane.doe@example.com", redacted: true, expected: "reach me at [redacted]" },
     { label: "10-digit phone with separators", text: "call (682) 333-9323 anytime", redacted: true, expected: "call [redacted] anytime" },
+    { label: "phone with non-breaking hyphens (U+2011)", text: "call 682\u2011333\u20119323", redacted: true, expected: "call [redacted]" },
+    { label: "phone with en dashes (U+2013)", text: "call 682\u2013333\u20139323 anytime", redacted: true, expected: "call [redacted] anytime" },
+    { label: "phone with minus signs (U+2212)", text: "call +1 682\u2212333\u22129323", redacted: true, expected: "call [redacted]" },
     { label: "9-digit run (one below the phone threshold)", text: "ticket 12345-6789 open", redacted: false, expected: "ticket 12345-6789 open" },
     { label: "year range (8 digits)", text: "Worked 2015-2019 on payments", redacted: false, expected: "Worked 2015-2019 on payments" },
+    { label: "back-to-back year ranges (>=10 digits, all years)", text: "Led 2015-2019 2019-2023 migrations", redacted: false, expected: "Led 2015-2019 2019-2023 migrations" },
     { label: "a metric like p99", text: "tuned p99 latency", redacted: false, expected: "tuned p99 latency" },
   ])("$label → redacted=$redacted", ({ text, redacted, expected }) => {
     const out = scrubProfilePii({ summary: text, skills: [], targetRoles: [] }).summary;

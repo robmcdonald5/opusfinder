@@ -368,15 +368,20 @@ export function profileWarnings(profile: StructuredProfile): string[] {
 }
 
 const EMAIL_RE = /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g;
-// A phone-like run: optional + and (, then digits/separators. Redacted ONLY when it contains >=10
-// digits, so it never eats a year range like "2015-2019" (8 digits) or a metric like "p99".
-const PHONE_CANDIDATE_RE = /\+?\(?\d[\d\s().-]{8,}\d/g;
+// A phone-like run: optional + and (, then digits/separators, any Unicode dash included (Word writes
+// U+2011 non-breaking hyphens). Redacted ONLY when it has >=10 digits whose groups are not all
+// 4-digit years, so "2015-2019 2019-2023" and a metric like "p99" survive.
+const PHONE_CANDIDATE_RE = /\+?\(?\d[\d\s().\p{Pd}\u2212]{8,}\d/gu;
+const YEAR_RE = /^(?:19|20)\d\d$/;
+
+function isPhoneRun(run: string): boolean {
+  const groups = run.match(/\d+/g) ?? [];
+  return groups.join("").length >= 10 && !groups.every((g) => YEAR_RE.test(g));
+}
 
 function scrubText(text: string): string {
   const noEmail = text.replace(EMAIL_RE, "[redacted]");
-  const noPhone = noEmail.replace(PHONE_CANDIDATE_RE, (m) =>
-    (m.match(/\d/g)?.length ?? 0) >= 10 ? "[redacted]" : m,
-  );
+  const noPhone = noEmail.replace(PHONE_CANDIDATE_RE, (m) => (isPhoneRun(m) ? "[redacted]" : m));
   return noPhone.replace(/[ \t]{2,}/g, " ").trim();
 }
 
