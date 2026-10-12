@@ -612,14 +612,51 @@ describe("runPerUser", () => {
     expect(batchSubmit).not.toHaveBeenCalled();
   });
 
-  it("throws when the synthesis batch never ends within the poll window", async () => {
+  it("polls past the 24h batch expiry before giving up on a batch that never ends", async () => {
     batchPoll.mockResolvedValue({ status: "in_progress" }); // never 'ended'
+    const { sleepCalls, tools } = recordingStep();
+
+    const err = await rejectionOf(runPerUser(makeDeps(), event(), tools));
+
+    expect(err).toBeInstanceOf(NonRetriableError);
+    expect(err.message).toMatch(/had not ended after 171 polls/);
+    expect(batchPoll).toHaveBeenCalledTimes(171); // SYNTH_MAX_POLLS (30 fast + 141 slow)
+    // The API ends an expired batch at 24h, so the last poll must land after that to collect it.
+    const minutes = (d = "") => (d.endsWith("s") ? parseInt(d) / 60 : parseInt(d));
+    const lastPollAt = sleepCalls.reduce((sum, s) => sum + minutes(s.duration), 0);
+    expect(lastPollAt).toBeGreaterThan(24 * 60);
+  });
+
+  it("rides out failed synthesis polls and collects once the batch ends", async () => {
+    const outage = new Error("overloaded");
+    batchPoll
+      .mockRejectedValueOnce(outage)
+      .mockRejectedValueOnce(outage)
+      .mockRejectedValueOnce(outage)
+      .mockRejectedValueOnce(outage)
+      .mockRejectedValueOnce(outage) // five in a row: one short of giving up
+      .mockResolvedValueOnce({ status: "in_progress" }) // a success resets the run
+      .mockRejectedValueOnce(outage)
+      .mockResolvedValueOnce({ status: "ended" });
+    const { runs, tools } = recordingStep();
+
+    const out = await runPerUser(makeDeps(), event(), tools);
+
+    expect(out).toEqual({ userId: USER, digestId: 500, itemCount: 2, delivery: "delivered" });
+    expect(batchPoll).toHaveBeenCalledTimes(8);
+    expect(runs).toContain("collect-synthesis");
+  });
+
+  it("gives up after six consecutive failed polls", async () => {
+    const outage = new Error("unauthorized");
+    batchPoll.mockRejectedValue(outage);
     const { tools } = recordingStep();
 
-    await expect(runPerUser(makeDeps(), event(), tools)).rejects.toThrow(
-      /did not end within the ~24h poll window/,
-    );
-    expect(batchPoll).toHaveBeenCalledTimes(168); // SYNTH_MAX_POLLS (30 fast + 138 slow)
+    const err = await rejectionOf(runPerUser(makeDeps(), event(), tools));
+
+    expect(err).toBe(outage);
+    expect(batchPoll).toHaveBeenCalledTimes(6);
+    expect(batchCollect).not.toHaveBeenCalled();
   });
 
   it("polls on the fast (2m) schedule for the first hour, then the slow (10m) tail", async () => {

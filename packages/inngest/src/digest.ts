@@ -50,12 +50,15 @@ const SYNTH_INITIAL_WAIT = "30s"; // first sleep before polling the synthesis ba
 // per-run step budget, and every sleep suspends at zero compute. Step ids depend ONLY on the loop
 // index, never on ctx.attempt: `attempt` also increments on STEP retries (and resets when a step
 // completes), so an attempt-scoped id would re-derive mid-request and orphan a retried step's target.
-// Past 24h the batch is expired server-side — retries can't recover it — so exhaustion fails the run.
+// The last poll lands at 30s + 30×2m + 140×10m ≈ 24h20m (no sleep follows it), past the API's 24h
+// expiry, so an expired batch is still seen `ended` and its succeeded results are kept.
 const SYNTH_FAST_POLLS = 30; // 2m apart — the first hour
 const SYNTH_FAST_INTERVAL = "2m";
-const SYNTH_SLOW_POLLS = 138; // 10m apart — the tail out to the 24h batch expiry
+const SYNTH_SLOW_POLLS = 141; // 10m apart — the tail, out past the 24h batch expiry
 const SYNTH_SLOW_INTERVAL = "10m";
 const SYNTH_MAX_POLLS = SYNTH_FAST_POLLS + SYNTH_SLOW_POLLS;
+/** Consecutive failed polls (each after its own step retries) before the run gives up on the batch. */
+const SYNTH_MAX_FAILED_POLLS = 6;
 
 /** Shared with the CLI's gate — the event schema is compile-time only, so the orchestrator re-checks at
  *  runtime (an empty string is falsy-shaped junk that must not widen into an all-recipients run). */
@@ -461,11 +464,19 @@ export async function runPerUser(deps: DigestDeps, event: PerUserEvent, step: Pe
   //    is what lets the wait span the SLA.
   await step.sleep("synthesis-initial-wait", SYNTH_INITIAL_WAIT);
   let ended = false;
+  let failedPolls = 0;
   for (let i = 0; i < SYNTH_MAX_POLLS; i++) {
-    const poll = await step.run(`poll-synthesis-${i}`, () => deps.batch.poll(batchId));
-    if (poll.status === "ended") {
-      ended = true;
-      break;
+    try {
+      const poll = await step.run(`poll-synthesis-${i}`, () => deps.batch.poll(batchId));
+      if (poll.status === "ended") {
+        ended = true;
+        break;
+      }
+      failedPolls = 0;
+    } catch (err) {
+      // A poll is a read and the paid batch keeps running server-side: an outage that outlasts one
+      // step's retries waits for the next scheduled poll instead of abandoning the batch.
+      if (++failedPolls >= SYNTH_MAX_FAILED_POLLS) throw err;
     }
     if (i < SYNTH_MAX_POLLS - 1) {
       await step.sleep(
@@ -475,9 +486,10 @@ export async function runPerUser(deps: DigestDeps, event: PerUserEvent, step: Pe
     }
   }
   if (!ended) {
-    throw new Error(
-      `synthesis batch ${batchId} did not end within the ~24h poll window (${SYNTH_MAX_POLLS} polls) — ` +
-        `it has expired server-side.`,
+    // A retry would only replay the memoized polls.
+    throw new NonRetriableError(
+      `synthesis batch ${batchId} had not ended after ${SYNTH_MAX_POLLS} polls (~24h20m, past its ` +
+        `24h expiry) — giving up.`,
     );
   }
 

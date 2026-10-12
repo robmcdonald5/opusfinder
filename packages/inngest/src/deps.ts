@@ -71,6 +71,8 @@ function buildRerank(): DigestDeps["rerank"] {
           schema: RerankScoresSchema,
           messages: [{ role: "user", content: renderRerankCandidates(chunk) }],
           maxOutputTokens: 2048,
+          // The scores feed a hard MIN_SCORE floor, so sampling noise would flip borderline jobs in and out.
+          temperature: 0,
         });
         inputTokens += usage.inputTokens ?? 0;
         outputTokens += usage.outputTokens ?? 0;
