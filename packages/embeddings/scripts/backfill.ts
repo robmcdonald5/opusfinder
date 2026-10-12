@@ -8,7 +8,7 @@ import { embed, formatEmbedCost } from "../src/index";
 /**
  * Embed every job whose `embedding` is still NULL (the backlog + any reset by a content
  * change). Idempotent: a second run finds nothing and reports 0 — no double-embedding.
- * Needs DATABASE_URL (packages/db/.env) and VOYAGE_API_KEY (packages/embeddings/.env).
+ * Needs DATABASE_URL and VOYAGE_API_KEY (packages/embeddings/.env).
  */
 async function main(): Promise<void> {
   const db = createDb(getDatabaseUrl());

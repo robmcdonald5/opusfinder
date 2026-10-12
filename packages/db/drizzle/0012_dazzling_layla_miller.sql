@@ -6,8 +6,7 @@
 -- content_signature / 0010's consecutive_absences). The NOT-NULL columns use the atomic
 -- `type DEFAULT x NOT NULL` template (the 0005 precedent) so existing rows backfill in one statement.
 -- max_salary/yoe_min/yoe_max are NULLABLE-no-default (null = "not answered"; a 0 default would read as a
--- real value). remote_ok is KEPT (soft-deprecated, unread after F3) — a follow-up migration may DROP it
--- once verified. See PHASE_F3_PLAN.md §3.
+-- real value). remote_ok was kept here, unread, and 0026 drops it. See PHASE_F3_PLAN.md §3.
 ALTER TABLE "user_preferences" ADD COLUMN IF NOT EXISTS "max_salary" integer;--> statement-breakpoint
 ALTER TABLE "user_preferences" ADD COLUMN IF NOT EXISTS "yoe_min" smallint;--> statement-breakpoint
 ALTER TABLE "user_preferences" ADD COLUMN IF NOT EXISTS "yoe_max" smallint;--> statement-breakpoint
@@ -17,5 +16,10 @@ ALTER TABLE "user_preferences" ADD COLUMN IF NOT EXISTS "location_mode" text DEF
 -- user's recall shifts: remote_ok=true → 'any' (the new column's default, already correct), false →
 -- 'onsite_only' (the old remote_ok=false behavior). Only the remote_ok=false rows need flipping, so the
 -- UPDATE is scoped to them — it never touches a row already at the 'any' default, keeping it idempotent
--- and unable to clobber a value set after the column landed.
-UPDATE "user_preferences" SET "location_mode" = 'onsite_only' WHERE NOT "remote_ok";
+-- and unable to clobber a value set after the column landed. 0026 drops remote_ok, so a replay after it skips
+-- the backfill.
+DO $$ BEGIN
+ UPDATE "user_preferences" SET "location_mode" = 'onsite_only' WHERE NOT "remote_ok";
+EXCEPTION
+ WHEN undefined_column THEN null;
+END $$;

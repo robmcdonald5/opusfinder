@@ -264,16 +264,6 @@ export const sourceRuns = pgTable(
 export type CvFileStatus = "extracted" | "failed";
 
 /**
- * Hard-ish user preferences (remote / locations / salary). Feeds the deterministic filter, NOT the
- * embedding. Mirrors `EvalProfile.preferences`.
- */
-export interface ProfilePreferences {
-  remote?: boolean;
-  locations?: string[];
-  minSalary?: number;
-}
-
-/**
  * Append-only history of CV uploads + their R2 object references. One row per upload; never updated in
  * place except (a) the provisional `failed` → `extracted` status flip and (b) patching `r2_text_key`
  * once the transcript is cached. The original PDF and the cached transcript live in R2 — this table
@@ -325,7 +315,6 @@ export const userProfiles = pgTable(
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),
     structured: jsonb("structured").$type<StructuredProfile>().notNull(),
-    preferences: jsonb("preferences").$type<ProfilePreferences>(),
     embedding: vector("embedding", { dimensions: EMBEDDING_DIMENSIONS }),
     sourceCvFileId: integer("source_cv_file_id").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -335,7 +324,8 @@ export const userProfiles = pgTable(
     // One profile per user — the onConflict target for upsertUserProfile.
     uniqueIndex("user_profiles_user_id_uq").on(t.userId),
     // HNSW approximate-NN over the profile vectors (cosine `<=>`), mirroring jobs_embedding_hnsw_idx
-    // (same neon-http IF NOT EXISTS gotcha).
+    // (same neon-http IF NOT EXISTS gotcha). No query searches profiles by vector yet; it is kept for the
+    // undecided design that scores new jobs against users.
     index("user_profiles_embedding_hnsw_idx").using("hnsw", t.embedding.op("vector_cosine_ops")),
     // FK to the backing upload, explicit stable name. Same DO/EXCEPTION idempotency guard as jobs' FK above.
     foreignKey({
@@ -482,8 +472,7 @@ export type DigestDeliveryStatus = "none" | "sent" | "delivered" | "bounced" | "
  * email step reads. The user-SETTABLE subset mirrors `UserPreferences` in @opusfinder/shared; the
  * delivery-STATE columns (`digest_suppressed_at`, `digest_bounce_status`, `last_digest_*`) are
  * pipeline-written, not form-set. `unsubscribe_token` is cryptographically random
- * (generateUnsubscribeToken), NEVER email-derived. Retires the never-populated
- * `user_profiles.preferences` jsonb.
+ * (generateUnsubscribeToken), NEVER email-derived.
  */
 export const userPreferences = pgTable(
   "user_preferences",
@@ -491,9 +480,6 @@ export const userPreferences = pgTable(
     id: serial("id").primaryKey(),
     userId: uuid("user_id").$type<UserId>().notNull(),
     // --- user-settable filter prefs (deterministic filter) ---
-    // @deprecated subsumed into `locationMode`; kept (soft-deprecated, unread). A follow-up migration
-    // may DROP the column once verified.
-    remoteOk: boolean("remote_ok").notNull().default(true),
     locations: text("locations")
       .array()
       .notNull()
@@ -515,10 +501,8 @@ export const userPreferences = pgTable(
       .array()
       .notNull()
       .default(sql`'{}'::text[]`),
-    // Indeed/LinkedIn-style location filter — a TS string-union on plain text (no pgEnum). SUBSUMES the
-    // soft-deprecated `remote_ok` boolean above; geoMatches branches on it. Default 'any' = byte-identical
-    // to remote_ok=true; the migration backfills existing rows from remote_ok (true→'any',
-    // false→'onsite_only') so no current user's recall shifts.
+    // Indeed/LinkedIn-style location filter — a TS string-union on plain text (no pgEnum); geoMatches
+    // branches on it.
     locationMode: text("location_mode").$type<LocationMode>().notNull().default("any"),
     // --- delivery prefs + state ---
     digestCadence: text("digest_cadence").$type<DigestCadence>().notNull().default("weekly"),

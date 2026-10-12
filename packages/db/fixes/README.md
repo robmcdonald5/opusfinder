@@ -89,10 +89,11 @@ so the owner does this in the Neon Console.
 
 ## One-time setup (owner)
 
-In a normal terminal (outside the agent sandbox), with `gh` logged in and `packages/db/.env` holding your
-`DATABASE_URL`:
+In a normal terminal (outside the agent sandbox), with `gh` logged in and your owner `DATABASE_URL` exported
+from outside the repo (never `packages/db/.env`, which agents can read):
 
 ```sh
+set -a; . ~/.config/opusfinder/db.env; set +a          # DATABASE_URL='postgresql://…' (quoted: it contains &)
 pnpm db:migrate                                         # creates the data_fixes table (migration 0024)
 pnpm --filter @opusfinder/db run data-fixer:setup       # role + grants, Environment, secret
 ```

@@ -24,7 +24,7 @@ function validatePostgresUrl(name: string): (url: string) => void {
 export const getDatabaseUrl = requireEnv({
   name: "DATABASE_URL",
   notSetMessage:
-    "DATABASE_URL is not set. Copy the repo-root .env.example to packages/db/.env and paste your Neon connection string.",
+    "DATABASE_URL is not set. Export it from a file outside the repo (set -a; . ~/.config/opusfinder/db.env; set +a); don't keep the owner URL in packages/db/.env, where agents can read it.",
   validate: validatePostgresUrl("DATABASE_URL"),
 });
 

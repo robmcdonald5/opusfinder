@@ -15,8 +15,8 @@ import {
 // OWNER, one time (and again to rotate the password), from a normal terminal with `gh` logged in:
 //   pnpm --filter @opusfinder/db run data-fixer:setup            (add -- --dry-run to only print the SQL)
 // 1. Creates/updates the `data-fixes` GitHub Environment so only `main` can deploy to it.
-// 2. With DATABASE_URL (packages/db/.env, the owner's role): creates the data_fixer role or rotates its
-//    password, and resets its grants (src/fixer-role.ts), in one transaction.
+// 2. With DATABASE_URL (the owner's role, exported from outside the repo): creates the data_fixer role or
+//    rotates its password, and resets its grants (src/fixer-role.ts), in one transaction.
 // 3. Pipes data_fixer's connection string into `gh secret set DATA_FIX_DATABASE_URL --env data-fixes` on stdin.
 // Never prints the password or the connection string. Safe to re-run: if a step fails, run it again.
 

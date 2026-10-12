@@ -27,7 +27,7 @@ import {
  * report is unhealthy, even if the email was cooldown-suppressed.
  *
  * Lives in @opusfinder/inngest (not @opusfinder/db) because it both READS (db) and SENDS (email). Needs
- * DATABASE_URL (packages/db/.env); thresholds/modes come from HEALTH_* env (see healthOptionsFromEnv), the
+ * DATABASE_URL; thresholds/modes come from HEALTH_* env (see healthOptionsFromEnv), the
  * cooldown from HEALTH_ALERT_COOLDOWN_H. A real alert send additionally needs ALERT_TO + RESEND_API_KEY +
  * EMAIL_FROM (packages/email/.env) — fail-LOUD: if a page is due and those are unset, sendHealthAlert throws
  * and this script exits non-zero rather than silently dropping the alert. Output is shape-only (counts /

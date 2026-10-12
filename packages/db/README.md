@@ -37,14 +37,16 @@ is unaffected and the scrapers Worker never pulls neon-serverless/WebSocket into
 
 ## Environment
 
-The real connection string lives in `packages/db/.env` (gitignored). Copy the
-repo-root `.env.example` there and set `DATABASE_URL` to your Neon **direct**
-(non-pooled) connection string. `getDatabaseUrl()` (`src/env.ts`, built on
-`@opusfinder/shared/env`'s `loadPackageEnv` + `requireEnv`) validates it is
-a `postgres(ql)://` URL and, on failure, echoes only the scheme — never the
-credentials. `loadPackageEnv(import.meta.url)` resolves `packages/db/.env`
-relative to the module (not the cwd), so any package's scripts pick up
-`DATABASE_URL` however they're invoked.
+`DATABASE_URL` is the owner's Neon **direct** (non-pooled) connection string. Keep it in a file outside
+the repo and export it before running a db script:
+
+```sh
+set -a; . ~/.config/opusfinder/db.env; set +a   # the file holds DATABASE_URL='postgresql://…'
+```
+
+Single-quote the value: Neon URLs contain `&`. Never put it in `packages/db/.env`: agents can read the
+repo, and `getDatabaseUrl()` (`src/env.ts`) loads that file into every script that imports it, whatever
+the cwd. A value already in the shell wins over the file.
 
 ## Commands
 
@@ -157,8 +159,9 @@ Run from the repo root via the workspace filter so the cwd is `packages/db`:
   (F1e/F1f) is DEFERRED.
 - **Schema (Phase F3).** `drizzle/0012_dazzling_layla_miller.sql` (additive, hand-guarded `IF NOT EXISTS` — same
   neon-http discipline as 0002/0010/0011) adds five `user_preferences` columns — `max_salary`, `yoe_min`,
-  `yoe_max`, `dealbreakers`, `location_mode` — and backfills `location_mode` from the now soft-deprecated (kept
-  but unread) `remote_ok` (`true`→`'any'`, `false`→`'onsite_only'`). `location_mode` is a TS union
+  `yoe_max`, `dealbreakers`, `location_mode` — and backfills `location_mode` from `remote_ok` (`true`→`'any'`,
+  `false`→`'onsite_only'`), which `drizzle/0026` later drops along with the never-populated
+  `user_profiles.preferences`. `location_mode` is a TS union
   (`LocationMode` = `'any' | 'remote_only' | 'onsite_only'`, same idempotent-migration rule as `lifecycle_state`);
   `repos/preferences.ts` `toRow` maps the new fields. Retrieval's `geoMatches` was REWRITTEN to branch on
   `LocationMode` (`remote_only` excludes on-site; `onsite_only` excludes remote — subsumes the old `remoteOk`
