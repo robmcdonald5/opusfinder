@@ -59,5 +59,5 @@ filler.
 ## Tests
 
 `src/*.test.ts` cover the core with a fake call. `pnpm eval -- --ranker llm-rerank` runs it through
-eval's deterministic stub (`packages/eval/reports/llm-rerank.dataset.json`), which checks the wiring,
-not rerank quality.
+eval's deterministic stub (`packages/eval/reports/llm-rerank-stub.dataset.json`), which checks the
+wiring, not rerank quality.

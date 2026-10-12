@@ -1,7 +1,6 @@
 /**
  * Build the pooled candidate snapshot for each per-profile label file: the union of three
- * nomination arms over the live corpus, written to data/pools/<id>.json (gitignored; only the
- * frozen dataset.jsonl the pools feed is committed).
+ * nomination arms over the live corpus, written to data/pools/<id>.json.
  *
  * Why pooled: at the ~100k-job corpus a full-board candidate pool is unlabelable, so each
  * example is labeled against the union of what several retrievers surface. Labels are honest
@@ -32,12 +31,13 @@
  * seed exact-distance tie noise — one member represents the group, the same rule production
  * applies at display time (collapseBySignature).
  *
- * Regeneration against a changed corpus is a deliberate refresh: pool ids shift, and
- * build:dataset fails loud on any goodId absent from the new pool (forcing relabeling) instead
- * of silently rescoring stale labels.
+ * A labeled profile's pool is only rebuilt with --force: its labels (and every negative they
+ * imply) mean something only against the pool they were drafted from, and build:dataset catches a
+ * good id that left the pool but not a new member nobody judged. A forced rebuild means relabeling.
  *
- *   pnpm --filter @opusfinder/eval build:pool                       # all data/profiles/*.json
+ *   pnpm --filter @opusfinder/eval build:pool                       # every unlabeled profile
  *   pnpm --filter @opusfinder/eval build:pool -- --profile it-sysadmin
+ *   pnpm --filter @opusfinder/eval build:pool -- --profile it-manager --force   # rebuild a labeled one
  */
 import { mkdirSync, writeFileSync } from "node:fs";
 
@@ -56,6 +56,7 @@ import { hashString, mulberry32 } from "../src/rng";
 import { relativeToPkg } from "../src/runner";
 import type { EvalProfile } from "../src/types";
 import {
+  isLabeled,
   loadAllProfileFiles,
   loadProfileFile,
   poolPath,
@@ -75,6 +76,9 @@ const ARM_OVERFETCH = 3;
 /** Voyage-arm fetch depth before the signature collapse trims to VOYAGE_K distinct roles. */
 const VOYAGE_FETCH = VOYAGE_K * 4;
 const HNSW_INDEX = "jobs_embedding_hnsw_idx";
+/** Every arm requires an embedding, so a stalled embed drain empties the window long before a
+ *  narrow corpus would: a caught-up window held ~11.5k (activeEmbedded14d in hnsw-recall's report). */
+const MIN_ELIGIBLE = 1000;
 
 /** Local mirror of repos/sql.ts's vectorLiteral/VECTOR_CAST (the hnsw-recall precedent — a few
  *  duplicated lines beat widening the production API for a tooling script). */
@@ -225,14 +229,18 @@ async function buildPoolFor(db: AuthDb, profile: EvalProfile): Promise<PoolFile>
     }
   }
 
-  // Arm 2 — fts. ts_rank DESC with an id tiebreak so the arm is deterministic on rank ties.
+  // Arm 2 — fts, with an id tiebreak so the arm is deterministic on rank ties. 'simple', not
+  // 'english': 'english' drops "IT" as a stopword, turning "IT Manager" into the bare stem 'manag'
+  // that matches nearly every posting (the cost: no stemming). ts_rank_cd, not ts_rank: ts_rank
+  // ignores phrase adjacency, so it would score every stray "it" and "and" in a long posting;
+  // normalization 1 damps length (rank / (1 + log length)).
   const queryText = ftsQueryText(profile);
-  const tsv = sql`to_tsvector('english', title || ' ' || description_text)`;
-  const tsq = sql`websearch_to_tsquery('english', ${queryText})`;
+  const tsv = sql`to_tsvector('simple', title || ' ' || description_text)`;
+  const tsq = sql`websearch_to_tsquery('simple', ${queryText})`;
   const ftsRows = resultRows(
     await db.execute(sql`
       SELECT id, title, description_text, locations, remote, content_signature,
-             ts_rank(${tsv}, ${tsq}) AS rank
+             ts_rank_cd(${tsv}, ${tsq}, 1) AS rank
       FROM ${jobs}
       WHERE ${BASE_WHERE} AND ${tsv} @@ ${tsq}
       ORDER BY rank DESC, id
@@ -257,6 +265,12 @@ async function buildPoolFor(db: AuthDb, profile: EvalProfile): Promise<PoolFile>
       contentSignature: typeof r.content_signature === "string" ? r.content_signature : null,
     };
   });
+  if (eligible.length < MIN_ELIGIBLE) {
+    throw new Error(
+      `only ${eligible.length} eligible jobs (embedded, active, last ${RECENCY_DAYS}d; need ` +
+        `${MIN_ELIGIBLE}+) — is the embedding backlog drained? Not writing a pool this thin.`,
+    );
+  }
   const rng = mulberry32(hashString(profile.id));
   for (let i = eligible.length - 1; i > 0; i--) {
     const j = Math.floor(rng() * (i + 1));
@@ -330,17 +344,28 @@ async function buildPoolFor(db: AuthDb, profile: EvalProfile): Promise<PoolFile>
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
   const only = getFlag(args, "--profile");
-  const labeled = only
+  const force = args.includes("--force");
+  const targets = only
     ? [loadProfileFile(`${PROFILES_DIR}/${only}.json`)]
     : loadAllProfileFiles();
-  if (labeled.length === 0) {
+  if (targets.length === 0) {
     throw new Error(`no profile files in ${relativeToPkg(PROFILES_DIR)} — nothing to pool.`);
   }
 
   const db = createAuthDb(getDatabaseUrl());
   try {
     mkdirSync(POOLS_DIR, { recursive: true });
-    for (const { profile } of labeled) {
+    for (const target of targets) {
+      // Same contract as draft-labels: naming a labeled profile fails loud, a sweep skips it.
+      if (isLabeled(target) && !force) {
+        const msg =
+          `${target.profile.id} is already labeled — a new pool would leave those labels judged ` +
+          `against a different one. Pass --force to rebuild it, then re-draft it with --force.`;
+        if (only) throw new Error(msg);
+        console.error(`[${target.profile.id}] SKIPPED: ${msg}`);
+        continue;
+      }
+      const { profile } = target;
       const pool = await buildPoolFor(db, profile);
       const out = poolPath(profile.id);
       writeFileSync(out, `${JSON.stringify(pool, null, 2)}\n`, "utf8");

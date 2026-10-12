@@ -4,7 +4,7 @@
  * definition here means the determinism contract can't drift between the two rankers.
  */
 
-/** FNV-1a 32-bit string hash — a stable seed from a string (e.g. a profile id, or the rerank system). */
+/** FNV-1a 32-bit string hash — a stable seed from a string (e.g. a profile id). */
 export function hashString(s: string): number {
   let h = 2166136261 >>> 0;
   for (let i = 0; i < s.length; i++) {

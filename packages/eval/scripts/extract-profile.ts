@@ -12,12 +12,13 @@ import { composeProfileText, MIN_TRANSCRIPT_CHARS, profileWarnings, scrubProfile
 import { runScript } from "@opusfinder/shared/script";
 
 import type { EvalProfile } from "../src/types";
+import type { LabeledProfileFile } from "./pooling";
 
 /**
  * Generate an `EvalProfile` from a real CV PDF via the SAME cv-extract prompts + quality gates the
- * production pipeline uses (transcribe → structure → PII-scrub). Prints a paste-ready, PII-free
- * profile to stdout; the CV owner (the labeling authority) adds `goodIds` for it in
- * build-dataset.ts's LABELS and re-runs build:dataset.
+ * production pipeline uses (transcribe → structure → PII-scrub). Prints a PII-free, not-yet-labeled
+ * label file to stdout: save it as data/profiles/<profile-id>.json, then run build:pool,
+ * draft-labels and build:dataset.
  *
  * The LLM wiring + guards mirror packages/profiles (scripts/seams.ts + ingestCv's gates) — kept
  * separate because those seams are script-local and the @opusfinder/profiles index stays
@@ -78,10 +79,15 @@ async function main(): Promise<void> {
   // Surface partial extractions the way ingest-cv does, so a weak profile isn't pasted blindly.
   const warnings = profileWarnings(profile);
 
-  // Guidance + any warnings to stderr; the profile JSON to stdout (so it can be piped/inspected cleanly).
+  // Guidance + any warnings to stderr; the label-file JSON to stdout (so it can be piped/inspected cleanly).
   if (warnings.length > 0) console.error(`// WARNING: ${warnings.join("; ")}`);
-  console.error("// cv-extract output — review for residual PII + accuracy, then add `goodIds` in build-dataset.ts LABELS.");
-  console.log(JSON.stringify(profile, null, 2));
+  console.error(
+    `// cv-extract output — review for residual PII + accuracy, save as data/profiles/${id}.json, ` +
+      "then run build:pool, draft-labels, build:dataset.",
+  );
+  // Empty goodIds AND notes is the "never labeled" marker draft-labels and build:dataset key on.
+  const file: LabeledProfileFile = { profile, goodIds: [], notes: "" };
+  console.log(JSON.stringify(file, null, 2));
 }
 
 await runScript("ExtractProfile", main);

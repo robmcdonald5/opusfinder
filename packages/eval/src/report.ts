@@ -19,7 +19,11 @@ export interface EvalReport {
   ranker: string;
   /** Embedding provider when the ranker is embedding-based, else null. */
   embedder: string | null;
+  /** The embedder's model id; absent for model-free rankers and in older reports. */
+  model?: string;
   dataset: string;
+  /** sha256 of the dataset file; absent in older reports. */
+  datasetSha256?: string;
   exampleCount: number;
   metrics: AggregateMetrics[];
 }
@@ -71,7 +75,9 @@ function coerceReport(parsed: unknown): EvalReport | null {
   return {
     ranker: typeof parsed.ranker === "string" ? parsed.ranker : "",
     embedder: typeof parsed.embedder === "string" ? parsed.embedder : null,
+    model: typeof parsed.model === "string" ? parsed.model : undefined,
     dataset: typeof parsed.dataset === "string" ? parsed.dataset : "",
+    datasetSha256: typeof parsed.datasetSha256 === "string" ? parsed.datasetSha256 : undefined,
     exampleCount: numOrNaN(parsed.exampleCount),
     metrics,
   };
@@ -92,6 +98,7 @@ const pct = (x: number): string =>
 export function formatReport(report: EvalReport): string {
   const head =
     `ranker=${report.ranker}${report.embedder ? ` embedder=${report.embedder}` : ""}` +
+    `${report.model ? ` model=${report.model}` : ""}` +
     `  examples=${report.exampleCount}  dataset=${report.dataset}`;
   const rows = report.metrics.map(
     (m) =>
@@ -117,15 +124,40 @@ export function ppDelta(a: number, b: number, bothUndefined = "n/a"): string {
   return cell.padStart(8);
 }
 
-/** Per-k delta of `next` vs `prev` in percentage points; `=` when both are undefined. */
+/** A report's dataset path, tagged with its fingerprint's first 8 hex chars when recorded. */
+const datasetLabel = (r: EvalReport): string =>
+  r.datasetSha256 ? `${r.dataset}@${r.datasetSha256.slice(0, 8)}` : r.dataset;
+
+/**
+ * Per-k delta of `next` vs `prev` in percentage points; `=` when both are undefined. A first line
+ * names a model change and calls out a different dataset, which moves every metric on its own. An
+ * older baseline without a model or fingerprint reads as "unknown", never as a change.
+ */
 export function diffReports(prev: EvalReport | null, next: EvalReport): string {
   if (!prev) return "  (no previous report — this run establishes the baseline)";
   const byK = new Map(prev.metrics.map((m) => [m.k, m]));
-  return next.metrics
-    .map((m) => {
-      const p = byK.get(m.k);
-      if (!p) return `  @${m.k}  (new k)`;
-      return `  @${String(m.k).padEnd(2)}  P ${ppDelta(p.precision, m.precision, "=")}  R ${ppDelta(p.recall, m.recall, "=")}  NDCG ${ppDelta(p.ndcg, m.ndcg, "=")}`;
-    })
-    .join("\n");
+  const rows = next.metrics.map((m) => {
+    const p = byK.get(m.k);
+    if (!p) return `  @${m.k}  (new k)`;
+    return `  @${String(m.k).padEnd(2)}  P ${ppDelta(p.precision, m.precision, "=")}  R ${ppDelta(p.recall, m.recall, "=")}  NDCG ${ppDelta(p.ndcg, m.ndcg, "=")}`;
+  });
+  const notes: string[] = [];
+  if (prev.model !== next.model) {
+    notes.push(`model ${prev.model ?? "unknown"} → ${next.model ?? "unknown"}`);
+  }
+  const bothHashed = prev.datasetSha256 !== undefined && next.datasetSha256 !== undefined;
+  if (
+    prev.dataset !== next.dataset ||
+    prev.exampleCount !== next.exampleCount ||
+    (bothHashed && prev.datasetSha256 !== next.datasetSha256)
+  ) {
+    notes.push(
+      `dataset changed (${datasetLabel(prev)}, ${prev.exampleCount} examples → ${datasetLabel(next)}, ` +
+        `${next.exampleCount}) — these deltas are not comparable`,
+    );
+  } else if (prev.datasetSha256 !== next.datasetSha256) {
+    notes.push("dataset fingerprint unknown — can't tell if its contents changed");
+  }
+  if (notes.length > 0) rows.unshift(`  ${notes.join("; ")}`);
+  return rows.join("\n");
 }

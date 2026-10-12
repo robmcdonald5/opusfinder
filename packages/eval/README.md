@@ -23,7 +23,6 @@ pnpm eval:compare                               # Voyage vs OpenAI, side-by-side
 pnpm eval:hnsw                                  # HNSW-vs-exact recall on real Neon (read-only)
 
 pnpm exec vitest run packages/eval/src              # self-tests: metrics/cosine/dataset/report (Vitest)
-pnpm --filter @opusfinder/eval export:candidates    # dump real jobs from Neon (labeling aid)
 pnpm --filter @opusfinder/eval build:pool           # per-profile candidate pools from Neon (3 arms)
 pnpm --filter @opusfinder/eval draft-labels         # draft each pool's labels + an owner review sheet
 pnpm --filter @opusfinder/eval build:dataset        # regenerate dataset.jsonl (legacy + pooled)
@@ -65,19 +64,21 @@ Two example shapes coexist:
   frozen verbatim in `data/legacy-examples.jsonl` and passed through `build:dataset` untouched.
 - **Pooled (the scale shape)** — at the ~100k-job corpus a full board is unlabelable, so each
   example's `candidateJobs` is the union of three nomination arms (`scripts/build-pool.ts`):
-  production retrieval (Voyage query embedding through `retrieveCandidatesForProfile`), a
+  a Voyage arm (retrieval.ts's filters over a Voyage query embedding, run as an exact scan rather
+  than through `retrieveCandidatesForProfile`, so the pool can't inherit the HNSW under-fill), a
   Postgres full-text arm (target roles + skills), and a seeded random arm — multi-arm so the
   labels aren't circular in the production ranker's favor. **Labels are honest only WITHIN each
   example's pool**: unlabeled ≠ irrelevant, so never compute full-corpus labeled recall from
   pool-scoped labels.
 
 Build flow: profiles + owner-authoritative labels live in `data/profiles/<id>.json` (committed)
-→ `build:pool` snapshots each profile's candidate pool to `data/pools/<id>.json` (gitignored)
+→ `build:pool` snapshots each profile's candidate pool to `data/pools/<id>.json` (committed: a
+pool can't be rebuilt once the corpus moves, and its labels mean nothing without it)
 → `draft-labels` judges that pool and writes drafted `goodIds` + a review sheet
-→ `build:dataset` assembles legacy + pooled examples into `dataset.jsonl`. Rebuilding a pool
-against a changed corpus shifts pool ids; `build:dataset` then fails loud on stale labels
-(forcing a relabel) instead of silently rescoring them. A profile with no labels drafted yet is
-SKIPPED (loudly) rather than emitted as an example nothing is relevant to.
+→ `build:dataset` assembles legacy + pooled examples into `dataset.jsonl`. Rebuilding a labeled
+profile's pool needs `--force` and means relabeling it (`draft-labels --force`): `build:dataset`
+catches a good id that left the pool, not a new member nobody judged. A profile with no labels
+drafted yet is SKIPPED (loudly) rather than emitted as an example nothing is relevant to.
 
 ### Profiles, labels, and PII
 
@@ -86,8 +87,7 @@ derived from a real CV — the 2 seed profiles from the owners' own CVs, the poo
 the CC0 Kaggle "Resume Dataset" (snehaanbhawal; source-anonymized LiveCareer resumes, pulled via
 the `opensporks/resumes` HF mirror) — and is **anonymized** — no names, contact info, employers,
 schools, or URLs; only summary / skills / target roles. Raw CVs live in `data/cvs/` and are
-**gitignored** (never committed), as are the `candidates-export.json` / `data/pools/` working
-artifacts and `.env`.
+**gitignored** (never committed).
 
 Labels are agent-drafted; the labeling authority (the CV owner for the seed profiles, the repo
 owner for the dataset-derived ones) refines `goodIds` in `data/profiles/<id>.json` and re-runs
@@ -107,7 +107,8 @@ boards as adapters land.
 ## Status (Phase 5)
 
 - Harness, metrics, random baseline, embedding ranker, `pnpm eval` + reports: **done**.
-- Voyage `voyage-3-large` retrieval validated on the real seed set (NDCG@10 ≈ 83% vs random ≈ 9%).
+- Voyage `voyage-3-large` retrieval validated on the real seed set (NDCG@10 ≈ 83% vs random ≈ 9%);
+  the committed Voyage report is still that run.
 - **Voyage-vs-OpenAI comparison: done → Voyage wins** (NDCG@10 83.2% vs OpenAI
   `text-embedding-3-small` 66.9% on the seed set), so Voyage is the chosen provider. The harness
   is provider-agnostic — `pnpm eval:compare` reproduces the head-to-head, and `--embedder` swaps
@@ -116,14 +117,14 @@ boards as adapters land.
 
 ## LLM rerank (Phase 10)
 
-`src/types.ts` defines `Ranker`. The Phase-10 LLM rerank landed here as the `llm-rerank` ranker
-(`src/rankers/llm-rerank.ts`): it runs the **shared** `rerankCandidates` from `@opusfinder/rerank` —
-the SAME core the digest pipeline runs — through a deterministic stub call (seeded RNG in `src/rng.ts`,
-so the report is reproducible). `pnpm eval -- --ranker llm-rerank` writes
-`reports/llm-rerank.dataset.json`, so eval scores exactly what production reranks. (The synthesis
-"why matched" contract is exercised in the pipeline, not scored here.)
+The `llm-rerank` ranker (`src/rankers/llm-rerank.ts`) runs the **shared** `rerankCandidates` from
+`@opusfinder/rerank` (the core the digest pipeline runs) through a deterministic stub call seeded per
+profile, and writes `reports/llm-rerank-stub.dataset.json`. The stub proves the core (chunking,
+merging, backfill) and the wiring only; its scores are random-equivalent, not rerank quality. The real
+Haiku call has never been scored here.
 
 ## Keys
 
 - `OPENAI_API_KEY` → `packages/eval/.env` (this package; for the comparison).
 - `VOYAGE_API_KEY` / `DATABASE_URL` are read from the embeddings/db packages (Phase 4/0).
+- `ANTHROPIC_API_KEY` → `packages/llm/.env` (for `draft-labels` and `extract-profile`).

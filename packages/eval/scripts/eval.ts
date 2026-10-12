@@ -19,7 +19,7 @@ import { join } from "node:path";
 import { runScript } from "@opusfinder/shared/script";
 
 import { getFlag } from "../src/cli";
-import { loadDataset } from "../src/dataset";
+import { datasetSha256, loadDataset } from "../src/dataset";
 import { resolveEmbedder } from "../src/embedders";
 import { aggregate, defaultReportPath, PKG_ROOT, relativeToPkg, scoreRanker } from "../src/runner";
 import { randomRanker } from "../src/rankers/random";
@@ -52,7 +52,7 @@ function parseArgs(argv: string[]): Options {
 async function resolveRanker(
   name: string,
   embedder: string | undefined,
-): Promise<{ ranker: Ranker; label: string; embedderLabel: string | null }> {
+): Promise<{ ranker: Ranker; label: string; embedderLabel: string | null; model?: string }> {
   if (name === "random") {
     // --embedder only applies to the embedding ranker; warn so a `--embedder x` run that forgot
     // `--ranker embedding` doesn't silently measure (and overwrite the baseline with) the shuffle.
@@ -65,9 +65,14 @@ async function resolveRanker(
   }
   if (name === "embedding") {
     const embedderName = embedder ?? "voyage";
-    const chosen = await resolveEmbedder(embedderName);
+    const { embedder: chosen, model } = await resolveEmbedder(embedderName);
     const { embeddingRanker } = await import("../src/rankers/embedding");
-    return { ranker: embeddingRanker(chosen), label: "embedding", embedderLabel: embedderName };
+    return {
+      ranker: embeddingRanker(chosen),
+      label: "embedding",
+      embedderLabel: embedderName,
+      model,
+    };
   }
   if (name === "llm-rerank") {
     // --embedder doesn't apply to the rerank ranker; warn so it isn't silently ignored.
@@ -76,14 +81,14 @@ async function resolveRanker(
     }
     // Dynamic import keeps @opusfinder/rerank off the plain `pnpm eval` path; uses the deterministic stub call (no API key).
     const { llmRerankRanker } = await import("../src/rankers/llm-rerank");
-    return { ranker: llmRerankRanker(), label: "llm-rerank", embedderLabel: null };
+    return { ranker: llmRerankRanker(), label: "llm-rerank-stub", embedderLabel: null };
   }
   throw new Error(`unknown ranker "${name}" (expected: random | embedding | llm-rerank).`);
 }
 
 async function main(): Promise<void> {
   const opts = parseArgs(process.argv);
-  const { ranker, label, embedderLabel } = await resolveRanker(opts.ranker, opts.embedder);
+  const { ranker, label, embedderLabel, model } = await resolveRanker(opts.ranker, opts.embedder);
 
   const examples = loadDataset(opts.dataset);
   if (examples.length === 0) {
@@ -96,7 +101,9 @@ async function main(): Promise<void> {
   const report: EvalReport = {
     ranker: label,
     embedder: embedderLabel,
+    model,
     dataset: relativeToPkg(opts.dataset),
+    datasetSha256: datasetSha256(opts.dataset),
     exampleCount: examples.length,
     metrics: aggregate(perExample),
   };

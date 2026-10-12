@@ -31,7 +31,7 @@ import { runScript } from "@opusfinder/shared/script";
 import { parseDatasetLines } from "../src/dataset";
 import { PKG_ROOT } from "../src/runner";
 import type { EvalExample, EvalJob } from "../src/types";
-import { loadAllProfileFiles, loadPoolFile } from "./pooling";
+import { isLabeled, loadAllProfileFiles, loadPoolFile } from "./pooling";
 
 /** The frozen legacy lines, verbatim: validated through the real loader, but emitted as the raw
  *  strings so the committed bytes can never churn. */
@@ -51,13 +51,12 @@ function main(): void {
   const lines = legacyLines();
   const skipped: string[] = [];
 
-  for (const { profile, goodIds, notes } of loadAllProfileFiles()) {
+  for (const file of loadAllProfileFiles()) {
+    const { profile, goodIds, notes } = file;
     // A profile that has never been labeled is NOT an example with nothing relevant in its pool —
     // it is work in progress, and emitting it would score every ranker 0 on it and silently drag
-    // the aggregate precision down. Distinguished by `notes`: draft-labels.ts always writes
-    // provenance there, so empty goodIds + empty notes means "no one has labeled this yet", while
-    // empty goodIds WITH notes is a real (if unusual) judgement that nothing in the pool fits.
-    if (goodIds.length === 0 && notes.trim() === "") {
+    // the aggregate precision down.
+    if (!isLabeled(file)) {
       skipped.push(profile.id);
       continue;
     }

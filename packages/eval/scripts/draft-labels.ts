@@ -29,6 +29,7 @@ import { getFlag } from "../src/cli";
 import { PKG_ROOT, relativeToPkg } from "../src/runner";
 import { judgeCandidate, buildJudgeSystem, VERDICTS, type Verdict } from "./label-judge";
 import {
+  isLabeled,
   loadAllProfileFiles,
   loadProfileFile,
   loadPoolFile,
@@ -94,9 +95,13 @@ async function judgeAll(
   const out = new Array<JudgedCandidate>(candidates.length);
   let cursor = 0;
   let done = 0;
+  // Promise.all rejects on the first failed candidate, but the other workers would keep drawing
+  // from the cursor — paying for judgements the failed run then discards.
+  let failed = false;
 
   const worker = async (): Promise<void> => {
     for (;;) {
+      if (failed) return;
       const i = cursor++;
       if (i >= candidates.length) return;
       const candidate = candidates[i];
@@ -123,6 +128,7 @@ async function judgeAll(
         }
       }
       if (!out[i]) {
+        failed = true;
         throw new Error(
           `judging candidate #${candidate.id} failed after ${MAX_RETRIES + 1} attempts: ` +
             `${lastErr instanceof Error ? lastErr.message : String(lastErr)}`,
@@ -137,18 +143,11 @@ async function judgeAll(
   return out;
 }
 
-/** Which arm(s) nominated a candidate, with each arm's rank — the owner's cue for WHY something is
- *  in the pool at all (a random-arm row scoring "good" is a genuinely interesting signal). */
+/** Which arm(s) nominated a candidate — the owner's cue for WHY something is in the pool at all (a
+ *  random-arm row scoring "good" is a genuinely interesting signal). Names only: showing the
+ *  ranker-under-test's own rank and distance to the labeler would anchor the ground truth toward it. */
 function provenance(c: PoolCandidate): string {
-  const parts = c.arms.map((arm) => {
-    if (arm === "voyage") {
-      const d = c.voyageDistance === undefined ? "" : ` d=${c.voyageDistance.toFixed(3)}`;
-      return `voyage #${c.voyageRank ?? "?"}${d}`;
-    }
-    if (arm === "fts") return `fts #${c.ftsRank ?? "?"}`;
-    return "random";
-  });
-  return parts.join(" · ");
+  return c.arms.join(" · ");
 }
 
 /** Collapse internal whitespace: both scraped titles and model-written reasons can contain newlines,
@@ -202,6 +201,11 @@ function renderReviewSheet(
       "`pnpm --filter @opusfinder/eval build:dataset`. **Start with the borderline section**: those " +
       "are the judgements the model itself was unsure of, so that is where your attention changes " +
       "the ground truth most.",
+  );
+  lines.push("");
+  lines.push(
+    "Editing the profile itself makes this pool and every verdict here stale, and nothing detects " +
+      `it: rebuild both (\`build:pool\`, then \`draft-labels\`, each with \`--profile ${profile.id} --force\`).`,
   );
   lines.push("");
   lines.push(
@@ -287,7 +291,9 @@ async function draftFor(
   if (candidates.length === 0) {
     throw new Error(`${relativeToPkg(poolPath(profile.id))} has no candidates — rebuild with build:pool.`);
   }
-  const partial = candidates.length < pool.candidates.length;
+  // Any --limit run is a smoke test, even one covering the whole pool: main() lets it past the
+  // labeled-profile guard, so it must never write labels or replace the full review sheet.
+  const partial = limit !== undefined;
 
   console.error(
     `\n[${profile.id}] judging ${candidates.length}${partial ? ` of ${pool.candidates.length}` : ""} ` +
@@ -296,7 +302,7 @@ async function draftFor(
   const judged = await judgeAll(profileFile, candidates, model, concurrency, totals);
 
   mkdirSync(REVIEWS_DIR, { recursive: true });
-  const sheetPath = join(REVIEWS_DIR, `${profile.id}.md`);
+  const sheetPath = join(REVIEWS_DIR, `${profile.id}${partial ? ".partial" : ""}.md`);
   writeFileSync(sheetPath, renderReviewSheet(profileFile, pool, judged, model, partial), "utf8");
   console.error(`  wrote ${relativeToPkg(sheetPath)}`);
 
@@ -338,10 +344,11 @@ async function main(): Promise<void> {
   for (const target of targets) {
     // Already-labeled profiles are protected, but differently by intent: naming one explicitly is a
     // request this script must not quietly ignore (fail loud), while a sweep over every profile
-    // should resume where it left off rather than re-spend on finished work (skip). --force overrides.
-    if (target.goodIds.length > 0 && !force) {
+    // should resume where it left off rather than re-spend on finished work (skip). --force overrides;
+    // a --limit smoke run writes no labels, so it needs no override.
+    if (isLabeled(target) && !force && limit === undefined) {
       const msg =
-        `${target.profile.id} already has ${target.goodIds.length} label(s) — ` +
+        `${target.profile.id} is already labeled (${target.goodIds.length} good) — ` +
         `re-drafting would discard owner refinements. Pass --force to overwrite.`;
       if (only) throw new Error(msg);
       console.error(`[${target.profile.id}] SKIPPED: ${msg}`);

@@ -1,7 +1,8 @@
 /**
  * Shared plumbing for the pooled-labeling flow: the per-profile label files
- * (data/profiles/<id>.json — committed) and their candidate-pool snapshots
- * (data/pools/<id>.json — gitignored working artifacts, like candidates-export.json).
+ * (data/profiles/<id>.json) and their candidate-pool snapshots (data/pools/<id>.json). Both are
+ * committed: a label means nothing without the pool it was drafted against, and a pool can't be
+ * rebuilt once the corpus moves on.
  *
  * One label file per profile (instead of one LABELS array in build-dataset.ts) so refining one
  * example's labels is a one-file diff at 12+ examples. Validation here is deliberately LIGHT
@@ -27,6 +28,12 @@ export interface LabeledProfileFile {
   notes: string;
 }
 
+/** draft-labels always writes provenance into `notes`, so empty goodIds WITH notes is a real (if
+ *  unusual) judgement that nothing in the pool fits — only both empty means "never labeled". */
+export function isLabeled(file: LabeledProfileFile): boolean {
+  return file.goodIds.length > 0 || file.notes.trim() !== "";
+}
+
 /** A pool member: the frozen EvalJob fields + nomination provenance. `arms` records every arm
  *  that surfaced it (a job found by both voyage and fts carries both tags). */
 export interface PoolCandidate {
@@ -43,8 +50,7 @@ export interface PoolCandidate {
 }
 
 /** data/pools/<id>.json. No timestamp (the eligible-count is the "when" proxy, mirroring the
- *  hnsw-recall report convention); regeneration against a changed corpus is a deliberate refresh
- *  that forces relabeling (build:dataset fails loud on a goodId absent from the new pool). */
+ *  hnsw-recall report convention). */
 export interface PoolFile {
   profileId: string;
   arms: { voyageK: number; ftsK: number; randomK: number; recencyDays: number };

@@ -6,6 +6,7 @@
  * a typo'd label fails loudly at load instead of silently scoring wrong. Blank lines and
  * `//` / `#` comment lines are skipped so the file can carry section headers.
  */
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 
 import { composeEmbeddingText, composeProfileText, isRecord } from "@opusfinder/shared";
@@ -15,6 +16,11 @@ import type { EvalExample, EvalJob, EvalProfile } from "./types";
 /** Read a JSONL dataset file and return validated examples. */
 export function loadDataset(path: string): EvalExample[] {
   return parseDatasetLines(readFileSync(path, "utf8"), path);
+}
+
+/** sha256 of the dataset file, so a report records exactly which labeled set produced it. */
+export function datasetSha256(path: string): string {
+  return createHash("sha256").update(readFileSync(path)).digest("hex");
 }
 
 /**

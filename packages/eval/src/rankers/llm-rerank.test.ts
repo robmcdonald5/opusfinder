@@ -2,14 +2,14 @@ import type { RerankCall, RerankScore } from "@opusfinder/rerank";
 import { describe, expect, it, vi } from "vitest";
 
 import type { EvalJob, EvalProfile } from "../types";
-import { llmRerankRanker, stubRerankCall } from "./llm-rerank";
+import { llmRerankRanker } from "./llm-rerank";
 
 // Leaf pure-unit with an INJECTED rerank call — no Haiku, no API key. The eval ranker is a thin
 // adapter over the shared `rerankCandidates` core: it maps each EvalJob → {id,title,descriptionText},
 // passes a cached `system` (rubric + profile) to the call, and returns the core's full ordering. These
 // tests lock the adapter contract: scored candidates come back score-descending (ties by input order),
 // any candidate the call OMITS is backfilled at the end so the result is always a full permutation
-// (`assertPermutation`-safe), and the default `stubRerankCall` is deterministic so the committed report
+// (`assertPermutation`-safe), and the default stub call is deterministic so the committed report
 // is byte-stable.
 
 const profile: EvalProfile = {
@@ -70,23 +70,23 @@ describe("llmRerankRanker", () => {
   });
 
   it("returns a full permutation of the candidate ids", async () => {
-    const ranked = await llmRerankRanker(stubRerankCall)(profile, [...candidates]);
+    const ranked = await llmRerankRanker()(profile, [...candidates]);
     expect([...ranked].sort((a, b) => a - b)).toEqual([1, 2, 3, 4]);
   });
 
   it("the default stub call is deterministic — same inputs yield the frozen order", async () => {
     const a = await llmRerankRanker()(profile, [...candidates]);
     const b = await llmRerankRanker()(profile, [...candidates]);
-    expect(a).toEqual([2, 3, 1, 4]);
-    expect(b).toEqual([2, 3, 1, 4]);
+    expect(a).toEqual([4, 3, 2, 1]);
+    expect(b).toEqual([4, 3, 2, 1]);
   });
 
   it("the stub ordering depends on the profile (a different profile reorders)", async () => {
     const other: EvalProfile = { ...profile, id: "frontend-ic-2", summary: "Frontend engineer, React" };
     const forFrontend = await llmRerankRanker()(other, [...candidates]);
-    // The stub keys on the `system` (which embeds the profile), so a different profile produces a
-    // genuinely different ordering — not just a coincidental permutation of the same ids.
-    expect(forFrontend).toEqual([4, 3, 1, 2]);
-    expect(forFrontend).not.toEqual([2, 3, 1, 4]);
+    // The stub is seeded per profile, so a different profile produces a genuinely different
+    // ordering — not just a coincidental permutation of the same ids.
+    expect(forFrontend).toEqual([2, 1, 4, 3]);
+    expect(forFrontend).not.toEqual([4, 3, 2, 1]);
   });
 });
