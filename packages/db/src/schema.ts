@@ -228,8 +228,9 @@ export const jobs = pgTable(
  * {@link LifecycleState}). */
 export type RunStatus = "running" | "ok" | "error";
 
-/** Which pipeline a run belongs to: `discovery` or `ingestion`. */
-export type RunPipeline = "discovery" | "ingestion";
+/** Which pipeline a run belongs to: `discovery`, `ingestion` (the cron), or `ingestion-cli` (a manual
+ * `pnpm ingest` / `ingest:all` run — kept apart so health reads only the cron's runs). */
+export type RunPipeline = "discovery" | "ingestion" | "ingestion-cli";
 
 /** Open metric bag for a run, keyed by count name. Discovery and ingestion tally different
  * things (candidates/probed/inserted vs boards/changed/…), so it stays a free-form jsonb map

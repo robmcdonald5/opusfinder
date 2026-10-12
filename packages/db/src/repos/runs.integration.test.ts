@@ -241,6 +241,23 @@ describe("run lifecycle (source_runs + digest_runs) — start opens a running ro
     }
   });
 
+  it("gives a CLI ingest run a day: a 2-h-old one is still live, a 25-h-old one is swept", async () => {
+    const seeded = await db
+      .insert(sourceRuns)
+      .values([
+        { pipeline: "ingestion-cli", startedAt: new Date(Date.now() - 2 * 3_600_000) },
+        { pipeline: "ingestion-cli", startedAt: new Date(Date.now() - 25 * 3_600_000) },
+      ])
+      .returning({ id: sourceRuns.id });
+
+    expect(await failStaleRuns(db)).toBe(1);
+
+    const status = async (id: number) =>
+      (await db.select().from(sourceRuns).where(eq(sourceRuns.id, id)))[0]!.status;
+    expect(await status(seeded[0]!.id)).toBe("running");
+    expect(await status(seeded[1]!.id)).toBe("error");
+  });
+
   // RUN-9 — the pre-seeded non-null sample is the discriminator: if the `errorSample: result.errorSample
   // ?? null` set member were deleted, 'pre-set noise' survives. (A NULL-seeded row would be vacuous.)
   it("nulls error_sample when the finish payload omits it — a pre-existing value never survives an ok finish", async () => {

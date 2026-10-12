@@ -323,6 +323,30 @@ describe("runIngestion — orchestration over real PGlite (fetch stubbed)", () =
       expect(await jobsFor(inactive)).toHaveLength(1);
     });
 
+    it("a CLI run reactivates a deactivated board that lists postings; one that fails or lists none stays inactive", async () => {
+      const live = await seedCompany({ slug: "liveco", active: false });
+      const dead = await seedCompany({ slug: "deadco", active: false });
+      const empty = await seedCompany({ slug: "emptyco", active: false });
+      installFetch([
+        boardRoute("liveco", [ghJob(1)]),
+        failRoute("deadco", 404),
+        boardRoute("emptyco", []),
+      ]);
+
+      await runIngestion(db, {
+        activeOnly: false,
+        pipeline: "ingestion-cli",
+        paceMs: 0,
+        adapter: NO_RETRY,
+      });
+
+      // Left inactive, liveco's new job would be one no close path ever reaches (the cron skips the board).
+      expect((await companyById(live)).active).toBe(true);
+      expect((await companyById(dead)).active).toBe(false);
+      expect((await companyById(empty)).active).toBe(false);
+      expect((await allSourceRuns())[0]!.pipeline).toBe("ingestion-cli");
+    });
+
     it("afterId + limit fetch exactly the id-keyset slice, and lastId records the cursor", async () => {
       const c1 = await seedCompany({ slug: "c1", active: true });
       const c2 = await seedCompany({ slug: "c2", active: true });

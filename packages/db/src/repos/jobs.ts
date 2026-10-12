@@ -24,7 +24,7 @@ export interface CompanyRow {
 }
 
 /**
- * List companies to ingest (id + canonical slug + source), oldest id first. Slugs come back
+ * List companies to ingest (id + canonical slug + source + active), oldest id first. Slugs come back
  * already branded (the column is `$type<CompanySlug>()`) and in their platform-canonical form
  * — stored post-`normalizeSlug` — so the driver requests them exactly as ingestion expects.
  * Optionally scoped to one `source` (for a per-source pass) and/or to `activeOnly` rows —
@@ -36,13 +36,18 @@ export interface CompanyRow {
 export function listCompanies(
   db: Db,
   opts: { source?: SourceName; activeOnly?: boolean; afterId?: number; limit?: number } = {},
-): Promise<CompanyRow[]> {
+): Promise<(CompanyRow & { active: boolean })[]> {
   const conditions: SQL[] = [];
   if (opts.source) conditions.push(eq(companies.source, opts.source));
   if (opts.activeOnly) conditions.push(eq(companies.active, true));
   if (opts.afterId !== undefined) conditions.push(gt(companies.id, opts.afterId));
   const query = db
-    .select({ id: companies.id, slug: companies.slug, source: companies.source })
+    .select({
+      id: companies.id,
+      slug: companies.slug,
+      source: companies.source,
+      active: companies.active,
+    })
     .from(companies)
     .where(conditions.length ? and(...conditions) : undefined)
     .orderBy(companies.id);

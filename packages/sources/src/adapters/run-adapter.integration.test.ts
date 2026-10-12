@@ -70,6 +70,18 @@ function makeAdapter(over: Partial<SourceAdapter> = {}): SourceAdapter {
 
 const ids = (jobs: NormalizedJob[]): string[] => jobs.map((j) => j.externalId as string);
 
+/** A 200 whose body breaks off after its first bytes, as a connection reset mid-body does. */
+const brokenBody = () =>
+  new HttpResponse(
+    new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('{"jobs":['));
+        controller.error(new TypeError("terminated"));
+      },
+    }),
+    { status: 200 },
+  );
+
 describe("runAdapter — invariant ATS plumbing over MSW", () => {
   afterEach(() => vi.restoreAllMocks());
 
@@ -450,6 +462,54 @@ describe("runAdapter — invariant ATS plumbing over MSW", () => {
       }
     });
 
+    it("retries a 2xx whose body breaks off mid-stream, and fails it tagged once out of retries", async () => {
+      vi.useFakeTimers();
+      try {
+        let calls = 0;
+        server.use(
+          http.get(LIST, () => {
+            calls += 1;
+            return calls === 1 ? brokenBody() : HttpResponse.json({ jobs: [raw(1)] });
+          }),
+        );
+
+        const promise = runAdapter(makeAdapter(), "acme", { maxRetries: 1 });
+        await vi.advanceTimersByTimeAsync(2500); // no Retry-After: the full 2 s base backoff (+ jitter)
+
+        await expect(promise).resolves.toHaveLength(1);
+        expect(calls).toBe(2);
+      } finally {
+        vi.useRealTimers();
+      }
+
+      server.use(http.get(LIST, () => brokenBody()));
+      const err = await rejectionOf(runAdapter(makeAdapter(), "acme", { maxRetries: 0 }));
+      expect(err.message).toMatch(/^greenhouse "acme" body read error:/);
+    });
+
+    it("fails a 2xx body over 64 MiB at once, never retried", async () => {
+      let calls = 0;
+      const mib = new Uint8Array(1024 * 1024).fill(0x20); // 1 MiB of JSON whitespace
+      server.use(
+        http.get(LIST, () => {
+          calls += 1;
+          let sent = 0;
+          const body = new ReadableStream<Uint8Array>({
+            pull(controller) {
+              if (sent++ < 65) controller.enqueue(mib);
+              else controller.close();
+            },
+          });
+          return new HttpResponse(body, { status: 200 });
+        }),
+      );
+
+      const err = await rejectionOf(runAdapter(makeAdapter(), "acme", { maxRetries: 3 }));
+
+      expect(err.message).toBe('greenhouse "acme" body over 67108864 bytes');
+      expect(calls).toBe(1);
+    });
+
     it("throws a tagged fetch-error on a network failure with no retries left", async () => {
       let calls = 0;
       server.use(
@@ -632,6 +692,7 @@ describe("runAdapter — invariant ATS plumbing over MSW", () => {
       ["hangs past the fetch timeout", () => new Promise<never>(() => {})],
       ["fails at the network", () => HttpResponse.error()],
       ["returns a non-JSON body", () => new HttpResponse("<html>", { status: 200 })],
+      ["breaks off mid-body", () => brokenBody()],
       ["answers 500", () => limited(500)],
       ["is refused 403 (a WAF)", () => limited(403)],
       ["is 429'd again", () => limited(429, { "retry-after": "1" })],
@@ -988,6 +1049,35 @@ describe("runAdapter — invariant ATS plumbing over MSW", () => {
           expect(calls).toBe(3);
           expect(err).not.toBeInstanceOf(RateLimitedError);
           expect(err.message).toBe('greenhouse "acme" board time limit reached');
+        } finally {
+          vi.useRealTimers();
+        }
+      });
+
+      it("a request 429'd before the limit ends as a RateLimitedError, not the plain limit error", async () => {
+        vi.useFakeTimers();
+        try {
+          let calls = 0;
+          server.use(
+            http.get(LIST, () => {
+              calls += 1;
+              return new HttpResponse(null, { status: 429, headers: { "retry-after": "1" } });
+            }),
+          );
+
+          const settled = rejectionOf(
+            runAdapter(makeAdapter(), "acme", {
+              maxRetries: 3,
+              maxRetryWaitMs: 5000,
+              boardTimeLimitMs: 500,
+            }),
+          );
+          await vi.advanceTimersByTimeAsync(1300); // the 1 s Retry-After (+ jitter) outlasts the limit
+          const err = await settled;
+
+          expect(calls).toBe(1);
+          expect(err).toBeInstanceOf(RateLimitedError);
+          expect(err).toMatchObject({ retryAfterMs: 1000 });
         } finally {
           vi.useRealTimers();
         }

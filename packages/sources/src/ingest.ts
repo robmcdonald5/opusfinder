@@ -16,6 +16,7 @@ import {
   listCompanies,
   markCompanyIngested,
   markJobsPresent,
+  markProbeResult,
   startRun,
   sweepLifecycle,
   sweepStaleJobs,
@@ -72,9 +73,16 @@ export interface IngestionOptions {
   /**
    * Skip boards discovery has deactivated. Defaults to TRUE — the Worker cron, and any direct
    * caller that omits this, wants only live boards. The CLI passes `false` to preserve its prior
-   * "ingest every row" behavior (a manual run may want to re-check a deactivated board).
+   * "ingest every row" behavior (a manual run may want to re-check a deactivated board). A deactivated
+   * board that lists postings is reactivated, so the cron ingests — and can close — what this run wrote.
    */
   activeOnly?: boolean;
+  /**
+   * The `source_runs` pipeline label: `ingestion` (the default, the cron) or `ingestion-cli`, which the
+   * CLIs pass. Health reads only the cron's runs, and a CLI run — an hour or more over every board — gets a
+   * day before a later startRun takes it for a zombie.
+   */
+  pipeline?: "ingestion" | "ingestion-cli";
   /**
    * Chunk cursor: process only boards with `id > afterId`. Pushed into the `listCompanies` SQL
    * as an id-keyset `WHERE id > afterId` (not an in-memory filter). Omit = from the start. The
@@ -168,7 +176,7 @@ export interface IngestionCounts {
   wouldClose: number; // absent postings at/over threshold NOT yet closed (shadow standing population)
   sweepFailed: number; // boards whose sweep step threw (jobs still persisted; self-heals next cycle)
   // Observability + universal staleness sweep (run-level, post-loop).
-  markFailed: number; // boards whose markJobsPresent/markCompanyIngested liveness stamp threw (jobs still persisted)
+  markFailed: number; // boards whose liveness stamp (presence, certification, reactivation) threw (jobs still persisted)
   cappedBoards: number; // boards whose fetch hit adapter.maxItems (partial → Arm A sweep skipped → covered by the stale timer)
   partialBoards: number; // uncapped boards whose listing came back incomplete (see fetchBoard): Arm A sweep skipped, as for capped
   staleClosed: number; // jobs closed by the staleness timer this run (STALE_SWEEP enforce only; always 0 in shadow)
@@ -204,7 +212,7 @@ export async function runIngestion(db: Db, opts: IngestionOptions = {}): Promise
   // Pacing key → when its most recent board FINISHED (see opts.paceMs), and, after a rate limit, the time
   // before which its boards are skipped (see RATE_LIMIT_COOLDOWN_MAX_MS).
   const keys = new Map<string, { lastFinish?: number; notBefore?: number }>();
-  const runId = await startRun(db, "ingestion", { source: opts.source });
+  const runId = await startRun(db, opts.pipeline ?? "ingestion", { source: opts.source });
   let errorSample: string | undefined;
 
   try {
@@ -326,11 +334,14 @@ export async function runIngestion(db: Db, opts: IngestionOptions = {}): Promise
             const present = await markJobsPresent(db, company.id, listedIds);
             counts.revived += present.revived; // revivals + streak resets (works for capped boards too)
             await markCompanyIngested(db, company.id);
+            // Listing postings proves a deactivated board live: without this, no close path would ever
+            // reach the jobs just written or revived (the cron skips inactive boards).
+            if (!company.active) await markProbeResult(db, company.id, true);
           } catch (err) {
             counts.markFailed += 1;
             // Shape-only (no job text); company.id is a non-secret int.
             console.warn(
-              `markJobsPresent/markCompanyIngested failed for company ${company.id}: ` +
+              `liveness stamp failed for company ${company.id}: ` +
                 describeDbError(err).slice(0, 200),
             );
           }

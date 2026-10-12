@@ -77,15 +77,15 @@ pnpm ingest trakstar instacart
 pnpm ingest:all                        # [--no-embed] [--source=<name>]
 ```
 
-Each board upserts via `@opusfinder/db`'s `upsertJobs` (`pnpm ingest` first get-or-creates the company
-with `upsertCompany`; `ingest:all` takes the id from the `companies` row it iterates), then embeds the
-new/changed postings via `@opusfinder/embeddings` (best-effort: a Voyage failure is warned, not
-fatal; skipped when `VOYAGE_API_KEY` is unset or `--no-embed` is passed). `ingest:all` isolates
-each board in a try/catch — one dead slug doesn't halt the run.
+Both commands are thin shells over the shared `runIngestion(db, opts)` library (`src/ingest.ts`), which
+the Worker cron also calls (`pnpm ingest` first records the board with `upsertCompany`). Each board
+upserts via `@opusfinder/db`'s `upsertJobs`, then embeds the new/changed postings via
+`@opusfinder/embeddings` (best-effort: a Voyage failure is warned, not fatal; skipped when
+`VOYAGE_API_KEY` is unset or `--no-embed` is passed); one dead slug doesn't halt the run. A CLI run is
+recorded in `source_runs` as `ingestion-cli`, apart from the cron's `ingestion` runs that health reads.
+A CLI run also visits boards discovery deactivated, and reactivates one that lists postings.
 
-`ingest:all` is now a thin CLI shell over the shared `runIngestion(db, opts)` library
-(`src/ingest.ts`), which the Phase-8 Worker cron also calls — the CLI commands are unchanged. Boards run
-one at a time. Politeness (`paceMs`, 500 ms) is per pacing key — an adapter's `pacingKey`, default its
+Boards run one at a time. Politeness (`paceMs`, 500 ms) is per pacing key — an adapter's `pacingKey`, default its
 source, since no two adapters share a request host — and by TIME: a board starts ≥ 500 ms after its
 key's previous board FINISHED, sleeping only the remainder, so alternating sources can't burst one host
 and a board after enough other work waits for nothing. A key whose adapters declare a slower `paceMs`

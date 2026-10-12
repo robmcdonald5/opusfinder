@@ -36,12 +36,14 @@ export interface RunAdapterOptions {
   fetchTimeoutMs?: number;
   /**
    * Cap the postings PROCESSED for one board (Worker-only). Stops PAGINATION once this many valid
-   * postings are mapped, so the list-fetch count, the N+1 hydrate pool, AND the in-memory array are all
-   * bounded — a pathological mega-board (SmartRecruiters boschgroup ~4.6k postings) otherwise consumes
-   * the whole Worker invocation's wall-clock / memory / subrequest budget and kills the tick before
-   * `finishRun`, freezing the chunk cursor. Omit ⇒ no cap (the CLI, in Node, has no per-invocation budget
-   * and ingests the whole board). A capped board is a PARTIAL fetch: runIngestion skips its feed-absence
-   * sweep (an incomplete present-set would false-close the un-fetched tail).
+   * postings are mapped, so the list-fetch count, the N+1 hydrate pool and the retained array are bounded
+   * — a pathological mega-board (SmartRecruiters boschgroup ~4.6k postings) otherwise consumes the whole
+   * Worker invocation's wall-clock / memory / subrequest budget and kills the tick before `finishRun`,
+   * freezing the chunk cursor. It does NOT bound the peak memory of one response: an unpaginated source
+   * still reads and parses its whole board before the trim — only {@link MAX_BODY_BYTES} bounds that. Omit
+   * ⇒ no cap (the CLI, in Node, has no per-invocation budget and ingests the whole board). A capped board
+   * is a PARTIAL fetch: runIngestion skips its feed-absence sweep (an incomplete present-set would
+   * false-close the un-fetched tail).
    */
   maxItems?: number;
   /**
@@ -80,6 +82,13 @@ const DEFAULT_MAX_RETRIES = 3;
 // Generous for a healthy ATS JSON endpoint, but well under the Worker wall limit so one hung
 // board (worst case ~maxRetries attempts + backoff) can't eat the whole tick's budget.
 const DEFAULT_FETCH_TIMEOUT_MS = 10_000;
+/**
+ * The largest response body read, in bytes: past it the read stops and the request fails. Parsing holds the
+ * text and its parsed copy at once — about 2 bytes of heap per body byte, 3 when the text decodes to two-byte
+ * — so a bigger body can never be ingested in the Worker's 128 MiB isolate. Read whole, it would kill the
+ * isolate mid-tick (skipping `finishRun`, freezing the chunk cursor) instead of failing one board.
+ */
+const MAX_BODY_BYTES = 64 * 1024 * 1024;
 /** The least a rate limit sidelines its host: the wait assumed when a 429 carries no usable Retry-After,
  *  and runIngestion's cooldown floor (a 429 that outlasted a short retry means the host still throttles). */
 export const RATE_LIMIT_MIN_COOLDOWN_MS = 60_000;
@@ -246,7 +255,9 @@ async function fetchJsonResilient(
       : new RateLimitedError(tag, limitedRetryAfterMs, { cause: err });
   for (;;) {
     // The board's time limit: no new attempt once it is spent (see RunAdapterOptions.boardTimeLimitMs).
-    if (deadline !== undefined && Date.now() >= deadline) throw new Error(`${tag} board time limit reached`);
+    if (deadline !== undefined && Date.now() >= deadline) {
+      throw fail(new Error(`${tag} board time limit reached`));
+    }
     let res: Response;
     try {
       // Bound every attempt with a fresh timeout signal (the abort throws -> the catch below
@@ -265,7 +276,19 @@ async function fetchJsonResilient(
     }
 
     if (res.ok) {
-      const text = await res.text();
+      let text: string | null;
+      try {
+        text = await readBody(res);
+      } catch (err) {
+        // The body broke off mid-stream (a reset, the timeout): transient, like a fetch error.
+        if (limitedRetryAfterMs === undefined && (await retry())) continue;
+        throw fail(
+          new Error(`${tag} body read error: ${err instanceof Error ? err.message : String(err)}`, {
+            cause: err,
+          }),
+        );
+      }
+      if (text === null) throw fail(new Error(`${tag} body over ${MAX_BODY_BYTES} bytes`));
       try {
         return JSON.parse(text) as unknown;
       } catch {
@@ -292,6 +315,28 @@ async function fetchJsonResilient(
     // A request already 429'd ends at this failure; otherwise retry (within maxRetryWaitMs, in fail-fast).
     if (!wasLimited && (await retry(retryAfter))) continue;
     throw fail(error);
+  }
+}
+
+/**
+ * A 2xx body as text, decoded like `res.text()` (UTF-8, a leading BOM dropped), or null once it passes
+ * {@link MAX_BODY_BYTES} — the stream is cancelled there, so an oversized body is never held whole.
+ */
+async function readBody(res: Response): Promise<string | null> {
+  if (!res.body) return "";
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let bytes = 0;
+  let text = "";
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) return text + decoder.decode();
+    bytes += value.byteLength;
+    if (bytes > MAX_BODY_BYTES) {
+      await reader.cancel().catch(() => {});
+      return null;
+    }
+    text += decoder.decode(value, { stream: true });
   }
 }
 

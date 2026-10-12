@@ -15,9 +15,10 @@ import { companies, sourceRuns, type RunCounts, type RunPipeline, type RunStatus
 import type { CompanyRow } from "./jobs";
 import { finishRunRow } from "./runs";
 
-// Stale-`running` window. A run never legitimately exceeds the Cloudflare Worker wall limit (15 min)
-// — a tick is ~30s — so anything still `running` after this is a zombie from a killed/timed-out
-// process. Set well above the max real duration so a slow-but-live concurrent run is never swept.
+// Stale-`running` window. A Worker run never legitimately exceeds the Cloudflare Worker wall limit
+// (15 min), so anything still `running` after this is a zombie from a killed/timed-out process. Set
+// well above the max real duration so a slow-but-live concurrent run is never swept. A CLI ingest
+// (`ingestion-cli`) has no such limit and walks every board for an hour or more: it gets a day.
 const DEFAULT_STALE_RUN_MINUTES = 60;
 
 /**
@@ -43,6 +44,7 @@ export async function failStaleRuns(
       and(
         eq(sourceRuns.status, "running"),
         sql`${sourceRuns.startedAt} < now() - ${minutes} * interval '1 minute'`,
+        sql`(${sourceRuns.pipeline} <> 'ingestion-cli' OR ${sourceRuns.startedAt} < now() - interval '1 day')`,
       ),
     )
     .returning({ id: sourceRuns.id });
@@ -115,8 +117,7 @@ export interface CompanyState {
 /**
  * Every company's `(id, slug, source, active)`, optionally scoped to one source. Backs the discovery
  * partition that must route NEW + INACTIVE candidates to the probe path (so a re-discovered dead-then-
- * revived slug can reactivate via `markProbeResult(true)`) and ACTIVE ones to the reprobe pass — which
- * plain `listCompanies` can't drive because it omits `active`.
+ * revived slug can reactivate via `markProbeResult(true)`) and ACTIVE ones to the reprobe pass.
  */
 export function listCompanyStates(
   db: Db,
