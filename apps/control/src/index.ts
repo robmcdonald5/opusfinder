@@ -316,8 +316,10 @@ const ROUTES: readonly Route[] = [
     ui: true,
     handler: async ({ request, env, caller, url, now }) => {
       const form = await formBody(request, url);
-      await addStatement(env.DB, caller, Object.fromEntries(form), now);
-      return redirect("/cost?done=statement_added");
+      const { duplicateOf } = await addStatement(env.DB, caller, Object.fromEntries(form), now);
+      return redirect(
+        `/cost?done=${duplicateOf === null ? "statement_added" : "statement_duplicate"}`,
+      );
     },
   },
   {

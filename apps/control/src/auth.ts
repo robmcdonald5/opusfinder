@@ -43,6 +43,7 @@ const MAX_TOKEN_LENGTH = 8192;
 async function fetchJwks(domain: string): Promise<Map<string, CryptoKey>> {
   const res = await fetch(`${domain}/cdn-cgi/access/certs`, {
     headers: { accept: "application/json" },
+    signal: AbortSignal.timeout(5_000),
   });
   if (!res.ok) {
     await res.body?.cancel();

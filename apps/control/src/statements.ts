@@ -112,20 +112,26 @@ const NAMED: Record<string, string> = {
   shy: "",
 };
 
+/** A numeric entity's character; past Unicode's range it stays as written (fromCodePoint would throw). */
+const codePoint = (code: number, entity: string) =>
+  code <= 0x10ffff ? String.fromCodePoint(code) : entity;
+
 /** A crude HTML → text: invoices are often HTML-only, and the model reads text better than markup. */
 export function htmlToText(html: string): string {
   return (
     html
-      .replace(/<(style|script)[^>]*>[\s\S]*?<\/\1>/gi, " ")
-      .replace(/<(br|\/p|\/div|\/tr|\/li|\/h\d)[^>]*>/gi, "\n")
-      .replace(/<[^>]+>/g, " ")
+      // Linear on hostile input: a tag stops at the next "<", and an unclosed style or script runs to the
+      // end (as in a browser), so a run of unclosed "<" can't make every later "<" rescan the rest.
+      .replace(/<(style|script)\b[^<>]*>[\s\S]*?(?:<\/\1\s*>|$)/gi, " ")
+      .replace(/<(br|\/p|\/div|\/tr|\/li|\/h\d)[^<>]*>/gi, "\n")
+      .replace(/<[^<>]+>/g, " ")
       .replace(/&nbsp;/gi, " ")
       .replace(/&amp;/gi, "&")
       .replace(/&#36;|&dollar;/gi, "$")
       .replace(/&lt;/gi, "<")
       .replace(/&gt;/gi, ">")
-      .replace(/&#x([0-9a-f]{1,6});/gi, (_, n: string) => String.fromCodePoint(parseInt(n, 16)))
-      .replace(/&#(\d{1,7});/g, (_, n: string) => String.fromCodePoint(Number(n)))
+      .replace(/&#x([0-9a-f]{1,6});/gi, (m, n: string) => codePoint(parseInt(n, 16), m))
+      .replace(/&#(\d{1,7});/g, (m, n: string) => codePoint(Number(n), m))
       .replace(/&(\w+);/g, (m, name: string) => NAMED[name.toLowerCase()] ?? m)
       // Preheader padding (zero-width joiners, soft hyphens) carries nothing but inflates the text.
       .replace(/[\u00ad\u200b-\u200d\u2060\ufeff]/g, "")
@@ -200,48 +206,117 @@ export function isConfirmationRow(row: { sender: string | null }): boolean {
 
 /**
  * A vendor name for comparing and grouping: case, punctuation and legal suffixes ignored, so "Neon, LLC",
- * "Neon Inc." and "neon" are one vendor.
+ * "Neon L.L.C." and "neon" are one vendor. Dotted initials ("s.a.") join into one word first; a lone dot
+ * ("voyage.ai") is punctuation.
  */
 export function vendorKey(vendor: string | null | undefined): string {
   return (vendor ?? "")
     .toLowerCase()
+    .replace(/\b(?:[a-z]\.){2,}/g, (m) => m.replace(/\./g, ""))
     .replace(/[.,'’"()&]/g, " ")
     .replace(/\b(llc|inc|incorporated|ltd|limited|corp|corporation|co|gmbh|plc|pbc|sa|bv)\b/g, " ")
     .replace(/\s+/g, " ")
     .trim();
 }
 
-/**
- * The sender-authentication verdicts the receiving server recorded (Authentication-Results, its ARC copy,
- * Received-SPF), as "spf=pass(gmail.com) dkim=pass(gmail.com) …": domains only, never a full address (an
- * envelope sender is the owner's). Shadow evidence for deciding what the mailbox should later require.
- */
-export function authSummary(headers: { get(name: string): string | null }): string | null {
-  const found: string[] = [];
-  const results = ["authentication-results", "arc-authentication-results"]
-    .map((h) => headers.get(h) ?? "")
-    .join(";");
-  for (const m of results.matchAll(/\b(spf|dkim|dmarc|arc)=(\w+)([^;]*)/gi)) {
-    const domain =
-      /(?:smtp\.mailfrom|header\.d|header\.from|header\.i)=(?:[^@\s;]*@)?([^\s;)]+)/i.exec(
-        m[3] ?? "",
-      )?.[1];
-    found.push(
-      `${(m[1] ?? "").toLowerCase()}=${(m[2] ?? "").toLowerCase()}${domain ? `(${domain.toLowerCase()})` : ""}`,
-    );
-  }
-  const spf = headers.get("received-spf")?.trim().split(/\s/)[0];
-  if (spf) found.push(`received-spf=${spf.toLowerCase()}`);
-  const unique = [...new Set(found)];
-  return unique.length > 0 ? unique.join(" ").slice(0, 300) : null;
+/** A vendor name to show: as written, less the trailing legal suffixes vendorKey ignores. */
+export function vendorLabel(vendor: string | null | undefined): string {
+  let name = (vendor ?? "").trim();
+  let m: RegExpExecArray | null;
+  while ((m = /^(.*?)[\s,]+([^\s,]+)$/.exec(name)) && m[1] && vendorKey(m[2]) === "") name = m[1];
+  return name || "Unknown vendor";
 }
 
-/** "8.42", "$1,234.5", "USD 5" → cents; anything else (negative, huge, words) → null. */
+/** An invoice number for comparing: case, spaces, "#" and punctuation ignored, so "#inv-7" is "INV7". */
+export function referenceKey(reference: string | null | undefined): string {
+  return (reference ?? "").toUpperCase().replace(/[^\p{L}\p{N}]/gu, "");
+}
+
+export interface ChargeFacts {
+  vendor: string | null;
+  reference: string | null;
+  amount_cents: number | null;
+  charged_on: string | null;
+}
+
+/**
+ * Whether two statements are one charge: the same vendor (vendorKey, so "Neon, LLC" and "Neon" match) and
+ * invoice number (referenceKey), or — when either has no number — the same vendor and amount charged within
+ * 3 days. Two invoices with different numbers are two charges, however alike (two domain renewals on one
+ * day); the reader asks the model for the invoice number over a receipt number, so a Stripe invoice and its
+ * receipt carry the same one.
+ */
+export function sameCharge(a: ChargeFacts, b: ChargeFacts): boolean {
+  const vendor = vendorKey(a.vendor);
+  if (!vendor || vendorKey(b.vendor) !== vendor) return false;
+  const ref = referenceKey(a.reference);
+  const otherRef = referenceKey(b.reference);
+  if (ref && otherRef) return ref === otherRef;
+  return (
+    a.amount_cents !== null &&
+    a.amount_cents === b.amount_cents &&
+    a.charged_on !== null &&
+    b.charged_on !== null &&
+    Math.abs(Date.parse(a.charged_on) - Date.parse(b.charged_on)) <= 3 * 86_400_000
+  );
+}
+
+/**
+ * The email's sender-authentication verdicts, one entry per Authentication-Results, ARC copy and
+ * Received-SPF header, in header order, each labelled with the server that wrote it:
+ * "[mx.example] spf=pass(gmail.com) dkim=pass(gmail.com) | [arc i=1 mx.google.com] dkim=pass(stripe.com)".
+ * Every hop, and the sender, can add these headers; only the topmost entry written by the receiving server
+ * is its verdict, the rest are upstream claims. Domains only, never a full address (an envelope sender is
+ * the owner's). Shadow evidence for deciding what the mailbox should later require.
+ */
+export function authSummary(headers: readonly { key: string; value: string }[]): string | null {
+  const entries: string[] = [];
+  for (const { key, value } of headers) {
+    if (key === "received-spf") {
+      // "pass (google.com: domain of x@stripe.com designates …) …" or "… receiver=…; envelope-from=…"
+      const result = /^\s*(\w+)/.exec(value)?.[1];
+      if (!result) continue;
+      const by = /\(([\w.-]+):|receiver=([\w.-]+)/i.exec(value);
+      const domain =
+        /(?:domain of (?:transitioning )?|envelope-from=)["<]?(?:[^@\s"<>;]*@)?([^\s;)",>@]+)/i.exec(
+          value,
+        )?.[1];
+      entries.push(
+        `[received-spf ${by?.[1] ?? by?.[2] ?? "?"}] spf=${result}${domain ? `(${domain})` : ""}`,
+      );
+      continue;
+    }
+    const arc = key === "arc-authentication-results";
+    if (!arc && key !== "authentication-results") continue;
+    // "[i=N;] authserv-id; method=result property=value …; …"
+    const parts = value.split(";");
+    const instance = arc ? (/i=(\d+)/i.exec(parts.shift() ?? "")?.[1] ?? "?") : null;
+    const id = (parts.shift() ?? "").trim().split(/\s/)[0] ?? "";
+    const server = /^[\w.-]+$/.test(id) ? id : "?";
+    const verdicts = parts.flatMap((part) => {
+      const m = /^\s*(spf|dkim|dmarc|arc)=(\w+)(.*)$/i.exec(part);
+      if (!m) return [];
+      const domain =
+        /(?:smtp\.mailfrom|header\.d|header\.from|header\.i)=(?:[^@\s]*@)?([^\s),"@]+)/i.exec(
+          m[3] ?? "",
+        )?.[1];
+      return [`${m[1]}=${m[2]}${domain ? `(${domain})` : ""}`];
+    });
+    entries.push(`[${arc ? `arc i=${instance} ` : ""}${server}] ${verdicts.join(" ") || "none"}`);
+  }
+  return entries.length > 0 ? entries.join(" | ").toLowerCase().slice(0, 1000) : null;
+}
+
+/**
+ * "8.42", "$1,234.5", "USD 5" → cents; anything else (negative, huge, words) → null. A comma only ever
+ * separates thousands: "8,42" is a decimal comma, never $842.
+ */
 export function cents(raw: unknown): number | null {
   if (typeof raw !== "string" && typeof raw !== "number") return null;
-  const s = String(raw)
-    .replace(/[$,\s]/g, "")
+  let s = String(raw)
+    .replace(/[$\s]/g, "")
     .replace(/^(USD|US)/i, "");
+  if (/^\d{1,3}(,\d{3})+(\.\d{1,2})?$/.test(s)) s = s.replace(/,/g, "");
   if (!/^\d{1,7}(\.\d{1,2})?$/.test(s)) return null;
   return Math.round(Number(s) * 100);
 }
@@ -336,6 +411,9 @@ function fromAnswer(
       status: "review",
       note: `Currency ${currency ?? "unknown"}: totals count USD only. Enter the USD amount charged.`,
     };
+  // Duplicates are matched by vendor, so a charge without one could otherwise be counted twice.
+  if (reading.vendor === null)
+    return { ...reading, status: "review", note: "No vendor found: enter it." };
   return reading;
 }
 

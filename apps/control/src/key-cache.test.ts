@@ -138,11 +138,23 @@ describe("KeyCache", () => {
     expect(r.load).toHaveBeenCalledTimes(3);
   });
 
-  it("shares one in-flight fetch between concurrent misses", async () => {
+  it("keeps the last good keys when a refetch finds no key at all", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
     const r = rig();
-    const results = await Promise.all(Array.from({ length: 10 }, () => r.cache.get("k1")));
-    expect(new Set(results)).toEqual(new Set(["key-one"]));
-    expect(r.load).toHaveBeenCalledTimes(1);
+    await r.cache.get("k1");
+    r.rotate({});
+    r.advance(r.cache.ttlMs);
+    expect(await r.cache.get("k1")).toBe("key-one");
+    expect(r.load).toHaveBeenCalledTimes(2);
+  });
+
+  it("doesn't make later requests wait on a fetch that never settles (its request was cancelled)", async () => {
+    const r = rig();
+    await r.cache.get("k1");
+    r.advance(r.cache.ttlMs);
+    r.load.mockImplementationOnce(() => new Promise(() => {}));
+    void r.cache.get("k1");
+    expect(await r.cache.get("k1")).toBe("key-one");
   });
 
   it("never wedges when load() throws synchronously", async () => {

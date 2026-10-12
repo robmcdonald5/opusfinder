@@ -83,7 +83,7 @@ type is 415 — and at most 16 KB, counted in bytes. Every POST that a browser m
 | `GET /v1/runs[?stage=…&outcome=…&from=…&to=…&before=<id>&limit=…]`                                                    | owner, agent                    | The run ledger, newest start first, 50 per page (max 200); `more: true` means pass the last row's id as `before`.                                                                                                                                                                                   |
 | `GET /v1/changes[?stage=…&from=…&to=…&before=<id>&limit=…]`                                                           | owner, agent                    | The change log, newest first; `stage` keeps that stage's own targets (the stage, its knobs, its overrides).                                                                                                                                                                                         |
 | `GET /v1/cost[?from=…&to=…\|month=YYYY-MM]`                                                                           | owner, agent                    | What vendors charged: totals per month and vendor, the statements filed in the period (whole months of `from`/`to`, else `month`, else this month), the review queue, the advisory target and the vendor ceilings. Amounts in US cents.                                                             |
-| `POST /v1/statements` `{vendor, amount, chargedOn, kind?, periodStart?, reference?, note?}`                           | owner, agent                    | Record a charge by hand (history, or a vendor that emails no invoice). A repeat of a recorded charge is stored as `duplicate`.                                                                                                                                                                      |
+| `POST /v1/statements` `{vendor, amount, chargedOn, kind?, periodStart?, reference?, note?}`                           | owner, agent                    | Record a charge by hand (history, or a vendor that emails no invoice). A repeat of a counted charge (from an agent, also of one still in review) is stored as `duplicate`.                                                                                                                          |
 | `GET /v1/gate/:stage[?source=…&lane=…]`                                                                               | all                             | "May I run, and with what settings?" — effective mode (narrowed to the slice), knobs, the policies the stage reads, set overrides, and `since`/`by`/`because`.                                                                                                                                      |
 | `POST /v1/changes` `{target, value, reason, proposeIfNeeded?, dryRun?}`                                               | owner, agent                    | Applies if `classify` allows; else **403 `needs_approval`** with a ready-to-send `propose` body, or — with `proposeIfNeeded: true` — files it and answers **202 `proposed`**. Re-setting the current value is a `noop`. `reason` is required from an agent; the owner may leave it out.             |
 | `GET /v1/proposals[?status=all\|closed]`                                                                              | owner, agent                    | Open (default) or all proposals, or `closed` (decided, stale, withdrawn or lapsed) paged like the run list with `stage`/`outcome`/`from`/`to`/`before`/`limit` and `more`; `status` reads `expired` past 7 days. In `/v1/status`, each open proposal also says whether it is `stale` (see approve). |
@@ -155,37 +155,47 @@ row per email:
   - everything else is refused at the SMTP stage (no row, no model read; the Worker logs the domain only).
 
   The envelope sender is SMTP's unauthenticated MAIL FROM, and Cloudflare admits mail that passes SPF _or_
-  carries any valid DKIM signature, so someone who knows the owner's address could forge it. **Shadow:**
-  each accepted email's SPF / DKIM / DMARC / ARC verdicts, domains only, are stored in `statement.auth`
-  (and logged); once real filter forwards have been seen there, require the verdict they carry (e.g. SPF
-  pass for the envelope's gmail.com). UNVERIFIED until the first filter forward (Cloudflare's, ~23rd).
+  carries any valid DKIM signature, so someone who knows the owner's address could forge it. Until the gate
+  checks authentication, nothing read from an email counts by itself (below). **Shadow:** each accepted
+  email's SPF / DKIM / DMARC / ARC verdicts are stored in `statement.auth` (and logged), one entry per
+  header in header order, labelled with the server that wrote it, domains only. Any hop, and the sender,
+  can add these headers, so a gate must read only the topmost entry Cloudflare wrote, never match a
+  substring of the column. UNVERIFIED until the first filter forward (Cloudflare's, ~23rd): whether
+  Cloudflare writes such a header where the Worker sees it at all; if not, the gate needs another basis.
+  Either way the gate proves only who forwarded the mail, not who wrote it: anyone can send mail a broad
+  filter forwards (e.g. another merchant's Stripe invoice), so a filter forward should count by itself only
+  when its From is also a known in-scope vendor sender.
 
 - **Read by a model.** Workers AI (`[ai]` binding, `@cf/meta/llama-3.3-70b-instruct-fp8-fast` in JSON
   mode) reads vendor, kind, total, currency, charge date, service period and invoice number (the invoice's,
   over a receipt's); it gets both the plain-text and HTML parts, and when the body doesn't settle it, the
   attached PDF (via `toMarkdown`). Every field is validated (real calendar dates, a day of timezone slack);
   the email is untrusted text and the model has no tools.
-- **Never guessed.** No total, no charge date on a hand forward (its own date is the forward's, not the
-  invoice's), a currency other than USD, a failed model call, an unparseable or oversized (> 10 MiB) email,
-  or mail the model doesn't see a bill in → status `review`, for the owner to count (with the amount, date
-  and service period they read) or exclude. Only owner forwards reach the model, so it never drops one.
-  `ignored` is only for Gmail's confirmation, which can't be counted (the server refuses, whatever the
-  row's status). An agent's hand entry also waits in `review`; the owner's counts at once.
+- **Counted by the owner.** Every forward lands in `review` (or `duplicate`, below), pre-filled with what
+  the model read, for the owner to count (correcting the amount, date and service period as needed) or
+  exclude. A note says what's doubtful: no total, no vendor, no charge date on a hand forward (its own
+  date is the forward's, not the invoice's), a currency other than USD, a failed model call, an
+  unparseable or oversized (> 10 MiB) email, or mail the model doesn't see a bill in. Only owner forwards
+  reach the model, so it never drops one. `ignored` is only for Gmail's confirmation, which can't be
+  counted (the server refuses, whatever the row's status). An agent's hand entry also waits in `review`;
+  the owner's counts at once.
 - **Caps.** Per UTC day: 100 owner forwards and, apart from them, 5 Gmail confirmations (anyone can write
   that From header, so junk confirmations can't use up the owner's quota); past either, mail is refused at
   the SMTP stage. Past 50 forwards in a day the rest wait in `review` unread (each read is at most two model
   calls and one PDF conversion). How Email Routing answers when the handler itself throws (e.g. a D1
   outage) isn't documented: the email may be lost, so check the Email Routing activity log after an outage.
 - **Counted once, mostly.** A redelivered email (same `Message-ID`) is dropped. A second email for a
-  recorded charge — same vendor (compared without case, punctuation or legal suffixes: "Neon, LLC" is
-  "Neon") and invoice number, or, when either has no number, same vendor and amount within 3 days — is
-  stored as `duplicate`. Different invoice numbers never merge, so the filter should still forward one
-  email per charge.
+  charge already counted or still in `review` — same vendor (compared without case, punctuation or legal
+  suffixes: "Neon, LLC" is "Neon") and invoice number (without case or punctuation: "#inv-7" is "INV7"),
+  or, when either has no number, same vendor and amount within 3 days — is stored as `duplicate`.
+  Different invoice numbers never merge, so the filter should still forward one email per charge.
 - **Filed by month.** Under the service period the invoice states, else the charge date. Prepaid credits
-  always go by the charge date (cash, not usage). The month view groups vendor spellings into one line.
+  (cash, not usage) go by the charge date, and so does a period the model reads as starting after tomorrow
+  (billed in advance) until the owner enters it when counting. The month view groups vendor spellings into
+  one line.
 - **Gmail's forwarding confirmation** (code and/or link) is shown on the Cost page to the owner only;
   agents see neither the code nor the subject that repeats it.
-- Mail for any address other than `BILLING_ADDRESS` is rejected.
+- Mail for any address other than `BILLING_ADDRESS` is rejected, and all mail while it is unset.
 
 **Scope** (owner, 2026-10-10): only what it costs to run opusfinder — Neon, Cloudflare (Workers Paid and
 the `opusfinder.ai` domain; not the account's other domains), Voyage AI, OpenRouter (the product's LLM

@@ -77,7 +77,8 @@ async function costJson(as: "owner" | "agent" = "agent", month?: string): Promis
 }
 
 describe("the billing mailbox", () => {
-  it("records a forwarded invoice the model reads, and the cost view totals it", async () => {
+  it("files a forwarded invoice for the owner to count, pre-filled with what the model read", async () => {
+    // From the Worker's side a forged owner envelope looks exactly like this, so nothing counts by itself.
     const res = await h.email(email({ answer: bill() }));
     expect(res.status).toBe(200);
     expect(await rows()).toMatchObject([
@@ -91,17 +92,19 @@ describe("the billing mailbox", () => {
         currency: "USD",
         month: thisMonth(),
         reference: "INV-1",
-        status: "recorded",
+        status: "review",
+        note: null,
         updated_by: "mailbox",
       },
     ]);
     const c = await costJson();
-    expect(c.months).toEqual([
-      { month: thisMonth(), cents: 842, vendors: [{ vendor: "Neon", cents: 842, n: 1 }] },
-    ]);
-    expect(c.statements).toHaveLength(1);
+    expect(c.months).toEqual([]);
+    expect(c.review).toHaveLength(1);
     expect(c.billingAddress).toBe(BILLING_ADDRESS);
     expect(c.targetUsdPerMonth).toBe(50);
+    expect(await (await h.request("/cost", { as: "owner" })).text()).toContain(
+      'name="amount" type="number" inputmode="decimal" min="0" step="0.01" required value="8.42"',
+    );
   });
 
   it("files a charge under the service period it covers", async () => {
@@ -116,15 +119,10 @@ describe("the billing mailbox", () => {
     expect(await rows()).toHaveLength(1);
   });
 
-  it("marks the receipt for an already-recorded invoice as a duplicate (same number, or same amount within 3 days)", async () => {
+  it("marks a second email for a charge, counted or still waiting, as its duplicate (same number however written, or same amount within 3 days)", async () => {
     await h.email(email({ answer: bill({ reference: "INV-7" }) }));
-    await h.email(email({ subject: "Your receipt", answer: bill({ reference: "INV-7" }) }));
-    await h.email(
-      email({
-        from: "billing@voyageai.com",
-        answer: bill({ vendor: "Voyage AI", reference: "", total: "20.00" }),
-      }),
-    );
+    await h.email(email({ subject: "Your receipt", answer: bill({ reference: "#inv 7" }) }));
+    await add("owner", { vendor: "Voyage AI", amount: "20.00", chargedOn: today() });
     await h.email(
       email({
         from: "billing@voyageai.com",
@@ -132,10 +130,10 @@ describe("the billing mailbox", () => {
       }),
     );
     const r = await rows();
-    expect(r.map((x) => x.status)).toEqual(["recorded", "duplicate", "recorded", "duplicate"]);
+    expect(r.map((x) => x.status)).toEqual(["review", "duplicate", "recorded", "duplicate"]);
     expect(r[1]?.note).toBe(`Same charge as #${r[0]?.id}.`);
     const c = await costJson();
-    expect(c.months[0].cents).toBe(842 + 2000);
+    expect(c.months[0].cents).toBe(2000);
   });
 
   it("accepts only what the owner forwarded: their address as envelope sender, Gmail's +caf_ form included", async () => {
@@ -199,7 +197,7 @@ describe("the billing mailbox", () => {
     });
     expect(await rows()).toHaveLength(DAILY_CONFIRMATION_CAP);
     await h.email(email({ answer: bill() })); // the owner's forward still gets in
-    expect((await rows()).at(-1)).toMatchObject({ status: "recorded", amount_cents: 842 });
+    expect((await rows()).at(-1)).toMatchObject({ status: "review", amount_cents: 842 });
   });
 
   it("records the receiving server's authentication verdicts, domains only (shadow evidence)", async () => {
@@ -208,7 +206,9 @@ describe("the billing mailbox", () => {
       "Authentication-Results: mx.cloudflare.net; spf=pass smtp.mailfrom=owner+caf_=billing=control.test@example.com; dkim=pass header.d=neon.tech\r\nContent-Type: text/plain",
     );
     await h.email(withAuth);
-    expect((await rows())[0]?.auth).toBe("spf=pass(example.com) dkim=pass(neon.tech)");
+    expect((await rows())[0]?.auth).toBe(
+      "[mx.cloudflare.net] spf=pass(example.com) dkim=pass(neon.tech)",
+    );
   });
 
   it("stops accepting mail after the day's cap", async () => {
@@ -230,7 +230,7 @@ describe("the billing mailbox", () => {
     const renewal = bill({ vendor: "Cloudflare", kind: "domain", total: "10.46" });
     await h.email(email({ answer: { ...renewal, reference: "IN-1" } }));
     await h.email(email({ answer: { ...renewal, reference: "IN-2" } }));
-    expect((await rows()).map((r) => r.status)).toEqual(["recorded", "recorded"]);
+    expect((await rows()).map((r) => r.status)).toEqual(["review", "review"]);
   });
 
   it("files prepaid credits when bought, whatever period the model read", async () => {
@@ -353,6 +353,38 @@ describe("statements by hand", () => {
     ).toBe(403);
   });
 
+  it("files an agent's repeat of an entry still waiting as its duplicate", async () => {
+    const entry = { vendor: "Voyage AI", amount: "120", chargedOn: "2026-10-09" };
+    const first = (await (await add("agent", entry)).json()) as Json;
+    const again = (await (await add("agent", entry)).json()) as Json;
+    expect(again.duplicateOf).toBe(first.statement.id);
+    expect((await rows()).map((r) => r.status)).toEqual(["review", "duplicate"]);
+  });
+
+  it("still names the agent who entered a charge once the owner has counted or excluded it", async () => {
+    const enter = async (vendor: string, note: string) => {
+      const res = await add("agent", { vendor, amount: "4.00", chargedOn: "2026-10-01", note });
+      return ((await res.json()) as Json).statement.id;
+    };
+    const counted = await enter("Neon", "from the console");
+    const excluded = await enter("Voyage AI", "from the dashboard");
+    await h.request(`/ui/statements/${counted}`, {
+      as: "owner",
+      form: {
+        action: "count",
+        vendor: "Neon",
+        amount: "4.00",
+        chargedOn: "2026-10-01",
+        kind: "other",
+      },
+    });
+    await h.request(`/ui/statements/${excluded}`, { as: "owner", form: { action: "exclude" } });
+    const page = await (await h.request("/cost?month=2026-10", { as: "owner" })).text();
+    expect(page.match(/entered by <span title="agent:observer">/g)).toHaveLength(2);
+    expect(page).toContain("from the dashboard");
+    expect(page).not.toContain("Added by agent:observer");
+  });
+
   it.each([
     [{ amount: "1", chargedOn: "2026-10-01" }, "invalid_vendor"],
     [{ vendor: "Neon", amount: "-1", chargedOn: "2026-10-01" }, "invalid_amount"],
@@ -384,7 +416,7 @@ describe("statements by hand", () => {
 
 describe("the Cost page", () => {
   it("shows the month's total, the queue and the statements; forms for the owner only", async () => {
-    await h.email(email({ answer: bill() }));
+    await add("owner", { vendor: "Neon", amount: "8.42", chargedOn: today(), kind: "usage" });
     await h.email(email({ answer: bill({ total: "" }), subject: "Invoice with a PDF" }));
     const owner = await (await h.request("/cost", { as: "owner" })).text();
     expect(owner).toContain("$8.42");
@@ -400,10 +432,40 @@ describe("the Cost page", () => {
     expect(home).toContain("1 charge to review");
   });
 
+  it("flags a charge waiting for review that matches one already counted", async () => {
+    await h.email(email({ answer: bill({ reference: "INV-9" }) }));
+    const counted = (await (
+      await add("owner", { vendor: "Neon", amount: "8.42", chargedOn: today(), reference: "INV-9" })
+    ).json()) as Json;
+    expect(counted.duplicateOf).toBeNull();
+    expect((await costJson()).review[0].sameAs).toBe(counted.statement.id);
+    expect(await (await h.request("/cost", { as: "owner" })).text()).toContain(
+      `Same charge as #${counted.statement.id}, already counted.`,
+    );
+  });
+
+  it("warns on the overview when last month went over the target", async () => {
+    const last = new Date();
+    last.setUTCDate(1);
+    last.setUTCMonth(last.getUTCMonth() - 1);
+    // A usage invoice arrives after the month it covers, so it never lands in this month's total.
+    await add("owner", {
+      vendor: "Neon",
+      amount: "60.00",
+      chargedOn: today(),
+      kind: "usage",
+      periodStart: last.toISOString().slice(0, 10),
+    });
+    const name = last.toLocaleString("en-US", { month: "long", year: "numeric", timeZone: "UTC" });
+    expect(await (await h.request("/", { as: "owner" })).text()).toContain(
+      `${name} was over the monthly target`,
+    );
+  });
+
   it("lets the owner count a reviewed statement with the amount they read, or exclude one", async () => {
     await h.email(email({ answer: bill({ total: "" }) }));
     await h.email(email({ answer: bill({ reference: "INV-2" }) }));
-    const [unread, recorded] = await rows();
+    const [unread, read] = await rows();
     const count = await h.request(`/ui/statements/${unread?.id}`, {
       as: "owner",
       form: {
@@ -417,7 +479,7 @@ describe("the Cost page", () => {
     });
     expect(count.status).toBe(303);
     expect(count.headers.get("location")).toBe("/cost?done=statement_counted");
-    const exclude = await h.request(`/ui/statements/${recorded?.id}`, {
+    const exclude = await h.request(`/ui/statements/${read?.id}`, {
       as: "owner",
       form: { action: "exclude" },
     });
@@ -452,6 +514,32 @@ describe("the Cost page", () => {
     });
   });
 
+  it("files a charge billed in advance under the month it covers once the owner enters that period", async () => {
+    // Two months ahead: on a month's last day, the next month's first is "tomorrow", which the model may give.
+    const next = new Date();
+    next.setUTCDate(1);
+    next.setUTCMonth(next.getUTCMonth() + 2);
+    const periodStart = next.toISOString().slice(0, 10);
+    // The model's reading of a future period isn't trusted: the charge waits under its charge date.
+    await h.email(email({ answer: bill({ kind: "subscription", period_start: periodStart }) }));
+    const [row] = await rows();
+    expect(row).toMatchObject({ period_start: null, month: thisMonth() });
+    const res = await h.request(`/ui/statements/${row?.id}`, {
+      as: "owner",
+      form: {
+        action: "count",
+        vendor: "Neon",
+        amount: "8.42",
+        chargedOn: today(),
+        periodStart,
+        kind: "subscription",
+        note: "",
+      },
+    });
+    expect(res.status).toBe(303);
+    expect((await rows())[0]).toMatchObject({ status: "recorded", month: periodStart.slice(0, 7) });
+  });
+
   it("counts every statement waiting for review, not just the ones it lists", async () => {
     const now = new Date().toISOString();
     await h.db.batch(
@@ -469,6 +557,27 @@ describe("the Cost page", () => {
     const page = await (await h.request("/cost", { as: "owner" })).text();
     expect(page).toContain("Needs your review (55)");
     expect(await (await h.request("/", { as: "owner" })).text()).toContain("55 to review");
+  });
+
+  it("counts every charge not counted, and lists the ones filed in the period asked for", async () => {
+    const now = new Date().toISOString();
+    await h.db.batch(
+      Array.from({ length: 22 }, (_, i) =>
+        h.db
+          .prepare(
+            "INSERT INTO statement (received_at, source, message_id, month, status, updated_at, updated_by) VALUES (?, 'manual', ?, ?, 'excluded', ?, 'test')",
+          )
+          .bind(now, `<excluded-${i}@test>`, i === 0 ? "2025-01" : null, now),
+      ),
+    );
+    const c = await costJson();
+    expect(c.notCounted).toHaveLength(20);
+    expect(c.notCountedCount).toBe(21);
+    expect(await (await h.request("/cost", { as: "owner" })).text()).toContain("Not counted (21)");
+    // The oldest is out of this month's list, but still there to count from its own month; the rows with
+    // no month are listed under the month they arrived.
+    const older = await costJson("owner", "2025-01");
+    expect(older.notCounted.map((r: Json) => r.message_id)).toEqual(["<excluded-0@test>"]);
   });
 
   it("offers Count it on every uncounted row except Gmail's confirmation", async () => {
@@ -495,7 +604,7 @@ describe("the Cost page", () => {
     expect(page).not.toContain(`action="/ui/statements/${confirmation?.id}"`);
   });
 
-  it("keeps a counted statement's note when it's edited, and never pre-fills a non-USD amount as USD", async () => {
+  it("keeps a counted statement's note when it's edited, and never shows or pre-fills a non-USD or unknown-currency amount as USD", async () => {
     await add("owner", {
       vendor: "Neon",
       amount: "8.42",
@@ -503,13 +612,25 @@ describe("the Cost page", () => {
       note: "Q3 back-fill",
     });
     await h.email(email({ answer: bill({ currency: "EUR", total: "8.42", reference: "EU-1" }) }));
+    // No currency stated and no "$" in the email: unknown, never taken for USD.
+    await h.email(
+      email({
+        body: "Amount due: 19.99",
+        answer: bill({ currency: "", total: "19.99", reference: "X-1" }),
+      }),
+    );
     const page = await (await h.request("/cost", { as: "owner" })).text();
     expect(page).toContain('value="Q3 back-fill"');
-    const eur = (await rows()).find((r) => r.currency === "EUR");
-    const form = page.slice(page.indexOf(`action="/ui/statements/${eur?.id}"`));
-    expect(form.slice(0, form.indexOf("</form>"))).toContain(
-      'name="amount" type="number" inputmode="decimal" min="0" step="0.01" required value=""',
-    );
+    const read = (await rows()).filter((r) => r.source === "email");
+    expect(read.map((r) => r.currency)).toEqual(["EUR", null]);
+    for (const r of read) {
+      const form = page.slice(page.indexOf(`action="/ui/statements/${r.id}"`));
+      expect(form.slice(0, form.indexOf("</form>"))).toContain(
+        'name="amount" type="number" inputmode="decimal" min="0" step="0.01" required value=""',
+      );
+    }
+    expect(page).toContain("<strong>8.42</strong> EUR");
+    expect(page).not.toContain("$19.99");
   });
 
   it("refuses an impossible month", async () => {
@@ -584,6 +705,11 @@ describe("the Cost page", () => {
     expect(await (await h.request("/cost?month=2026-07", { as: "owner" })).text()).toContain(
       "Pro plan",
     );
+    const again = await h.request("/ui/statements", {
+      as: "owner",
+      form: { vendor: "Vercel", amount: "20", chargedOn: "2026-07-14", kind: "subscription" },
+    });
+    expect(again.headers.get("location")).toBe("/cost?done=statement_duplicate");
   });
 
   it("shows a period of whole months picked on the calendar, and keeps ?month= working", async () => {
@@ -641,7 +767,7 @@ describe("the Cost page", () => {
       form: { action: "exclude" },
     });
     expect(csrf.status).toBe(403);
-    expect((await rows())[0]?.status).toBe("recorded");
+    expect((await rows())[0]?.status).toBe("review");
   });
 
   it("answers a bad statement id or month with a readable error page", async () => {

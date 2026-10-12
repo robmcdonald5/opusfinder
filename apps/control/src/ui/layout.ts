@@ -65,6 +65,7 @@ const FLASH: Record<string, string> = {
   rejected: "Proposal rejected.",
   stale: "That proposal was stale, so nothing was applied.",
   statement_added: "Charge added.",
+  statement_duplicate: "Matches a charge already counted, so it's under Not counted.",
   statement_counted: "Charge counted.",
   statement_excluded: "Charge left out of the totals.",
 };

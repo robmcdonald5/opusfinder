@@ -12,6 +12,7 @@ import {
   readEmail,
   validDay,
   vendorKey,
+  vendorLabel,
   type InvoiceAi,
 } from "./statements";
 
@@ -247,6 +248,22 @@ describe("readEmail", () => {
     expect(r).toMatchObject({ status: "review", vendor: null });
   });
 
+  it("sends a bill with no vendor to review: a hand forward has no sender domain to fall back on", async () => {
+    const r = await readEmail(
+      await parse(
+        raw({ from: "Owner <owner@gmail.com>", subject: "Fwd: Your receipt", body: "$19.00" }),
+      ),
+      fakeAi([bill({ vendor: "", total: "19.00" })]),
+      RECEIVED,
+    );
+    expect(r).toMatchObject({
+      status: "review",
+      vendor: null,
+      amountCents: 1900,
+      note: "No vendor found: enter it.",
+    });
+  });
+
   it("keeps the body's reading when the attached PDF can't be read", async () => {
     const ai = fakeAi([bill({ total: "" })]);
     ai.toMarkdown = () => Promise.reject(new Error("encrypted PDF"));
@@ -343,6 +360,9 @@ describe("cents", () => {
   it.each<[unknown, number | null]>([
     ["8.42", 842],
     ["$1,234.5", 123450],
+    ["1,234,567.89", 123456789],
+    ["8,42", null],
+    ["1234,56", null],
     ["USD 5", 500],
     [5.33, 533],
     ["0", 0],
@@ -361,23 +381,72 @@ describe("vendorKey / authSummary", () => {
   it("compares vendors without case, punctuation or legal suffixes", () => {
     expect(vendorKey("Neon, LLC")).toBe("neon");
     expect(vendorKey("NEON Inc.")).toBe("neon");
+    expect(vendorKey("Neon, L.L.C.")).toBe("neon");
+    expect(vendorKey("Acme Co")).toBe("acme");
     expect(vendorKey("Voyage AI, Inc.")).toBe("voyage ai");
+    expect(vendorKey("voyage.ai")).toBe("voyage ai");
     expect(vendorKey(null)).toBe("");
   });
 
+  it("shows a vendor without the legal suffixes it is grouped without", () => {
+    expect(vendorLabel("Neon, L.L.C.")).toBe("Neon");
+    expect(vendorLabel("Acme Co")).toBe("Acme");
+    expect(vendorLabel("Voyage AI, Inc.")).toBe("Voyage AI");
+    expect(vendorLabel("voyage.ai")).toBe("voyage.ai");
+    expect(vendorLabel(null)).toBe("Unknown vendor");
+  });
+
   it("keeps the verdicts and domains, never a full address", () => {
-    const headers = new Headers({
-      "authentication-results":
-        "mx.cloudflare.net; spf=pass smtp.mailfrom=owner+caf_=billing=opusfinder.ai@gmail.com; dkim=pass header.d=gmail.com header.i=@gmail.com; dmarc=pass header.from=neon.tech",
-      "received-spf":
-        "pass (mx.cloudflare.net: domain of owner@gmail.com designates 209.85.0.1 as permitted sender)",
-    });
-    const summary = authSummary(headers);
+    const summary = authSummary([
+      { key: "from", value: "Neon <billing@neon.tech>" },
+      {
+        key: "authentication-results",
+        value:
+          "mx.cloudflare.net; spf=pass smtp.mailfrom=owner+caf_=billing=opusfinder.ai@gmail.com; dkim=pass header.d=gmail.com header.i=@gmail.com; dmarc=pass header.from=neon.tech",
+      },
+      {
+        key: "received-spf",
+        value:
+          "pass (mx.cloudflare.net: domain of owner@gmail.com designates 209.85.0.1 as permitted sender)",
+      },
+    ]);
     expect(summary).toBe(
-      "spf=pass(gmail.com) dkim=pass(gmail.com) dmarc=pass(neon.tech) received-spf=pass",
+      "[mx.cloudflare.net] spf=pass(gmail.com) dkim=pass(gmail.com) dmarc=pass(neon.tech) | [received-spf mx.cloudflare.net] spf=pass(gmail.com)",
     );
     expect(summary).not.toContain("owner");
-    expect(authSummary(new Headers())).toBeNull();
+    expect(authSummary([])).toBeNull();
+  });
+
+  it("keeps each server's verdicts apart and in header order, so a sender's own header can't pass as the receiver's", () => {
+    expect(
+      authSummary([
+        {
+          key: "authentication-results",
+          value:
+            "mx.cloudflare.net; spf=softfail smtp.mailfrom=owner@gmail.com; dkim=pass header.d=attacker.example",
+        },
+        {
+          key: "arc-authentication-results",
+          value:
+            "i=1; mx.google.com; dkim=pass header.i=@stripe.com; spf=pass (google.com: domain of bounce@stripe.com designates 1.2.3.4) smtp.mailfrom=bounce@stripe.com",
+        },
+        {
+          key: "received-spf",
+          value:
+            "pass (google.com: domain of bounce@stripe.com designates 1.2.3.4) client-ip=1.2.3.4;",
+        },
+        // Written by the sender, below everything the receiving servers added.
+        {
+          key: "authentication-results",
+          value: "mx.cloudflare.net; spf=pass smtp.mailfrom=owner@gmail.com",
+        },
+      ]),
+    ).toBe(
+      "[mx.cloudflare.net] spf=softfail(gmail.com) dkim=pass(attacker.example) | " +
+        "[arc i=1 mx.google.com] dkim=pass(stripe.com) spf=pass(stripe.com) | " +
+        "[received-spf google.com] spf=pass(stripe.com) | " +
+        "[mx.cloudflare.net] spf=pass(gmail.com)",
+    );
   });
 });
 
@@ -405,6 +474,14 @@ describe("filingMonth / htmlToText", () => {
     expect(
       htmlToText("<p>Total&zwnj;&nbsp;\u200c&#x24;5 &rsquo;paid&rsquo; &mdash; &bogus;</p>"),
     ).toBe("Total $5 'paid' - &bogus;");
+    // Past Unicode's range: kept as written, not thrown (which would cost the email its reading).
+    expect(htmlToText("<p>$5 &#x110000; &#9999999;</p>")).toBe("$5 &#x110000; &#9999999;");
+  });
+
+  it("takes linear time on unclosed tags, so a hostile email can't exhaust the CPU", () => {
+    const start = performance.now();
+    for (const open of ["<", "<br", "<style>"]) htmlToText(open.repeat(64 * 1024));
+    expect(performance.now() - start).toBeLessThan(1000);
   });
 
   it("keeps the text and drops markup, styles and scripts", () => {

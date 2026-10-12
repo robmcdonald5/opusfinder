@@ -63,6 +63,7 @@ import {
   filingMonth,
   isConfirmationRow,
   mayBeGmailConfirmation,
+  sameCharge,
   validDay,
   vendorKey,
   type StatementKind,
@@ -910,10 +911,18 @@ export async function cost(
     /** Newest first; only months with a recorded statement. Amounts in US cents. */
     months: [...months.values()],
     statements: c.rows.map(view),
-    /** The newest 50 waiting for the owner; `reviewCount` is how many wait in all. */
-    review: c.review.map(view),
+    /**
+     * The newest 50 waiting for the owner; `reviewCount` is how many wait in all. `sameAs` is a counted
+     * charge one matches, for the owner to see before counting it again.
+     */
+    review: c.review.map((r) => ({
+      ...view(r),
+      sameAs: c.counted.find((x) => sameCharge(r, x))?.id ?? null,
+    })),
     reviewCount: c.reviewCount,
+    /** The newest 20 not counted in the period; `notCountedCount` is how many. */
     notCounted: c.notCounted.map(view),
+    notCountedCount: c.notCountedCount,
     ceilings,
   };
 }
@@ -936,9 +945,17 @@ function statementFields(body: unknown, now: string) {
       "chargedOn is the charge date: a real YYYY-MM-DD date, from 2020 on, not after tomorrow",
     );
   const periodRaw = field(body, "periodStart");
-  const periodStart = periodRaw === undefined || periodRaw === "" ? null : validDay(periodRaw, now);
+  // A period billed in advance starts after the charge: up to a year ahead here, where a person enters it
+  // (the model's reading of one is not trusted).
+  const yearAhead = new Date(Date.parse(now) + 365 * 86_400_000).toISOString();
+  const periodStart =
+    periodRaw === undefined || periodRaw === "" ? null : validDay(periodRaw, yearAhead);
   if (periodRaw !== undefined && periodRaw !== "" && !periodStart)
-    throw new ApiError(400, "invalid_date", "periodStart, when given, is a real YYYY-MM-DD date");
+    throw new ApiError(
+      400,
+      "invalid_date",
+      "periodStart, when given, is a real YYYY-MM-DD date, from 2020 on, at most a year ahead",
+    );
   const kindRaw = field(body, "kind") ?? "other";
   if (typeof kindRaw !== "string" || !(STATEMENT_KINDS as readonly string[]).includes(kindRaw))
     throw new ApiError(400, "invalid_kind", `kind is one of: ${STATEMENT_KINDS.join(", ")}`);
@@ -955,14 +972,17 @@ function statementFields(body: unknown, now: string) {
 
 /**
  * Record a statement by hand (history from before the mailbox, or a vendor that doesn't email one). The
- * owner's entry counts at once; an agent's waits in the owner's review queue, like anything the mailbox
- * isn't sure of: agents may record, but only the owner decides what counts.
+ * owner's entry counts at once; an agent's waits in the owner's review queue, like everything the mailbox
+ * reads: agents may record, but only the owner decides what counts.
  */
 export async function addStatement(db: D1Database, caller: Caller, body: unknown, now: string) {
   requireRole(caller, "owner", "agent");
   const f = statementFields(body, now);
-  const same = await findSameCharge(db, f);
   const byAgent = caller.role !== "owner";
+  // An agent's repeat of an entry still waiting is a duplicate too. The owner's entry counts at once, so it
+  // is matched against counted charges only: filed as a duplicate of a waiting row, it would go uncounted
+  // if that row were excluded.
+  const same = await findSameCharge(db, f, { alsoWaiting: byAgent });
   const status = same !== null ? "duplicate" : byAgent ? "review" : "recorded";
   const note =
     same !== null
@@ -974,7 +994,8 @@ export async function addStatement(db: D1Database, caller: Caller, body: unknown
     received_at: now,
     source: "manual",
     message_id: null,
-    sender: null,
+    // Who entered it: updated_by changes when the owner counts or excludes it.
+    sender: actorLabel(caller),
     subject: null,
     ...f,
     currency: "USD",
@@ -1040,7 +1061,10 @@ export async function reviewStatement(
   return "counted" as const;
 }
 
-/** The home page's Cost card: this month's recorded total and how many statements wait for the owner. */
+/**
+ * The home page's Cost card: this month's and last month's recorded totals, and how many statements wait
+ * for the owner.
+ */
 export async function costSummary(db: D1Database, now: string) {
   const s = await readCostSummary(db, now.slice(0, 7));
   return { ...s, month: now.slice(0, 7), targetUsdPerMonth: totalTargetUsdPerMonth };

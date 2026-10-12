@@ -28,12 +28,13 @@ import { findSameCharge, insertStatement, mailCountsSince, statementExists } fro
  * Who may write here: only mail whose ENVELOPE sender is one of the owner's addresses (a Gmail forward keeps
  * the forwarding account as the envelope sender; Cloudflare's docs call `message.from` the trustworthy
  * one — header addresses can be spoofed), plus Gmail's forwarding confirmation, which the owner needs to see.
- * Everything else is refused at the SMTP stage: no row, no model read. Without the gate, anyone who learned
- * the address could put an invented charge into the totals.
+ * Everything else is refused at the SMTP stage: no row, no model read. The envelope sender can still be
+ * forged (README), so until the gate also checks the mail's authentication, nothing read from an email
+ * counts by itself: every charge waits in review for the owner, pre-filled with what the model read.
  *
  * Once accepted, a vendor's invoice is never lost for a reason of ours: anything unreadable is still
  * recorded, for the owner to review on the Cost page. A database error is NOT swallowed: email() throws, and
- * Email Routing reports a temporary failure, so the sender retries.
+ * what Email Routing then does with the email isn't documented (it may be lost).
  */
 
 /**
@@ -69,7 +70,7 @@ export async function receiveEmail(
   now: string,
 ): Promise<void> {
   const expected = env.BILLING_ADDRESS?.trim().toLowerCase();
-  if (expected && message.to.trim().toLowerCase() !== expected) {
+  if (!expected || message.to.trim().toLowerCase() !== expected) {
     message.setReject("Unknown recipient");
     return;
   }
@@ -100,11 +101,6 @@ export async function receiveEmail(
     message.setReject("Not accepted: today's limit for this mailbox is reached");
     return;
   }
-  const auth = authSummary(message.headers);
-  console.log(
-    `billing mailbox: accepted ${confirmation ? "a Gmail confirmation" : "an owner forward"}; auth: ${auth ?? "none recorded"}`,
-  );
-
   let email: Email | null = null;
   let failure: string | null = null;
   if (message.rawSize > MAX_EMAIL_BYTES) {
@@ -117,8 +113,14 @@ export async function receiveEmail(
       failure = `Unreadable email: ${errorSummary(err)}`;
     }
   }
+  // From the parsed header list, not message.headers: Headers.get joins every copy of a header into one,
+  // which loses which server wrote which verdict.
+  const auth = email ? authSummary(email.headers) : null;
+  console.log(
+    `billing mailbox: accepted ${confirmation ? "a Gmail confirmation" : "an owner forward"}; auth: ${auth ?? "none recorded"}`,
+  );
 
-  const messageId = email?.messageId ?? message.headers.get("message-id");
+  const messageId = (email?.messageId ?? message.headers.get("message-id"))?.slice(0, 200);
   if (messageId && (await statementExists(db, messageId))) return; // redelivered or forwarded twice
 
   let reading: Reading;
@@ -146,14 +148,20 @@ export async function receiveEmail(
     }
   }
 
+  // Rows still waiting match too: nothing read from an email counts by itself, so an invoice and its receipt
+  // would otherwise both wait unflagged, and both be counted.
   const same =
     reading.status === "recorded"
-      ? await findSameCharge(db, {
-          vendor: reading.vendor,
-          reference: reading.reference,
-          amount_cents: reading.amountCents,
-          charged_on: reading.chargedOn,
-        })
+      ? await findSameCharge(
+          db,
+          {
+            vendor: reading.vendor,
+            reference: reading.reference,
+            amount_cents: reading.amountCents,
+            charged_on: reading.chargedOn,
+          },
+          { alsoWaiting: true },
+        )
       : null;
   // A confirmation's sender is stored as exactly Gmail's address: that is what marks the row as one.
   const sender = confirmation
@@ -175,7 +183,8 @@ export async function receiveEmail(
     period_start: reading.periodStart,
     month: filingMonth(reading.kind, reading.periodStart, reading.chargedOn),
     reference: reading.reference,
-    status: same === null ? reading.status : "duplicate",
+    // Even a clean reading waits for the owner (see the top of this file).
+    status: same !== null ? "duplicate" : reading.status === "recorded" ? "review" : reading.status,
     note: same === null ? reading.note : `Same charge as #${same}.`,
     auth,
     updated_at: now,
