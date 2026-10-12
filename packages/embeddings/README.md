@@ -1,13 +1,13 @@
 # @opusfinder/embeddings
 
 A thin, **provider-agnostic** wrapper over [Voyage AI](https://voyageai.com) embeddings
-(`voyage-3-large`, 1024 dims). The primary surface is one function — `embed()` — that
+(`voyage-4-large`, 1024 dims). The primary surface is one function — `embed()` — that
 turns texts into vectors and reports token usage; the package also exports a
 provider-agnostic embedding-request **contract** (`chunkByLimits`,
 `parseEmbeddingResponse`, from `src/contract.ts`) that the Voyage provider and the
-eval-only OpenAI embedder share instead of forking. Job ingestion (Phase 4) writes
-`jobs.embedding`; the user-profile embedding (Phase 9) and digest vector-retrieval
-(Phase 10) reuse the same `embed()`.
+eval-only OpenAI embedder share instead of forking. The embed-backlog drain,
+`embeddings:backfill` and the ingest CLIs fill `jobs.embedding` with it, and CV ingest embeds
+the user profile; digest retrieval reads that stored profile vector and never calls `embed()`.
 
 It deliberately does **not** go through the Vercel AI SDK (which `@opusfinder/llm` uses):
 embeddings get none of the SDK's value (no streaming, tools, or prompt caching), and a
@@ -27,10 +27,9 @@ This package needs a Voyage API key. Either:
 - or export `VOYAGE_API_KEY` in your shell (a pre-set env var wins over the file).
 
 Get a key from the [Voyage AI dashboard](https://dashboard.voyageai.com); billing is
-usage-based and `voyage-3-large` bills $0.18/1M tokens from the first token (no free
-allotment — the "first 200M tokens free" applies only to the voyage-4 line). This account
-has a payment method on file, so it runs at standard limits (2000 RPM / 3M TPM), not the
-no-card throttle. The key is read + validated by
+usage-based (list price and the account's free allotment are pinned next to the model id in
+`src/provider.ts`). This account has a payment method on file, so it runs at standard limits
+(2000 RPM / 3M TPM), not the no-card throttle. The key is read + validated by
 `getVoyageApiKey()` (`@opusfinder/embeddings/env`), which loads `packages/embeddings/.env`
 relative to the module (never the caller's cwd), so the key lives in ONE place no matter
 which package's script imports it. Errors echo only the key's shape (presence/length),
@@ -47,7 +46,7 @@ const { embeddings, usage, model } = await embed(["a job description", "another"
 
 embeddings; // number[][] — one 1024-dim vector per input, in input order
 usage.totalTokens; // summed across any internal chunking
-estimateCostUsd(usage.totalTokens); // USD at voyage-3-large list price
+estimateCostUsd(usage.totalTokens); // USD at list price (ignores the free allotment)
 ```
 
 `embed()` transparently chunks large inputs to respect Voyage's per-request limits

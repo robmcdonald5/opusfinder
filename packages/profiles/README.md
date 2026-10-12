@@ -55,8 +55,11 @@ guarantee**, not a seam contract — `src/` stays free of `@opusfinder/llm`.
 
 ## Known gaps
 
-- **R2 object lifecycle.** Each ingest mints a fresh `uploadId`, and a pre-extraction failure stores
-  the original PDF before failing — so old/failed R2 objects accumulate (cv_file rows are append-only
-  history; the current profile only references the latest upload). `deleteObject` exists but no
-  sweeper reclaims orphans yet. Fine at Phase-9 scale (a script, low volume); a cleanup job is
-  deferred to a later phase.
+- **R2 object lifecycle.** Nothing deletes CV objects: each ingest mints a fresh `uploadId`, so the
+  PDFs and transcripts of superseded and failed uploads accumulate. They hold the user's CV, so a
+  user-deletion flow must delete the user's R2 objects BEFORE deleting the `user` row: the FK
+  cascade drops the `user_cv_files` rows that record their keys.
+- **Failed profile steps leave no DB trace.** After the transcript is cached, a structure/embed
+  failure (or a profile with nothing to embed) records no error on the upload, and the previous
+  profile keeps driving digests; only the CLI output says so. An async or UI-driven ingest needs a
+  persisted per-upload outcome.
