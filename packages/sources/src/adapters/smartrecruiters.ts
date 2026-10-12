@@ -2,7 +2,7 @@ import { companySlug, isRecord, safeJobId } from "@opusfinder/shared";
 import type { NormalizedJob } from "@opusfinder/shared";
 
 import { joinParts, nextOffset } from "./fields";
-import { htmlToText } from "./text";
+import { htmlToText, joinSections } from "./text";
 import type { FetchJson, ProbeOutcome, SourceAdapter, SourceContext } from "./types";
 import { firstPathSegment, segmentAfter } from "./url-match";
 
@@ -44,12 +44,14 @@ export const smartRecruitersAdapter: SourceAdapter = {
   normalizeSlug: (rawSlug) => companySlug(rawSlug),
 
   // jobs/careers.smartrecruiters.com/{slug} OR api.smartrecruiters.com/v1/companies/{slug}/...
-  matchUrl: (url) =>
-    url.hostname === PUBLIC_HOST || url.hostname === CAREERS_HOST
-      ? firstPathSegment(url)
-      : url.hostname === API_HOST
-        ? segmentAfter(url, "companies")
-        : null,
+  // `/oneclick-ui/company/{id}/…` is the apply flow, not a board; its company id isn't known to be
+  // the API's, so it yields nothing rather than a phantom "oneclick-ui" board.
+  matchUrl: (url) => {
+    if (url.hostname === API_HOST) return segmentAfter(url, "companies");
+    if (url.hostname !== PUBLIC_HOST && url.hostname !== CAREERS_HOST) return null;
+    const firstSegment = firstPathSegment(url);
+    return firstSegment === "oneclick-ui" ? null : firstSegment;
+  },
 
   // An unknown slug returns 200 + totalFound:0 (NOT 404), indistinguishable from a real-but-empty
   // board, so existence can't be asserted: a positive count is live, anything else indeterminate
@@ -183,14 +185,13 @@ async function hydratePosting(
 
 /** Concatenate the description sections in a stable order, each cleaned to plain text. */
 function cleanSections(sections: Record<string, unknown>): string {
-  const parts: string[] = [];
-  for (const key of SECTION_ORDER) {
-    const section = sections[key];
-    // jobAd section text is RAW tags + single-encoded entities (the htmlToText recipe).
-    const cleaned = htmlToText(isRecord(section) ? section.text : "");
-    if (cleaned) parts.push(cleaned);
-  }
-  return parts.join("\n\n");
+  return joinSections(
+    SECTION_ORDER.map((key) => {
+      const section = sections[key];
+      // jobAd section text is RAW tags + single-encoded entities (the htmlToText recipe).
+      return htmlToText(isRecord(section) ? section.text : "");
+    }),
+  );
 }
 
 /** Prefer `location.fullLocation`; else compose city/region/country. Single-element array. */

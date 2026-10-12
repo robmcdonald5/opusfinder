@@ -9,7 +9,8 @@ const NBSP = String.fromCharCode(0xa0);
 // every ATS adapter shares, so a regression here silently corrupts `locations` + the `remote`
 // flag across all five sources. Locks: joinParts drops non-string/blank parts and trims survivors
 // (but does NOT dedupe), and inferRemoteFromText matches only the whole word "remote"
-// (word-boundary, case-insensitive) so "remotely" and the empty case stay false.
+// (word-boundary, case-insensitive) so "remotely" and the empty case stay false, and never a
+// negated or hybrid-qualified "remote" (Hybrid resolves to false per the NormalizedJob contract).
 describe("joinParts", () => {
   it.each([
     { name: "all valid", parts: ["Austin", "TX", "USA"], expected: "Austin, TX, USA" },
@@ -41,6 +42,9 @@ describe("inferRemoteFromText", () => {
     { name: "parenthetical", locations: ["Austin, TX (Remote)"] },
     { name: "hyphen is a word boundary", locations: ["Remote-first"] },
     { name: "match in a later element", locations: ["Austin", "Fully remote"] },
+    { name: "remote offered beside hybrid", locations: ["Remote or Hybrid - NYC"] },
+    { name: "comma-listed options", locations: ["Remote, Hybrid or On-site"] },
+    { name: "a hybrid location doesn't cancel a remote one", locations: ["New York (Hybrid)", "Remote - US"] },
   ])("true: $name", ({ locations }) => {
     expect(inferRemoteFromText(locations)).toBe(true);
   });
@@ -54,6 +58,13 @@ describe("inferRemoteFromText", () => {
     { name: "substring false-positive 'remoteness'", locations: ["remoteness"] },
     { name: "substring false-positive 'unremote'", locations: ["unremote"] },
     { name: "telecommute synonym not matched", locations: ["Telecommute"] },
+    { name: "hybrid remote", locations: ["Hybrid Remote - New York, NY"] },
+    { name: "hybrid, remote N days", locations: ["New York, NY (Hybrid, remote 2 days/week)"] },
+    { name: "remote (hybrid)", locations: ["Remote (Hybrid)"] },
+    { name: "remote - hybrid", locations: ["Remote - Hybrid, Berlin"] },
+    { name: "non-remote", locations: ["Austin, TX - Non-Remote"] },
+    { name: "not remote", locations: ["Chicago (not remote)"] },
+    { name: "no remote", locations: ["Paris - no remote"] },
   ])("false: $name", ({ locations }) => {
     expect(inferRemoteFromText(locations)).toBe(false);
   });

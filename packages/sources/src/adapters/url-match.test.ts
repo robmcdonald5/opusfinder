@@ -33,12 +33,16 @@ describe("matchUrl — per-adapter URL → raw-slug routing", () => {
       // A board literally slugged "boards": segmentAfter anchors on the FIRST "boards" marker, so
       // the tenant is the next segment — `lastIndexOf` would wrongly return the segment after the slug.
       ["https://boards-api.greenhouse.io/v1/boards/boards/jobs?content=true", "boards"],
+      // Embed widgets carry the board in `for`, not the path.
+      ["https://boards.greenhouse.io/embed/job_board?for=acme", "acme"],
+      ["https://job-boards.greenhouse.io/embed/job_app?for=beta&token=123", "beta"],
     ])("%s → %j", (url, slug) => {
       expect(matchUrl("greenhouse", url)).toBe(slug);
     });
 
     it.each([
       ["https://boards.greenhouse.io/", null], // bare host → no slug
+      ["https://boards.greenhouse.io/embed/job_board", null], // embed without `for` → no slug, not "embed"
       ["https://example.com/vercel", null], // foreign host
     ])("%s → %j", (url, slug) => {
       expect(matchUrl("greenhouse", url)).toBe(slug);
@@ -107,8 +111,11 @@ describe("matchUrl — per-adapter URL → raw-slug routing", () => {
       expect(matchUrl("smartrecruiters", url)).toBe(slug);
     });
 
-    it("foreign host → null", () => {
-      expect(matchUrl("smartrecruiters", "https://example.com/Visa")).toBeNull();
+    it.each([
+      ["https://jobs.smartrecruiters.com/oneclick-ui/company/Acme/publication/abc", null], // apply flow
+      ["https://example.com/Visa", null],
+    ])("%s → %j", (url, slug) => {
+      expect(matchUrl("smartrecruiters", url)).toBe(slug);
     });
   });
 

@@ -8,8 +8,8 @@ import type { SourceContext } from "./types";
 // that turns one untrusted board-API job into a NormalizedJob, and its quirks are load-bearing:
 //   - posting-date fallback uses `||` (NOT `??`) so an EMPTY first_published falls back to
 //     updated_at instead of being kept as an unparseable "";
-//   - `remote` is inferred ONLY from a `\bremote\b` word-boundary match on the location string,
-//     so "Hybrid"/"Remoteville" must stay false;
+//   - `remote` is inferred ONLY from the location string (the shared inferRemoteFromText), so
+//     "Hybrid"/"Hybrid Remote"/"Remoteville" must stay false;
 //   - the bad-row guards return `null` (skip + count) rather than throwing, so one malformed job
 //     can't abort a whole page;
 //   - `content` is asymmetrically DOUBLE-encoded, so the decode→strip→decode→collapse pipeline is
@@ -110,6 +110,8 @@ describe("greenhouseAdapter.mapItem", () => {
       ["Remote, EMEA", true],
       ["San Francisco, CA", false],
       ["Hybrid - San Francisco", false],
+      ["Hybrid Remote - New York, NY", false],
+      ["Austin, TX - Non-Remote", false],
       ["Remoteville, OH", false],
       ["", false],
     ])("location %j → remote=%s", (name, expected) => {

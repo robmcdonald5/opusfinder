@@ -261,6 +261,50 @@ describe("leverAdapter.mapItem", () => {
     });
   });
 
+  // descriptionPlain is only the opening + body: requirements live in lists[], the closing in additionalPlain.
+  describe("descriptionText sections (body, lists, salary note, closing)", () => {
+    it("appends each lists[] section as heading + items, then the salary note and additionalPlain", () => {
+      const job = mapJob({
+        ...RAW_JOB,
+        descriptionPlain: "We build  payments.",
+        lists: [
+          { text: "Requirements", content: "<li>5+ years of Go</li><li>Security clearance</li>" },
+          { text: "", content: "<li>Equity &amp; 401k</li>" },
+        ],
+        salaryDescriptionPlain: "Base salary: $150k-$180k.",
+        additionalPlain: "We are an equal opportunity employer.",
+      });
+      expect(job?.descriptionText).toBe(
+        "We build payments.\n\nRequirements\n5+ years of Go Security clearance\n\nEquity & 401k" +
+          "\n\nBase salary: $150k-$180k.\n\nWe are an equal opportunity employer.",
+      );
+    });
+
+    it("keeps a body that lives only in lists[] (empty descriptionPlain)", () => {
+      const job = mapJob({
+        ...RAW_JOB,
+        descriptionPlain: "",
+        lists: [{ text: "Responsibilities", content: "<li>Own the API</li>" }],
+      });
+      expect(job?.descriptionText).toBe("Responsibilities\nOwn the API");
+    });
+
+    it("is '' when only the salary note and closing are present (no body to extend)", () => {
+      const job = mapJob({
+        ...RAW_JOB,
+        descriptionPlain: "",
+        salaryDescriptionPlain: "Base salary: $150k-$180k.",
+        additionalPlain: "We are an equal opportunity employer.",
+      });
+      expect(job?.descriptionText).toBe("");
+    });
+
+    it("skips malformed and itemless lists[] entries", () => {
+      const job = mapJob({ ...RAW_JOB, lists: ["x", null, { text: "Perks", content: "" }, { text: "Perks" }] });
+      expect(job?.descriptionText).toBe("We are hiring a backend engineer.");
+    });
+  });
+
   describe("bad-row guards return null (skip + count, never throw)", () => {
     it.each([
       ["non-record raw (string)", "not-an-object"],

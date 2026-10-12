@@ -19,14 +19,21 @@ export function joinParts(parts: unknown[]): string {
     .join(", ");
 }
 
+/** A "remote" that doesn't make a location remote: negated ("Non-Remote", "not remote") or qualified
+ *  as hybrid ("Hybrid Remote", "Hybrid, remote 2 days/week", "Remote (Hybrid)"). No comma after
+ *  "remote": "Remote, Hybrid or On-site" lists options and stays remote. */
+const NOT_REMOTE =
+  /\b(?:non|not|no)[- ]?remote\b|\bhybrid[\s,(-]*remote\b|\bremote[\s(-]*hybrid\b/gi;
+
 /**
- * Best-effort remote inference from location strings: true iff any contains the word "remote"
- * (word-boundary, case-insensitive). The shared FALLBACK used by every adapter that has no
- * authoritative structured remote signal — or as the last resort AFTER one. "Hybrid" never
- * reaches here: a structured hybrid/onsite value resolves to false in the caller first.
+ * Best-effort remote inference from location strings: true iff any location contains the word
+ * "remote" (word-boundary, case-insensitive) outside a NOT_REMOTE phrase, so Hybrid resolves to false
+ * per the NormalizedJob contract. Each location is judged alone: "Remote - US" beside "NYC (Hybrid)"
+ * stays remote, as does "Remote or Hybrid". The shared FALLBACK used by every adapter that has no
+ * authoritative structured remote signal — or as the last resort AFTER one.
  */
 export function inferRemoteFromText(locations: string[]): boolean {
-  return /\bremote\b/i.test(locations.join(" "));
+  return locations.some((location) => /\bremote\b/i.test(location.replace(NOT_REMOTE, " ")));
 }
 
 /**

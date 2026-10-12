@@ -2,7 +2,7 @@ import { companySlug, isRecord, safeJobId } from "@opusfinder/shared";
 import type { NormalizedJob } from "@opusfinder/shared";
 
 import { inferRemoteFromText } from "./fields";
-import { cleanHtml, htmlToText } from "./text";
+import { cleanHtml, htmlToText, joinSections } from "./text";
 import type { SourceAdapter, SourceContext } from "./types";
 import { firstPathSegment, segmentAfter } from "./url-match";
 
@@ -42,7 +42,9 @@ export const ashbyAdapter: SourceAdapter = {
     if (!isRecord(body) || !Array.isArray(body.jobs)) {
       throw new Error(`Ashby returned an unexpected response shape for "${ctx.slug}"`);
     }
-    return body.jobs;
+    // `isListed: false` = the company keeps the posting off its board (direct link only). Dropped
+    // here rather than as a null `mapItem` so it isn't counted as a malformed posting every tick.
+    return body.jobs.filter((job) => !(isRecord(job) && job.isListed === false));
   },
 
   mapItem: (raw, ctx) => toNormalizedJob(raw, ctx),
@@ -82,9 +84,7 @@ function toNormalizedJob(raw: unknown, ctx: SourceContext): NormalizedJob | null
   // descriptionPlain is genuine plain text (collapse only). Fall back to the single-encoded
   // descriptionHtml (strip → decode once → collapse) only if the plain text is empty.
   const plain = typeof raw.descriptionPlain === "string" ? raw.descriptionPlain : "";
-  const descriptionText = plain.trim()
-    ? cleanHtml(plain, ["collapse"])
-    : htmlToText(raw.descriptionHtml);
+  const body = plain.trim() ? cleanHtml(plain, ["collapse"]) : htmlToText(raw.descriptionHtml);
 
   return {
     source: "ashby",
@@ -93,10 +93,25 @@ function toNormalizedJob(raw: unknown, ctx: SourceContext): NormalizedJob | null
     companySlug: ctx.slug,
     locations,
     remote,
-    descriptionText,
+    // Pay only with a body: a blank body must stay "" so upsertJobs' blank-description guard keeps
+    // the stored text through a fetch anomaly.
+    descriptionText: body ? joinSections([body, compensationLine(raw)]) : "",
     applyUrl,
     postedAt,
   };
+}
+
+/**
+ * The pay summary `?includeCompensation=true` adds (e.g. "$81K – $87K • 0.5% – 1.75%"), labelled,
+ * or "" when absent or when the company hides pay on its postings.
+ */
+function compensationLine(raw: Record<string, unknown>): string {
+  if (raw.shouldDisplayCompensationOnJobPostings === false || !isRecord(raw.compensation)) {
+    return "";
+  }
+  const summary = raw.compensation.compensationTierSummary;
+  const text = cleanHtml(typeof summary === "string" ? summary : "", ["collapse"]);
+  return text ? `Compensation: ${text}` : "";
 }
 
 /** Primary `location` string plus each `secondaryLocations[].location` (multi-office). */

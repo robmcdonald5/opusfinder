@@ -2,7 +2,7 @@ import { companySlug, isRecord, safeJobId } from "@opusfinder/shared";
 import type { NormalizedJob } from "@opusfinder/shared";
 
 import { inferRemoteFromText, joinParts } from "./fields";
-import { htmlToText } from "./text";
+import { htmlToText, joinSections } from "./text";
 import type { SourceAdapter, SourceContext } from "./types";
 import { subdomainLabel } from "./url-match";
 
@@ -76,10 +76,14 @@ function toNormalizedJob(raw: unknown, ctx: SourceContext): NormalizedJob | null
     companySlug: ctx.slug,
     locations,
     remote,
-    // `description` is raw HTML tags (incl. <!--block--> markers, removed by the tag regex)
-    // plus SINGLE-encoded entities: strip → decode once → collapse. The richer
-    // key_responsibilities / skills_knowledge_expertise / benefits sections are not mapped.
-    descriptionText: htmlToText(raw.description),
+    // `description` plus the responsibilities and skills sections, each raw HTML tags (incl.
+    // <!--block--> markers, removed by the tag regex) plus SINGLE-encoded entities: strip → decode
+    // once → collapse. The `benefits` section is left out: it says nothing about fit.
+    descriptionText: joinSections([
+      htmlToText(raw.description),
+      htmlToText(raw.key_responsibilities),
+      htmlToText(raw.skills_knowledge_expertise),
+    ]),
     applyUrl,
     // No posted/created date on the posting — only deadline_at (an application-CLOSE date),
     // which must NOT be used. postedAt is therefore always null (contract-valid).

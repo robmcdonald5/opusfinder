@@ -27,8 +27,12 @@ const RAW_OFFER = Object.freeze({
   remote: false,
   hybrid: false,
   on_site: true,
-  locations: [{ name: "Berlin" }, { name: "Amsterdam" }],
-  location: "Berlin, Germany",
+  // `name` is a free-form office label; city/state/country are the geography.
+  locations: [
+    { name: "Munich", city: "Munich", state: "Bavaria", country: "Germany", country_code: "DE" },
+    { name: "AMS office", city: "Amsterdam", state: "North Holland", country: "Netherlands", country_code: "NL" },
+  ],
+  location: "Munich, Germany",
 });
 
 describe("recruiteeAdapter.mapItem", () => {
@@ -40,9 +44,9 @@ describe("recruiteeAdapter.mapItem", () => {
       externalId: "482915", // numeric id stringified before branding
       title: "Senior Platform Engineer",
       companySlug: "acme-corp",
-      locations: ["Berlin", "Amsterdam"],
+      locations: ["Munich, Bavaria, Germany", "Amsterdam, North Holland, Netherlands"],
       remote: false,
-      descriptionText: "Build the platform . & ship it fast.",
+      descriptionText: "Build the platform . & ship it fast.\n\n5y experience",
       applyUrl: "https://acme-corp.recruitee.com/o/senior-platform-engineer/c/new",
       postedAt: new Date("2026-06-20T14:30:00.000Z"),
     });
@@ -127,9 +131,17 @@ describe("recruiteeAdapter.mapItem", () => {
   });
 
   describe("location extraction", () => {
-    it("prefers multi-office locations[].name, trimming each", () => {
+    it("composes city/state/country, keeping the country a bare-city office name would drop", () => {
       const job = recruiteeAdapter.mapItem(
-        { ...RAW_OFFER, locations: [{ name: "  Berlin " }, { name: "London  " }] },
+        { ...RAW_OFFER, locations: [{ name: "Berlin", city: " Berlin ", state: null, country: "Germany" }] },
+        ctx,
+      );
+      expect(job?.locations).toEqual(["Berlin, Germany"]);
+    });
+
+    it("uses the trimmed office name only when city/state/country are all empty", () => {
+      const job = recruiteeAdapter.mapItem(
+        { ...RAW_OFFER, locations: [{ name: "  Berlin ", city: "", country_code: "DE" }, { name: "London  " }] },
         ctx,
       );
       expect(job?.locations).toEqual(["Berlin", "London"]);
@@ -199,17 +211,20 @@ describe("recruiteeAdapter.mapItem", () => {
   describe("descriptionText", () => {
     it("strips tags, decodes one entity layer, and collapses whitespace", () => {
       const job = recruiteeAdapter.mapItem(
-        { ...RAW_OFFER, description: "<p>Hello&nbsp;&amp; <b>welcome</b></p>" },
+        { ...RAW_OFFER, description: "<p>Hello&nbsp;&amp; <b>welcome</b></p>", requirements: null },
         ctx,
       );
       expect(job?.descriptionText).toBe("Hello & welcome");
     });
 
-    it("is '' when description is missing or non-string", () => {
-      const { description, ...rest } = RAW_OFFER;
+    it("is '' when description and requirements are missing or non-string", () => {
+      const { description, requirements, ...rest } = RAW_OFFER;
       void description;
+      void requirements;
       expect(recruiteeAdapter.mapItem(rest, ctx)?.descriptionText).toBe("");
-      expect(recruiteeAdapter.mapItem({ ...RAW_OFFER, description: null }, ctx)?.descriptionText).toBe("");
+      expect(
+        recruiteeAdapter.mapItem({ ...RAW_OFFER, description: null, requirements: 7 }, ctx)?.descriptionText,
+      ).toBe("");
     });
   });
 

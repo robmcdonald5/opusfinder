@@ -70,6 +70,18 @@ describe("pinpointAdapter.mapItem", () => {
     expect(pinpointAdapter.mapItem(RAW_REMOTE, CTX)).not.toHaveProperty("raw");
   });
 
+  it("appends the responsibilities and skills sections after the description (benefits left out)", () => {
+    const raw = {
+      ...RAW_REMOTE,
+      key_responsibilities: "<ul><li>Own the API</li></ul>",
+      skills_knowledge_expertise: "<p>5+ years of Go</p>",
+      benefits: "<p>Pension</p>",
+    };
+    expect(pinpointAdapter.mapItem(raw, CTX)?.descriptionText).toBe(
+      "Build & ship the platform.\n\nOwn the API\n\n5+ years of Go",
+    );
+  });
+
   it("coerces a missing description to an empty string instead of throwing", () => {
     const { description: _drop, ...raw } = RAW_REMOTE;
     expect(pinpointAdapter.mapItem(raw, CTX)?.descriptionText).toBe("");

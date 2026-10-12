@@ -1,8 +1,8 @@
 import { companySlug, isRecord, jobId } from "@opusfinder/shared";
 import type { NormalizedJob } from "@opusfinder/shared";
 
-import { inferRemoteFromText } from "./fields";
-import { htmlToText } from "./text";
+import { inferRemoteFromText, joinParts } from "./fields";
+import { htmlToText, joinSections } from "./text";
 import type { SourceAdapter, SourceContext } from "./types";
 import { subdomainLabel } from "./url-match";
 
@@ -16,8 +16,8 @@ const RECRUITEE_HOST = "recruitee.com";
  *
  * Quirks: the host is case-INSENSITIVE, so `normalizeSlug` lowercases (the apply URL is an
  * explicit field, so lowercasing can't corrupt it). `id` is a NUMBER (stringify before `jobId`).
- * `remote` is three independent booleans (see mapItem); locations prefer the multi-office
- * `locations[].name` (see extractLocations); `published_at` is massaged to ISO (see
+ * `remote` is three independent booleans (see mapItem); locations compose each multi-office
+ * `locations[]` entry (see extractLocations); `published_at` is massaged to ISO (see
  * parsePublishedAt). Apply URL is `careers_apply_url`, falling back to the listing `careers_url`
  * VERBATIM — never reconstructed (custom careers domains exist).
  */
@@ -76,29 +76,31 @@ function toNormalizedJob(raw: unknown, ctx: SourceContext): NormalizedJob | null
     companySlug: ctx.slug,
     locations,
     remote,
-    // `description` is raw HTML tags + SINGLE-encoded entities (strip → decode once → collapse);
-    // the separate `requirements` field is not mapped.
-    descriptionText: htmlToText(raw.description),
+    // `description` and `requirements` are raw HTML tags + SINGLE-encoded entities (strip → decode once → collapse).
+    descriptionText: joinSections([htmlToText(raw.description), htmlToText(raw.requirements)]),
     applyUrl,
     postedAt: parsePublishedAt(raw.published_at),
   };
 }
 
 /**
- * Prefer the multi-office `locations[].name`; fall back to the primary-office top-level
- * `location` string. Each value is kept verbatim (no parsing). `[]` when neither is present.
+ * One string per multi-office `locations[]` entry, composed from its city/state/country. Its `name` is
+ * a free-form office label (often a bare city, so the country would be lost), used only when those
+ * parts are empty. Falls back to the primary-office top-level `location` string. `[]` when neither
+ * is present.
  */
 function extractLocations(raw: Record<string, unknown>): string[] {
   const out: string[] = [];
   if (Array.isArray(raw.locations)) {
     for (const loc of raw.locations) {
-      if (isRecord(loc) && typeof loc.name === "string" && loc.name.trim()) {
-        out.push(loc.name.trim());
-      }
+      if (!isRecord(loc)) continue;
+      const composed = joinParts([loc.city, loc.state, loc.country]) || joinParts([loc.name]);
+      if (composed) out.push(composed);
     }
   }
-  if (out.length === 0 && typeof raw.location === "string" && raw.location.trim()) {
-    out.push(raw.location.trim());
+  if (out.length === 0) {
+    const flat = joinParts([raw.location]);
+    if (flat) out.push(flat);
   }
   return out;
 }

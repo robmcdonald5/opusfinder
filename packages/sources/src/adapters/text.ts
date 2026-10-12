@@ -40,6 +40,15 @@ export function htmlToText(value: unknown): string {
   return cleanHtml(typeof value === "string" ? value : "", ["strip", "decode", "collapse"]);
 }
 
+/**
+ * Join already-cleaned description sections, skipping empty ones, with a blank line between them.
+ * Callers pass sections in a FIXED order: a reorder would change `content_signature` and needlessly
+ * NULL the embedding on re-ingest.
+ */
+export function joinSections(sections: readonly string[]): string {
+  return sections.filter((s) => s.length > 0).join("\n\n");
+}
+
 const NAMED_ENTITIES = new Map([
   ["amp", "&"],
   ["lt", "<"],

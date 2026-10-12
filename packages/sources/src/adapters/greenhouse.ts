@@ -1,6 +1,7 @@
 import { companySlug, isRecord, jobId } from "@opusfinder/shared";
 import type { NormalizedJob } from "@opusfinder/shared";
 
+import { inferRemoteFromText } from "./fields";
 import { cleanHtml } from "./text";
 import type { SourceAdapter, SourceContext } from "./types";
 import { firstPathSegment, segmentAfter } from "./url-match";
@@ -29,13 +30,15 @@ export const greenhouseAdapter: SourceAdapter = {
   // per-source lowercasing lives here.
   normalizeSlug: (rawSlug) => companySlug(rawSlug.toLowerCase()),
 
-  // A public board host → first path segment; the boards-API host → the segment after "boards".
-  matchUrl: (url) =>
-    BOARD_HOSTS.has(url.hostname)
-      ? firstPathSegment(url)
-      : url.hostname === BOARDS_API_HOST
-        ? segmentAfter(url, "boards")
-        : null,
+  // A public board host → first path segment, except the embed widgets
+  // (`/embed/job_board?for={slug}`, `/embed/job_app?for={slug}&token=…`), which carry the slug in
+  // `for`; the boards-API host → the segment after "boards".
+  matchUrl: (url) => {
+    if (url.hostname === BOARDS_API_HOST) return segmentAfter(url, "boards");
+    if (!BOARD_HOSTS.has(url.hostname)) return null;
+    const firstSegment = firstPathSegment(url);
+    return firstSegment === "embed" ? url.searchParams.get("for") || null : firstSegment;
+  },
 
   jobsRequest: (ctx) => ({ url: `${BOARDS_API}/${ctx.slug}/jobs?content=true` }),
 
@@ -61,6 +64,7 @@ function toNormalizedJob(raw: unknown, ctx: SourceContext): NormalizedJob | null
 
   const locationName =
     isRecord(raw.location) && typeof raw.location.name === "string" ? raw.location.name.trim() : "";
+  const locations = locationName ? [locationName] : [];
 
   // `||` (not `??`): an empty-string date should fall back to updated_at, not be kept.
   const dateText =
@@ -74,8 +78,8 @@ function toNormalizedJob(raw: unknown, ctx: SourceContext): NormalizedJob | null
     externalId: jobId(String(id)),
     title,
     companySlug: ctx.slug,
-    locations: locationName ? [locationName] : [],
-    remote: /\bremote\b/i.test(locationName),
+    locations,
+    remote: inferRemoteFromText(locations),
     // `content` is DOUBLE-entity-encoded (structural tags single-encoded, inner text
     // entities double-encoded), so the pipeline is decode → strip → decode → collapse.
     descriptionText: cleanHtml(typeof raw.content === "string" ? raw.content : "", [
