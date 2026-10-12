@@ -329,8 +329,8 @@ export async function runIngestion(db: Db, opts: IngestionOptions = {}): Promise
           if (listed) {
             const present = await markJobsPresent(db, company.id, listedIds);
             counts.revived += present.revived; // revivals + streak resets (works for capped boards too)
-            // Listing postings proves a deactivated board live: without this, no close path would ever
-            // reach the jobs just written or revived (the cron skips inactive boards).
+            // Listing postings proves a deactivated board live: left inactive, the cron would skip it and
+            // discovery's board-death close would shut the jobs just written or revived.
             if (!company.active) await markProbeResult(db, [company.id], true);
           } else if (board.empty) {
             await markCompanyIngested(db, company.id);

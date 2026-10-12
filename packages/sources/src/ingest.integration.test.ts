@@ -336,7 +336,7 @@ describe("runIngestion — orchestration over real PGlite (fetch stubbed)", () =
         adapter: NO_RETRY,
       });
 
-      // Left inactive, liveco's new job would be one no close path ever reaches (the cron skips the board).
+      // Left inactive: the cron skips liveco, and discovery's board-death close shuts its new job.
       expect((await companyById(live)).active).toBe(true);
       expect((await companyById(dead)).active).toBe(false);
       expect((await companyById(empty)).active).toBe(false);
