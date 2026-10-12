@@ -40,10 +40,10 @@ export const PRUNE_BATCH = 2000;
  *                                                    uses to suppress a repost (digests.ts), so the
  *                                                    suppression lasts only until the row is pruned.
  *                                                    NULL-safe because digest_items.job_id is NOT NULL (no
- *                                                    NOT-IN three-valued-logic trap). (NOT EXISTS over
- *                                                    digest_items_user_id_job_id_idx is an index-friendlier
- *                                                    equivalent if an EXPLAIN ever warrants it; NOT IN is
- *                                                    fine at friends-scale.)
+ *                                                    NOT-IN three-valued-logic trap). Relaxing it must
+ *                                                    still keep a job whose digest_items row has no display
+ *                                                    snapshot (job_title IS NULL): once the job is gone
+ *                                                    that history row has nothing to render.
  *
  * Returns a FRESH fragment per call so it can be embedded in multiple statements (the breakdown FILTER and
  * the DELETE CTE) without aliasing a shared instance. The `${n} * interval '1 day'` form binds the window

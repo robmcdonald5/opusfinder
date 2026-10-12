@@ -13,7 +13,7 @@ import { OPLOG_PRUNE_BATCH, OPLOG_RETENTION_DAYS, pruneOplog } from "./prune-opl
 // (count / breakdown / size / DELETE) to hand back canned rows. `resultRows()` passes a plain rows array
 // through unchanged, so a count returns `[{ n }]`, a breakdown returns the string-count row, and a DELETE
 // returns its batch's `{ id }[]` (length = the RETURNING count). The row SEMANTICS (which rows actually
-// match the gate) are the owner's live dry-run gate; here we lock the query SHAPE + param binding.
+// match the gate) are prune.integration.test.ts's job; here we lock the query SHAPE + param binding.
 
 /** render() is typed `(SQL)`; the stub hands `respond`/`calls` the query as `unknown`, so cast at the seam. */
 const renderQ = (query: unknown): { sql: string; params: unknown[] } => render(query as SQL);
