@@ -336,9 +336,9 @@ describe("runAdapter — invariant ATS plumbing over MSW", () => {
     it("a capped listing is not partial, however short of the total it stops", async () => {
       const { adapter } = pagedAdapter(twoPages, 100);
 
-      const { jobs, partial } = await fetchBoard(adapter, "acme", { maxItems: 3 });
+      const { capped, partial } = await fetchBoard(adapter, "acme", { maxItems: 3 });
 
-      expect(jobs).toHaveLength(3);
+      expect(capped).toBe(true);
       expect(partial).toBe(false);
     });
   });

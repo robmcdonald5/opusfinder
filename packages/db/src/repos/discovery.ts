@@ -178,13 +178,13 @@ export async function markProbed(db: Db, companyIds: number[]): Promise<void> {
  * Deactivate every company that failed a probe and has shown no sign of life for `olderThanDays`
  * days, decidable from each row alone: ACTIVE, a non-zero failure streak, and a staleness clock
  * COALESCE(GREATEST(last_live_at, last_ingested_at), created_at) older than the window (GREATEST
- * ignores NULLs). A successful non-empty ingest counts as liveness: a board is reprobed only every
+ * ignores NULLs). A successful ingest counts as liveness: a board is reprobed only every
  * few weeks, so its last LIVE probe alone is often already past the window, and one 404 would
  * deactivate a board that ingests fine (and close all its jobs). A never-failed row (streak 0) is
  * untouched, so a source whose absence can't be asserted — SmartRecruiters' ambiguous 200, which never
- * increments the streak — never wrongly deactivates. Not readily reversible: only a live probe
- * reactivates (`markProbeResult`), and discovery probes an inactive row only when a seed lane
- * re-emits its slug.
+ * increments the streak — never wrongly deactivates. Not readily reversible: only a live probe, or a
+ * CLI ingest that lists postings, reactivates (`markProbeResult`), and discovery probes an inactive
+ * row only when a seed lane re-emits its slug.
  * `opts.source` scopes the sweep to one source so a `--source` run doesn't deactivate rows of an
  * unrelated source it never re-probed; omit it (the broader pass) to sweep all sources. Returns the
  * ids of the rows flipped. `days` is the trunc of an in-code number, never user input.

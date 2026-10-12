@@ -219,7 +219,8 @@ async function closeActiveJobsBy(
  * re-fetched, so its jobs never enter that sweep). NOT streak-gated: deactivateStale only deactivates a
  * board that failed a probe and has had no live probe or successful ingest for ~30 days. Reversal needs a
  * live probe (markProbeResult), which discovery runs on an inactive board only when a seed lane re-emits
- * its slug; the next ingest then revives the listed jobs.
+ * its slug, after which the next ingest revives the listed jobs; or a CLI ingest that lists postings,
+ * which does both.
  */
 export function closeJobsForCompanies(
   db: Db,
