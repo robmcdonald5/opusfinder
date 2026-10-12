@@ -40,8 +40,8 @@ pnpm workspaces; the package manager is pinned to pnpm 11.3.0.
 ```sh
 pnpm install
 
-# Export your Neon connection string (the DIRECT, non-pooled host) from a file OUTSIDE the repo, never
-# packages/db/.env, which agents can read. Single-quote it there (Neon URLs contain &):
+# Export DATABASE_URL, your Neon connection string (the DIRECT, non-pooled host), from a file OUTSIDE
+# the repo, never packages/db/.env, which agents can read. Single-quote it there (Neon URLs contain &):
 #   set -a; . ~/.config/opusfinder/db.env; set +a
 #
 # For the LLM package (Phase 3), paste your Anthropic key into packages/llm/.env:

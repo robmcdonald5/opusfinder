@@ -14,7 +14,6 @@
 #   1. Create a `live-integration` GitHub Environment with a deployment-branch rule = `main` only.
 #   2. Add these Environment secrets (NOT repo-wide secrets):
 #        NEON_PROJECT_ID, NEON_API_KEY               — ephemeral branch create/delete (project-scoped key)
-#        BETTER_AUTH_SECRET                           — the auth neon-serverless tx gate
 #        VOYAGE_API_KEY                               — the live embeddings gate (dedicated CI key + rate cap)
 #        R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY,
 #        R2_BUCKET_NAME, R2_ACCOUNT_ID                — the R2 round-trip gate (dedicated `opusfinder-ci`
@@ -93,7 +92,8 @@ jobs:
         run: pnpm test:live
         env:
           DATABASE_URL: ${{ steps.neon.outputs.db_url }}
-          BETTER_AUTH_SECRET: ${{ secrets.BETTER_AUTH_SECRET }}
+          # The auth gate only constructs createAuth, so a throwaway keeps the prod signing secret out of CI.
+          BETTER_AUTH_SECRET: ci-live-lane-throwaway-not-a-real-secret-0123456789
           VOYAGE_API_KEY: ${{ secrets.VOYAGE_API_KEY }}
           R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}

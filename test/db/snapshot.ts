@@ -1,8 +1,9 @@
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { readFile, rename, writeFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { PGlite, types } from "@electric-sql/pglite";
@@ -29,9 +30,14 @@ const parsers = { [types.INT8]: (value: string) => value };
  * Fingerprint the migration SET — every `*.sql` body AND `meta/_journal.json` — so a snapshot is reused only
  * when the migrations are byte-identical. An added, edited, renamed, or removed migration changes the hash,
  * so a stale snapshot can never be loaded: the new hash points at a file that doesn't exist yet → rebuild.
+ * The snapshot is a datadir written by one PGlite + pgvector build, so their installed versions are hashed too.
  */
-function migrationsHash(): string {
+function snapshotHash(): string {
   const h = createHash("sha256");
+  const require = createRequire(import.meta.url);
+  for (const pkg of ["@electric-sql/pglite", "@electric-sql/pglite-pgvector"]) {
+    h.update(readFileSync(join(dirname(require.resolve(pkg)), "..", "package.json")));
+  }
   h.update(readFileSync(join(MIGRATIONS, "meta", "_journal.json")));
   for (const f of readdirSync(MIGRATIONS).filter((n) => n.endsWith(".sql")).sort()) {
     h.update(f); // filename: catches a rename that keeps identical SQL
@@ -40,9 +46,9 @@ function migrationsHash(): string {
   return h.digest("hex").slice(0, 16);
 }
 
-/** Absolute path of the snapshot for the CURRENT migration set (hash-keyed → never stale). */
+/** Absolute path of the snapshot for the CURRENT migration set and engine versions. */
 export function snapshotPath(): string {
-  return join(CACHE_DIR, `schema-${migrationsHash()}.tar`);
+  return join(CACHE_DIR, `schema-${snapshotHash()}.tar`);
 }
 
 /**
