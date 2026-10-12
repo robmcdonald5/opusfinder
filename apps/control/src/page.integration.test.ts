@@ -52,8 +52,11 @@ async function fileProposal(target: string, value: string, reason = "r"): Promis
 
 const hoursAgo = (n: number) => new Date(Date.now() - n * 3_600_000).toISOString();
 
-async function recordRun(run: Record<string, unknown>): Promise<void> {
-  const res = await h.request("/v1/runs", { as: "runtime", json: run });
+async function recordRun(
+  run: Record<string, unknown>,
+  as: "runtime" | "other-runtime" = "runtime",
+): Promise<void> {
+  const res = await h.request("/v1/runs", { as, json: run });
   expect(res.status).toBe(201);
 }
 
@@ -430,7 +433,10 @@ describe("runs", () => {
   it("marks a failed run's row and a gate that wasn't on", async () => {
     await recordRun({ stage: "ingest", outcome: "error", startedAt: hoursAgo(1), detail: "boom" });
     await recordRun({ stage: "ingest", outcome: "ok", startedAt: hoursAgo(2), gateMode: "off" });
-    await recordRun({ stage: "embed", outcome: "ok", startedAt: hoursAgo(3), gateMode: "shadow" });
+    await recordRun(
+      { stage: "embed", outcome: "ok", startedAt: hoursAgo(3), gateMode: "shadow" },
+      "other-runtime",
+    );
     const html = await page("/runs");
     expect(html.match(/<tr class="err">/g)).toHaveLength(1);
     expect(html).toContain("switch was off</span>");

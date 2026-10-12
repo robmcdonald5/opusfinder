@@ -753,10 +753,10 @@ describe("runtime: ledger + trip", () => {
     [
       "a negative unit",
       {
-        stage: "embed",
+        stage: "ingest",
         outcome: "ok",
         startedAt: "2026-10-04T10:00:00Z",
-        units: { "voyage.tokens": -5 },
+        units: { "cf.wall_ms": -5 },
       },
     ],
     ["a missing start time", { stage: "ingest", outcome: "ok" }],
@@ -851,6 +851,12 @@ describe("runtime: ledger + trip", () => {
     });
     expect(res.status).toBe(403);
     expect(await stateValue("alerts")).toBe("on");
+  });
+
+  it("refuses a run for a stage another runtime owns", async () => {
+    const res = await run({ stage: "embed", outcome: "ok", startedAt: "2026-10-04T10:00:00Z" });
+    expect(res.status).toBe(403);
+    expect(await h.db.prepare("SELECT COUNT(*) AS n FROM ledger").first("n")).toBe(0);
   });
 });
 
@@ -996,8 +1002,8 @@ describe("compare-and-set: a change lands only on the value it was classified ag
 
 describe("GET /v1/runs and /v1/changes (the history behind the panel's Runs and Activity pages)", () => {
   const hoursAgo = (n: number) => new Date(Date.now() - n * 3_600_000).toISOString();
-  const run = async (json: Json) =>
-    expect((await h.request("/v1/runs", { as: "runtime", json })).status).toBe(201);
+  const run = async (json: Json, as: "runtime" | "other-runtime" = "runtime") =>
+    expect((await h.request("/v1/runs", { as, json })).status).toBe(201);
 
   it("lists runs newest first, filtered, paged by id", async () => {
     await run({
@@ -1069,7 +1075,7 @@ describe("GET /v1/runs and /v1/changes (the history behind the panel's Runs and 
   it("orders by when a run started, not when it was recorded, and pages across a tie", async () => {
     // A long ingest tick that started first is recorded AFTER a short alerts run that started later.
     const t = hoursAgo(2);
-    await run({ stage: "alerts", outcome: "ok", startedAt: hoursAgo(1) });
+    await run({ stage: "alerts", outcome: "ok", startedAt: hoursAgo(1) }, "other-runtime");
     await run({ stage: "ingest", outcome: "ok", startedAt: t, detail: "a" });
     await run({ stage: "discover", outcome: "ok", startedAt: t, detail: "b" }); // same start: id breaks the tie
     await run({ stage: "ingest", outcome: "ok", startedAt: hoursAgo(3) });

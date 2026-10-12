@@ -4,8 +4,8 @@ import { startControl, type ControlHarness } from "@test/control/harness";
 
 // The ControlRpc entrypoint, called through REAL service bindings from a second Worker (how the scrapers
 // Worker reaches it; the RPC binding's props name matches its wrangler.toml). A binding caller is the
-// runtime role: it can read a gate, write a ledger row and trip a stage off — and the surface is exactly
-// those three methods.
+// runtime role: it can read any gate, but record runs of and trip off only its own stages — and the
+// surface is exactly those three methods.
 
 let h: ControlHarness;
 beforeAll(async () => {
@@ -58,16 +58,15 @@ describe("ControlRpc over a service binding", () => {
     });
   });
 
-  it("labels a binding without props generically — the role is runtime either way", async () => {
-    await h.rpc("RPC_ANON", "recordRun", {
+  it("refuses a run from a binding without props: it names no runtime", async () => {
+    const res = await h.rpc("RPC_ANON", "recordRun", {
       stage: "discover",
       outcome: "ok",
       startedAt: "2026-10-04T03:00:00Z",
     });
-    const row = await h.db
-      .prepare("SELECT recorded_by FROM ledger ORDER BY id DESC LIMIT 1")
-      .first<{ recorded_by: string }>();
-    expect(row?.recorded_by).toBe("runtime:service-binding");
+    expect(res).toMatchObject({ ok: false });
+    expect(res.error).toMatch(/only cf:opusfinder-scrapers may record runs of discover/);
+    expect(await h.db.prepare("SELECT COUNT(*) AS n FROM ledger").first("n")).toBe(0);
   });
 
   it("trip() turns a stage off via channel rpc", async () => {

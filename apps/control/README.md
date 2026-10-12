@@ -57,9 +57,9 @@ What each role may change is decided by `classify()` in `packages/control`:
   the registry need approval for **any** change, quieter or louder, knobs included: the **master
   switch** (an agent may stop any single spending stage, not everything at once), the **alerts**
   stage (an agent may not silence alerting) and the **8 health checks**.
-- **runtime** — read gates, write ledger rows, `trip(stage, reason)` which can only set **its own**
-  stage off: one whose registry `runtime` is the caller's name (the token's `name`, the binding's
-  `props.name`).
+- **runtime** — read gates; write ledger rows and `trip(stage, reason)` (which can only set a stage
+  off) for **its own** stages: those whose registry `runtime` is the caller's name (the token's `name`,
+  the binding's `props.name`).
 
 **Why there is no local identity shortcut.** The Worker has exactly one way to learn who is
 calling — the verified JWT — and no code path that trusts anything else (no header, cookie, env flag
@@ -105,7 +105,7 @@ Every registry dimension is also a `/v1/gate` query parameter.
 
 RPC (`ControlRpc`, for a service binding): `gate(stage, dims?)`, `recordRun(run)`,
 `trip(stage, reason, detail?)`. A binding passes `props = { name = "<registry runtime id>" }`: its audit
-label and the stages it may trip.
+label and the stages it may record and trip.
 
 ## Storage and the fail-closed rules
 

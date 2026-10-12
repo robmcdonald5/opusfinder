@@ -53,8 +53,9 @@ import { renderStage, renderStages } from "./ui/stages";
  *      it admits (default deny), and every desired-state change goes through classify().
  *   2. RPC (`ControlRpc`, a WorkerEntrypoint): gate(), recordRun(), trip() for Workers in this account via
  *      a service binding. RPC methods can't be reached over HTTP, and Access never sees binding traffic,
- *      so a binding caller IS the runtime role — the least-privileged role (read gates, write ledger rows,
- *      trip a stage off). A binding's plain `fetch()` lands in (1) without an Access token and is refused.
+ *      so a binding caller IS the runtime role — the least-privileged role (read gates; record runs of,
+ *      and trip off, only its own stages). A binding's plain `fetch()` lands in (1) without an Access
+ *      token and is refused.
  *
  * The Worker never holds a Neon credential and imports nothing that could reach Neon (guard:worker
  * enforces an inputs allow-list on this bundle), so reading or flipping a switch can't wake the database
@@ -576,7 +577,8 @@ export default {
 } satisfies ExportedHandler<Env>;
 
 /** Props a service binding may attach (wrangler `services = [{ …, props = { name = "…" } }]`). The name is
- *  the audit label and the registry runtime id whose stages it may trip; the role is always "runtime". */
+ *  the audit label and the registry runtime id whose stages it may record and trip; the role is always
+ *  "runtime". */
 interface BindingProps {
   name?: unknown;
 }

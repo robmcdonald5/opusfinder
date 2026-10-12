@@ -31,6 +31,7 @@ export const AGENT_NAME = "observer";
 export const OTHER_AGENT_CLIENT_ID = "other-agent-client.access";
 export const RUNTIME_CLIENT_ID = "runtime-client.access";
 export const RUNTIME_NAME = "cf:opusfinder-scrapers";
+export const OTHER_RUNTIME_CLIENT_ID = "other-runtime-client.access";
 export const ORIGIN = "https://control.test";
 
 export const BILLING_ADDRESS = "billing@control.test";
@@ -44,6 +45,7 @@ export const DEFAULT_BINDINGS: Record<string, string> = {
     [AGENT_CLIENT_ID]: { role: "agent", name: AGENT_NAME },
     [OTHER_AGENT_CLIENT_ID]: { role: "agent", name: "other-agent" },
     [RUNTIME_CLIENT_ID]: { role: "runtime", name: RUNTIME_NAME },
+    [OTHER_RUNTIME_CLIENT_ID]: { role: "runtime", name: "inngest:opusfinder" },
   }),
 };
 
@@ -254,7 +256,14 @@ export default {
   },
 };`;
 
-export type Who = "owner" | "agent" | "other-agent" | "runtime" | { token: string } | null;
+export type Who =
+  | "owner"
+  | "agent"
+  | "other-agent"
+  | "runtime"
+  | "other-runtime"
+  | { token: string }
+  | null;
 
 export interface RequestOptions {
   as: Who;
@@ -381,6 +390,8 @@ export async function startControl(
           return keys.sign(AccessKeys.serviceClaims(OTHER_AGENT_CLIENT_ID));
         case "runtime":
           return keys.sign(AccessKeys.serviceClaims(RUNTIME_CLIENT_ID));
+        case "other-runtime":
+          return keys.sign(AccessKeys.serviceClaims(OTHER_RUNTIME_CLIENT_ID));
       }
     },
     async request(path, opts) {
