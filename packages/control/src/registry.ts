@@ -171,6 +171,9 @@ export interface GlobalDef {
  * The "all off" master switch: every stage's and policy's effective mode is capped by it (§5.1). An agent
  * may stop any single spending stage on its own, but flipping EVERYTHING off (alerting and the watchdog
  * heartbeat's driver included) is an owner call — hence "approval", in both directions.
+ * Stop by stop, an agent can still reach all-off with every health check skipped (C6), so (owner,
+ * 2026-10-12) each agent stop still applies at once, keeping the brake fast, but must notify the owner.
+ * Nothing notifies yet: that is built with the notification/observer slice.
  */
 export const globalSwitch: GlobalDef = {
   label: "Master switch",
