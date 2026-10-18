@@ -90,7 +90,7 @@ describe("registry: modes", () => {
       live_integration: "off",
       cv_ingest: "on",
       close: "enforce",
-      stale_sweep: "shadow",
+      stale_sweep: "enforce",
       "health.ingestion_staleness": "shadow",
       "health.board_fail_ratio": "shadow",
       "health.hydrate_skip_ratio": "shadow",
