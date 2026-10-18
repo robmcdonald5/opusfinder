@@ -20,7 +20,7 @@ describe("gateView", () => {
       knobs: { boardsPerTick: 250 },
       policies: {
         close: { mode: "enforce", knobs: {} },
-        stale_sweep: { mode: "shadow", knobs: { ttlDays: 21 } },
+        stale_sweep: { mode: "enforce", knobs: { ttlDays: 21 } },
       },
       overrides: {},
     });

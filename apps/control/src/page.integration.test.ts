@@ -359,6 +359,8 @@ describe("stages", () => {
     expect(await page("/health", "agent")).toContain(
       '<span class="mode m-shadow">logs only</span>',
     );
+    // Every seeded policy is on, so put one back to logs only to see that label on /stages too.
+    await h.db.prepare("UPDATE state SET value = 'shadow' WHERE key = 'stale_sweep'").run();
     const stages = await page("/stages");
     expect(stages).toContain('<option value="shadow" selected>logs only</option>');
     expect(stages).toContain('<option value="enforce" selected>on</option>');

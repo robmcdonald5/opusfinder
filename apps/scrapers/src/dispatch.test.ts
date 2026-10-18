@@ -423,20 +423,24 @@ describe("runIngestionTick — cursor wrap math (wrap to 0 only at end of table,
   });
 });
 
-// The seeded ingest gate (migration 0002) and the deployed vars it agrees with (wrangler.toml [vars]).
+// The seeded ingest gate (migrations 0002 and 0007) and the deployed vars it agrees with (wrangler.toml [vars]).
 const GATE_ON = {
   mode: "on",
   cappedBy: null,
   knobs: { boardsPerTick: DEFAULT_INGEST_LIMIT },
   policies: {
     close: { mode: "enforce", knobs: {} },
-    stale_sweep: { mode: "shadow", knobs: { ttlDays: 21 } },
+    stale_sweep: { mode: "enforce", knobs: { ttlDays: 21 } },
   },
   overrides: {},
   by: "owner:owner",
   because: "seed",
 };
-const DEPLOYED_VARS = { LIFECYCLE_CLOSE_ENFORCE: "enforce", STALE_SWEEP_TTL_DAYS: "21" };
+const DEPLOYED_VARS = {
+  LIFECYCLE_CLOSE_ENFORCE: "enforce",
+  STALE_SWEEP: "enforce",
+  STALE_SWEEP_TTL_DAYS: "21",
+};
 
 /** A fake CONTROL binding (the control Worker's ControlRpc): `gate` answers as given, `recordRun` succeeds. */
 function makeControl(gate: () => Promise<unknown> = async () => GATE_ON) {
@@ -592,19 +596,19 @@ describe("control plane, in shadow — the gate is logged, never obeyed", () => 
       knobs: { boardsPerTick: 200 },
       policies: {
         close: { mode: "shadow", knobs: {} },
-        stale_sweep: { mode: "enforce", knobs: { ttlDays: 14 } },
+        stale_sweep: { mode: "shadow", knobs: { ttlDays: 14 } },
       },
     }));
     const { ingestArgs } = await runIngestTick({ env: { CONTROL: control, ...DEPLOYED_VARS } });
     expect(console.warn).toHaveBeenCalledWith(
       "control gate ingest: settings differ, not enforced: boardsPerTick 200 (gate) vs 250 (in use), " +
-        "close shadow (gate) vs enforce (in use), stale_sweep enforce (gate) vs shadow (in use), " +
+        "close shadow (gate) vs enforce (in use), stale_sweep shadow (gate) vs enforce (in use), " +
         "stale_sweep.ttlDays 14 (gate) vs 21 (in use)",
     );
     expect(ingestArgs).toMatchObject({
       limit: DEFAULT_INGEST_LIMIT,
       enforceLifecycle: true,
-      staleSweep: { ttlDays: 21, enforce: false },
+      staleSweep: { ttlDays: 21, enforce: true },
     });
 
     mocks.runDiscovery.mockResolvedValue(DISCOVERY_COUNTS);

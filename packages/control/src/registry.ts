@@ -403,7 +403,7 @@ export const policies = {
   stale_sweep: {
     label: "Close stale jobs",
     modes: ["shadow", "enforce"],
-    initial: "shadow",
+    initial: "enforce",
     readBy: ["ingest"],
     knobs: {
       // A SHORTER TTL closes more, so riskier is DOWN.

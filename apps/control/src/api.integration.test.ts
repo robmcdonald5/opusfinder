@@ -58,7 +58,7 @@ const change = (as: "owner" | "agent", target: string, value: string, extra: Jso
     json: { target, value, reason: `test ${target} → ${value}`, ...extra },
   });
 
-describe("seed (migration 0002) = today's reality = the registry defaults", () => {
+describe("seed (migration 0002, then 0007) = today's reality = the registry defaults", () => {
   it("stores every mode row at its registry `initial`, each with a seed change_log row", async () => {
     const { results } = await h.db
       .prepare("SELECT key, value FROM state ORDER BY key")
@@ -69,17 +69,26 @@ describe("seed (migration 0002) = today's reality = the registry defaults", () =
     expect(Object.fromEntries(results.map((r) => [r.key, r.value]))).toEqual(expected);
 
     const log = await h.db
-      .prepare("SELECT actor_role, channel, from_value, to_value, target FROM change_log")
+      .prepare(
+        "SELECT actor_role, channel, from_value, to_value, target FROM change_log ORDER BY id",
+      )
       .all<Json>();
-    expect(log.results).toHaveLength(results.length);
-    for (const row of log.results) {
-      expect(row).toMatchObject({
+    // 0002 adopts every row once; a later seed migration logs each move it makes on top of that.
+    const adopted = log.results.filter((row) => row.from_value === null);
+    expect(adopted.map((row) => row.target).sort()).toEqual(results.map((r) => r.key).sort());
+    expect(log.results.filter((row) => row.from_value !== null)).toEqual([
+      {
         actor_role: "seed",
         channel: "migration",
-        from_value: null,
-        to_value: expected[row.target],
-      });
-    }
+        from_value: "shadow",
+        to_value: "enforce",
+        target: "stale_sweep",
+      },
+    ]);
+    for (const row of log.results)
+      expect(row).toMatchObject({ actor_role: "seed", channel: "migration" });
+    const latest = Object.fromEntries(log.results.map((row) => [row.target, row.to_value]));
+    expect(latest).toEqual(expected);
   });
 
   it("reports the seeded reality through /v1/status", async () => {
@@ -96,7 +105,7 @@ describe("seed (migration 0002) = today's reality = the registry defaults", () =
     const policies = Object.fromEntries(s.policies.map((p: Json) => [p.id, p.effective]));
     expect(policies).toMatchObject({
       close: "enforce",
-      stale_sweep: "shadow",
+      stale_sweep: "enforce",
       "health.digest_health": "shadow",
     });
     expect(s.openProposals).toEqual([]);
