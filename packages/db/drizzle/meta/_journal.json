@@ -197,6 +197,13 @@
       "when": 1791817172763,
       "tag": "0027_digest_items_content_signature",
       "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1792359860222,
+      "tag": "0028_prune_closed_jobs_fn",
+      "breakpoints": true
     }
   ]
 }

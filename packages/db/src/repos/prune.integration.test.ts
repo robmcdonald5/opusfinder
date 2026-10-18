@@ -2,7 +2,15 @@ import { eq, inArray, sql } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import type { Db } from "@opusfinder/db";
-import { companies, digestItems, digestRuns, digests, jobs, user } from "@opusfinder/db/schema";
+import {
+  companies,
+  digestItems,
+  digestRuns,
+  digests,
+  jobs,
+  sourceRuns,
+  user,
+} from "@opusfinder/db/schema";
 import { companySlug, jobId, type NormalizedJob, type UserId } from "@opusfinder/shared";
 
 import { uid } from "@test/db/ids";
@@ -11,7 +19,7 @@ import { truncate } from "@test/db/truncate";
 
 import { insertDigest, insertDigestItems, startDigestRun } from "./digests";
 import { upsertCompany, upsertJobs } from "./jobs";
-import { pruneStaleJobs } from "./prune";
+import { PRUNE_WINDOW_DAYS, pruneStaleJobs, runPrune } from "./prune";
 import { pruneOplog } from "./prune-oplog";
 
 // Which rows the two irreversible prunes actually delete, on real Postgres (prune.test.ts covers the emitted
@@ -40,7 +48,7 @@ describe("TTL prunes (integration: real PGlite Postgres)", () => {
     ({ db, close } = await createTestDb());
   });
   beforeEach(async () => {
-    await truncate(db, digestItems, digests, digestRuns, jobs, companies, user);
+    await truncate(db, digestItems, digests, digestRuns, jobs, companies, sourceRuns, user);
     await db.insert(user).values({ id: reader, name: "Reader", email: "reader@test.local" });
   });
   afterAll(async () => {
@@ -119,6 +127,57 @@ describe("TTL prunes (integration: real PGlite Postgres)", () => {
 
     expect(await pruneStaleJobs(db, { apply: true })).toMatchObject({ prunable: 1, deleted: 1 });
     expect(await jobsLeft()).toEqual(all.filter((k) => k !== "closed-old"));
+  });
+
+  /** Insert closed jobs, each closed the given number of days ago; returns nothing (read back by externalId). */
+  async function closedJobs(closedDaysAgo: Record<string, number>): Promise<void> {
+    const companyId = await upsertCompany(db, companySlug("acme"), "greenhouse");
+    await upsertJobs(db, companyId, Object.keys(closedDaysAgo).map(job));
+    for (const [externalId, days] of Object.entries(closedDaysAgo)) {
+      await db
+        .update(jobs)
+        .set({ lifecycleState: "closed", closedAt: sql`now() - ${days} * interval '1 day'` })
+        .where(eq(jobs.externalId, jobId(externalId)));
+    }
+  }
+
+  it("the prune function's window is PRUNE_WINDOW_DAYS: a day inside it stays, a day past it goes", async () => {
+    await closedJobs({ inside: PRUNE_WINDOW_DAYS - 1, past: PRUNE_WINDOW_DAYS + 1 });
+    expect(await pruneStaleJobs(db, { apply: true })).toMatchObject({ prunable: 1, deleted: 1 });
+    expect(await jobsLeft()).toEqual(["inside"]);
+  });
+
+  it("runPrune only counts unless applied, deletes at most maxRows, and records a prune run each time", async () => {
+    await closedJobs({ a: 40, b: 50, c: 60 });
+
+    expect(await runPrune(db, { apply: false, maxRows: 2 })).toEqual({ prunable: 3, deleted: 0 });
+    expect(await jobsLeft()).toEqual(["a", "b", "c"]);
+    expect(await runPrune(db, { apply: true, maxRows: 2 })).toEqual({ prunable: 3, deleted: 2 });
+    expect(await jobsLeft()).toHaveLength(1);
+    expect(await runPrune(db, { apply: true, maxRows: 2 })).toEqual({ prunable: 1, deleted: 1 });
+    expect(await jobsLeft()).toEqual([]);
+
+    const runs = await db
+      .select({
+        pipeline: sourceRuns.pipeline,
+        status: sourceRuns.status,
+        counts: sourceRuns.counts,
+      })
+      .from(sourceRuns)
+      .orderBy(sourceRuns.id);
+    expect(runs).toEqual([
+      { pipeline: "prune", status: "ok", counts: { prunable: 3, deleted: 0 } },
+      { pipeline: "prune", status: "ok", counts: { prunable: 3, deleted: 2 } },
+      { pipeline: "prune", status: "ok", counts: { prunable: 1, deleted: 1 } },
+    ]);
+  });
+
+  it("the prune function deletes nothing for a zero, negative or NULL max", async () => {
+    await closedJobs({ old: 40 });
+    for (const max of [sql`0`, sql`-5`, sql`NULL`]) {
+      await db.execute(sql`SELECT public.prune_closed_jobs(${max}, true)`);
+    }
+    expect(await jobsLeft()).toEqual(["old"]);
   });
 
   it("pruneOplog deletes only digest runs past the window that no digest references", async () => {

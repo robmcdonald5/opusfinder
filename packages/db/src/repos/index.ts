@@ -60,6 +60,9 @@ export {
   DEFAULT_STALE_TTL_DAYS,
 } from "./lifecycle";
 export type { SweepResult, SweepOptions, CloseResult } from "./lifecycle";
+// The weekly job prune the scrapers Worker runs after discovery (the owner's script imports prune.ts directly).
+export { runPrune } from "./prune";
+export type { PruneRunCounts } from "./prune";
 // Digest persistence — recipient list, already-shown anti-join, run/header/item writes.
 export {
   listDigestRecipients,

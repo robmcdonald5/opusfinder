@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { render } from "@test/db/render";
 import { stubExecDb } from "@test/db/stub-exec-db";
 
-import { PRUNE_BATCH, PRUNE_WINDOW_DAYS, prunablePredicate, pruneStaleJobs } from "./prune";
+import { PRUNE_BATCH, PRUNE_WINDOW_DAYS, pruneStaleJobs } from "./prune";
 import { OPLOG_PRUNE_BATCH, OPLOG_RETENTION_DAYS, pruneOplog } from "./prune-oplog";
 
 // Leaf pure-unit for the two TTL retention prunes (NO DB, NO creds). Merges scripts/test-prune-oplog.ts
@@ -163,106 +163,75 @@ describe("pruneOplog — TTL retention for the append-only oplog tables", () => 
 });
 
 describe("pruneStaleJobs — TTL hard-delete of long-closed, history-unreferenced jobs", () => {
-  // A fake Db dispatching on the query KIND: pg_size_pretty probe → a size row; DELETE → the next batch
-  // (then [] once exhausted); anything else → the breakdown row (bigint counts as STRINGS, as neon returns).
+  // A fake Db dispatching on the query KIND: pg_size_pretty probe → a size row; the prune function with
+  // apply = true → the next batch's deleted count (then 0 once exhausted); its apply = false count → the
+  // prunable count; anything else → the breakdown row. Counts come back as STRINGS, as neon returns bigints.
   function makeStub(opts: {
     breakdownRow: Record<string, string>;
-    deleteReturns?: Array<Array<{ id: number }>>;
+    prunable: string;
+    deleteReturns?: number[];
   }) {
     const deleteReturns = opts.deleteReturns ?? [];
     let deleteCall = 0;
     return stubExecDb((q) => {
       const { sql: text } = renderQ(q);
       if (text.includes("pg_size_pretty")) return [{ db_size: "123 MB" }];
-      if (text.includes("DELETE FROM")) return deleteReturns[deleteCall++] ?? [];
+      if (text.includes("prune_closed_jobs(0, false)")) return [{ n: opts.prunable }];
+      if (text.includes("prune_closed_jobs("))
+        return [{ n: String(deleteReturns[deleteCall++] ?? 0) }];
       return [opts.breakdownRow];
     });
   }
+  const isDelete = (q: unknown) => /prune_closed_jobs\(\$\d+, true\)/.test(renderQ(q).sql);
 
-  it("prunablePredicate is the byte-shared three-part gate binding the window", () => {
-    const { sql: text, params } = render(prunablePredicate());
-    // 1) never touch an active/retrievable job; 2) closed long enough; 3) referenced by no digest history.
-    expect(text).toContain("lifecycle_state = 'closed'");
-    expect(text).toContain("interval '1 day'");
-    // Clause 2 must gate on closed_at SPECIFICALLY — a mutation to created_at/updated_at still binds the
-    // window param + interval yet prunes the wrong rows, so pin the COLUMN, not just the window shape.
-    expect(text).toContain("closed_at < now() -");
-    expect(text).toContain("id NOT IN (SELECT job_id FROM digest_items)");
-    expect(params).toContain(PRUNE_WINDOW_DAYS);
-  });
-
-  it("dry run: exactly one breakdown, no DELETE, string counts coerced via Number", async () => {
+  it("dry run: the breakdown plus the function's own count, no delete, string counts coerced via Number", async () => {
     const { db, calls } = makeStub({
-      breakdownRow: { closed_total: "10", closed_old: "7", prunable: "5" },
+      breakdownRow: { closed_total: "10", closed_old: "7" },
+      prunable: "5",
     });
 
     const r = await pruneStaleJobs(db);
 
-    // Exactly the breakdown; NEVER a DELETE.
-    expect(calls).toHaveLength(1);
+    expect(calls).toHaveLength(2);
     const { sql: text, params } = renderQ(calls[0]!);
-    expect(text).toContain("closed_total");
-    expect(text).toContain("closed_old");
-    expect(text).toContain("prunable");
-    // The breakdown's prunable count MUST use the SAME unreferenced gate as the delete.
-    expect(text).toContain("id NOT IN (SELECT job_id FROM digest_items)");
-    // closed_total / closed_old are stub-fed (they come back as strings from the fake), so their aggregate
-    // FILTER predicates are otherwise UNASSERTED — a mutated FILTER would still return the canned count.
-    // Pin each FILTER structurally to its alias: closed_total counts only closed rows; closed_old ADDS the
-    // closed_at window (spacing/newlines inside the rendered FILTER are matched with \s+, not hard-coded).
-    expect(text).toContain("FILTER (WHERE lifecycle_state = 'closed')");
+    // closed_total / closed_old are stub-fed, so pin each FILTER structurally to its alias: closed_total
+    // counts only closed rows; closed_old ADDS the closed_at window, bound to PRUNE_WINDOW_DAYS.
     expect(text).toMatch(/FILTER \(WHERE lifecycle_state = 'closed'\)\s+AS closed_total/);
     expect(text).toMatch(/AND closed_at < now\(\) - \$\d+ \* interval '1 day'\)\s+AS closed_old/);
-    // The breakdown hand-writes the closed_old window SEPARATELY from prunablePredicate(); BOTH must bind
-    // PRUNE_WINDOW_DAYS (>=2 occurrences) so a drift in the duplicated closed_old window is caught.
-    expect(params.filter((p) => p === PRUNE_WINDOW_DAYS).length).toBeGreaterThanOrEqual(2);
-    expect(calls.every((c) => !renderQ(c).sql.includes("DELETE FROM"))).toBe(true);
+    expect(params).toContain(PRUNE_WINDOW_DAYS);
+    // prunable is the SQL function's count: the same rule the delete applies.
+    expect(renderQ(calls[1]!).sql).toContain("SELECT public.prune_closed_jobs(0, false) AS n");
+    expect(calls.some(isDelete)).toBe(false);
 
-    // Counts parsed from the STRING breakdown row; nothing written.
-    expect(r.applied).toBe(false);
-    expect(r.deleted).toBe(0);
-    expect(r.closedTotal).toBe(10);
-    expect(r.closedOld).toBe(7);
-    expect(r.prunable).toBe(5);
+    expect(r).toEqual({ closedTotal: 10, closedOld: 7, prunable: 5, applied: false, deleted: 0 });
   });
 
-  it("--apply with prunable>0: keyset DELETE loop accumulates across batches", async () => {
+  it("--apply with prunable>0: calls the function in PRUNE_BATCH batches until a short one", async () => {
     const { db, calls } = makeStub({
-      breakdownRow: { closed_total: "5000", closed_old: "4005", prunable: "4005" },
+      breakdownRow: { closed_total: "5000", closed_old: "4005" },
+      prunable: "4005",
       // Two FULL batches then a SHORT one → the loop continues, accumulates, and terminates.
-      deleteReturns: [arrayOf(PRUNE_BATCH), arrayOf(PRUNE_BATCH), arrayOf(5)],
+      deleteReturns: [PRUNE_BATCH, PRUNE_BATCH, 5],
     });
 
     const r = await pruneStaleJobs(db, { apply: true });
 
-    const deletes = calls.filter((c) => renderQ(c).sql.includes("DELETE FROM"));
+    const deletes = calls.filter(isDelete);
     expect(deletes).toHaveLength(3);
-    const { sql: deleteSql, params: deleteParams } = renderQ(deletes[0]!);
-    expect(deleteSql).toContain("WITH batch AS");
-    expect(deleteSql).toContain("ORDER BY id");
-    expect(deleteSql).toContain("DELETE FROM jobs");
-    expect(deleteSql).toContain("RETURNING id");
-    expect(deleteParams).toContain(PRUNE_BATCH);
-    // The DELETE CTE must RE-APPLY the full prunable gate, not just the id keyset — the inner SELECT still
-    // excludes digest-referenced jobs, so a dropped clause 3 would delete rows the breakdown never counted.
-    expect(deleteSql).toContain("id NOT IN (SELECT job_id FROM digest_items)");
-    // ...and on the DELETE's own WHERE, the only clause re-checked against a row revived mid-statement.
-    expect(deleteSql).toMatch(
-      /WHERE id IN \(SELECT id FROM batch\) AND lifecycle_state = 'closed'/,
-    );
-
+    for (const d of deletes) expect(renderQ(d).params).toEqual([PRUNE_BATCH]);
     expect(r.applied).toBe(true);
     expect(r.deleted).toBe(PRUNE_BATCH * 2 + 5);
   });
 
   it("--apply with prunable=0: short-circuits before any destructive work", async () => {
     const { db, calls } = makeStub({
-      breakdownRow: { closed_total: "4", closed_old: "0", prunable: "0" },
+      breakdownRow: { closed_total: "4", closed_old: "0" },
+      prunable: "0",
     });
 
     const r = await pruneStaleJobs(db, { apply: true });
 
-    expect(calls.every((c) => !renderQ(c).sql.includes("DELETE FROM"))).toBe(true);
+    expect(calls.some(isDelete)).toBe(false);
     expect(r.applied).toBe(true);
     expect(r.deleted).toBe(0);
   });

@@ -139,7 +139,7 @@ export function wiring(gate: StageDef["gate"]): string {
   return `<span class="mode w-${esc(gate)}" title="${esc(GATE_LONG[gate])}">${esc(GATE_SHORT[gate])}</span>`;
 }
 
-/** Health checks are the policies the alerts stage reads; the rest (close, stale_sweep) are lifecycle. */
+/** Health checks are the policies the alerts stage reads; the rest (close, stale_sweep, prune) are lifecycle. */
 export function isHealthCheck(id: PolicyId): boolean {
   return (policyDef(id).readBy as readonly string[]).includes("alerts");
 }

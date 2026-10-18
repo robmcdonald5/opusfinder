@@ -1,6 +1,6 @@
 import { createDb, type Db } from "@opusfinder/db";
 import { describeDbError } from "@opusfinder/db/errors";
-import { DEFAULT_STALE_TTL_DAYS } from "@opusfinder/db/repos";
+import { DEFAULT_STALE_TTL_DAYS, runPrune } from "@opusfinder/db/repos";
 import { runDiscovery } from "@opusfinder/discovery";
 import { parseEnforceFlag } from "@opusfinder/shared";
 import { runIngestion, type IngestionCounts } from "@opusfinder/sources";
@@ -84,6 +84,9 @@ interface Env {
   /** Staleness-close TTL in days (the {@link sweepStaleJobs} horizon). Default 21 (see DEFAULT_STALE_TTL_DAYS)
    *  — must exceed the worst-case full-sweep latency or a still-live, not-recently-fetched job false-closes. */
   STALE_SWEEP_TTL_DAYS?: string;
+  /** The weekly job prune after discovery — see {@link prunePass}. Unset / "shadow" = count-only (the shipped
+   *  default); "enforce" deletes up to PRUNE_MAX_ROWS jobs closed for 30+ days that no digest showed. */
+  PRUNE?: string;
   /** The control plane: a service binding to the `opusfinder-control` Worker's `ControlRpc` entrypoint
    *  (wrangler.toml [[services]]). Read in SHADOW — see ./control.ts. OPTIONAL: unbound (e.g. `wrangler dev`
    *  without it) ⇒ every gate logs as unreadable and no run is recorded; the ticks run regardless. */
@@ -129,6 +132,9 @@ const MAX_RETRY_WAIT_MS = 5_000;
 // clock starts (≤ 2 s, GATE_TIMEOUT_MS in ./control): ≈ 2 + 600 + 120 + 5 + 10 + 1 ≈ 738 s ≈ 12.3 min,
 // leaving ~2.7 min for that board's DB writes, the stale sweep and finishRun.
 const BOARD_TIME_LIMIT_MS = 120_000;
+// The most jobs one weekly prune deletes, so a backlog drains over a few weeks instead of in one long delete.
+// ~10 calls of 2,000 rows, well under a minute after discovery's ~3 min.
+const PRUNE_MAX_ROWS = 20_000;
 // Floor for STALE_SWEEP_TTL_DAYS, the registry's stale_sweep.ttlDays min: a typo like "1" must not put an
 // enforcing stale sweep on a one-day close horizon.
 const MIN_STALE_TTL_DAYS = 7;
@@ -184,6 +190,7 @@ export default {
             limit: DISCOVERY_LIMIT,
             reprobeLimit: DISCOVERY_REPROBE_LIMIT,
             close: policyMode(env.LIFECYCLE_CLOSE_ENFORCE),
+            prune: policyMode(env.PRUNE),
           });
           // workerOnly: run only workerSafe (fetch-only, bundle-safe) lanes so a future Node-only lane
           // can never execute inside the isolate.
@@ -197,6 +204,7 @@ export default {
           });
           pingWatchdog(env.HEALTH_PING_URL_DISCOVER, ctx);
           recordRun(env.CONTROL, ctx, (end) => discoverRun(tick, end, counts));
+          await prunePass(db, env.PRUNE);
           break;
         }
         default:
@@ -341,6 +349,24 @@ function staleTtlDays(env: Env): number | undefined {
 /** A close switch's mode as the control registry names it (`close` / `stale_sweep`: shadow | enforce). */
 function policyMode(flag: string | undefined): "shadow" | "enforce" {
   return parseEnforceFlag(flag) ? "enforce" : "shadow";
+}
+
+/**
+ * The weekly job prune, after discovery (the database is already awake): count the jobs closed for 30+ days
+ * that no digest showed and, with PRUNE=enforce, delete up to PRUNE_MAX_ROWS of them. It records its own
+ * `prune` source_runs row. Isolated: a failure is logged and recorded there, never failing discovery, which
+ * has already pinged its watchdog and recorded its run.
+ */
+async function prunePass(db: Db, flag: string | undefined): Promise<void> {
+  const apply = parseEnforceFlag(flag);
+  try {
+    const { prunable, deleted } = await runPrune(db, { apply, maxRows: PRUNE_MAX_ROWS });
+    const mode = apply ? `on, at most ${PRUNE_MAX_ROWS} a run` : "logs only";
+    console.log(`Prune: ${prunable} prunable, ${deleted} deleted (${mode}).`);
+  } catch (err) {
+    const detail = err instanceof Error ? `${err.name}: ${describeDbError(err)}` : String(err);
+    console.error(`prune failed: ${detail}`);
+  }
 }
 
 /**

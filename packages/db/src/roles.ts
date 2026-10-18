@@ -3,6 +3,7 @@ import { randomBytes } from "node:crypto";
 import { getTableColumns, getTableName, is } from "drizzle-orm";
 import { PgSerial, type PgTable } from "drizzle-orm/pg-core";
 
+import { PRUNE_FUNCTION } from "./repos/prune";
 import { companies, dataFixes, jobs, sourceRuns } from "./schema";
 
 type TablePrivilege = "SELECT" | "INSERT" | "UPDATE" | "DELETE";
@@ -22,6 +23,9 @@ export interface LimitedRole {
     readonly tables: readonly PgTable[];
     readonly privileges: readonly TablePrivilege[];
   }[];
+  /** SECURITY DEFINER functions it may EXECUTE, by signature (`public.name(argtypes)`). Each must exist when
+   *  setup runs, and the audit refuses any other definer function the role could call. */
+  readonly functions?: readonly string[];
 }
 
 /** The data-fixes GitHub Action's only credential (`data-fixer:setup`): the ingestion-side tables, plus
@@ -38,10 +42,11 @@ export const DATA_FIXER: LimitedRole = {
 };
 
 /** The ingest Worker's (apps/scrapers) DATABASE_URL (`worker-role:setup`): what runIngestion and runDiscovery
- *  touch. No DELETE: no Worker path deletes a row. */
+ *  touch. No DELETE: the weekly prune deletes through `prune_closed_jobs`, whose rule it can't change. */
 export const SCRAPERS_WORKER: LimitedRole = {
   name: "scrapers_worker",
   grants: [{ tables: [companies, jobs, sourceRuns], privileges: ["SELECT", "INSERT", "UPDATE"] }],
+  functions: [PRUNE_FUNCTION],
 };
 
 /** A fresh 256-bit password, base64url (so it needs no escaping in a URL). Neon requires ≥ 60 bits. */
@@ -92,6 +97,8 @@ export function buildRoleSetupSql(role: LimitedRole): string {
   }));
   const literals = (names: readonly string[]) => names.map((n) => `'${n}'`).join(", ");
   const sequences = groups.flatMap((g) => g.sequences);
+  const functions = role.functions ?? [];
+  const functionArray = `ARRAY[${literals(functions)}]::text[]`;
   // Per granted table, the privileges it must NOT hold; ELSE (every other table) is all of them.
   const notGranted = (all: readonly string[]) =>
     groups
@@ -114,6 +121,12 @@ BEGIN
   IF missing IS NOT NULL THEN
     RAISE EXCEPTION 'missing table(s) %: run pnpm db:migrate first', missing;
   END IF;
+  SELECT string_agg(f, ', ') INTO missing
+  FROM unnest(${functionArray}) AS f
+  WHERE to_regprocedure(f) IS NULL;
+  IF missing IS NOT NULL THEN
+    RAISE EXCEPTION 'missing function(s) %: run pnpm db:migrate first', missing;
+  END IF;
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '${name}') THEN
     EXECUTE format('ALTER ROLE ${name} WITH LOGIN PASSWORD %L', new_password);
   ELSE
@@ -130,9 +143,11 @@ BEGIN
 END $$;
 REVOKE ALL ON ALL TABLES IN SCHEMA public FROM ${name};
 REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM ${name};
+REVOKE ALL ON ALL FUNCTIONS IN SCHEMA public FROM ${name};
 GRANT USAGE ON SCHEMA public TO ${name};
 ${groups.map((g) => `GRANT ${g.privileges.join(", ")} ON ${g.tables.map((t) => `public.${t}`).join(", ")} TO ${name};`).join("\n")}
 ${sequences.length > 0 ? `GRANT USAGE ON SEQUENCE ${sequences.join(", ")} TO ${name};` : ""}
+${functions.map((f) => `GRANT EXECUTE ON FUNCTION ${f} TO ${name};`).join("\n")}
 DO $$
 DECLARE
   extra text;
@@ -153,6 +168,15 @@ BEGIN
            END));
   IF extra IS NOT NULL OR has_schema_privilege('${name}', 'public', 'CREATE') THEN
     RAISE EXCEPTION '${name} holds privileges beyond its allowlist (on: %; or CREATE on schema public), granted by another role: revoke them, then re-run', coalesce(extra, 'no table');
+  END IF;
+  -- A SECURITY DEFINER function runs with its owner's rights, so one the role can call is a privilege too.
+  SELECT string_agg(p.oid::regprocedure::text, ', ') INTO extra
+  FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+  WHERE n.nspname = 'public' AND p.prosecdef
+    AND has_function_privilege('${name}', p.oid, 'EXECUTE')
+    AND p.oid NOT IN (SELECT to_regprocedure(f) FROM unnest(${functionArray}) AS f);
+  IF extra IS NOT NULL THEN
+    RAISE EXCEPTION '${name} can run SECURITY DEFINER function(s) beyond its allowlist: %: revoke EXECUTE, then re-run', extra;
   END IF;
 END $$;
 `;

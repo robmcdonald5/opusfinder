@@ -91,6 +91,7 @@ describe("registry: modes", () => {
       cv_ingest: "on",
       close: "enforce",
       stale_sweep: "enforce",
+      prune: "shadow",
       "health.ingestion_staleness": "shadow",
       "health.board_fail_ratio": "shadow",
       "health.hydrate_skip_ratio": "shadow",
@@ -151,11 +152,11 @@ describe("registry: agent rules", () => {
       "health.digest_health",
       "health.bounce_suppression",
     ]);
-    // Every other entry an agent may stop on its own: each single spending stage, close, stale_sweep.
+    // Every other entry an agent may stop on its own: each single spending stage, close, stale_sweep, prune.
     for (const id of STAGE_IDS.filter((s) => s !== "alerts")) {
       expect(stageDef(id).agent ?? "safe-direction", id).toBe("safe-direction");
     }
-    for (const id of ["close", "stale_sweep"] as const) {
+    for (const id of ["close", "stale_sweep", "prune"] as const) {
       expect(policyDef(id).agent ?? "safe-direction", id).toBe("safe-direction");
     }
   });

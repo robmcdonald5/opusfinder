@@ -17,11 +17,16 @@ const mocks = vi.hoisted(() => ({
   createDb: vi.fn(),
   runIngestion: vi.fn(),
   runDiscovery: vi.fn(),
+  runPrune: vi.fn(),
 }));
 
 vi.mock("@opusfinder/db", () => ({ createDb: mocks.createDb }));
 vi.mock("@opusfinder/sources", () => ({ runIngestion: mocks.runIngestion }));
 vi.mock("@opusfinder/discovery", () => ({ runDiscovery: mocks.runDiscovery }));
+vi.mock("@opusfinder/db/repos", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@opusfinder/db/repos")>()),
+  runPrune: mocks.runPrune,
+}));
 vi.mock("@opusfinder/shared", () => ({
   // Mirror the real flag semantics narrowly (only the explicit "enforce" affirmative enables) so we can
   // assert the env var is threaded into the pipeline opts without pulling the real package.
@@ -96,6 +101,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   vi.unstubAllGlobals();
   mocks.createDb.mockReturnValue(DB);
+  mocks.runPrune.mockResolvedValue({ prunable: 0, deleted: 0 });
   // Every tick logs its control gate (unreadable when the env has no CONTROL binding); keep the output quiet.
   vi.spyOn(console, "log").mockImplementation(() => undefined);
   vi.spyOn(console, "warn").mockImplementation(() => undefined);
@@ -154,6 +160,51 @@ describe("scheduled() dispatch", () => {
       makeCtx(),
     );
     expect(mocks.runDiscovery.mock.calls[0]![1]).toMatchObject({ enforceLifecycle: true });
+  });
+
+  it("prunes after discovery, counting only unless PRUNE=enforce, and never on an ingest tick", async () => {
+    mocks.runDiscovery.mockResolvedValue(undefined);
+    mocks.runPrune.mockResolvedValue({ prunable: 85_806, deleted: 0 });
+    const env = { DATABASE_URL: "postgres://stub", INGEST_CURSOR: makeKv(null) };
+    await scheduled({ cron: DISCOVERY_CRON }, env, makeCtx());
+    expect(mocks.runPrune).toHaveBeenCalledWith(DB, { apply: false, maxRows: 20_000 });
+    expect(console.log).toHaveBeenCalledWith("Prune: 85806 prunable, 0 deleted (logs only).");
+
+    mocks.runPrune.mockResolvedValue({ prunable: 85_806, deleted: 20_000 });
+    await scheduled({ cron: DISCOVERY_CRON }, { ...env, PRUNE: "enforce" }, makeCtx());
+    expect(mocks.runPrune).toHaveBeenLastCalledWith(DB, { apply: true, maxRows: 20_000 });
+    expect(console.log).toHaveBeenCalledWith(
+      "Prune: 85806 prunable, 20000 deleted (on, at most 20000 a run).",
+    );
+
+    mocks.runPrune.mockClear();
+    await runIngestTick({ env: { PRUNE: "enforce" } });
+    expect(mocks.runPrune).not.toHaveBeenCalled();
+  });
+
+  it("a failed prune is logged and never fails discovery or its heartbeat", async () => {
+    mocks.runDiscovery.mockResolvedValue(undefined);
+    mocks.runPrune.mockRejectedValue(new Error("permission denied for function prune_closed_jobs"));
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const fetchMock = vi.fn(async () => new Response("OK"));
+    vi.stubGlobal("fetch", fetchMock);
+    const ctx = makeCtx();
+    await scheduled(
+      { cron: DISCOVERY_CRON },
+      {
+        DATABASE_URL: "postgres://stub",
+        INGEST_CURSOR: makeKv(null),
+        HEALTH_PING_URL_DISCOVER: "https://watchdog.example/discover",
+      },
+      ctx,
+    );
+    await settle(ctx);
+    expect(console.error).toHaveBeenCalledWith(
+      "prune failed: Error: permission denied for function prune_closed_jobs",
+    );
+    expect(fetchMock.mock.calls.map((call) => String((call as unknown[])[0]))).toEqual([
+      "https://watchdog.example/discover",
+    ]);
   });
 
   it("throws Unhandled cron on a cron string no case matches (drift surfaces as a FAILED invocation)", async () => {
@@ -615,7 +666,7 @@ describe("control plane, in shadow — the gate is logged, never obeyed", () => 
     const discover = makeControl(async () => ({
       ...GATE_ON,
       knobs: { limit: 300, reprobeLimit: 500 },
-      policies: { close: { mode: "enforce", knobs: {} } },
+      policies: { close: { mode: "enforce", knobs: {} }, prune: { mode: "shadow", knobs: {} } },
     }));
     await scheduled(
       { cron: DISCOVERY_CRON },
