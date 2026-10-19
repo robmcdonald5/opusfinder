@@ -5,10 +5,9 @@ import { runScript } from "@opusfinder/shared/script";
 import { generate } from "../src/index";
 import type { GenerateResult } from "../src/index";
 
-// Anthropic only caches a prompt prefix once it clears a per-model minimum (a few
-// thousand input tokens, model-dependent; highest for the Haiku 4.x tier). Below that
-// the cacheControl marker is silently ignored and there is no cache hit to observe. So
-// the system prompt below is deliberately large.
+// A prompt prefix is cached only once it clears a per-model minimum (512 tokens on the
+// current Haiku). Below that the cache marker is silently ignored and there is no cache
+// hit to observe, so the system prompt below is deliberately large.
 function buildSystemPrompt(): string {
   const intro = [
     // Per-run nonce: makes the cached system prompt unique each run, so the cache is
@@ -41,7 +40,8 @@ async function runOnce(label: string): Promise<GenerateResult> {
     model: "haiku",
     system: SYSTEM_PROMPT,
     cacheSystem: true,
-    maxOutputTokens: 64,
+    effort: "low",
+    maxOutputTokens: 256,
     messages: [
       {
         role: "user",
@@ -53,9 +53,10 @@ async function runOnce(label: string): Promise<GenerateResult> {
   const preview = result.text.replace(/\s+/g, " ").trim().slice(0, 120);
   console.log(`\n[${label}]`);
   console.log(`  completion:            ${preview}`);
-  console.log(`  finish reason:         ${result.finishReason}`);
-  console.log(`  input tokens:          ${result.usage.inputTokens ?? "?"}`);
-  console.log(`  output tokens:         ${result.usage.outputTokens ?? "?"}`);
+  console.log(`  stop reason:           ${result.stopReason}`);
+  console.log(`  input tokens:          ${result.usage.inputTokens}`);
+  console.log(`  output tokens:         ${result.usage.outputTokens}`);
+  console.log(`  cost (USD):            ${result.usage.costUsd}`);
   console.log(`  cache_creation_tokens: ${result.cache.creationInputTokens}`);
   console.log(`  cache_read_tokens:     ${result.cache.readInputTokens}`);
   return result;

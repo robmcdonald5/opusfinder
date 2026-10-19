@@ -50,9 +50,9 @@ injection blueprint already used in `packages/eval`.
 ## Cache-size note (load-bearing for the digest gate)
 
 The Phase-10 acceptance gate requires the rerank prompt cache to engage (`rerankCacheReadTokens > 0`).
-A model only caches a prefix above a minimum size (**Haiku ≈ 4096 tokens**); a thin rubric silently
-no-ops the cache and fails the gate. `RERANK_RUBRIC` is written long **on purpose** — a richer rubric
-both scores better and clears that floor. It's verified live (the digest run observes
+A model only caches a prefix above a minimum size (**512 tokens on Haiku 5.5**, down from 4096 on Haiku
+4.5); a thin rubric silently no-ops the cache and fails the gate. `RERANK_RUBRIC` is written long **on
+purpose** — a richer rubric scores better and clears that floor with room to spare. It's verified live (the digest run observes
 `cache.readInputTokens`); if a model bumps its minimum, extend the rubric rather than padding with
 filler.
 

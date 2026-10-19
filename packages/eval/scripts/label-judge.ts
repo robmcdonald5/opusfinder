@@ -116,15 +116,19 @@ export interface JudgeResult extends LabelVerdict {
   cache: { creationInputTokens: number; readInputTokens: number };
 }
 
+/** Medium, not the low the production calls use: a wrong label silently rescores every later run, so the
+ *  judge gets more thinking per verdict. Not measured against owner-reviewed labels yet. */
+export const JUDGE_EFFORT = "medium" as const;
+
 /**
  * Draft one verdict. ONE candidate per call on purpose: a chunked call scores each job in the
  * company of its neighbours, which is the relative-judgment bias the production rubric spends a
  * paragraph warning against — tolerable when the output is an ordering, not when it is the ground
- * truth. Temperature 0 for reproducibility.
+ * truth. The current models take no temperature, so a re-run can differ on a borderline verdict.
  *
- * `cacheSystem` marks the rubric+profile prefix as an Anthropic cache breakpoint; it is a silent
- * no-op below the model's minimum cacheable prefix, so the caller REPORTS the returned counters
- * rather than assuming caching engaged.
+ * `cacheSystem` marks the rubric+profile prefix as a cache breakpoint; it is a silent no-op below
+ * the model's minimum cacheable prefix, so the caller REPORTS the returned counters rather than
+ * assuming caching engaged.
  */
 export async function judgeCandidate(
   system: string,
@@ -136,16 +140,16 @@ export async function judgeCandidate(
     schema: LabelVerdictSchema,
     system,
     cacheSystem: true,
-    temperature: 0,
-    // Generous headroom over the ~100 tokens a verdict actually costs. A truncated response is not a
-    // soft failure here: generateObject throws on unparseable JSON, and at temperature 0 every retry
-    // reproduces the same overrun — so one verbose reason would take down a whole pool's run.
-    maxOutputTokens: 1024,
+    effort: JUDGE_EFFORT,
+    // Generous headroom over the ~100 tokens a verdict costs plus the thinking before it. A truncated
+    // response is not a soft failure here: generateObject throws, and one verbose answer would take
+    // down a whole pool's run.
+    maxOutputTokens: 4096,
     messages: [{ role: "user", content: renderJob(candidate) }],
   });
   return {
     ...object,
-    usage: { inputTokens: usage.inputTokens ?? 0, outputTokens: usage.outputTokens ?? 0 },
+    usage: { inputTokens: usage.inputTokens, outputTokens: usage.outputTokens },
     cache,
   };
 }

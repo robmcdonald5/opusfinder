@@ -7,12 +7,11 @@
 import { http, HttpResponse } from "msw";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
-import { anthropicMessage } from "@test/msw/fixtures/anthropic";
+import { messagesReply, OPENROUTER_MESSAGES_URL } from "@test/msw/fixtures/openrouter";
 import { server } from "@test/msw/server";
 
 import { buildDigestDeps } from "./deps";
 
-const MESSAGES_URL = "https://api.anthropic.com/v1/messages";
 const PROFILE = { summary: "Backend engineer.", skills: ["Go"], targetRoles: ["Backend Engineer"] };
 // 14 candidates → two chunks at the core's default chunk size of 13.
 const CANDIDATES = Array.from({ length: 14 }, (_, i) => ({
@@ -22,39 +21,50 @@ const CANDIDATES = Array.from({ length: 14 }, (_, i) => ({
 }));
 const FIRST_CHUNK_SCORES = CANDIDATES.slice(0, 13).map((c) => ({ id: c.id, score: 0.8 }));
 
-/** Answer the Nth Messages call with the Nth reply; returns a call counter. */
+/** Answer the Nth Messages call with the Nth reply; returns a call counter. An off-schema reply is retried
+ *  once by generateObject, so an unusable chunk takes two replies. */
 function replyInOrder(...replies: object[]): () => number {
   let calls = 0;
-  server.use(http.post(MESSAGES_URL, () => HttpResponse.json(replies[calls++])));
+  server.use(http.post(OPENROUTER_MESSAGES_URL, () => HttpResponse.json(replies[calls++])));
   return () => calls;
 }
 
 describe("buildDigestDeps().rerank — real generateObject over MSW", () => {
   beforeAll(() => {
-    vi.stubEnv("ANTHROPIC_API_KEY", "sk-ant-test");
+    vi.stubEnv("OPENROUTER_API_KEY", "sk-or-test");
     vi.stubEnv("DATABASE_URL", "postgresql://user:pass@db.test/opusfinder");
   });
   afterAll(() => vi.unstubAllEnvs());
 
-  it("leaves a chunk with an unusable reply unscored and keeps the chunks already scored", async () => {
+  it("leaves a chunk with an unusable reply unscored, keeps the scored chunks, and counts every call", async () => {
+    const offSchema = messagesReply({ text: "I can't score these postings." });
     const calls = replyInOrder(
-      anthropicMessage({ text: JSON.stringify({ scores: FIRST_CHUNK_SCORES }) }),
-      anthropicMessage({ text: "I can't score these postings." }),
+      messagesReply({ text: JSON.stringify({ scores: FIRST_CHUNK_SCORES }) }),
+      offSchema,
+      offSchema,
     );
 
     const outcome = await buildDigestDeps().rerank(PROFILE, CANDIDATES);
 
-    expect(calls()).toBe(2);
+    expect(calls()).toBe(3);
     expect(outcome.scores.size).toBe(13);
     expect(outcome.scores.has(14)).toBe(false);
     expect(outcome.orderedIds).toHaveLength(14); // the unscored candidate is backfilled last
+    // The unscored chunk's two paid attempts count too (each fixture reply: 10 in, 5 out, $0.0001).
+    expect(outcome.usage).toMatchObject({ inputTokens: 30, outputTokens: 15 });
+    expect(outcome.usage.costUsd).toBeCloseTo(0.0003, 10);
   });
 
   it("leaves a chunk scored on the wrong scale unscored instead of clamping it to 1.0", async () => {
-    const zeroToTen = CANDIDATES.slice(0, 13).map((c, i) => ({ id: c.id, score: (i % 3) + 1 }));
+    const zeroToTen = messagesReply({
+      text: JSON.stringify({
+        scores: CANDIDATES.slice(0, 13).map((c, i) => ({ id: c.id, score: (i % 3) + 1 })),
+      }),
+    });
     replyInOrder(
-      anthropicMessage({ text: JSON.stringify({ scores: zeroToTen }) }),
-      anthropicMessage({ text: JSON.stringify({ scores: [{ id: 14, score: 0.9 }] }) }),
+      zeroToTen,
+      zeroToTen,
+      messagesReply({ text: JSON.stringify({ scores: [{ id: 14, score: 0.9 }] }) }),
     );
 
     const outcome = await buildDigestDeps().rerank(PROFILE, CANDIDATES);
@@ -62,32 +72,33 @@ describe("buildDigestDeps().rerank — real generateObject over MSW", () => {
     expect([...outcome.scores]).toEqual([[14, 0.9]]);
   });
 
-  it("sums token and prompt-cache counters across chunks", async () => {
+  it("sums token, cost and prompt-cache counters across chunks", async () => {
     replyInOrder(
-      anthropicMessage({
+      messagesReply({
         text: JSON.stringify({ scores: FIRST_CHUNK_SCORES }),
         usage: {
           input_tokens: 100,
           output_tokens: 20,
           cache_creation_input_tokens: 4000,
           cache_read_input_tokens: 1000,
+          cost: 0.002,
         },
       }),
-      anthropicMessage({
+      messagesReply({
         text: JSON.stringify({ scores: [{ id: 14, score: 0.6 }] }),
-        usage: { input_tokens: 30, output_tokens: 5, cache_read_input_tokens: 4000 },
+        usage: { input_tokens: 30, output_tokens: 5, cache_read_input_tokens: 4000, cost: 0.0005 },
       }),
     );
 
     const outcome = await buildDigestDeps().rerank(PROFILE, CANDIDATES);
 
-    expect(outcome.usage).toEqual({ inputTokens: 130, outputTokens: 25 });
+    expect(outcome.usage).toEqual({ inputTokens: 130, outputTokens: 25, costUsd: 0.0025 });
     expect(outcome.cache).toEqual({ creationInputTokens: 4000, readInputTokens: 5000 });
   });
 
   it("still fails the rerank on a provider error", async () => {
     server.use(
-      http.post(MESSAGES_URL, () =>
+      http.post(OPENROUTER_MESSAGES_URL, () =>
         HttpResponse.json(
           { type: "error", error: { type: "invalid_request_error", message: "bad request" } },
           { status: 400 },

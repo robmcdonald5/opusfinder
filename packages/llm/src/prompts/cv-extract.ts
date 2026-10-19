@@ -9,8 +9,9 @@ import { generateObject } from "../generate-object";
 /**
  * The two CV-ingestion calls and their prompts, exported so the eval harness runs the SAME calls
  * production does. Layer 1 (transcribe) and Layer 2 (structure) are deliberately separate calls so the
- * structured extraction can re-run from cached text without re-paying the vision call. Both run at
- * temperature 0: transcription is a faithful-copy task and structuring is grounded extraction.
+ * structured extraction can re-run from cached text without re-paying the vision call. Both run at low
+ * effort: transcription is a faithful-copy task (thinking off, so the cap is all transcript) and
+ * structuring is grounded extraction.
  */
 
 /**
@@ -33,10 +34,8 @@ Rules:
 
 /**
  * Layer 2 — structuring. Turns the transcribed text into the {@link CvProfileSchema} profile. Used
- * with `generateObject` over the TEXT (so it re-runs cheaply from cached text). `cacheSystem` may be
- * enabled by the caller; it only engages if this prompt clears the model's minimum cacheable prefix
- * (Haiku ~4096 tokens) — this prompt is intentionally sized for quality, not padded to force caching
- * (a longer prompt would cost more per call than the cache saves at typical fleet sizes).
+ * with `generateObject` over the TEXT (so it re-runs cheaply from cached text). It is not cached: a CV is
+ * structured once, so a cache write would rarely be read.
  */
 export const CV_STRUCTURE_SYSTEM = `You convert the plain text of a CV / résumé into a compact, PII-free semantic profile used for job matching. You are given the CV text; return ONLY the structured fields.
 
@@ -84,11 +83,13 @@ const _cvProfileMatchesStructuredProfile: Equal<CvProfile, StructuredProfile> = 
 
 /** Layer 1: Haiku vision over the PDF → clean transcript text. */
 export async function transcribeCv(pdf: Uint8Array): Promise<string> {
-  const { text, finishReason } = await generate({
+  const { text, stopReason } = await generate({
     model: "haiku",
     system: CV_TRANSCRIBE_SYSTEM,
-    temperature: 0,
-    maxOutputTokens: 8192,
+    effort: "low",
+    thinking: "off",
+    // Room for a long multi-page CV; a cap, not a spend.
+    maxOutputTokens: 16000,
     messages: [
       {
         role: "user",
@@ -101,12 +102,10 @@ export async function transcribeCv(pdf: Uint8Array): Promise<string> {
   });
   // generate() returns a cut-off or refused transcript without throwing, and a cached transcript is
   // permanent (restructure re-reads it, never re-transcribing) — so accept only a natural stop.
-  if (finishReason !== "stop") {
+  if (stopReason !== "end_turn") {
     const hint =
-      finishReason === "length" ? "; raise transcribeCv's maxOutputTokens or split the PDF" : "";
-    throw new Error(
-      `transcribeCv: transcription stopped with finishReason "${finishReason}"${hint}`,
-    );
+      stopReason === "max_tokens" ? "; raise transcribeCv's maxOutputTokens or split the PDF" : "";
+    throw new Error(`transcribeCv: transcription stopped with "${stopReason ?? "none"}"${hint}`);
   }
   return text;
 }
@@ -117,10 +116,10 @@ export async function structureCv(text: string): Promise<CvProfile> {
     model: "haiku",
     schema: CvProfileSchema,
     system: CV_STRUCTURE_SYSTEM,
-    temperature: 0,
-    // Above generateObject's 2048 default: a skill-dense CV's profile JSON can exceed 2048 output
-    // tokens (which would throw a truncation Error).
-    maxOutputTokens: 4096,
+    effort: "low",
+    // Above generateObject's 2048 default: a skill-dense CV's profile JSON plus any thinking can exceed
+    // it (which would throw a truncation Error).
+    maxOutputTokens: 8192,
     messages: [{ role: "user", content: text }],
   });
   return object;

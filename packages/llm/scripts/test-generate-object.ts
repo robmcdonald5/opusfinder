@@ -1,7 +1,7 @@
 // Exercises generateObject end-to-end against Anthropic: (1) extraction of a valid CvProfileSchema
 // profile from sample CV text, (2) prompt-cache plumbing (created on call 1, read on call 2), and
-// (3) truncation surfaces as an actionable Error (not an opaque SDK throw). Requires
-// ANTHROPIC_API_KEY in packages/llm/.env.
+// (3) truncation surfaces as an actionable Error (not an opaque provider throw). Requires
+// OPENROUTER_API_KEY in packages/llm/.env.
 // Run: pnpm --filter @opusfinder/llm test:generate-object
 import { randomUUID } from "node:crypto";
 
@@ -49,9 +49,11 @@ async function testExtraction(): Promise<void> {
     model: "haiku",
     schema: CvProfileSchema,
     system: CV_STRUCTURE_SYSTEM,
+    effort: "low",
     messages: [{ role: "user", content: SAMPLE_CV_TEXT }],
   });
   console.log("\n[extraction]");
+  console.log(`  cost (USD):  ${result.usage.costUsd}`);
   console.log(`  summary:     ${result.object.summary.slice(0, 100)}...`);
   console.log(`  skills:      ${result.object.skills.join(", ")}`);
   console.log(`  targetRoles: ${result.object.targetRoles.join(", ")}`);
@@ -66,8 +68,9 @@ async function testCachePlumbing(): Promise<void> {
   const system = buildLargeSystemPrompt();
   const schema = z.object({ ready: z.boolean() });
   const messages = [{ role: "user" as const, content: 'Reply with {"ready": true}.' }];
-  const first = await generateObject({ model: "haiku", schema, system, cacheSystem: true, messages, maxOutputTokens: 64 });
-  const second = await generateObject({ model: "haiku", schema, system, cacheSystem: true, messages, maxOutputTokens: 64 });
+  const call = { model: "haiku" as const, schema, system, cacheSystem: true, messages, effort: "low" as const, maxOutputTokens: 256 };
+  const first = await generateObject(call);
+  const second = await generateObject(call);
   console.log("\n[cache plumbing]");
   console.log(`  system size:           ${system.length} chars (~${Math.round(system.length / 4)} tokens)`);
   console.log(`  call 1 cache_creation: ${first.cache.creationInputTokens}`);

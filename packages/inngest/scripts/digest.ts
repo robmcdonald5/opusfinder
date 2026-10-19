@@ -8,8 +8,8 @@
  *   Terminal B:  pnpm inngest:serve        # the serve endpoint (INNGEST_DEV=1)
  *   Terminal C:  pnpm digest --all         # (or --user <uuid>)    (INNGEST_DEV=1)
  *
- * NEEDS: DATABASE_URL + ANTHROPIC_API_KEY (the per-user fn calls Haiku rerank + the Sonnet synthesis
- * batch), and a CV-ingested, eligible user. Real, batch-discounted Anthropic spend; runs a few minutes.
+ * NEEDS: DATABASE_URL + OPENROUTER_API_KEY (the per-user fn calls Haiku rerank + the Sonnet synthesis
+ * batch), and a CV-ingested, eligible user. Real, batch-discounted OpenRouter spend; runs a few minutes.
  * The SERVE process additionally needs RESEND_API_KEY / RESEND_API_KEY_FULL / EMAIL_FROM
  * (packages/email/.env) for the send tail — without them the digest still
  * persists, then the send step terminalizes to delivery_status='failed' (a send-only key breaks just

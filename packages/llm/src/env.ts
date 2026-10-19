@@ -5,14 +5,14 @@ import { loadPackageEnv, requireEnv } from "@opusfinder/shared/env";
 loadPackageEnv(import.meta.url);
 
 /**
- * Read + validate ANTHROPIC_API_KEY. The soft "sk-ant-" prefix check warns but never
+ * Read + validate OPENROUTER_API_KEY. The soft "sk-or-" prefix check warns but never
  * hard-fails (prefixes can change; the provider is the real authority) and echoes only
  * non-sensitive shape, never the key.
  */
-export const getAnthropicApiKey = requireEnv({
-  name: "ANTHROPIC_API_KEY",
+export const getOpenRouterApiKey = requireEnv({
+  name: "OPENROUTER_API_KEY",
   notSetMessage:
-    "ANTHROPIC_API_KEY is not set. Paste your Anthropic API key into packages/llm/.env " +
-    "(ANTHROPIC_API_KEY=sk-ant-...), or export it as an environment variable.",
-  prefix: "sk-ant-",
+    "OPENROUTER_API_KEY is not set. Paste your OpenRouter API key into packages/llm/.env " +
+    "(OPENROUTER_API_KEY=sk-or-...), or export it as an environment variable.",
+  prefix: "sk-or-",
 });

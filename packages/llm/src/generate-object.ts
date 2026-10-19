@@ -1,127 +1,116 @@
-import { generateObject as aiGenerateObject, NoObjectGeneratedError } from "ai";
-import type { FinishReason, ModelMessage } from "ai";
+import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import type { z } from "zod";
 
 import {
-  assertMaxOutputTokens,
-  assertSystemNotInMessages,
-  buildCacheableRequest,
-  readCacheCounters,
-} from "./cache-plumbing";
-import { resolveModel, type ModelAlias } from "./provider";
+  addUsage,
+  buildMessagesBody,
+  readMessage,
+  toSyncBody,
+  type CacheCounters,
+  type CallOptions,
+  type MessagesResponse,
+  type StopReason,
+  type Usage,
+} from "./messages";
+import { openRouterRequest } from "./openrouter";
 
-export interface GenerateObjectParams<T> {
-  /** Model tier. */
-  model: ModelAlias;
-  /** Zod schema for the object to extract; the result is validated against it. */
+export interface GenerateObjectParams<T> extends CallOptions {
+  /** Zod schema for the object to extract; the reply is decoded against it and validated with it. */
   schema: z.ZodType<T>;
-  /**
-   * User/assistant turns. The system prompt goes in `system`, NOT here (same rule + rationale as
-   * {@link generate}: a role:"system" entry in `messages` misplaces the cache breakpoint).
-   */
-  messages: ModelMessage[];
-  /** Optional system prompt. Pass it here, never as a message in `messages`. */
-  system?: string;
-  /**
-   * Mark the system prompt as an Anthropic ephemeral cache breakpoint (same mechanism as
-   * {@link generate}'s `cacheSystem`). Only engages above the model's minimum cacheable prefix
-   * (Haiku ~4096 tokens); below that it is silently a no-op. Verify via the returned `cache` counters.
-   */
-  cacheSystem?: boolean;
-  /**
-   * Max tokens to generate. Defaults to {@link DEFAULT_MAX_OUTPUT_TOKENS} (larger than `generate`'s
-   * 1024 default, since a structured-profile JSON is bigger than a one-line reply). If the model hits
-   * this mid-JSON the SDK can't parse the output — see the truncation note on {@link generateObject}.
-   */
-  maxOutputTokens?: number;
-  /** Sampling temperature (provider default when omitted). */
-  temperature?: number;
 }
 
 export interface GenerateObjectResult<T> {
   /** The validated object (conforms to `schema`). */
   object: T;
-  /**
-   * Why generation stopped, for a SUCCESSFUL parse. NOTE: unlike {@link generate}, a truncated or
-   * otherwise unparseable response does NOT arrive here — the AI SDK throws first (re-thrown as an
-   * `Error` with an actionable message). So this is `"length"` only in the rare case a length-stopped
-   * output still parsed and validated.
-   */
-  finishReason: FinishReason;
-  usage: { inputTokens?: number; outputTokens?: number; totalTokens?: number };
-  /** Anthropic prompt-cache accounting; both 0 when nothing was cached or for a non-Anthropic provider. */
-  cache: { creationInputTokens: number; readInputTokens: number };
+  /** Always a natural stop: a truncated or refused reply throws {@link ObjectGenerationError} instead. */
+  stopReason: StopReason | null;
+  /** Summed across attempts, including one that came back off-schema and was retried. */
+  usage: Usage;
+  cache: CacheCounters;
 }
 
+// Larger than generate()'s 1024: a structured-profile JSON is bigger than a one-line reply.
 const DEFAULT_MAX_OUTPUT_TOKENS = 2048;
+// Decoding is constrained to the schema, but the constraints it can't express (number bounds, string
+// lengths) are only described to the model, so a reply can still fail validation. One retry.
+const MAX_ATTEMPTS = 2;
 
-/** The model replied, but its output could not be parsed or validated against the schema (truncated,
- *  refused, or off-schema). Provider and network errors are never this class. */
+type Spent = { usage: Usage; cache: CacheCounters };
+
+/** The model replied, but not with a usable object: truncated, refused, or off-schema after the retry.
+ *  `spent` is what the failed attempts cost (zero from `parseObject`), so a caller can still count it.
+ *  Provider and network errors are never this class. */
 export class ObjectGenerationError extends Error {
-  constructor(message: string, options?: ErrorOptions) {
+  readonly spent: Spent;
+  constructor(message: string, options?: ErrorOptions & { spent?: Spent }) {
     super(message, options);
     this.name = "ObjectGenerationError";
+    this.spent = options?.spent ?? {
+      usage: { inputTokens: 0, outputTokens: 0, costUsd: 0 },
+      cache: { creationInputTokens: 0, readInputTokens: 0 },
+    };
   }
 }
 
 /**
- * Structured generation over the Vercel AI SDK + Anthropic — the {@link generate} sibling for
- * schema-validated output. Same cache plumbing and cache accounting; returns the validated object.
- *
- * Implemented over the AI SDK's STABLE `generateObject` (ai@5), NOT the experimental `Output.object`
- * path: on the pinned major `generateObject` is not deprecated while `experimental_output` is
- * experimental, so the stable call is the safer choice. This wrapper isolates the SDK surface.
- *
- * Decoding is constrained to the schema (Anthropic structured outputs); the provider's default is an
- * unconstrained forced tool call, whose input can break the schema. The mode is "outputFormat", not
- * "auto": "auto" falls back to that forced tool on any model newer than the pinned provider version,
- * and Sonnet 5.5 rejects forced tool use.
- *
- * TRUNCATION: the SDK's generateObject THROWS `NoObjectGeneratedError` when the output can't be
- * parsed/validated (the usual symptom of hitting `maxOutputTokens` mid-JSON, or a refusal) — it does NOT
- * return `finishReason: "length"`. We re-throw it as an {@link ObjectGenerationError} with an actionable
- * message (the SDK error is kept as `cause`); other provider errors propagate unwrapped (same posture as
- * {@link generate}).
+ * Structured generation: the {@link generate} sibling for schema-validated output. The schema goes out as
+ * the native `output_config.format` (constrained decoding, no forced tool call), converted by the Anthropic
+ * SDK's `zodOutputFormat`, which also moves the constraints the API can't enforce into field descriptions;
+ * the reply is then validated with the same zod schema, and an off-schema reply is retried once.
  */
 export async function generateObject<T>(
   params: GenerateObjectParams<T>,
 ): Promise<GenerateObjectResult<T>> {
-  const { model, schema, messages, system, cacheSystem, maxOutputTokens, temperature } = params;
-
-  assertSystemNotInMessages("generateObject", messages);
-  assertMaxOutputTokens("generateObject", maxOutputTokens);
-  const effectiveMax = maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS;
-  const req = buildCacheableRequest({ system, cacheSystem, messages });
-
-  const result = await aiGenerateObject({
-    model: resolveModel(model),
-    schema,
-    system: req.system,
-    messages: req.messages,
-    ...req.extra,
-    maxOutputTokens: effectiveMax,
-    ...(temperature === undefined ? {} : { temperature }),
-    providerOptions: { anthropic: { structuredOutputMode: "outputFormat" } },
-  }).catch((err: unknown) => {
-    if (NoObjectGeneratedError.isInstance(err)) {
-      const finishReason = err.finishReason;
-      const why =
-        finishReason === "length"
-          ? `output was truncated at maxOutputTokens=${effectiveMax}; raise the caller's maxOutputTokens`
-          : `the model did not return schema-valid JSON (finishReason=${finishReason ?? "unknown"})`;
-      throw new ObjectGenerationError(`generateObject(): ${why}.`, { cause: err });
-    }
-    throw err;
+  const format = zodOutputFormat(params.schema);
+  const body = buildMessagesBody("generateObject", params, {
+    defaultMaxOutputTokens: DEFAULT_MAX_OUTPUT_TOKENS,
+    cacheTtl: "5m",
+    format: { type: format.type, schema: format.schema },
   });
-
-  return {
-    object: result.object,
-    finishReason: result.finishReason,
-    usage: {
-      inputTokens: result.usage.inputTokens,
-      outputTokens: result.usage.outputTokens,
-      totalTokens: result.usage.totalTokens,
-    },
-    cache: readCacheCounters(result),
+  const request = toSyncBody(params, body);
+  const totals: Spent = {
+    usage: { inputTokens: 0, outputTokens: 0, costUsd: 0 },
+    cache: { creationInputTokens: 0, readInputTokens: 0 },
   };
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    const reply = readMessage(
+      await openRouterRequest<MessagesResponse>("POST", "/messages", request),
+    );
+    addUsage(totals, reply);
+    if (reply.stopReason === "max_tokens") {
+      throw new ObjectGenerationError(
+        `generateObject(): output was truncated at maxOutputTokens=${body.max_tokens}; raise the caller's ` +
+          "maxOutputTokens or lower its effort.",
+        { spent: totals },
+      );
+    }
+    if (reply.stopReason !== "end_turn") {
+      throw new ObjectGenerationError(
+        `generateObject(): the model stopped with "${reply.stopReason ?? "none"}" instead of an answer.`,
+        { spent: totals },
+      );
+    }
+    try {
+      return { object: format.parse(reply.text) as T, stopReason: reply.stopReason, ...totals };
+    } catch (err) {
+      lastError = err;
+    }
+  }
+  throw new ObjectGenerationError(
+    `generateObject(): the model did not return schema-valid JSON in ${MAX_ATTEMPTS} attempts.`,
+    { cause: lastError, spent: totals },
+  );
+}
+
+/** Parse and validate a structured reply's text against `schema` — for a batch request sent with a
+ *  `schema`, whose results come back as text. Throws {@link ObjectGenerationError}. */
+export function parseObject<T>(schema: z.ZodType<T>, text: string): T {
+  try {
+    return zodOutputFormat(schema).parse(text) as T;
+  } catch (err) {
+    throw new ObjectGenerationError("parseObject(): the reply is not schema-valid JSON.", {
+      cause: err,
+    });
+  }
 }

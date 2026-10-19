@@ -9,7 +9,7 @@ import { jobText, TITLE_CHARS } from "./job-text";
 
 /**
  * The digest SYNTHESIS prompt — one short "why this matches you" note per ranked job. Run via the
- * Message Batches API (Sonnet 4.6, 50% discount) one request per kept item; the system (rubric +
+ * Batch API (Sonnet, about half price) one request per kept item; the system (rubric +
  * profile) is the cached prefix shared across a user's items, the per-job text is the variable tail
  * ({@link renderDigestJob}). Synthesis writes the REASON only — it must NOT re-rank (order comes from
  * the rerank step). Output is plain text (no structured schema), so it avoids any
@@ -21,22 +21,23 @@ You are given the candidate's profile (summary, skills, target roles) in the sys
 
 Write the match note:
 - 1–2 sentences, addressed to the candidate in the second person ("You…", "Your…").
+- Never write in the first person: no "I", "me", "my", "we" or "our" anywhere in the note. The note speaks about the candidate and the role, never about its writer.
 - Ground it ONLY in the provided candidate profile and job posting. Name the specific overlap that makes this a fit — the skills, target role, seniority, or domain they share. Do NOT invent skills, experience, requirements, or facts not present in the text.
 - Be specific, not generic. "This matches your interest in distributed systems and your Go experience" — not "This looks like a great opportunity for you."
 - If the candidate's stated preferences (below the profile) name a target years-of-experience band, you MAY ground a seniority-fit remark in that declared experience level (e.g. "fits the ~2-5 years of experience you're targeting"); never contradict it. Salary and location stay off-limits regardless (next rule).
 - If the candidate listed dealbreakers, NEVER frame the note around anything they want to avoid; ground it only in genuine positive overlap.
 - Do NOT restate the whole job or list its requirements. Do NOT mention salary, location, or how to apply (the digest shows those separately). Do NOT use the company's marketing language.
-- If the fit is weak or you cannot find a concrete, grounded overlap, say so plainly in one sentence rather than overselling.
+- If the fit is weak or there is no concrete, grounded overlap, say so plainly in one sentence about the role rather than overselling.
 
 Output ONLY the note text — no preamble, no heading, no quotation marks, no markdown.`;
 
 /**
  * Compose the cached synthesis `system`: the rubric, then the candidate's profile via the shared
  * {@link composeProfileText} (the same representation retrieval + rerank used). The job is NOT here —
- * it's the per-request variable tail ({@link renderDigestJob}). NOTE: Sonnet 4.6 caches a prefix from
- * 1024 tokens, so a skill-dense profile on this ~450-token rubric can pay the 1h-TTL cache write (2x
- * base input) while reads within a batch are best-effort; the `synthesisCache*` counters on
- * `digests.counts` show whether it pays. The 50% batch discount is the load-bearing saving, not the cache.
+ * it's the per-request variable tail ({@link renderDigestJob}). NOTE: Sonnet 5.5 caches a prefix from
+ * 512 tokens, so this ~450-token rubric plus a profile usually pays the 1h-TTL cache write (2x base
+ * input) while reads within a batch are best-effort; the `synthesisCache*` counters on `digests.counts`
+ * show whether it pays. The batch discount is the load-bearing saving, not the cache.
  */
 export function buildDigestSystem(profile: StructuredProfile, prefs?: PromptPreferences): string {
   const base = `${DIGEST_SYNTHESIS_SYSTEM}\n\n=== Candidate profile ===\n${composeProfileText(profile)}`;

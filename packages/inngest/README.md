@@ -4,7 +4,7 @@ The per-user digest pipeline on **Inngest** — the durable orchestration that t
 profile + the live job corpus into ranked `digests` / `digest_items` rows with per-job reasons, then
 emails them (Phase 11). The sequence is: deterministic filter → pgvector retrieval (top ~50 vs
 `user_profiles.embedding`) → **synchronous** Haiku rerank (prompt-cached) → **batched** Sonnet
-synthesis (Anthropic Message Batches API) → persist → **send (Resend, idempotency-keyed) → bounded
+synthesis (OpenRouter Batch API) → persist → **send (Resend, idempotency-keyed) → bounded
 delivery poll → record** (`src/delivery.ts`).
 
 > **Phases 10/11 run on the local Inngest dev server** (`npx inngest-cli dev`, `INNGEST_DEV=1`) for
@@ -197,11 +197,11 @@ INNGEST_DEV=1 pnpm inngest:serve
 INNGEST_DEV=1 pnpm digest --user <uuid>     # or: INNGEST_DEV=1 pnpm digest --all
 ```
 
-Needs `DATABASE_URL` + `ANTHROPIC_API_KEY` (packages/llm/.env) and a CV-ingested,
+Needs `DATABASE_URL` + `OPENROUTER_API_KEY` (packages/llm/.env) and a CV-ingested,
 digest-enabled user; the Phase-11 send tail additionally needs `RESEND_API_KEY` (send) /
 `RESEND_API_KEY_FULL` (the delivery poll's read — full access) / `EMAIL_FROM`
 (packages/email/.env) in the SERVE process. The dev server's dashboard
-(http://localhost:8288) shows each step + the durable sleeps. Real, batch-discounted Anthropic spend;
+(http://localhost:8288) shows each step + the durable sleeps. Real, batch-discounted OpenRouter spend;
 a run takes a few minutes — and the CLI's verdict prints at persist, ~2–12 min BEFORE the send/poll
 tail finishes (watch the dashboard before checking the delivery columns).
 
@@ -210,7 +210,7 @@ tail finishes (watch the dashboard before checking the delivery columns).
 | Step | Who |
 |---|---|
 | All package code, the local dev server (`pnpm inngest:dev` — keyless), the end-to-end gate | **Agent** |
-| Provide `DATABASE_URL` + `ANTHROPIC_API_KEY` (already in place since Phase 9) | **User** |
+| Provide `DATABASE_URL` + `OPENROUTER_API_KEY` (the OpenRouter key replaced `ANTHROPIC_API_KEY` in 2026-10) | **User** |
 | **Resend account + API key + verified sending domain (SPF/DKIM/DMARC) + `EMAIL_FROM`** | **User (Phase 11)** |
 | Production serve route (SvelteKit-on-Vercel, `apps/web`) + the cadence cron (`10 12 * * *`; `0 13 * * *` until 2026-10) + the F8 backfill cron | Built + deployed (12a; live 2026-06-17) |
 | **Inngest Cloud account + app sync; `INNGEST_SIGNING_KEY`/`INNGEST_EVENT_KEY` auto-provisioned by the Inngest↔Vercel integration (`INNGEST_DEV` UNSET)** | Done (User, deployed 2026-06-17) |

@@ -20,7 +20,7 @@ pipeline, and delivers a personalized digest on a regular cadence. See
 | `packages/embeddings/` | Voyage `voyage-4-large` embeddings + HNSW retrieval ([README](packages/embeddings/README.md))                                                                                                     |
 | `packages/eval/`       | Matching-quality eval harness — metrics, rankers, reports ([README](packages/eval/README.md))                                                                                                     |
 | `packages/inngest/`    | Per-user digest pipeline on Inngest — orchestrator + per-user fn + cadence cron + F8 backfills, serve + trigger CLI (Phase 10; cadence/backfills Phase 12a) ([README](packages/inngest/README.md)) |
-| `packages/llm/`        | Vercel AI SDK + Anthropic wrapper, prompt caching, structured output, Message Batches (Phase 10) ([README](packages/llm/README.md))                                                               |
+| `packages/llm/`        | Claude (Haiku/Sonnet 5.5) through OpenRouter: prompt caching, structured output, effort/thinking controls, Batch API ([README](packages/llm/README.md))                                          |
 | `packages/profiles/`   | CV → semantic-profile pipeline — transcribe → structure → embed (Phase 9) ([README](packages/profiles/README.md))                                                                                 |
 | `packages/rerank/`     | Shared listwise LLM rerank core — `RerankCall` injection, runs in both the digest pipeline and eval (Phase 10) ([README](packages/rerank/README.md))                                              |
 | `packages/shared/`     | Shared brand types + validators ([README](packages/shared/README.md))                                                                                                                             |
@@ -42,8 +42,8 @@ pnpm install
 # the repo, never packages/db/.env, which agents can read. Single-quote it there (Neon URLs contain &):
 #   set -a; . ~/.config/opusfinder/db.env; set +a
 #
-# For the LLM package (Phase 3), paste your Anthropic key into packages/llm/.env:
-#   ANTHROPIC_API_KEY=sk-ant-...   (or export it as a shell env var)
+# For the LLM package, paste your OpenRouter key into packages/llm/.env:
+#   OPENROUTER_API_KEY=sk-or-...   (or export it as a shell env var)
 #
 # For the embeddings package (Phase 4), paste your Voyage key into packages/embeddings/.env:
 #   VOYAGE_API_KEY=pa-...   (or export it as a shell env var)

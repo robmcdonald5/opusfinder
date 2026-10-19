@@ -34,7 +34,11 @@ const repos = vi.hoisted(() => ({
 }));
 vi.mock("@opusfinder/db/repos", () => repos);
 
-const llm = vi.hoisted(() => ({ buildDigestSystem: vi.fn(), renderDigestJob: vi.fn() }));
+const llm = vi.hoisted(() => ({
+  buildDigestSystem: vi.fn(),
+  renderDigestJob: vi.fn(),
+  BatchEndedError: class BatchEndedError extends Error {},
+}));
 vi.mock("@opusfinder/llm", () => llm);
 
 const probeMod = vi.hoisted(() => ({ probeDigestLiveness: vi.fn() }));
@@ -52,6 +56,11 @@ const batchPoll = vi.fn();
 const batchCollect = vi.fn();
 const email = { send: vi.fn(), lastEvent: vi.fn() };
 const probe = vi.fn();
+
+/** Collect resolves to these results plus the batch total OpenRouter charged. */
+function mockCollect(results: Map<string, unknown>): void {
+  batchCollect.mockResolvedValue({ results, costUsd: 0.004 });
+}
 
 function makeDeps(enforceLifecycle = false): DigestDeps {
   return {
@@ -109,7 +118,7 @@ beforeEach(() => {
       [1, 0.9],
       [2, 0.8],
     ]),
-    usage: { inputTokens: 300, outputTokens: 40 },
+    usage: { inputTokens: 300, outputTokens: 40, costUsd: 0.003 },
     cache: { creationInputTokens: 10, readInputTokens: 20 },
   });
   batchSubmit.mockResolvedValue("batch-1");
@@ -120,7 +129,7 @@ beforeEach(() => {
     cacheCreationInputTokens: 5,
     cacheReadInputTokens: 7,
   };
-  batchCollect.mockResolvedValue(
+  mockCollect(
     new Map([
       [
         `d${RUN_ID}-1`,
@@ -311,7 +320,8 @@ describe("runPerUser", () => {
       "collect-synthesis",
       "persist",
     ]);
-    // Per-digest spend: rerank usage as reported, synthesis usage summed over the batch's results.
+    // Per-digest spend: rerank usage as reported, synthesis usage summed over the batch's results, and
+    // the synthesis cost as the batch total.
     expect(repos.insertDigest.mock.calls[0]![1].counts).toEqual({
       candidates: 2,
       reranked: 2,
@@ -320,10 +330,12 @@ describe("runPerUser", () => {
       rerankOutputTokens: 40,
       rerankCacheReadTokens: 20,
       rerankCacheCreationTokens: 10,
+      rerankCostUsd: 0.003,
       synthesisInputTokens: 200,
       synthesisOutputTokens: 60,
       synthesisCacheReadTokens: 14,
       synthesisCacheCreationTokens: 10,
+      synthesisCostUsd: 0.004,
     });
     expect(sleeps).toEqual(["synthesis-initial-wait"]); // poll ended first tick → no synthesis-wait
     expect(probeMod.probeDigestLiveness).toHaveBeenCalledWith(
@@ -537,7 +549,7 @@ describe("runPerUser", () => {
         [1, 0.4],
         [2, 0.3],
       ]),
-      usage: { inputTokens: 300, outputTokens: 40 },
+      usage: { inputTokens: 300, outputTokens: 40, costUsd: 0.003 },
       cache: { creationInputTokens: 10, readInputTokens: 20 },
     });
     const { runs, tools } = recordingStep();
@@ -553,7 +565,7 @@ describe("runPerUser", () => {
     rerank.mockResolvedValue({
       orderedIds: [1, 2], // the core's backfilled permutation, with nothing scored
       scores: new Map(),
-      usage: { inputTokens: 300, outputTokens: 40 },
+      usage: { inputTokens: 300, outputTokens: 40, costUsd: 0.003 },
       cache: { creationInputTokens: 10, readInputTokens: 20 },
     });
     const { tools } = recordingStep();
@@ -600,7 +612,7 @@ describe("runPerUser", () => {
     rerank.mockResolvedValue({
       orderedIds: [999],
       scores: new Map([[999, 0.9]]),
-      usage: { inputTokens: 0, outputTokens: 0 },
+      usage: { inputTokens: 0, outputTokens: 0, costUsd: 0 },
       cache: { creationInputTokens: 0, readInputTokens: 0 },
     });
     const { tools } = recordingStep();
@@ -678,8 +690,19 @@ describe("runPerUser", () => {
     expect(durationById.get("synthesis-wait-30")).toBe("10m"); // first slow (i=30, not < 30)
   });
 
+  it("fails the run without retries when the batch ended without results", async () => {
+    batchCollect.mockRejectedValue(new llm.BatchEndedError("batch batch-1 is expired, not completed"));
+    const { tools } = recordingStep();
+
+    const err = await rejectionOf(runPerUser(makeDeps(), event(), tools));
+
+    expect(err).toBeInstanceOf(NonRetriableError);
+    expect(err.message).toBe("batch batch-1 is expired, not completed");
+    expect(repos.insertDigest).not.toHaveBeenCalled();
+  });
+
   it("throws when synthesis yields no usable reason for any item, naming each drop reason", async () => {
-    batchCollect.mockResolvedValue(
+    mockCollect(
       new Map([
         [`d${RUN_ID}-1`, { text: "  ", status: "succeeded", stopReason: "end_turn" }], // trimmed empty
         [`d${RUN_ID}-2`, { text: "", status: "errored", error: "overloaded_error" }], // non-succeeded
@@ -697,7 +720,7 @@ describe("runPerUser", () => {
   });
 
   it("drops a note cut off at max_tokens even though its request succeeded", async () => {
-    batchCollect.mockResolvedValue(
+    mockCollect(
       new Map([
         [
           `d${RUN_ID}-1`,
@@ -719,7 +742,7 @@ describe("runPerUser", () => {
     // job 1's synthesis errored (dropped by the reason filter); job 2 succeeded. job 2 was index 1 pre-filter,
     // so it must be RENUMBERED to rank 1 — the only test that exercises the kept-map renumbering (i + 1) with
     // a hole punched in the middle (the all-keep and all-drop tests can't observe i + 1 vs i).
-    batchCollect.mockResolvedValue(
+    mockCollect(
       new Map([
         [`d${RUN_ID}-1`, { text: "reason one", status: "errored" }], // non-succeeded → dropped
         [`d${RUN_ID}-2`, { text: "reason two", status: "succeeded", stopReason: "end_turn" }], // survives
@@ -744,7 +767,7 @@ describe("runPerUser", () => {
     "Your Go work fits; see www.evil.example for the next step.",
     "Your Go work fits; send your CV to jobs@evil.example to be fast-tracked.",
   ])("drops a note carrying a link or email address: %s", async (injected) => {
-    batchCollect.mockResolvedValue(
+    mockCollect(
       new Map([
         [`d${RUN_ID}-1`, { text: injected, status: "succeeded", stopReason: "end_turn" }],
         [

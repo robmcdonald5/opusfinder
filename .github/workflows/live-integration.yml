@@ -2,8 +2,8 @@
 # the secret-free ci.yml deliberately CANNOT cover (VITEST_MIGRATION_PLAN §7b / §8 / §9 Q6). It runs the
 # `live` vitest project (`pnpm test:live`) with the per-provider opt-in flags set, so ONLY the admitted
 # providers light up: Neon (auth neon-serverless interactive tx + digest neon-http payload type parity),
-# Voyage (live voyage-4-large embeddings), and R2 (object round-trip). Anthropic (prompt-cache
-# observability) and Resend (delivery lifecycle) stay MANUAL — un-mockable / unbounded cost — so their
+# Voyage (live voyage-4-large embeddings), and R2 (object round-trip). The LLM calls via OpenRouter
+# (prompt-cache observability) and Resend (delivery lifecycle) stay MANUAL — un-mockable / unbounded cost — so their
 # gates' flags are deliberately NOT set here (§9 Q6).
 #
 # NEVER `pull_request`: fork PRs get no secrets by platform default, and this lane must never expose keys to
@@ -18,7 +18,7 @@
 #        R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY,
 #        R2_BUCKET_NAME, R2_ACCOUNT_ID                — the R2 round-trip gate (dedicated `opusfinder-ci`
 #                                                       bucket; token scoped to Object Read/Write on it only)
-#   3. Do NOT add ANTHROPIC_API_KEY / RESEND_* here — those gates stay manual (§9 Q6).
+#   3. Do NOT add OPENROUTER_API_KEY / RESEND_* here — those gates stay manual (§9 Q6).
 #   Third-party actions are pinned to full commit SHAs (Dependabot bumps the trailing-comment version): a
 #   compromised action in a secrets job reads keys in plaintext, so pinning + source audit is the primary
 #   supply-chain control for a solo private repo (fork surface is already zero). No `cache: pnpm` either:
@@ -107,7 +107,7 @@ jobs:
           DIGEST_LIVE_TEST: "1" # Neon: getDigestEmailPayload neon-http type-mapping parity
           VOYAGE_LIVE_TEST: "1" # Voyage: live voyage-4-large embeddings
           R2_LIVE_TEST: "1" # R2: object put/get/delete round-trip
-          # NO PREFS_LIVE_TEST / ANTHROPIC_API_KEY / RESEND_* — those gates stay manual (§9 Q6).
+          # NO PREFS_LIVE_TEST / OPENROUTER_API_KEY / RESEND_* — those gates stay manual (§9 Q6).
 
       - name: Delete ephemeral Neon branch
         # Tear down even when the gates FAIL — but only if the branch was actually created. Deleting a
