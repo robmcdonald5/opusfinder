@@ -9,7 +9,7 @@ export {
   renderPair,
 } from "./prompt";
 export type { PromptPair } from "./prompt";
-export { LocationAnswerSchema, LOCATION_ANSWER_JSON_SCHEMA } from "./schema";
+export { LocationAnswerSchema } from "./schema";
 export type { AnsweredPlace, LocationAnswerValue } from "./schema";
 export { checkAnswers, loadGazetteer } from "./check";
 export type { CheckedAnswer, Gazetteer } from "./check";

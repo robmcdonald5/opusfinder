@@ -6,7 +6,7 @@
  * provider.
  */
 import { LOCATION_SYSTEM, renderPair, type PromptPair } from "./prompt";
-import { LOCATION_ANSWER_JSON_SCHEMA } from "./schema";
+import { LocationAnswerSchema } from "./schema";
 
 /** Output budget: the longest strings name ~20 cities, ~40 tokens each, plus the reason. */
 const MAX_OUTPUT_TOKENS = 1024;
@@ -18,8 +18,8 @@ export interface LocationRequest {
   system: string;
   /** The pair's data. */
   user: string;
-  /** The JSON Schema the answer must follow, sent as the structured-output format. */
-  schema: Record<string, unknown>;
+  /** The schema the answer must follow, sent as the structured-output format. */
+  schema: typeof LocationAnswerSchema;
   maxOutputTokens: number;
   /** A short extraction: the lowest effort, and no thinking. */
   effort: "low";
@@ -51,7 +51,7 @@ export function buildLocationRequest(id: string, pair: PromptPair): LocationRequ
     id,
     system: LOCATION_SYSTEM,
     user: renderPair(pair),
-    schema: LOCATION_ANSWER_JSON_SCHEMA,
+    schema: LocationAnswerSchema,
     maxOutputTokens: MAX_OUTPUT_TOKENS,
     effort: "low",
     thinking: "off",

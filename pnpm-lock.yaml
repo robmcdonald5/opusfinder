@@ -328,6 +328,9 @@ importers:
       '@opusfinder/db':
         specifier: workspace:*
         version: link:../db
+      '@opusfinder/llm':
+        specifier: workspace:*
+        version: link:../llm
       '@opusfinder/shared':
         specifier: workspace:*
         version: link:../shared

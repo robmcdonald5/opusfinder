@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { buildLocationRequest } from "./model";
 import { LOCATION_SYSTEM, PROMPT_STRINGS, renderPair } from "./prompt";
-import { LOCATION_ANSWER_JSON_SCHEMA, LocationAnswerSchema } from "./schema";
+import { LocationAnswerSchema } from "./schema";
 
 describe("location request", () => {
   it("sends the same system block and schema for every pair, at low effort with thinking off", () => {
@@ -12,7 +12,7 @@ describe("location request", () => {
       company: { slug: "stripe", source: "greenhouse", otherStrings: ["Dublin, Ireland"] },
     });
     expect(a.system).toBe(b.system);
-    expect(a.schema).toBe(LOCATION_ANSWER_JSON_SCHEMA);
+    expect(a.schema).toBe(LocationAnswerSchema);
     expect(a).toMatchObject({ id: "p0", effort: "low", thinking: "off", maxOutputTokens: 1024 });
     expect(b.user).not.toBe(a.user);
   });

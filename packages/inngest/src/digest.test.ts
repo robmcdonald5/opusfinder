@@ -703,6 +703,7 @@ describe("runPerUser", () => {
         rerankOutputTokens: 40,
         rerankCacheReadTokens: 20,
         rerankCacheCreationTokens: 10,
+        rerankCostUsd: 0.003,
       },
     });
     expect(deliveryMod.deliverDigestEmail).not.toHaveBeenCalled();

@@ -27,17 +27,18 @@ request `buildLocationRequest` builds, so the daily path and the backfill can't 
 
 ## Commands
 
-| Command                                         | Does                                                                                                                   |
-| ----------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| `pnpm locations:sync`                           | The digest's daily step by hand: resolve every active pair with no row, a few requests at a time                       |
-| `pnpm locations:backfill [-- --dry-run]`        | One provider batch over every pair with no row, a row from another prompt version, or no answer                        |
-| `pnpm locations:report [-- --limit 25]`         | On-site coverage by source; worklists by active-job count (no usable place, low confidence, failed check, no answer)   |
+| Command                                          | Does                                                                                                                  |
+| ------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------- |
+| `pnpm locations:sync`                            | The digest's daily step by hand: resolve every active pair with no row, a few requests at a time                      |
+| `pnpm locations:backfill [-- --dry-run]`         | One provider batch over every pair with no row, a row from another prompt version, or no answer                       |
+| `pnpm locations:report [-- --limit 25]`          | On-site coverage by source; worklists by active-job count (no usable place, low confidence, failed check, no answer)  |
 | `pnpm locations:explain -- --email … --job <id>` | Each of the job's strings: places, confidence, reason, version, miles from home; the rule case + verdict; cosine rank |
-| `pnpm locations:explain -- --email …`           | The user's top candidates after the location filter, with place + distance (`--all`: every approved user)              |
+| `pnpm locations:explain -- --email …`            | The user's top candidates after the location filter, with place + distance (`--all`: every approved user)             |
 
 The digest orchestrator runs the daily step itself before its fan-out (see `@opusfinder/inngest`). All of
-them need `DATABASE_URL`; sync, backfill and explain's previews read production, and sync/backfill write
-`location_strings` (owner-run). `--recency-days N` on explain overrides the user's recency window for a
+them need `DATABASE_URL`; sync and backfill also need `OPENROUTER_API_KEY` (`packages/llm/.env`) and write
+`location_strings` (owner-run). The backfill sends batches of up to 2,000 requests at once and waits for
+all of them (minutes to hours). `--recency-days N` on explain overrides the user's recency window for a
 preview.
 
 ## Changing the prompt
