@@ -38,8 +38,9 @@ export type LocationAnswer =
   | { status: "failed"; reason: string };
 
 export interface LocationModel {
-  /** One request, answered now. Throws when the request itself fails (network, auth, rate limit, server
-   *  error) once the transport's retries are spent. */
+  /** One request, answered now. A reply with nothing usable in it (refused, cut off, off-schema) returns
+   *  `no-answer` and never throws; it throws only when the request itself fails (network, auth, rate
+   *  limit, server error) once the transport's retries are spent. */
   generate(request: LocationRequest): Promise<Exclude<LocationAnswer, { status: "failed" }>>;
   /** Many requests as one provider batch, waited to completion. Every request id is in the result. */
   batch(requests: LocationRequest[]): Promise<Map<string, LocationAnswer>>;

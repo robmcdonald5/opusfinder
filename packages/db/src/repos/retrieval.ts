@@ -102,7 +102,9 @@ export async function retrieveCandidatesForProfile(
       id: Number(r.id),
       title: typeof r.title === "string" ? r.title : String(r.title),
       descriptionText:
-        typeof r.description_text === "string" ? r.description_text : String(r.description_text ?? ""),
+        typeof r.description_text === "string"
+          ? r.description_text
+          : String(r.description_text ?? ""),
       contentSignature: typeof r.content_signature === "string" ? r.content_signature : null,
       distance: Number(r.distance),
     } satisfies JobCandidate;
@@ -148,8 +150,9 @@ export function candidateFilterSql(
 }
 
 /**
- * How many location strings are local for this home: they name a city within the radius or the home
- * region. Recorded per digest, so a user whose home has no placed jobs near it shows up as 0.
+ * How many location strings an active job lists that are local for this home: they name a city within
+ * the radius or the home region. Recorded per digest, so a user whose home has no placed jobs near it
+ * shows up as 0.
  */
 export async function countLocalStrings(
   db: Db,
@@ -157,7 +160,10 @@ export async function countLocalStrings(
 ): Promise<number> {
   const result = await db.execute(sql`
     WITH ${homeAndStringFlagsSql(home)}
-    SELECT count(*)::int AS n FROM string_flags WHERE near_city OR home_region
+    SELECT count(*)::int AS n FROM string_flags f
+    WHERE (f.near_city OR f.home_region)
+      AND EXISTS (SELECT 1 FROM ${jobs} j WHERE j.company_id = f.company_id
+                  AND j.lifecycle_state = 'active' AND j.locations ? f.raw)
   `);
   const row = resultRows(result)[0] as { n?: unknown } | undefined;
   return Number(row?.n ?? 0);

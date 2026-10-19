@@ -94,7 +94,9 @@ export async function listCompanyStrings(
 
 const UPSERT_CHUNK = 500;
 
-/** Insert or replace rows by (company_id, raw), stamping resolved_at. */
+/** Insert or replace rows by (company_id, raw), stamping resolved_at. A row the model gave no answer for
+ *  (confidence NULL) never replaces one it did answer: a re-run that hits a refusal keeps the older answer
+ *  (and its older prompt version, so the next backfill tries again). */
 export async function upsertLocationStrings(db: Db, rows: LocationStringRow[]): Promise<void> {
   for (let i = 0; i < rows.length; i += UPSERT_CHUNK) {
     await db
@@ -111,6 +113,7 @@ export async function upsertLocationStrings(db: Db, rows: LocationStringRow[]): 
           promptVersion: sql`excluded.prompt_version`,
           resolvedAt: sql`now()`,
         },
+        setWhere: sql`excluded.confidence IS NOT NULL OR ${locationStrings.confidence} IS NULL`,
       });
   }
 }

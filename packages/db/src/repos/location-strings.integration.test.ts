@@ -132,6 +132,22 @@ describe("location_strings repos (integration: real PGlite)", () => {
     expect(stored[0]).toMatchObject({ placeIds: [P.COLUMBUS_OH], confidence: "high" });
   });
 
+  it("never replaces an answered row with one the model gave no answer for", async () => {
+    await upsertLocationStrings(db, [
+      row(acme, "Columbus, OH", { placeIds: [P.COLUMBUS_OH], promptVersion: "0" }),
+    ]);
+    await upsertLocationStrings(db, [
+      row(acme, "Columbus, OH", { confidence: null, reason: "not resolved: refusal" }),
+    ]);
+    const [kept] = await db.select().from(locationStrings);
+    // The old answer stays, with its old version, so the next backfill tries this pair again.
+    expect(kept).toMatchObject({
+      placeIds: [P.COLUMBUS_OH],
+      confidence: "high",
+      promptVersion: "0",
+    });
+  });
+
   it("lists each company's strings, most-listed first, capped per company", async () => {
     const strings = await listCompanyStrings(db, [acme, globex], 2);
     expect(strings.get(acme)).toEqual(["Columbus, OH", "Remote"]);

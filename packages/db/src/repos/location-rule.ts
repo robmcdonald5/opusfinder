@@ -17,6 +17,11 @@
  * MATERIALIZED CTE, computed once per query), and `job_flags` folds those onto each job through its raw
  * `locations` with a hash join. A job's strings are matched by exact text within its company, the
  * location_strings key.
+ *
+ * A pass that rests on something being ABSENT ("names no country", "names your region and no city in
+ * it") holds only when every one of the job's strings is resolved: a string with no row yet, or one the
+ * model gave no answer for, could name exactly what is missing. Passes that rest on something present
+ * (a city within the radius, the user's country) hold regardless.
  */
 import { sql, type SQL } from "drizzle-orm";
 
@@ -75,11 +80,12 @@ export function locationRule(filter: LocationFilter, jobFilter: SQL): LocationRu
              bool_or(f.home_region) AS home_region,
              bool_or(f.city_in_home_region) AS city_in_home_region,
              bool_or(f.home_country) AS home_country,
-             bool_or(f.names_country) AS names_country
+             bool_or(f.names_country) AS names_country,
+             bool_and(COALESCE(f.resolved, false)) AS all_resolved
       FROM ${jobs} j
       CROSS JOIN LATERAL jsonb_array_elements_text(j.locations) AS l(raw)
-      JOIN string_flags f ON f.company_id = j.company_id AND f.raw = l.raw
-      WHERE ${jobFilter}
+      LEFT JOIN string_flags f ON f.company_id = j.company_id AND f.raw = l.raw
+      WHERE ${jobFilter} AND btrim(l.raw) <> ''
       GROUP BY j.id
     )`,
     join: sql`LEFT JOIN job_flags jf ON jf.job_id = j.id`,
@@ -90,8 +96,9 @@ export function locationRule(filter: LocationFilter, jobFilter: SQL): LocationRu
 
 /**
  * The `home` and `string_flags` CTEs (without the WITH keyword): per location string, whether it names
- * a city within the radius, the home region, a city in the home region, the home country, any country.
- * Exported for the per-string breakdown in locations:explain and the digest's local-string count.
+ * a city within the radius, the home region, a city in the home region, the home country, any country
+ * (a place, a remote country, or a place that failed the check), and whether the model answered it at
+ * all. Exported for the digest's local-string count.
  */
 export function homeAndStringFlagsSql(home: { placeId: number; radiusMiles: number }): SQL {
   const miles = milesBetween(sql`h.lat`, sql`h.lng`, sql`p.lat`, sql`p.lng`);
@@ -108,12 +115,14 @@ export function homeAndStringFlagsSql(home: { placeId: number; radiusMiles: numb
                               AND p.region_code = h.region_code), false) AS city_in_home_region,
              (COALESCE(bool_or(p.country_code = h.country_code), false)
               OR h.country_code = ANY(s.remote_countries)) AS home_country,
-             (count(p.geonames_id) > 0 OR cardinality(s.remote_countries) > 0) AS names_country
+             (count(p.geonames_id) > 0 OR cardinality(s.remote_countries) > 0
+              OR jsonb_array_length(s.unmatched) > 0) AS names_country,
+             s.confidence IS NOT NULL AS resolved
       FROM ${locationStrings} s
       CROSS JOIN home h
       LEFT JOIN LATERAL unnest(s.place_ids) AS u(place_id) ON true
       LEFT JOIN ${places} p ON p.geonames_id = u.place_id
-      GROUP BY s.company_id, s.raw, s.remote_countries, h.country_code
+      GROUP BY s.company_id, s.raw, h.country_code
     )`;
 }
 
@@ -126,16 +135,23 @@ function ruleCases({ mode, home }: LocationFilter): RuleCase[] {
   } else if (!home) {
     cases.push({ when: sql`j.remote`, pass: true, label: "remote job (no home place set)" });
   } else {
+    // A job with no location strings at all has no job_flags row: nothing named, nothing unresolved.
+    const noCountry = sql`NOT COALESCE(jf.names_country, false)`;
     cases.push(
-      {
-        when: sql`j.remote AND NOT COALESCE(jf.names_country, false)`,
-        pass: true,
-        label: "remote job naming no country",
-      },
       {
         when: sql`j.remote AND jf.home_country`,
         pass: true,
         label: "remote job open to your country",
+      },
+      {
+        when: sql`j.remote AND ${noCountry} AND COALESCE(jf.all_resolved, true)`,
+        pass: true,
+        label: "remote job naming no country",
+      },
+      {
+        when: sql`j.remote AND ${noCountry}`,
+        pass: false,
+        label: "remote job with a location not resolved yet",
       },
       { when: sql`j.remote`, pass: false, label: "remote job open only to other countries" },
     );
@@ -152,9 +168,14 @@ function ruleCases({ mode, home }: LocationFilter): RuleCase[] {
         label: `on-site job with a city within ${home.radiusMiles} mi`,
       },
       {
-        when: sql`jf.home_region AND NOT jf.city_in_home_region`,
+        when: sql`jf.home_region AND NOT jf.city_in_home_region AND jf.all_resolved`,
         pass: true,
         label: "on-site job naming your region and no city in it",
+      },
+      {
+        when: sql`jf.home_region AND NOT jf.city_in_home_region`,
+        pass: false,
+        label: "on-site job naming your region, with a location not resolved yet",
       },
       {
         when: sql`jf.home_region`,

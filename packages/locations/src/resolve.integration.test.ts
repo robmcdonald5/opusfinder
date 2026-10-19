@@ -175,15 +175,34 @@ describe("resolving location strings (integration: real PGlite, stub model)", ()
     expect(others).not.toContain('- "Dublin"');
   });
 
-  it("retries a failing request, then throws without storing that chunk", async () => {
+  it("throws, storing nothing, when every request in the chunk fails after its retries", async () => {
     const model = stubModel();
     model.generate = vi.fn(async () => {
       throw new Error("503 from the provider");
     });
 
-    await expect(syncLocationStrings(db, model, { limit: 1 })).rejects.toThrow(/503/);
-    expect(model.generate).toHaveBeenCalledTimes(3); // three attempts, then the step fails
+    await expect(syncLocationStrings(db, model, { limit: 2 })).rejects.toThrow(/503/);
+    expect(model.generate).toHaveBeenCalledTimes(6); // two requests, three attempts each
     expect((await stored()).size).toBe(0);
+  });
+
+  it("stores a request that keeps failing as unresolved, so it can't block the rest", async () => {
+    const model = stubModel();
+    const answer = model.generate;
+    model.generate = vi.fn(async (r: LocationRequest) => {
+      if (rawOf(r) === "Atlantis") throw new TypeError("the provider rejected this input");
+      return answer(r);
+    });
+
+    const result = await syncLocationStrings(db, model, { limit: 3 });
+
+    expect(result).toMatchObject({ resolved: 2, unanswered: 1, more: true });
+    const rows = await stored();
+    expect(rows.get("Atlantis")).toMatchObject({
+      confidence: null,
+      reason: "not resolved: the request failed (TypeError)",
+    });
+    expect(rows.get("Columbus, OH")!.placeIds).toEqual([P.COLUMBUS_OH]);
   });
 
   it("the backfill sends one batch over missing, stale and unanswered pairs; a failed request gets no row", async () => {

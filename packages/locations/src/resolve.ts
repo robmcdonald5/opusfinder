@@ -58,8 +58,10 @@ export interface PairOutcome {
 
 /**
  * The daily path: resolve up to `limit` active pairs that have no row yet, most-listed first. A request
- * that keeps failing throws (after retries), so the caller's run fails visibly instead of filtering on
- * strings nobody resolved; whatever was stored before the throw stays stored.
+ * that still fails after its retries is stored as unresolved (the backfill tries it again), so one string
+ * the provider keeps rejecting can't block every run. When EVERY request in the chunk fails, that is an
+ * outage: it throws and stores nothing, so the caller's run fails visibly instead of filtering on strings
+ * nobody resolved.
  */
 export async function syncLocationStrings(
   db: Db,
@@ -76,8 +78,24 @@ export async function syncLocationStrings(
     return { resolved: 0, unanswered: 0, failed: 0, unmatchedPlaces: 0, more: false };
   const gazetteer = opts.gazetteer ?? (await loadGazetteer(db));
   const requests = await buildRequests(db, pairs);
-  const answers = await mapConcurrent(requests, SYNC_CONCURRENCY, (r) =>
-    generateWithRetries(model, r),
+  const settled = await mapConcurrent(
+    requests,
+    SYNC_CONCURRENCY,
+    async (r): Promise<{ ok: true; answer: LocationAnswer } | { ok: false; error: unknown }> => {
+      try {
+        return { ok: true, answer: await generateWithRetries(model, r) };
+      } catch (error) {
+        return { ok: false, error };
+      }
+    },
+  );
+  const failures = settled.flatMap((s) => (s.ok ? [] : [s.error]));
+  if (failures.length === settled.length) throw failures[0];
+  const answers = settled.map(
+    (s): LocationAnswer =>
+      s.ok
+        ? s.answer
+        : { status: "no-answer", reason: `the request failed (${errorName(s.error)})` },
   );
   const outcomes = await storeAnswers(db, gazetteer, pairs, answers);
   return { ...countOutcomes(outcomes), more: pairs.length === limit };
@@ -223,8 +241,12 @@ async function generateWithRetries(
   }
 }
 
-/** Map with at most `limit` calls in flight; results keep the input order. After a call throws, no new
- *  call starts, and the first error is what rejects. */
+/** The error's class name: enough to tell an outage from a rejected request, and never a secret. */
+function errorName(error: unknown): string {
+  return error instanceof Error ? error.name : "error";
+}
+
+/** Map with at most `limit` calls in flight; results keep the input order. */
 async function mapConcurrent<T, R>(
   items: T[],
   limit: number,
@@ -232,16 +254,10 @@ async function mapConcurrent<T, R>(
 ): Promise<R[]> {
   const out = new Array<R>(items.length);
   let next = 0;
-  let stopped = false;
   const worker = async () => {
-    while (next < items.length && !stopped) {
+    while (next < items.length) {
       const i = next++;
-      try {
-        out[i] = await fn(items[i]!);
-      } catch (err) {
-        stopped = true;
-        throw err;
-      }
+      out[i] = await fn(items[i]!);
     }
   };
   await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));

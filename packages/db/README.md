@@ -236,7 +236,8 @@ EXISTS`) removes the seven job-side enrichment columns added by 0013 (`yoe_min`/
   50); `locations` is no longer read and a later migration drops it. `repos/location-rule.ts` is the whole
   location filter as SQL (retrieval's WHERE, and `locations:explain`'s verdicts): no home → location mode
   only; remote jobs pass if they name no country or the user's; on-site jobs pass with a city within the
-  radius (haversine, miles) or the user's region and no city in it. `repos/location-report.ts` holds the
+  radius (haversine, miles) or the user's region and no city in it. The two passes that rest on something
+  being absent hold only when every one of the job's strings is resolved. `repos/location-report.ts` holds the
   report/explain reads. **Apply BEFORE the code that reads these columns deploys** (drizzle selects every
   column of `user_preferences`).
 - **neon-http migrations are NOT transactional.** `pnpm db:migrate` (drizzle's neon-http migrator) runs

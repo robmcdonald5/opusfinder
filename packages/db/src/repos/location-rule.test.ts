@@ -28,11 +28,13 @@ describe("locationRule — what it emits per user", () => {
     const ctes = render(rule.ctes!).sql;
     expect(ctes).toContain("string_flags AS MATERIALIZED");
     expect(render(rule.verdict).params).toEqual([
-      "remote job naming no country",
       "remote job open to your country",
+      "remote job naming no country",
+      "remote job with a location not resolved yet",
       "remote job open only to other countries",
       "on-site job with a city within 25 mi",
       "on-site job naming your region and no city in it",
+      "on-site job naming your region, with a location not resolved yet",
       "on-site job naming a city in your region beyond 25 mi",
       "on-site job with no usable place",
       "on-site job with no place near you",

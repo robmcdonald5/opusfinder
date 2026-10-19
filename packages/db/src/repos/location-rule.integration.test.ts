@@ -35,6 +35,10 @@ interface StringSpec {
   raw: string;
   placeIds?: number[];
   remoteCountries?: string[];
+  /** The model gave no usable answer (confidence NULL). */
+  unanswered?: boolean;
+  /** A place the model named that failed the GeoNames check. */
+  unmatchedCountry?: string;
 }
 
 const COLUMBUS_50: LocationFilter["home"] = { placeId: P.COLUMBUS_OH, radiusMiles: 50 };
@@ -96,8 +100,18 @@ describe("location rule in retrieval (integration: real PGlite)", () => {
         raw: s.raw,
         placeIds: s.placeIds ?? [],
         remoteCountries: s.remoteCountries ?? [],
-        unmatched: [],
-        confidence: "high" as const,
+        unmatched: s.unmatchedCountry
+          ? [
+              {
+                city: null,
+                region: null,
+                country: s.unmatchedCountry,
+                kind: "country" as const,
+                why: "unknown-country" as const,
+              },
+            ]
+          : [],
+        confidence: s.unanswered ? null : ("high" as const),
         reason: "fixture",
         promptVersion: "test",
       });
@@ -156,6 +170,20 @@ describe("location rule in retrieval (integration: real PGlite)", () => {
           { key: "remote-turkiye", locations: ["Remote, Türkiye"], remote: true },
           { key: "remote-london", locations: ["London, UK", "Remote"], remote: true },
           { key: "remote-unresolved", locations: ["Not Resolved Remote"], remote: true },
+          {
+            key: "remote-plus-unresolved",
+            locations: ["Remote", "Not Resolved Remote"],
+            remote: true,
+          },
+          { key: "remote-unanswered", locations: ["Refused Remote"], remote: true },
+          { key: "remote-unchecked-country", locations: ["Remote, Deutschland"], remote: true },
+          {
+            key: "remote-us-plus-unresolved",
+            locations: ["Remote - USA", "Not Resolved Remote"],
+            remote: true,
+          },
+          { key: "region-plus-unresolved", locations: ["Ohio", "Not Resolved Yet"] },
+          { key: "no-strings-remote", locations: [], remote: true },
         ],
         [
           { raw: "Westerville, OH", placeIds: [P.WESTERVILLE_OH] },
@@ -172,8 +200,12 @@ describe("location rule in retrieval (integration: real PGlite)", () => {
           { raw: "Remote - USA", remoteCountries: ["US"] },
           { raw: "Remote, Türkiye", remoteCountries: ["TR"] },
           { raw: "London, UK", placeIds: [P.LONDON_GB] },
+          { raw: "Refused Remote", unanswered: true },
+          { raw: "Remote, Deutschland", unmatchedCountry: "DEU" },
         ],
       );
+      // A pass that rests on something being absent (no country named; the region and no city in it) needs
+      // every string resolved; a presence-based pass (near city, the user's country) doesn't.
       expect(await retrievedKeys(ids, { mode: "any", home: COLUMBUS_50 })).toEqual(
         [
           "suburb",
@@ -182,7 +214,8 @@ describe("location rule in retrieval (integration: real PGlite)", () => {
           "multi-place-one-local",
           "remote-plain",
           "remote-us",
-          "remote-unresolved",
+          "remote-us-plus-unresolved",
+          "no-strings-remote",
         ].sort(),
       );
     });
@@ -331,6 +364,8 @@ describe("location rule in retrieval (integration: real PGlite)", () => {
         { raw: "Cincinnati, OH", placeIds: [P.CINCINNATI_OH] },
         { raw: "Texas", placeIds: [P.TEXAS] },
         { raw: "Remote - USA", remoteCountries: ["US"] },
+        // Local, but listed by no active job: not counted.
+        { raw: "Dublin, OH", placeIds: [P.DUBLIN_OH] },
       ],
     );
     expect(await countLocalStrings(db, COLUMBUS_50!)).toBe(2);

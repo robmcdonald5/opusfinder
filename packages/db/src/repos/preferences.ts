@@ -6,7 +6,7 @@
  * here. `unsubscribeToken` is generated ONCE by the caller (generateUnsubscribeToken) at creation and
  * never rotated by these functions.
  */
-import { eq, sql } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, sql } from "drizzle-orm";
 
 import type { UserId, UserPreferences } from "@opusfinder/shared";
 
@@ -32,6 +32,17 @@ export interface CreatePreferencesInput {
   unsubscribeToken: string;
   /** Optional initial overrides on the column defaults (CLI flags / form fields). */
   prefs?: Partial<UserPreferences>;
+}
+
+/** Whether any of these users has a home place: only those users' retrieval reads resolved locations. */
+export async function anyHasHomePlace(db: Db, userIds: UserId[]): Promise<boolean> {
+  if (userIds.length === 0) return false;
+  const rows = await db
+    .select({ id: userPreferences.id })
+    .from(userPreferences)
+    .where(and(inArray(userPreferences.userId, userIds), isNotNull(userPreferences.homePlaceId)))
+    .limit(1);
+  return rows.length > 0;
 }
 
 /**

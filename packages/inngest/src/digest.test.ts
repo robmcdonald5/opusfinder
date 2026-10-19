@@ -31,6 +31,7 @@ const repos = vi.hoisted(() => ({
   // orchestrator
   startDigestRun: vi.fn(),
   listDigestRecipients: vi.fn(),
+  anyHasHomePlace: vi.fn(),
   finishDigestRun: vi.fn(),
 }));
 vi.mock("@opusfinder/db/repos", () => repos);
@@ -154,6 +155,7 @@ beforeEach(() => {
   repos.finishDigestRun.mockResolvedValue(undefined);
   repos.listDigestRecipients.mockResolvedValue([]);
   locations.syncLocationStrings.mockResolvedValue(NOTHING_TO_RESOLVE);
+  repos.anyHasHomePlace.mockResolvedValue(true);
 });
 
 const NOTHING_TO_RESOLVE = { resolved: 0, unanswered: 0, failed: 0, unmatchedPlaces: 0, more: false };
@@ -184,7 +186,7 @@ describe("runOrchestrator", () => {
       counts: { recipients: 1, dispatched: 1, ...NO_LOCATION_COUNTS },
     });
     expect(out).toEqual({ runId: 42, recipients: 1 });
-    expect(runs).toEqual(["start-run", "fetch-recipients", "resolve-locations-0", "finish-run"]);
+    expect(runs).toEqual(["start-run", "fetch-recipients", "check-home-places", "resolve-locations-0", "finish-run"]);
   });
 
   it("lowercases an uppercase single-user UUID, so the per-user singleton key matches the cron's", async () => {
@@ -285,6 +287,7 @@ describe("runOrchestrator", () => {
     expect(runs).toEqual([
       "start-run",
       "fetch-recipients",
+      "check-home-places",
       "resolve-locations-0",
       "resolve-locations-1",
       "finish-run",
@@ -301,6 +304,17 @@ describe("runOrchestrator", () => {
     });
   });
 
+  it("skips resolving locations when no recipient has a home place", async () => {
+    repos.anyHasHomePlace.mockResolvedValue(false);
+    const { runs, sentEvents, tools } = recordingStep();
+
+    await runOrchestrator(makeDeps(), event({ trigger: "manual", userId: UUID }), tools);
+
+    expect(runs).toEqual(["start-run", "fetch-recipients", "check-home-places", "finish-run"]);
+    expect(locations.syncLocationStrings).not.toHaveBeenCalled();
+    expect(sentEvents).toHaveLength(1);
+  });
+
   it("fails the run without fanning out when the location model keeps failing", async () => {
     locations.syncLocationStrings.mockRejectedValue(new Error("model unavailable"));
     const { runs, sentEvents, tools } = recordingStep();
@@ -310,7 +324,7 @@ describe("runOrchestrator", () => {
     ).rejects.toThrow(/model unavailable/);
 
     expect(sentEvents).toEqual([]);
-    expect(runs).toEqual(["start-run", "fetch-recipients", "resolve-locations-0", "fail-run"]);
+    expect(runs).toEqual(["start-run", "fetch-recipients", "check-home-places", "resolve-locations-0", "fail-run"]);
   });
 
   it("refuses to run the daily path over more strings than its step cap", async () => {

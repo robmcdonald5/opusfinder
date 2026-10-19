@@ -46,10 +46,10 @@ integration (email ships in Phase 11 on the local dev runtime — locked at Phas
     when `event.data.userId` is set — runtime-validated as a uuid, since the event schema is
     compile-time only — else every eligible user keyset-swept, with `cadenceDue` passed through as
     `event.data.trigger === 'cron'` so a cron run filters to cadence-due users while a manual `--all`
-    sweep does not), resolves the active location strings no `location_strings` row covers yet
-    (`resolve-locations-<i>` steps, `SYNC_CHUNK` pairs each, until none are left; a request that keeps failing
-    fails the run instead of filtering on unresolved strings; more than 50 chunks means run
-    `pnpm locations:backfill`), fans out one `digest/user.requested`
+    sweep does not), resolves the active location strings no `location_strings` row covers yet when any
+    recipient has a home place (`resolve-locations-<i>` steps, `SYNC_CHUNK` pairs each, until none are left;
+    a request that keeps failing is stored as unresolved, a chunk whose every request fails fails the run;
+    more than 50 chunks means run `pnpm locations:backfill`), fans out one `digest/user.requested`
     each via `step.sendEvent`, and finalizes the run to the dispatch count (plus the location counts). Fan-out is fire-and-forget,
     so the run row records **dispatch**, not per-user completion (those land on `digests`). A step that
     exhausts its retries is caught and terminalized onto the run row (`status: 'error'` +

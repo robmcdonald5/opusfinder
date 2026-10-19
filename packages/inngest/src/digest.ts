@@ -3,6 +3,7 @@ import { describeDbError } from "@opusfinder/db/errors";
 import {
   alreadyShownJobIds,
   alreadyShownSignatures,
+  anyHasHomePlace,
   countLocalStrings,
   deleteUserDigestForRun,
   finishDigestRun,
@@ -254,10 +255,14 @@ export async function runOrchestrator(
     });
 
     // Resolve the location strings no row covers yet, before any user's retrieval reads them: SYNC_CHUNK pairs
-    // per step (each step well inside the function's time limit), until none are left. A request that keeps
-    // failing throws out of its step, so the run fails visibly rather than filtering on unresolved strings.
+    // per step (each step well inside the function's time limit), until none are left. Only a user with a home
+    // place reads them, so a run with none skips this (and its model spend). A chunk whose every request fails
+    // throws out of its step, so the run fails visibly rather than filtering on unresolved strings.
     const resolved = { resolved: 0, unanswered: 0, unmatchedPlaces: 0 };
-    if (recipients.length > 0) {
+    const needsLocations =
+      recipients.length > 0 &&
+      (await step.run("check-home-places", () => anyHasHomePlace(deps.db, recipients as UserId[])));
+    if (needsLocations) {
       for (let i = 0; ; i++) {
         if (i === RESOLVE_MAX_STEPS) {
           throw new NonRetriableError(
