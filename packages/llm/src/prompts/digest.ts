@@ -9,7 +9,7 @@ import { jobText, TITLE_CHARS } from "./job-text";
 
 /**
  * The digest SYNTHESIS prompt — one short "why this matches you" note per ranked job. Run via the
- * Message Batches API (Sonnet 4.6, 50% discount) one request per kept item; the system (rubric +
+ * Batch API (Sonnet, about half price) one request per kept item; the system (rubric +
  * profile) is the cached prefix shared across a user's items, the per-job text is the variable tail
  * ({@link renderDigestJob}). Synthesis writes the REASON only — it must NOT re-rank (order comes from
  * the rerank step). Output is plain text (no structured schema), so it avoids any
@@ -33,10 +33,10 @@ Output ONLY the note text — no preamble, no heading, no quotation marks, no ma
 /**
  * Compose the cached synthesis `system`: the rubric, then the candidate's profile via the shared
  * {@link composeProfileText} (the same representation retrieval + rerank used). The job is NOT here —
- * it's the per-request variable tail ({@link renderDigestJob}). NOTE: Sonnet 4.6 caches a prefix from
- * 1024 tokens, so a skill-dense profile on this ~450-token rubric can pay the 1h-TTL cache write (2x
- * base input) while reads within a batch are best-effort; the `synthesisCache*` counters on
- * `digests.counts` show whether it pays. The 50% batch discount is the load-bearing saving, not the cache.
+ * it's the per-request variable tail ({@link renderDigestJob}). NOTE: Sonnet 5.5 caches a prefix from
+ * 512 tokens, so this ~450-token rubric plus a profile usually pays the 1h-TTL cache write (2x base
+ * input) while reads within a batch are best-effort; the `synthesisCache*` counters on `digests.counts`
+ * show whether it pays. The batch discount is the load-bearing saving, not the cache.
  */
 export function buildDigestSystem(profile: StructuredProfile, prefs?: PromptPreferences): string {
   const base = `${DIGEST_SYNTHESIS_SYSTEM}\n\n=== Candidate profile ===\n${composeProfileText(profile)}`;

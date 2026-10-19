@@ -1,10 +1,9 @@
-import type { FilePart } from "ai";
+import type { PdfPart } from "./messages";
 
 /**
- * Build a PDF document part for a vision/transcription call. The AI SDK's `FilePart` with
- * `mediaType: "application/pdf"` is mapped by the @ai-sdk/anthropic provider to an Anthropic document
- * block, so Claude reads the PDF natively (Haiku 4.5 supports PDF input). `data` is the raw bytes.
+ * Build a PDF part for a vision/transcription call. It is sent as an Anthropic document block, so Claude
+ * reads the PDF natively. `data` is the raw bytes. Sync calls only (see {@link PdfPart}).
  */
-export function pdfPart(bytes: Uint8Array): FilePart {
-  return { type: "file", data: bytes, mediaType: "application/pdf" };
+export function pdfPart(bytes: Uint8Array): PdfPart {
+  return { type: "pdf", data: bytes };
 }

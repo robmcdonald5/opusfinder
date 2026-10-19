@@ -126,4 +126,4 @@ Haiku call has never been scored here.
 
 - `OPENAI_API_KEY` → `packages/eval/.env` (this package; for the comparison).
 - `VOYAGE_API_KEY` / `DATABASE_URL` are read from the embeddings/db packages (Phase 4/0).
-- `ANTHROPIC_API_KEY` → `packages/llm/.env` (for `draft-labels` and `extract-profile`).
+- `OPENROUTER_API_KEY` → `packages/llm/.env` (for `draft-labels` and `extract-profile`).

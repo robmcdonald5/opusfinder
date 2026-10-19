@@ -1,15 +1,24 @@
-import Anthropic from "@anthropic-ai/sdk";
-import type { ModelMessage } from "ai";
+import type { z } from "zod";
 
 import { sleep } from "@opusfinder/shared/async";
 
-import { getAnthropicApiKey } from "./env";
-import { modelId, type ModelAlias } from "./provider";
+import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
+
+import {
+  buildMessagesBody,
+  readMessage,
+  type CallOptions,
+  type MessagesBody,
+  type MessagesResponse,
+  type StopReason,
+} from "./messages";
+import { openRouterRequest } from "./openrouter";
+import { modelId } from "./provider";
 
 /**
- * Anthropic Message Batches API (50% token discount) — the cost lever for digest synthesis.
- * The Vercel AI SDK has NO batch support, so this is the ONE place that talks to the raw
- * `@anthropic-ai/sdk`. Two layers:
+ * OpenRouter's Batch API (`/batches`, about half the per-token price) — the cost lever for digest synthesis.
+ * Each request's body is the same Anthropic Messages body the sync calls send (`endpoint: "/v1/messages"`).
+ * Two layers:
  *
  *   - Low-level primitives — {@link submitBatch} / {@link pollBatch} / {@link collectBatchResults} —
  *     for a DURABLE caller (the Inngest digest function drives them across `step.run` + `step.sleep`,
@@ -17,31 +26,27 @@ import { modelId, type ModelAlias } from "./provider";
  *   - {@link batchGenerate} — a blocking submit→poll→collect convenience composing the primitives, for
  *     a non-durable caller (only the `test:batch` live smoke uses it).
  *
- * The API key comes from `getAnthropicApiKey()` (env) and the client is memoized for the process
- * (mirrors provider.ts). NODE-only by design — the digest is Node-hosted and `guard:worker` keeps this
- * package out of the scraper Worker, so there is no keyless-in-Worker path to support.
+ * NODE-only by design — the digest is Node-hosted and `guard:worker` keeps this package out of the scraper
+ * Worker. The Batch API rejects some sync-only settings at validation, which fails the WHOLE batch after
+ * the submit returned: Sonnet's thinking-off spelling and inline file bytes are refused here, at submit.
  */
 
-/** One request in a batch. Mirrors {@link GenerateParams} inputs plus a caller-supplied `customId` to
- *  correlate results (Anthropic returns batch results unordered); `customId` must match
- *  `^[a-zA-Z0-9_-]{1,64}$` (Anthropic's constraint). */
-export interface BatchRequest {
+/** One request in a batch: the same {@link CallOptions} a sync call takes, plus a caller-supplied
+ *  `customId` to correlate results (`^[a-zA-Z0-9_-]{1,64}$`) and an optional `schema` to constrain the
+ *  reply to JSON (parse the result's `text` with `parseObject`). Every request in a batch must use the same
+ *  model tier. A cached system prompt gets a 1-hour TTL: a batch runs minutes to hours, and requests in one
+ *  batch run concurrently, so a cache written by one is not reliably read by another. */
+export interface BatchRequest extends CallOptions {
   customId: string;
-  model: ModelAlias;
-  messages: ModelMessage[];
-  system?: string;
-  /** Cache the system prompt. Sent with a 1-hour TTL (the 5-minute default expires mid-batch — batches
-   *  run minutes-to-hours), and only engages above the model's minimum cacheable prefix. Intra-batch
-   *  cache hits are best-effort (concurrent processing); verify via {@link BatchResult.usage}. */
-  cacheSystem?: boolean;
-  maxOutputTokens?: number;
-  temperature?: number;
+  schema?: z.ZodType<unknown>;
 }
 
-export type BatchResultStatus = "succeeded" | "errored" | "expired" | "canceled";
+/** A request's outcome. `errored` covers a per-request failure; a batch that failed, expired or was
+ *  cancelled as a whole makes {@link collectBatchResults} throw instead. */
+export type BatchResultStatus = "succeeded" | "errored";
 
-/** Per-request token usage (camelCased off the raw message usage), surfaced so callers can log cache
- *  behavior. Present only on a succeeded result. */
+/** Per-request token usage, present on a succeeded result. OpenRouter reports cost only for the whole
+ *  batch ({@link BatchCollection.costUsd}). */
 export interface BatchUsage {
   inputTokens: number;
   outputTokens: number;
@@ -50,197 +55,179 @@ export interface BatchUsage {
 }
 
 /** One batch result, correlated back to its request by `customId`. `text` is the completion on success
- *  ("" otherwise); `status` distinguishes success from the per-request failure modes (a batch can
- *  partially fail); `error` carries a SECRET-free error type for non-success. `stopReason` is set on
- *  success only: anything but `end_turn` / `stop_sequence` (e.g. `max_tokens`, `refusal`) means `text`
- *  is not a complete answer. */
+ *  ("" otherwise). `stopReason` is set on success only: anything but `end_turn` / `stop_sequence` (e.g.
+ *  `max_tokens`, `refusal`) means `text` is not a complete answer. `error` is a SECRET-free error type. */
 export interface BatchResult {
   customId: string;
   status: BatchResultStatus;
   text: string;
-  stopReason?: Anthropic.StopReason | null;
+  stopReason?: StopReason | null;
   error?: string;
   usage?: BatchUsage;
 }
 
-export type BatchProcessingStatus = "in_progress" | "canceling" | "ended";
+/** OpenRouter's batch lifecycle states. */
+export type BatchState =
+  | "validating"
+  | "in_progress"
+  | "finalizing"
+  | "completed"
+  | "failed"
+  | "expired"
+  | "cancelling"
+  | "cancelled";
 
 export interface BatchPoll {
-  status: BatchProcessingStatus;
-  counts: { processing: number; succeeded: number; errored: number; canceled: number; expired: number };
+  /** `ended` once the batch reached a terminal state (completed, failed, expired, cancelled). */
+  status: "in_progress" | "ended";
+  state: BatchState;
+  counts: { total: number; completed: number; failed: number };
+}
+
+/** A finished batch's results by `customId`, plus the batch's total charge as OpenRouter reports it. */
+export interface BatchCollection {
+  results: Map<string, BatchResult>;
+  costUsd: number;
 }
 
 const DEFAULT_MAX_OUTPUT_TOKENS = 1024;
 const CUSTOM_ID_PATTERN = /^[a-zA-Z0-9_-]{1,64}$/;
+const TERMINAL: ReadonlySet<BatchState> = new Set(["completed", "failed", "expired", "cancelled"]);
 
-let memoizedClient: Anthropic | undefined;
-function getClient(): Anthropic {
-  memoizedClient ??= new Anthropic({ apiKey: getAnthropicApiKey() });
-  return memoizedClient;
+interface WireBatch {
+  id: string;
+  status: BatchState;
+  request_counts?: { total?: number; completed?: number; failed?: number };
+  usage?: { cost?: unknown } | null;
+  error?: { message?: string } | null;
+  results?: WireResult[] | null;
 }
 
-/** Map a BatchRequest's optionally-cached system prompt to the raw shape. Caching promotes the plain
- *  string to a text block carrying `cache_control` with the 1-hour TTL (a plain `system` string can't
- *  carry a breakpoint). Mirrors the cache-promotion in cache-plumbing.ts, but emits the RAW Anthropic
- *  shape (the AI-SDK `providerOptions` form does not apply to this client). */
-function buildSystem(system: string, cacheSystem: boolean | undefined): string | Anthropic.TextBlockParam[] {
-  if (!cacheSystem) return system;
-  return [{ type: "text", text: system, cache_control: { type: "ephemeral", ttl: "1h" } }];
+interface WireResult {
+  custom_id: string;
+  response?: { status_code?: number; body?: MessagesResponse } | null;
+  error?: { type?: string; error_type?: string } | null;
 }
 
-/** Convert AI-SDK ModelMessages to raw Anthropic messages. Batch synthesis uses user/assistant turns
- *  with string (or text-part) content; image/file/tool parts and system-role messages are rejected with
- *  a clear message (the system prompt belongs in `system`, like generate()). */
-function toAnthropicMessages(messages: ModelMessage[]): Anthropic.MessageParam[] {
-  return messages.map((m) => {
-    if (m.role !== "user" && m.role !== "assistant") {
-      throw new Error(
-        `batchGenerate: unsupported message role "${m.role}" (only user/assistant; put the system ` +
-          "prompt in `system`, not in `messages`).",
-      );
-    }
-    return { role: m.role, content: toContent(m.content) };
-  });
-}
-
-function toContent(content: string | readonly unknown[]): string | Anthropic.TextBlockParam[] {
-  if (typeof content === "string") return content;
-  const blocks: Anthropic.TextBlockParam[] = [];
-  for (const part of content) {
-    const p = part as { type?: unknown; text?: unknown };
-    if (p.type === "text" && typeof p.text === "string") {
-      blocks.push({ type: "text", text: p.text });
-    } else {
-      throw new Error(
-        `batchGenerate: unsupported content part "${String(p.type)}" (batch synthesis is text-only).`,
-      );
-    }
-  }
-  return blocks;
-}
-
-function assertCustomIds(requests: BatchRequest[]): void {
+function assertRequests(requests: BatchRequest[]): void {
   const seen = new Set<string>();
   for (const r of requests) {
     if (!CUSTOM_ID_PATTERN.test(r.customId)) {
-      throw new Error(`batchGenerate: customId "${r.customId}" must match ${CUSTOM_ID_PATTERN.source}.`);
+      throw new Error(
+        `submitBatch: customId "${r.customId}" must match ${CUSTOM_ID_PATTERN.source}.`,
+      );
     }
-    // Duplicates would be rejected by the API (opaque 400) AND collapse the customId->result map,
-    // mis-correlating one request's result onto another — fail fast and clearly here instead.
+    // Duplicates would be rejected by the API AND collapse the customId->result map, mis-correlating one
+    // request's result onto another — fail fast and clearly here instead.
     if (seen.has(r.customId)) {
-      throw new Error(`batchGenerate: duplicate customId "${r.customId}" (must be unique within a batch).`);
+      throw new Error(
+        `submitBatch: duplicate customId "${r.customId}" (must be unique within a batch).`,
+      );
     }
     seen.add(r.customId);
   }
+  const tiers = new Set(requests.map((r) => r.model));
+  if (tiers.size > 1) {
+    throw new Error(`submitBatch: a batch runs one model; got ${[...tiers].join(", ")}.`);
+  }
+}
+
+function toBody(req: BatchRequest): MessagesBody {
+  const format = req.schema ? zodOutputFormat(req.schema) : undefined;
+  return buildMessagesBody("submitBatch", req, {
+    defaultMaxOutputTokens: DEFAULT_MAX_OUTPUT_TOKENS,
+    cacheTtl: "1h",
+    inBatch: true,
+    ...(format ? { format: { type: format.type, schema: format.schema } } : {}),
+  });
 }
 
 /**
- * Submit a batch and return its id. Maps each {@link BatchRequest} to a raw create-request. Throws on
- * an empty list or a malformed customId. Does NOT wait — pair with {@link pollBatch} +
+ * Submit a batch and return its id. Throws on an empty list, a malformed or duplicate customId, mixed
+ * model tiers, or a setting the Batch API would reject. Does NOT wait — pair with {@link pollBatch} +
  * {@link collectBatchResults} (durable callers) or use {@link batchGenerate} (blocking).
  */
 export async function submitBatch(requests: BatchRequest[]): Promise<string> {
-  if (requests.length === 0) throw new Error("submitBatch: received no requests.");
-  assertCustomIds(requests);
-  const client = getClient();
-  const batch = await client.messages.batches.create({
-    requests: requests.map((req) => ({
-      custom_id: req.customId,
-      params: {
-        model: modelId(req.model),
-        max_tokens: req.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
-        messages: toAnthropicMessages(req.messages),
-        ...(req.system !== undefined ? { system: buildSystem(req.system, req.cacheSystem) } : {}),
-        ...(req.temperature === undefined ? {} : { temperature: req.temperature }),
-      },
-    })),
+  const first = requests[0];
+  if (!first) throw new Error("submitBatch: received no requests.");
+  assertRequests(requests);
+  const bodies = requests.map((req) => ({ custom_id: req.customId, body: toBody(req) }));
+  // `endpoint` and `model` must serialize before `requests`: the API stream-parses the body.
+  const batch = await openRouterRequest<WireBatch>("POST", "/batches", {
+    endpoint: "/v1/messages",
+    model: modelId(first.model),
+    requests: bodies,
   });
   return batch.id;
 }
 
-/** Poll a batch's status + per-status request counts. `status === "ended"` means every request has
- *  settled (any final status) and {@link collectBatchResults} can be read. Idempotent. */
+/** Poll a batch's state and request counts. `status === "ended"` means it reached a terminal state and
+ *  {@link collectBatchResults} can be read. Idempotent. A batch polled within seconds of its submit can
+ *  404 (`OpenRouterError`), so wait before the first poll (the digest sleeps 30s). */
 export async function pollBatch(batchId: string): Promise<BatchPoll> {
-  const client = getClient();
-  const batch = await client.messages.batches.retrieve(batchId);
-  const counts = batch.request_counts;
+  const batch = await getBatch(batchId);
   return {
-    status: batch.processing_status,
+    status: TERMINAL.has(batch.status) ? "ended" : "in_progress",
+    state: batch.status,
     counts: {
-      processing: counts.processing,
-      succeeded: counts.succeeded,
-      errored: counts.errored,
-      canceled: counts.canceled,
-      expired: counts.expired,
+      total: batch.request_counts?.total ?? 0,
+      completed: batch.request_counts?.completed ?? 0,
+      failed: batch.request_counts?.failed ?? 0,
     },
   };
 }
 
-/** Stream a finished batch's results into a `customId → BatchResult` map. Call only after
- *  {@link pollBatch} reports `ended`. Results arrive unordered, hence the map; a partially-failed batch
- *  yields a mix of statuses. */
-export async function collectBatchResults(batchId: string): Promise<Map<string, BatchResult>> {
-  const client = getClient();
-  const out = new Map<string, BatchResult>();
-  for await (const entry of await client.messages.batches.results(batchId)) {
-    out.set(entry.custom_id, mapResult(entry.custom_id, entry.result));
+/** Read a completed batch's inline results into a `customId → BatchResult` map. Throws when the batch
+ *  failed, expired or was cancelled as a whole (OpenRouter then returns no results), naming the state and
+ *  its reason. */
+export async function collectBatchResults(batchId: string): Promise<BatchCollection> {
+  const batch = await getBatch(batchId);
+  if (batch.status !== "completed") {
+    const reason = batch.error?.message ? `: ${batch.error.message.slice(0, 300)}` : "";
+    throw new Error(
+      `collectBatchResults: batch ${batchId} is ${batch.status}, not completed${reason}`,
+    );
   }
-  return out;
+  const results = new Map<string, BatchResult>();
+  for (const r of batch.results ?? []) results.set(r.custom_id, mapResult(r));
+  return { results, costUsd: count(batch.usage?.cost) };
 }
 
-function mapResult(customId: string, result: Anthropic.Messages.MessageBatchResult): BatchResult {
-  switch (result.type) {
-    case "succeeded":
-      return {
-        customId,
-        status: "succeeded",
-        text: extractText(result.message),
-        stopReason: result.message.stop_reason,
-        usage: extractUsage(result.message),
-      };
-    case "errored": {
-      // The error envelope nesting has varied across versions ({type} vs {error:{type}}); extract
-      // defensively. Only the error TYPE is surfaced (SECRET-free), never a raw body.
-      const e = result.error as { type?: unknown; error?: { type?: unknown } };
-      const errorType =
-        (typeof e.error?.type === "string" && e.error.type) || (typeof e.type === "string" && e.type);
-      return { customId, status: "errored", text: "", error: errorType || "errored" };
-    }
-    case "expired":
-      return { customId, status: "expired", text: "", error: "expired" };
-    case "canceled":
-      return { customId, status: "canceled", text: "", error: "canceled" };
-    default: {
-      // Exhaustiveness guard: if Anthropic adds a result type, `result` is no longer `never` and this
-      // fails to COMPILE (forcing this map to be updated). Unreachable at runtime for the current union;
-      // throwing rather than returning undefined keeps the durable collect path from storing a hole.
-      const unexpected: never = result;
-      throw new Error(`mapResult: unhandled batch result type ${JSON.stringify(unexpected)}.`);
-    }
+function getBatch(batchId: string): Promise<WireBatch> {
+  return openRouterRequest<WireBatch>("GET", `/batches/${encodeURIComponent(batchId)}`);
+}
+
+function mapResult(r: WireResult): BatchResult {
+  const body = r.response?.body;
+  if (r.response?.status_code === 200 && body) {
+    const reply = readMessage(body);
+    return {
+      customId: r.custom_id,
+      status: "succeeded",
+      text: reply.text,
+      stopReason: reply.stopReason,
+      usage: {
+        inputTokens: reply.usage.inputTokens,
+        outputTokens: reply.usage.outputTokens,
+        cacheCreationInputTokens: reply.cache.creationInputTokens,
+        cacheReadInputTokens: reply.cache.readInputTokens,
+      },
+    };
   }
+  // Only the error TYPE is surfaced (SECRET-free), never its message or a body.
+  const errorType =
+    r.error?.error_type ?? r.error?.type ?? `http_${r.response?.status_code ?? "unknown"}`;
+  return { customId: r.custom_id, status: "errored", text: "", error: errorType };
 }
 
-function extractText(message: Anthropic.Message): string {
-  return message.content
-    .filter((b): b is Anthropic.TextBlock => b.type === "text")
-    .map((b) => b.text)
-    .join("");
-}
-
-function extractUsage(message: Anthropic.Message): BatchUsage {
-  const usage = message.usage;
-  return {
-    inputTokens: usage.input_tokens,
-    outputTokens: usage.output_tokens,
-    cacheCreationInputTokens: usage.cache_creation_input_tokens ?? 0,
-    cacheReadInputTokens: usage.cache_read_input_tokens ?? 0,
-  };
+function count(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
 export interface BatchGenerateOptions {
   /** Poll interval while waiting for the batch to end (default 10s). */
   pollIntervalMs?: number;
-  /** Give up (throw) after this long (default 24h — the API's hard expiry). */
+  /** Give up (throw) after this long (default 24h — the completion window). */
   maxWaitMs?: number;
   /** Progress hook, called after each poll. */
   onPoll?: (poll: BatchPoll) => void;
@@ -248,48 +235,45 @@ export interface BatchGenerateOptions {
 
 /**
  * Blocking batch generation: submit → poll until ended → collect. Returns results in the SAME ORDER as
- * `requests` (looked up by customId; a request missing from the results — should not happen — yields an
- * `errored` placeholder). For a DURABLE caller, drive {@link submitBatch}/{@link pollBatch}/
- * {@link collectBatchResults} across Inngest steps instead, so the wait suspends at zero compute cost.
+ * `requests` (a request missing from the results yields an `errored` placeholder). Giving up does not stop
+ * the batch — OpenRouter has no cancel endpoint, so its completed requests are still billed; the thrown
+ * error carries the batch id. For a DURABLE caller, drive the primitives across Inngest steps instead.
  */
 export async function batchGenerate(
   requests: BatchRequest[],
   opts: BatchGenerateOptions = {},
-): Promise<BatchResult[]> {
-  if (requests.length === 0) return [];
+): Promise<{ results: BatchResult[]; costUsd: number }> {
+  if (requests.length === 0) return { results: [], costUsd: 0 };
   const batchId = await submitBatch(requests);
 
   const pollIntervalMs = opts.pollIntervalMs ?? 10_000;
   const maxWaitMs = opts.maxWaitMs ?? 24 * 60 * 60 * 1000;
   const startedAt = Date.now();
   for (;;) {
+    // Wait first: a just-submitted batch can read as 404 for a few seconds.
+    await sleep(pollIntervalMs);
     const poll = await pollBatch(batchId);
     opts.onPoll?.(poll);
     if (poll.status === "ended") break;
     if (Date.now() - startedAt > maxWaitMs) {
-      // Best-effort: stop the server-side batch before abandoning it — every request that completes
-      // is billed whether or not anyone collects it. Advisory only; the throw below carries the
-      // batchId for manual recovery either way (results are retained 29 days).
-      try {
-        await getClient().messages.batches.cancel(batchId);
-      } catch {
-        // the timeout error below is the real signal
-      }
       throw new Error(
-        `batchGenerate: batch ${batchId} did not end within ${maxWaitMs}ms (status ${poll.status}).`,
+        `batchGenerate: batch ${batchId} did not end within ${maxWaitMs}ms (state ${poll.state}); it keeps ` +
+          "running server-side.",
       );
     }
-    await sleep(pollIntervalMs);
   }
 
-  const byId = await collectBatchResults(batchId);
-  return requests.map(
-    (r) =>
-      byId.get(r.customId) ?? {
-        customId: r.customId,
-        status: "errored" as const,
-        text: "",
-        error: "missing from batch results",
-      },
-  );
+  const { results, costUsd } = await collectBatchResults(batchId);
+  return {
+    results: requests.map(
+      (r) =>
+        results.get(r.customId) ?? {
+          customId: r.customId,
+          status: "errored" as const,
+          text: "",
+          error: "missing from batch results",
+        },
+    ),
+    costUsd,
+  };
 }

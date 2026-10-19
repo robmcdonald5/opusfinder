@@ -19,7 +19,7 @@ import { probeLiveness } from "./probe";
 
 /**
  * Build the production digest deps: a neon-http db + the real synchronous Haiku rerank (the shared
- * `@opusfinder/rerank` core wired to `generateObject`) + the Anthropic Message Batches primitives for
+ * `@opusfinder/rerank` core wired to `generateObject`) + the OpenRouter Batch API primitives for
  * synthesis + the Resend email send/last_event pair. NODE/server-only — it reads env via the `/env`
  * subpaths; the serve + CLI scripts call it. Never reached from a Worker (`guard:worker` keeps
  * `@opusfinder/inngest` out of the scraper bundle). Importing `@opusfinder/email` here pulls only its
@@ -60,6 +60,7 @@ function buildRerank(): DigestDeps["rerank"] {
   ): Promise<RerankOutcome> => {
     let inputTokens = 0;
     let outputTokens = 0;
+    let costUsd = 0;
     let creationInputTokens = 0;
     let readInputTokens = 0;
     const call: RerankCall = async (system, chunk) => {
@@ -70,12 +71,12 @@ function buildRerank(): DigestDeps["rerank"] {
           cacheSystem: true,
           schema: RerankScoresSchema,
           messages: [{ role: "user", content: renderRerankCandidates(chunk) }],
-          maxOutputTokens: 2048,
-          // The scores feed a hard MIN_SCORE floor, so sampling noise would flip borderline jobs in and out.
-          temperature: 0,
+          effort: "low",
+          maxOutputTokens: 4096,
         });
-        inputTokens += usage.inputTokens ?? 0;
-        outputTokens += usage.outputTokens ?? 0;
+        inputTokens += usage.inputTokens;
+        outputTokens += usage.outputTokens;
+        costUsd += usage.costUsd;
         creationInputTokens += cache.creationInputTokens;
         readInputTokens += cache.readInputTokens;
         return object.scores;
@@ -91,7 +92,7 @@ function buildRerank(): DigestDeps["rerank"] {
     return {
       orderedIds,
       scores,
-      usage: { inputTokens, outputTokens },
+      usage: { inputTokens, outputTokens, costUsd },
       cache: { creationInputTokens, readInputTokens },
     };
   };

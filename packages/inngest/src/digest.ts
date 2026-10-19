@@ -18,7 +18,7 @@ import {
   type UserPreferencesRow,
 } from "@opusfinder/db/repos";
 import { buildDigestSystem, renderDigestJob } from "@opusfinder/llm";
-import type { BatchPoll, BatchRequest, BatchResult } from "@opusfinder/llm";
+import type { BatchCollection, BatchPoll, BatchRequest, BatchResult } from "@opusfinder/llm";
 import type { RerankCandidate } from "@opusfinder/rerank";
 import type {
   LocationMode,
@@ -69,12 +69,12 @@ export const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0
 const LINK_OR_EMAIL = /https?:\/\/|www\.|[\w.+-]+@[\w-]+\.\w/i;
 
 /** The rerank result the per-user function consumes: a global ordering, the score map (only the
- *  candidates the model actually scored), and the token and prompt-cache counters summed across the
+ *  candidates the model actually scored), and the token, cost and prompt-cache counters summed across the
  *  rerank's chunk calls (the cache counters feed the "cache hit rate >0" gate). */
 export interface RerankOutcome {
   orderedIds: number[];
   scores: Map<number, number>;
-  usage: { inputTokens: number; outputTokens: number };
+  usage: { inputTokens: number; outputTokens: number; costUsd: number };
   cache: { creationInputTokens: number; readInputTokens: number };
 }
 
@@ -82,7 +82,7 @@ export interface RerankOutcome {
  * Injected seams for the digest functions — so the pipeline is testable with stubs and the heavy
  * `@opusfinder/llm` wiring stays out of this module. `buildDigestDeps()` (./deps) wires the real ones.
  * `rerank` runs the shared `@opusfinder/rerank` core (sync Haiku, prompt-cached); `batch` is the
- * Anthropic Message Batches lifecycle for synthesis; `email` is the Resend send + delivery-state
+ * OpenRouter Batch API lifecycle for synthesis; `email` is the Resend send + delivery-state
  * read (./delivery).
  */
 export interface DigestDeps {
@@ -95,7 +95,7 @@ export interface DigestDeps {
   batch: {
     submit: (requests: BatchRequest[]) => Promise<string>;
     poll: (batchId: string) => Promise<BatchPoll>;
-    collect: (batchId: string) => Promise<Map<string, BatchResult>>;
+    collect: (batchId: string) => Promise<BatchCollection>;
   };
   email: EmailSeam;
   /** The pre-send apply-URL liveness probe (one URL → verdict); the per-digest fan-out lives in
@@ -425,7 +425,7 @@ export async function runPerUser(deps: DigestDeps, event: PerUserEvent, step: Pe
     return { userId, skipped: "no-strong-matches" as const };
   }
 
-  // 4. Submit the synthesis batch (Sonnet, 50% discount): one request per kept item, cached
+  // 4. Submit the synthesis batch (Sonnet, about half price): one request per kept item, cached
   //    rubric+profile system, custom_id = synthId(jobId) — the ONE key definition shared with the
   //    persist lookup (drift between the two would silently empty every digest).
   const synthId = (jobId: number) => `d${digestRunId}-${jobId}`;
@@ -446,7 +446,10 @@ export async function runPerUser(deps: DigestDeps, event: PerUserEvent, step: Pe
         model: "sonnet" as const,
         system,
         cacheSystem: true,
-        maxOutputTokens: 256,
+        // A 1–2 sentence note. Low effort keeps thinking short (the Batch API can't turn it off for
+        // Sonnet), and the cap leaves room for what thinking remains on top of the note.
+        effort: "low" as const,
+        maxOutputTokens: 1024,
         messages: [{ role: "user" as const, content: renderDigestJob(job) }],
       };
     });
@@ -494,17 +497,18 @@ export async function runPerUser(deps: DigestDeps, event: PerUserEvent, step: Pe
   }
 
   // 6. Collect results into a serializable record (Map can't cross a step boundary), summing the
-  //    batch's token usage for digests.counts.
+  //    batch's token usage for digests.counts; the cost is the batch total OpenRouter charged.
   const synthesis = await step.run("collect-synthesis", async () => {
-    const map = await deps.batch.collect(batchId);
+    const { results, costUsd } = await deps.batch.collect(batchId);
     const reasons: Record<string, SynthesisResult> = {};
     const usage = {
       inputTokens: 0,
       outputTokens: 0,
       cacheCreationInputTokens: 0,
       cacheReadInputTokens: 0,
+      costUsd,
     };
-    for (const [customId, { text, status, stopReason, error, usage: u }] of map) {
+    for (const [customId, { text, status, stopReason, error, usage: u }] of results) {
       reasons[customId] = { text, status, stopReason, error };
       usage.inputTokens += u?.inputTokens ?? 0;
       usage.outputTokens += u?.outputTokens ?? 0;
@@ -565,10 +569,12 @@ export async function runPerUser(deps: DigestDeps, event: PerUserEvent, step: Pe
         rerankOutputTokens: reranked.usage.outputTokens,
         rerankCacheReadTokens: reranked.cache.readInputTokens,
         rerankCacheCreationTokens: reranked.cache.creationInputTokens,
+        rerankCostUsd: reranked.usage.costUsd,
         synthesisInputTokens: synthesis.usage.inputTokens,
         synthesisOutputTokens: synthesis.usage.outputTokens,
         synthesisCacheReadTokens: synthesis.usage.cacheReadInputTokens,
         synthesisCacheCreationTokens: synthesis.usage.cacheCreationInputTokens,
+        synthesisCostUsd: synthesis.usage.costUsd,
       },
     });
     // Snapshot the kept jobs' display fields onto digest_items — one small SELECT over the ~12 kept ids,

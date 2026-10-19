@@ -7,7 +7,7 @@
  * MEASUREMENT, not a binary pass (PHASE_F3 §9) — logged by the old script, never asserted here.
  *
  * NEVER runs in CI: gated on an EXPLICIT opt-in flag ON TOP of creds (PREFS_LIVE_TEST=1 + DATABASE_URL +
- * ANTHROPIC_API_KEY), in the no-MSW `live` project.
+ * OPENROUTER_API_KEY), in the no-MSW `live` project.
  *
  *   PREFS_LIVE_TEST=1 pnpm test:live
  */
@@ -21,7 +21,7 @@ import type { PromptPreferences, UserId } from "@opusfinder/shared";
 import { buildDigestDeps } from "./deps";
 
 const GATED =
-  process.env.PREFS_LIVE_TEST !== "1" || !process.env.DATABASE_URL || !process.env.ANTHROPIC_API_KEY;
+  process.env.PREFS_LIVE_TEST !== "1" || !process.env.DATABASE_URL || !process.env.OPENROUTER_API_KEY;
 const USER = (process.env.PREFS_LIVE_USER ?? "cda5e3ef-e387-4c9f-9709-194d3d2fe11e") as UserId;
 
 describe.skipIf(GATED)("preferences rerank (live: real Neon + Haiku)", () => {

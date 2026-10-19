@@ -21,13 +21,13 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import type { ModelAlias } from "@opusfinder/llm";
+import { modelId, type ModelAlias } from "@opusfinder/llm";
 import { backoff } from "@opusfinder/shared/async";
 import { runScript } from "@opusfinder/shared/script";
 
 import { getFlag } from "../src/cli";
 import { PKG_ROOT, relativeToPkg } from "../src/runner";
-import { judgeCandidate, buildJudgeSystem, VERDICTS, type Verdict } from "./label-judge";
+import { judgeCandidate, buildJudgeSystem, JUDGE_EFFORT, VERDICTS, type Verdict } from "./label-judge";
 import {
   isLabeled,
   loadAllProfileFiles,
@@ -185,7 +185,7 @@ function renderReviewSheet(
     lines.push("");
   }
   lines.push(
-    `**Draft:** \`${model}\`, one call per candidate, temperature 0 — ` +
+    `**Draft:** \`${modelId(model)}\`, one call per candidate, effort ${JUDGE_EFFORT} — ` +
       `**${good.length} good · ${borderline.length} borderline · ${bad.length} bad** of ${judged.length} judged.`,
   );
   lines.push(
@@ -271,7 +271,7 @@ function renderReviewSheet(
 function draftNotes(judged: JudgedCandidate[], model: ModelAlias, pool: PoolFile): string {
   const count = (v: Verdict): number => judged.filter((j) => j.verdict === v).length;
   return (
-    `Labels drafted by scripts/draft-labels.ts (${model}, one call per candidate, temperature 0) ` +
+    `Labels drafted by scripts/draft-labels.ts (${modelId(model)}, one call per candidate, effort ${JUDGE_EFFORT}) ` +
     `over the ${pool.candidates.length}-candidate pool: ` +
     `${VERDICTS.map((v) => `${count(v)} ${v}`).join(" / ")}. ` +
     `Pool-scoped: honest only within this pool (unlabeled != irrelevant).`
