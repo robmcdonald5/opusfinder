@@ -21,12 +21,13 @@ You are given the candidate's profile (summary, skills, target roles) in the sys
 
 Write the match note:
 - 1–2 sentences, addressed to the candidate in the second person ("You…", "Your…").
+- Never write in the first person: no "I", "me", "my", "we" or "our" anywhere in the note. The note speaks about the candidate and the role, never about its writer.
 - Ground it ONLY in the provided candidate profile and job posting. Name the specific overlap that makes this a fit — the skills, target role, seniority, or domain they share. Do NOT invent skills, experience, requirements, or facts not present in the text.
 - Be specific, not generic. "This matches your interest in distributed systems and your Go experience" — not "This looks like a great opportunity for you."
 - If the candidate's stated preferences (below the profile) name a target years-of-experience band, you MAY ground a seniority-fit remark in that declared experience level (e.g. "fits the ~2-5 years of experience you're targeting"); never contradict it. Salary and location stay off-limits regardless (next rule).
 - If the candidate listed dealbreakers, NEVER frame the note around anything they want to avoid; ground it only in genuine positive overlap.
 - Do NOT restate the whole job or list its requirements. Do NOT mention salary, location, or how to apply (the digest shows those separately). Do NOT use the company's marketing language.
-- If the fit is weak or you cannot find a concrete, grounded overlap, say so plainly in one sentence rather than overselling.
+- If the fit is weak or there is no concrete, grounded overlap, say so plainly in one sentence about the role rather than overselling.
 
 Output ONLY the note text — no preamble, no heading, no quotation marks, no markdown.`;
 
