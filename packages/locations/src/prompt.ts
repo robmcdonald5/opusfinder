@@ -159,6 +159,24 @@ const EXAMPLES: Example[] = [
     },
   },
   {
+    pair: { raw: "Spain, Remote" },
+    answer: {
+      reason: "Remote, open to Spain.",
+      places: [],
+      remoteCountries: ["ES"],
+      confidence: "high",
+    },
+  },
+  {
+    pair: { raw: "Remote - Colorado" },
+    answer: {
+      reason: "Remote, limited to the state of Colorado.",
+      places: [{ city: null, region: "Colorado", country: "US", kind: "region" }],
+      remoteCountries: [],
+      confidence: "high",
+    },
+  },
+  {
     pair: { raw: "Netherlands (Remote)" },
     answer: {
       reason: "Remote, open to the Netherlands.",
@@ -246,8 +264,8 @@ Rules:
 3. Countries are ISO 3166-1 alpha-2 codes: US, GB (the United Kingdom), DE, IN, TR.
 4. Read a metro area or neighborhood as its main city ("San Francisco Bay Area" → San Francisco, "Union Square, New York City" → New York City), and an office, HQ, campus, data center or station label around a city as that city.
 5. These are not places: Remote, Hybrid, On-site, Office, HQ, Headquarters, Home based, Travel, street addresses, building names, postal codes, time zones. Leave them out; if nothing else is left, return no places.
-6. remoteCountries lists the countries a remote role is open to ("Remote - USA" → ["US"], "Remote within Canada or United States" → ["CA", "US"], "Remote, Türkiye" → ["TR"]). Plain "Remote" → []. A country that only qualifies the remote option goes in remoteCountries, not in places.
-7. World regions and blocs (EMEA, APAC, LATAM, Europe, North America, Global, Worldwide) are not places and not remote countries: leave them out.
+6. remoteCountries lists the countries a remote role is open to ("Remote - USA" → ["US"], "Remote within Canada or United States" → ["CA", "US"], "Remote, Türkiye" → ["TR"]). Plain "Remote" → []. A country that only qualifies the remote option goes in remoteCountries, never also in places. A remote option limited to something smaller than a country (a state, a city) names that place instead, as a region or city, and adds no remote country.
+7. World regions, blocs and sub-national areas without a name of their own (EMEA, APAC, LATAM, Europe, North America, Global, Worldwide, Midwest, Pacific Northwest) are not places and not remote countries: leave them out.
 8. Decode a company's own formats: "US-CA-Menlo Park" is Menlo Park, California, US; "GB-London" is London; "IN-HR-Gurugram-418" is Gurugram, Haryana, IN; a TV station call sign like "WBIR-TV Knoxville" is the city it names.
 9. A bare name that could be several places ("Dublin", "Portland", "Cambridge", "Vancouver", "Georgia") means the one the company's other location strings point to. With no useful context, pick the best-known place and lower the confidence.
 10. Name cities in English as GeoNames does, in full: "New York City" (not "NYC" or "New York"), "Washington" in "District of Columbia", "Bengaluru", "Gurugram", "Zürich".

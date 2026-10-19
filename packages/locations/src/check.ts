@@ -4,7 +4,10 @@
  * within that country; a city by its name or ASCII name (else an alternate name) within that region, or
  * within the country when no region was given or the given one isn't a GeoNames region name ("County
  * Dublin", "State of Berlin"). A region that IS one GeoNames knows but holds no such city fails: that is
- * a wrong state, not a spelling. Two same-named cities in one scope: the larger wins.
+ * a wrong state, not a spelling. The one exception is a region named exactly like the city ("Taipei,
+ * Taipei", "Buenos Aires, Buenos Aires"): that names the city's own municipality, which GeoNames sometimes
+ * files under another region, so the city is looked up across the country. Two same-named cities in one
+ * scope: the larger wins.
  */
 import type { Db } from "@opusfinder/db";
 import {
@@ -88,10 +91,13 @@ function checkAnswer(
     }
     const region = place.region ? findRegion(gazetteer, code, place.region) : null;
     if (place.city) {
-      const city = pickCity(
-        cities.get(cityKey(code, normalizePlaceName(place.city))) ?? [],
-        region,
-      );
+      const cityNorm = normalizePlaceName(place.city);
+      const matches = cities.get(cityKey(code, cityNorm)) ?? [];
+      const city =
+        pickCity(matches, region) ??
+        (region && normalizePlaceName(place.region ?? "") === cityNorm
+          ? pickCity(matches, null)
+          : null);
       if (city) placeIds.add(city.geonamesId);
       else fail("unknown-city");
     } else if (place.region) {

@@ -79,6 +79,17 @@ describe("the GeoNames check (integration: real PGlite)", () => {
     expect(county!.placeIds).toEqual([P.DUBLIN_IE]);
   });
 
+  it("looks a city up across the country when its region is named exactly like it", async () => {
+    // GeoNames can file a city under a region other than its namesake municipality (Taipei sits under
+    // Taiwan's legacy "Taiwan" admin1, not "Taipei"); a region named like the city means the city itself.
+    const [namesake, wrongState] = await check(
+      answer([city("Taipei", "Taipei", "TW")]),
+      answer([city("Westerville", "Texas", "US")]),
+    );
+    expect(namesake!.placeIds).toEqual([P.TAIPEI]);
+    expect(wrongState!.placeIds).toEqual([]);
+  });
+
   it("matches a city by an alternate name only when no city has that name", async () => {
     const [result] = await check(answer([city("New York", "New York", "US")]));
     expect(result!.placeIds).toEqual([P.NEW_YORK_CITY]);
