@@ -16,7 +16,9 @@
     "draft-labels": "tsx scripts/draft-labels.ts",
     "build:dataset": "tsx scripts/build-dataset.ts",
     "typecheck": "tsc --noEmit",
-    "eval:locations": "tsx scripts/locations.ts"
+    "eval:locations": "tsx scripts/locations.ts",
+    "locations:review": "tsx scripts/locations-review.ts",
+    "locations:label": "tsx scripts/locations-label.ts"
   },
   "dependencies": {
     "@electric-sql/pglite": "0.5.3",
