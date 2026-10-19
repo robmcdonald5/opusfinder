@@ -2,7 +2,7 @@ export { generate } from "./generate";
 export type { GenerateParams, GenerateResult } from "./generate";
 export { generateObject, parseObject, ObjectGenerationError } from "./generate-object";
 export type { GenerateObjectParams, GenerateObjectResult } from "./generate-object";
-export { batchGenerate, submitBatch, pollBatch, collectBatchResults } from "./batch";
+export { batchGenerate, submitBatch, pollBatch, collectBatchResults, BatchEndedError } from "./batch";
 export type {
   BatchRequest,
   BatchResult,

@@ -48,24 +48,28 @@ export function buildDigestDeps(): DigestDeps {
 }
 
 /** The real rerank seam: run the shared core, scoring each chunk with a cached Haiku `generateObject`
- *  and aggregating the token and prompt-cache counters across chunks (surfaced for the "cache hit >0"
+ *  and aggregating the token, cost and prompt-cache counters across chunks (surfaced for the "cache hit >0"
  *  gate). A chunk whose reply is unusable (truncated, refused, off-schema) is left unscored rather than
- *  failing the rerank: those candidates fall below the score floor, and the chunks already paid for count.
- *  Provider errors still throw. */
+ *  failing the rerank: those candidates fall below the score floor, and every chunk paid for counts,
+ *  unscored ones included. Provider errors still throw. */
 function buildRerank(): DigestDeps["rerank"] {
   return async (
     profile: StructuredProfile,
     candidates: RerankCandidate[],
     prefs?: PromptPreferences,
   ): Promise<RerankOutcome> => {
-    let inputTokens = 0;
-    let outputTokens = 0;
-    let costUsd = 0;
-    let creationInputTokens = 0;
-    let readInputTokens = 0;
+    const usage = { inputTokens: 0, outputTokens: 0, costUsd: 0 };
+    const cache = { creationInputTokens: 0, readInputTokens: 0 };
+    const count = (spent: Pick<RerankOutcome, "usage" | "cache">) => {
+      usage.inputTokens += spent.usage.inputTokens;
+      usage.outputTokens += spent.usage.outputTokens;
+      usage.costUsd += spent.usage.costUsd;
+      cache.creationInputTokens += spent.cache.creationInputTokens;
+      cache.readInputTokens += spent.cache.readInputTokens;
+    };
     const call: RerankCall = async (system, chunk) => {
       try {
-        const { object, usage, cache } = await generateObject({
+        const result = await generateObject({
           model: "haiku",
           system,
           cacheSystem: true,
@@ -74,14 +78,11 @@ function buildRerank(): DigestDeps["rerank"] {
           effort: "low",
           maxOutputTokens: 4096,
         });
-        inputTokens += usage.inputTokens;
-        outputTokens += usage.outputTokens;
-        costUsd += usage.costUsd;
-        creationInputTokens += cache.creationInputTokens;
-        readInputTokens += cache.readInputTokens;
-        return object.scores;
+        count(result);
+        return result.object.scores;
       } catch (err) {
         if (!(err instanceof ObjectGenerationError)) throw err;
+        count(err.spent);
         console.warn(
           `rerank: chunk left unscored (jobs ${chunk.map((c) => c.id).join(",")}): ${err.message}`,
         );
@@ -89,11 +90,6 @@ function buildRerank(): DigestDeps["rerank"] {
       }
     };
     const { orderedIds, scores } = await rerankCandidates(profile, candidates, call, { prefs });
-    return {
-      orderedIds,
-      scores,
-      usage: { inputTokens, outputTokens, costUsd },
-      cache: { creationInputTokens, readInputTokens },
-    };
+    return { orderedIds, scores, usage, cache };
   };
 }

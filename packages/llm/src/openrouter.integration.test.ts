@@ -9,9 +9,24 @@ import { OpenRouterError, openRouterRequest } from "./openrouter";
 
 // The one transport every model call uses, over MSW. Pins the credential boundary (the OpenRouter key as a
 // Bearer token, and NOTHING from the Anthropic SDK's environment variables, which this transport exists to
-// keep out of requests to another vendor), which statuses retry, and that an error carries the status and
-// type but never a body. `retry-after: 0` keeps the shared backoff instant. A retried status is served with
-// a null body: the transport cancels a retried reply's body, and cancelling an MSW-mocked body deadlocks.
+// keep out of requests to another vendor), which failures retry — including an error OpenRouter reports
+// inside a 200, after the provider accepted the request — and that an error carries the status and type but
+// never a body. The shared backoff is mocked instant. A retried status is served with a null body: the
+// transport cancels a retried reply's body, and cancelling an MSW-mocked body deadlocks.
+vi.mock("@opusfinder/shared/async", () => ({ backoff: vi.fn(async () => {}) }));
+
+/** OpenRouter's Messages error envelope, as sent in a 200 when a provider fails after acceptance. */
+function envelope(errorType: string) {
+  return {
+    type: "error",
+    error: {
+      type: "overloaded_error",
+      message: "Provider is temporarily overloaded",
+      error_type: errorType,
+    },
+    request_id: "gen-test",
+  };
+}
 
 describe("openRouterRequest", () => {
   beforeEach(() => {
@@ -78,6 +93,65 @@ describe("openRouterRequest", () => {
     expect(err).toBeInstanceOf(OpenRouterError);
     expect(err).toMatchObject({ status: 400, type: "invalid_request_error" });
     expect(err.message).toBe(`OpenRouter 400 invalid_request_error: bad ${"x".repeat(296)}`);
+  });
+
+  it("retries a transient error reported inside a 200, then returns the reply", async () => {
+    let hits = 0;
+    server.use(
+      http.post(OPENROUTER_MESSAGES_URL, () =>
+        HttpResponse.json(
+          hits++ === 0 ? envelope("provider_overloaded") : messagesReply({ text: "ok" }),
+        ),
+      ),
+    );
+
+    const reply = await openRouterRequest<{ content: { text: string }[] }>("POST", "/messages", {});
+
+    expect(hits).toBe(2);
+    expect(reply.content[0]?.text).toBe("ok");
+  });
+
+  it("throws a non-transient error reported inside a 200 without retrying", async () => {
+    let hits = 0;
+    server.use(
+      http.post(OPENROUTER_MESSAGES_URL, () => {
+        hits += 1;
+        return HttpResponse.json(envelope("content_policy_violation"));
+      }),
+    );
+
+    const err = await rejectionOf(openRouterRequest("POST", "/messages", {}));
+
+    expect(hits).toBe(1);
+    expect(err).toBeInstanceOf(OpenRouterError);
+    expect(err).toMatchObject({ status: 200, type: "content_policy_violation" });
+  });
+
+  it("throws on a 200 that isn't JSON without echoing the reply", async () => {
+    server.use(
+      http.post(OPENROUTER_MESSAGES_URL, () =>
+        HttpResponse.text("<html>transcript fragment</html>"),
+      ),
+    );
+
+    const err = await rejectionOf(openRouterRequest("POST", "/messages", {}));
+
+    expect(err.message).toBe("OpenRouter 200 invalid_json: the reply is not JSON");
+  });
+
+  it("makes a single attempt when maxRetries is 0", async () => {
+    let hits = 0;
+    server.use(
+      http.post(OPENROUTER_MESSAGES_URL, () => {
+        hits += 1;
+        return HttpResponse.json({ error: { code: 503, message: "busy" } }, { status: 503 });
+      }),
+    );
+
+    const err = await rejectionOf(openRouterRequest("POST", "/messages", {}, { maxRetries: 0 }));
+
+    expect(hits).toBe(1);
+    expect(err).toMatchObject({ status: 503 });
   });
 
   it("gives up after the retries on a persistent 5xx, reading the last reply's error", async () => {

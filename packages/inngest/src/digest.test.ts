@@ -34,7 +34,11 @@ const repos = vi.hoisted(() => ({
 }));
 vi.mock("@opusfinder/db/repos", () => repos);
 
-const llm = vi.hoisted(() => ({ buildDigestSystem: vi.fn(), renderDigestJob: vi.fn() }));
+const llm = vi.hoisted(() => ({
+  buildDigestSystem: vi.fn(),
+  renderDigestJob: vi.fn(),
+  BatchEndedError: class BatchEndedError extends Error {},
+}));
 vi.mock("@opusfinder/llm", () => llm);
 
 const probeMod = vi.hoisted(() => ({ probeDigestLiveness: vi.fn() }));
@@ -684,6 +688,17 @@ describe("runPerUser", () => {
     expect(durationById.get("synthesis-wait-0")).toBe("2m"); // fast band
     expect(durationById.get("synthesis-wait-29")).toBe("2m"); // last fast (i=29 < 30)
     expect(durationById.get("synthesis-wait-30")).toBe("10m"); // first slow (i=30, not < 30)
+  });
+
+  it("fails the run without retries when the batch ended without results", async () => {
+    batchCollect.mockRejectedValue(new llm.BatchEndedError("batch batch-1 is expired, not completed"));
+    const { tools } = recordingStep();
+
+    const err = await rejectionOf(runPerUser(makeDeps(), event(), tools));
+
+    expect(err).toBeInstanceOf(NonRetriableError);
+    expect(err.message).toBe("batch batch-1 is expired, not completed");
+    expect(repos.insertDigest).not.toHaveBeenCalled();
   });
 
   it("throws when synthesis yields no usable reason for any item, naming each drop reason", async () => {

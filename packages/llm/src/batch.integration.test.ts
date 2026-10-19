@@ -11,7 +11,13 @@ import {
 import { server } from "@test/msw/server";
 import { rejectionOf } from "@test/rejection";
 
-import { batchGenerate, collectBatchResults, pollBatch, submitBatch } from "./batch";
+import {
+  BatchEndedError,
+  batchGenerate,
+  collectBatchResults,
+  pollBatch,
+  submitBatch,
+} from "./batch";
 import type { BatchRequest } from "./batch";
 import { parseObject } from "./generate-object";
 
@@ -23,6 +29,7 @@ import { parseObject } from "./generate-object";
 type SubmitBody = {
   endpoint?: string;
   model?: string;
+  provider?: unknown;
   requests?: { custom_id: string; body: Record<string, unknown> }[];
 };
 
@@ -39,7 +46,7 @@ describe("batch — OpenRouter Batch API over MSW", () => {
   beforeAll(() => vi.stubEnv("OPENROUTER_API_KEY", "sk-or-test"));
   afterAll(() => vi.unstubAllEnvs());
 
-  it("submits endpoint and model before the requests, each body the Messages body without routing fields", async () => {
+  it("submits endpoint, model and the Anthropic pin before the requests, each body the Messages body", async () => {
     let raw = "";
     server.use(
       http.post(OPENROUTER_BATCHES_URL, async ({ request }) => {
@@ -63,9 +70,11 @@ describe("batch — OpenRouter Batch API over MSW", () => {
     // The API stream-parses the body and 400s when `requests` comes first.
     expect(raw.indexOf('"endpoint"')).toBeLessThan(raw.indexOf('"requests"'));
     expect(raw.indexOf('"model"')).toBeLessThan(raw.indexOf('"requests"'));
+    expect(raw.indexOf('"provider"')).toBeLessThan(raw.indexOf('"requests"'));
     const body = JSON.parse(raw) as SubmitBody;
     expect(body.endpoint).toBe("/v1/messages");
     expect(body.model).toBe("anthropic/claude-haiku-5.5");
+    expect(body.provider).toEqual({ only: ["anthropic"] });
     const request = body.requests?.[0];
     expect(request?.custom_id).toBe("a");
     expect(request?.body).toMatchObject({
@@ -160,9 +169,26 @@ describe("batch — OpenRouter Batch API over MSW", () => {
 
     const err = await rejectionOf(collectBatchResults("batch_f"));
 
+    expect(err).toBeInstanceOf(BatchEndedError);
+    expect(err).toMatchObject({ state: "failed" });
     expect(err.message).toBe(
       "collectBatchResults: batch batch_f is failed, not completed: uses an unsupported setting",
     );
+  });
+
+  it("submits once: a failed submit is not retried, so it can't create a second paid batch", async () => {
+    let posts = 0;
+    server.use(
+      http.post(OPENROUTER_BATCHES_URL, () => {
+        posts += 1;
+        return HttpResponse.json({ error: { code: 503, message: "busy" } }, { status: 503 });
+      }),
+    );
+
+    const err = await rejectionOf(submitBatch([req()]));
+
+    expect(posts).toBe(1);
+    expect(err).toMatchObject({ status: 503 });
   });
 
   it("batchGenerate submits, polls until ended, and returns results in REQUEST order", async () => {

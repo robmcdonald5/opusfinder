@@ -17,7 +17,7 @@ import {
   startDigestRun,
   type UserPreferencesRow,
 } from "@opusfinder/db/repos";
-import { buildDigestSystem, renderDigestJob } from "@opusfinder/llm";
+import { BatchEndedError, buildDigestSystem, renderDigestJob } from "@opusfinder/llm";
 import type { BatchCollection, BatchPoll, BatchRequest, BatchResult } from "@opusfinder/llm";
 import type { RerankCandidate } from "@opusfinder/rerank";
 import type {
@@ -50,8 +50,9 @@ const SYNTH_INITIAL_WAIT = "30s"; // first sleep before polling the synthesis ba
 // per-run step budget, and every sleep suspends at zero compute. Step ids depend ONLY on the loop
 // index, never on ctx.attempt: `attempt` also increments on STEP retries (and resets when a step
 // completes), so an attempt-scoped id would re-derive mid-request and orphan a retried step's target.
-// The last poll lands at 30s + 30×2m + 140×10m ≈ 24h20m (no sleep follows it), past the API's 24h
-// expiry, so an expired batch is still seen `ended` and its succeeded results are kept.
+// The last poll lands at 30s + 30×2m + 140×10m ≈ 24h20m (no sleep follows it), past the 24h window of
+// the batch's provider (pinned to Anthropic), so an expired batch is still seen `ended`. OpenRouter keeps
+// no results for an expired batch, so collect then fails the run.
 const SYNTH_FAST_POLLS = 30; // 2m apart — the first hour
 const SYNTH_FAST_INTERVAL = "2m";
 const SYNTH_SLOW_POLLS = 141; // 10m apart — the tail, out past the 24h batch expiry
@@ -499,7 +500,10 @@ export async function runPerUser(deps: DigestDeps, event: PerUserEvent, step: Pe
   // 6. Collect results into a serializable record (Map can't cross a step boundary), summing the
   //    batch's token usage for digests.counts; the cost is the batch total OpenRouter charged.
   const synthesis = await step.run("collect-synthesis", async () => {
-    const { results, costUsd } = await deps.batch.collect(batchId);
+    const { results, costUsd } = await deps.batch.collect(batchId).catch((err: unknown) => {
+      // A batch that failed or expired as a whole has no results, and a retried read won't find any.
+      throw err instanceof BatchEndedError ? new NonRetriableError(err.message) : err;
+    });
     const reasons: Record<string, SynthesisResult> = {};
     const usage = {
       inputTokens: 0,

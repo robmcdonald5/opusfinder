@@ -36,12 +36,12 @@ describe("buildDigestDeps().rerank — real generateObject over MSW", () => {
   });
   afterAll(() => vi.unstubAllEnvs());
 
-  it("leaves a chunk with an unusable reply unscored and keeps the chunks already scored", async () => {
-    const refusal = messagesReply({ text: "I can't score these postings." });
+  it("leaves a chunk with an unusable reply unscored, keeps the scored chunks, and counts every call", async () => {
+    const offSchema = messagesReply({ text: "I can't score these postings." });
     const calls = replyInOrder(
       messagesReply({ text: JSON.stringify({ scores: FIRST_CHUNK_SCORES }) }),
-      refusal,
-      refusal,
+      offSchema,
+      offSchema,
     );
 
     const outcome = await buildDigestDeps().rerank(PROFILE, CANDIDATES);
@@ -50,6 +50,9 @@ describe("buildDigestDeps().rerank — real generateObject over MSW", () => {
     expect(outcome.scores.size).toBe(13);
     expect(outcome.scores.has(14)).toBe(false);
     expect(outcome.orderedIds).toHaveLength(14); // the unscored candidate is backfilled last
+    // The unscored chunk's two paid attempts count too (each fixture reply: 10 in, 5 out, $0.0001).
+    expect(outcome.usage).toMatchObject({ inputTokens: 30, outputTokens: 15 });
+    expect(outcome.usage.costUsd).toBeCloseTo(0.0003, 10);
   });
 
   it("leaves a chunk scored on the wrong scale unscored instead of clamping it to 1.0", async () => {

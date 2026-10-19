@@ -94,6 +94,12 @@ describe("generateObject — OpenRouter Messages over MSW", () => {
       "generateObject(): the model did not return schema-valid JSON in 2 attempts.",
     );
     expect(err.cause).toBeDefined();
+    // Both paid attempts ride on the error, so a caller that tolerates it can still count them.
+    expect((err as ObjectGenerationError).spent.usage).toEqual({
+      inputTokens: 20,
+      outputTokens: 10,
+      costUsd: 0.0002,
+    });
   });
 
   it("throws an actionable truncation error without retrying", async () => {

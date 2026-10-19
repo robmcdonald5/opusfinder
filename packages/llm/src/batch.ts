@@ -152,13 +152,35 @@ export async function submitBatch(requests: BatchRequest[]): Promise<string> {
   if (!first) throw new Error("submitBatch: received no requests.");
   assertRequests(requests);
   const bodies = requests.map((req) => ({ custom_id: req.customId, body: toBody(req) }));
-  // `endpoint` and `model` must serialize before `requests`: the API stream-parses the body.
-  const batch = await openRouterRequest<WireBatch>("POST", "/batches", {
-    endpoint: "/v1/messages",
-    model: modelId(first.model),
-    requests: bodies,
-  });
+  // `endpoint`, `model` and `provider` must serialize before `requests`: the API stream-parses the body.
+  // Pinned to Anthropic: OpenRouter otherwise picks the cheapest batch endpoint, and another provider
+  // can take up to 96h (past the digest's ~24h poll window) or reject a field that fails the whole batch.
+  // One attempt: a retried submit whose first try reached the server would create a second paid batch.
+  const batch = await openRouterRequest<WireBatch>(
+    "POST",
+    "/batches",
+    {
+      endpoint: "/v1/messages",
+      model: modelId(first.model),
+      provider: { only: ["anthropic"] },
+      requests: bodies,
+    },
+    { maxRetries: 0 },
+  );
   return batch.id;
+}
+
+/** A batch that reached a terminal state other than `completed`: OpenRouter returns no results for it,
+ *  and reading it again won't change that. */
+export class BatchEndedError extends Error {
+  readonly state: BatchState;
+  constructor(batchId: string, state: BatchState, reason: string | undefined) {
+    super(
+      `collectBatchResults: batch ${batchId} is ${state}, not completed${reason ? `: ${reason.slice(0, 300)}` : ""}`,
+    );
+    this.name = "BatchEndedError";
+    this.state = state;
+  }
 }
 
 /** Poll a batch's state and request counts. `status === "ended"` means it reached a terminal state and
@@ -177,16 +199,13 @@ export async function pollBatch(batchId: string): Promise<BatchPoll> {
   };
 }
 
-/** Read a completed batch's inline results into a `customId → BatchResult` map. Throws when the batch
- *  failed, expired or was cancelled as a whole (OpenRouter then returns no results), naming the state and
- *  its reason. */
+/** Read a completed batch's inline results into a `customId → BatchResult` map. Throws
+ *  {@link BatchEndedError} when the batch failed, expired or was cancelled as a whole (OpenRouter then
+ *  returns no results), naming the state and its reason. */
 export async function collectBatchResults(batchId: string): Promise<BatchCollection> {
   const batch = await getBatch(batchId);
   if (batch.status !== "completed") {
-    const reason = batch.error?.message ? `: ${batch.error.message.slice(0, 300)}` : "";
-    throw new Error(
-      `collectBatchResults: batch ${batchId} is ${batch.status}, not completed${reason}`,
-    );
+    throw new BatchEndedError(batchId, batch.status, batch.error?.message);
   }
   const results = new Map<string, BatchResult>();
   for (const r of batch.results ?? []) results.set(r.custom_id, mapResult(r));

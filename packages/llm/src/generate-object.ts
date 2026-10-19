@@ -35,12 +35,20 @@ const DEFAULT_MAX_OUTPUT_TOKENS = 2048;
 // lengths) are only described to the model, so a reply can still fail validation. One retry.
 const MAX_ATTEMPTS = 2;
 
+type Spent = { usage: Usage; cache: CacheCounters };
+
 /** The model replied, but not with a usable object: truncated, refused, or off-schema after the retry.
+ *  `spent` is what the failed attempts cost (zero from `parseObject`), so a caller can still count it.
  *  Provider and network errors are never this class. */
 export class ObjectGenerationError extends Error {
-  constructor(message: string, options?: ErrorOptions) {
+  readonly spent: Spent;
+  constructor(message: string, options?: ErrorOptions & { spent?: Spent }) {
     super(message, options);
     this.name = "ObjectGenerationError";
+    this.spent = options?.spent ?? {
+      usage: { inputTokens: 0, outputTokens: 0, costUsd: 0 },
+      cache: { creationInputTokens: 0, readInputTokens: 0 },
+    };
   }
 }
 
@@ -60,7 +68,7 @@ export async function generateObject<T>(
     format: { type: format.type, schema: format.schema },
   });
   const request = toSyncBody(params, body);
-  const totals = {
+  const totals: Spent = {
     usage: { inputTokens: 0, outputTokens: 0, costUsd: 0 },
     cache: { creationInputTokens: 0, readInputTokens: 0 },
   };
@@ -74,11 +82,13 @@ export async function generateObject<T>(
       throw new ObjectGenerationError(
         `generateObject(): output was truncated at maxOutputTokens=${body.max_tokens}; raise the caller's ` +
           "maxOutputTokens or lower its effort.",
+        { spent: totals },
       );
     }
     if (reply.stopReason !== "end_turn") {
       throw new ObjectGenerationError(
         `generateObject(): the model stopped with "${reply.stopReason ?? "none"}" instead of an answer.`,
+        { spent: totals },
       );
     }
     try {
@@ -89,7 +99,7 @@ export async function generateObject<T>(
   }
   throw new ObjectGenerationError(
     `generateObject(): the model did not return schema-valid JSON in ${MAX_ATTEMPTS} attempts.`,
-    { cause: lastError },
+    { cause: lastError, spent: totals },
   );
 }
 
