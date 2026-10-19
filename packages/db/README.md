@@ -58,6 +58,7 @@ Run from the repo root via the workspace filter so the cwd is `packages/db`:
 | `pnpm --filter @opusfinder/db studio`                 | Open Drizzle Studio                                                                   |
 | `pnpm --filter @opusfinder/db ping`                   | Round-trip `SELECT 1` against Neon                                                    |
 | `pnpm --filter @opusfinder/db runs`                   | Print the most recent `source_runs` rows (pipeline health)                            |
+| `pnpm --filter @opusfinder/db run places:load`        | Download GeoNames (cities500, admin1, countries) and upsert `places`; never deletes   |
 | `pnpm exec vitest run packages/db/src/health.test.ts` | Health-checker suite — pure `evaluateHealth` over canned signals (no creds; Phase F6) |
 | `pnpm --filter @opusfinder/db typecheck`              | `tsc --noEmit`                                                                        |
 
@@ -163,8 +164,8 @@ Run from the repo root via the workspace filter so the cwd is `packages/db`:
   `LocationMode` (`remote_only` excludes on-site; `onsite_only` excludes remote — subsumes the old `remoteOk`
   boolean), and `RetrieveOpts.remoteOk` → `locationMode`. LOCATION is the only working hard filter in F3; salary +
   YoE are stored + soft-prompt-only (never hard filters). No-creds smokes:
-  `pnpm exec vitest run packages/db/src/repos/preferences.test.ts` (preferences round-trip) + `pnpm exec vitest run packages/db/src/repos/location-mode.test.ts`
-  (`geoMatches` LocationMode branches). **APPLIED to prod.**
+  `pnpm exec vitest run packages/db/src/repos/preferences.test.ts` (preferences round-trip). **APPLIED to prod.**
+  (The text-matching `geoMatches` filter was later replaced by the location rule; see "Location places".)
 - **Schema (Phase F4) — job-side enrichment, REMOVED.** `drizzle/0013_cloudy_polaris.sql` originally added
   seven nullable `jobs` columns for job-side structured enrichment (`yoe_min`/`yoe_max`, `salary_min`/`salary_max`,
   `salary_currency`/`salary_period`, `enriched_at`). The feature was fully removed: `drizzle/0016` drops those
@@ -226,6 +227,18 @@ EXISTS`) removes the seven job-side enrichment columns added by 0013 (`yoe_min`/
   - `0022` / `0023` add the send permit `user_preferences.digest_approved_at`: NULL means no digest is sent
     (fail-closed); grant it with `pnpm user:approve --email …`.
   - `0024` adds `data_fixes`, the record of applied data fixes (see `fixes/README.md`).
+- **Location places (0029).** `places` is the GeoNames gazetteer (every city of 500+ people, first-level
+  region and country; `places:load` upserts it by `geonames_id` and never deletes). `location_strings` holds
+  what each company's raw location string means, keyed `(company_id, raw)`: the place ids that passed the
+  GeoNames check, remote countries, the model's confidence + one-line reason, the places that failed the check
+  (`unmatched`) and the prompt version (written by `@opusfinder/locations`; `confidence` NULL = no usable
+  answer). `user_preferences` gains `home_place_id` (FK → `places`, RESTRICT) and `radius_miles` (default
+  50); `locations` is no longer read and a later migration drops it. `repos/location-rule.ts` is the whole
+  location filter as SQL (retrieval's WHERE, and `locations:explain`'s verdicts): no home → location mode
+  only; remote jobs pass if they name no country or the user's; on-site jobs pass with a city within the
+  radius (haversine, miles) or the user's region and no city in it. `repos/location-report.ts` holds the
+  report/explain reads. **Apply BEFORE the code that reads these columns deploys** (drizzle selects every
+  column of `user_preferences`).
 - **neon-http migrations are NOT transactional.** `pnpm db:migrate` (drizzle's neon-http migrator) runs
   each statement on its own and records the applied migrations only after all of them succeed, so a migrate
   that fails partway leaves a partial apply, and the next one re-runs every pending migration from its

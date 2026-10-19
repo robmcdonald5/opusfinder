@@ -165,11 +165,11 @@ imports `node:crypto` — keeping the `src/index.ts` barrel `node:`-free so it b
 
 ## User preferences + unsubscribe token (Phase 9.5, extended in F3)
 
-`UserPreferences` is the node-free, user-SETTABLE preferences contract — `{ locationMode, locations[],
-minSalary, maxSalary, yoeMin, yoeMax, recencyDays, exclusions[], dealbreakers[], digestCadence,
+`UserPreferences` is the node-free, user-SETTABLE preferences contract — `{ locationMode, homePlaceId,
+radiusMiles, minSalary, maxSalary, yoeMin, yoeMax, recencyDays, exclusions[], dealbreakers[], digestCadence,
 digestEnabled }` — the shape both the `user_preferences` repo (`@opusfinder/db`) and the `user:set-prefs` CLI
 write, and the future SvelteKit settings form will reuse. The deterministic-filter fields
-(`locationMode`/`locations`/`recencyDays`/`exclusions`/`dealbreakers`) feed digest retrieval; the
+(`locationMode`/`homePlaceId`/`radiusMiles`/`recencyDays`/`exclusions`/`dealbreakers`) feed digest retrieval; the
 judgment-context fields (`yoeMin`/`yoeMax`/`minSalary`/`maxSalary`/`dealbreakers`) feed the rerank + synthesis
 prompt via `composePromptPrefs` (Phase F3 — salary/YoE are stored + soft-prompt signals only, never hard
 filters). The YoE band is the declared-level signal (the too-senior fix); a categorical

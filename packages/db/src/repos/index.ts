@@ -45,9 +45,50 @@ export {
   setDigestApproval,
 } from "./preferences";
 export type { UserPreferencesRow, CreatePreferencesInput } from "./preferences";
-// Digest retrieval — the deterministic filter + cosine ranking over a profile vector.
-export { retrieveCandidatesForProfile } from "./retrieval";
+// Digest retrieval — the deterministic filter + location rule + cosine ranking over a profile vector.
+export { retrieveCandidatesForProfile, candidateFilterSql, countLocalStrings } from "./retrieval";
 export type { RetrieveOpts, JobCandidate } from "./retrieval";
+export {
+  locationRule,
+  homeAndStringFlagsSql,
+  milesBetween,
+  EARTH_RADIUS_MILES,
+} from "./location-rule";
+export type { LocationFilter, LocationRuleSql } from "./location-rule";
+// The GeoNames gazetteer and the normalizer's resolved location strings.
+export {
+  upsertPlaces,
+  listCountriesAndRegions,
+  getPlaces,
+  findCities,
+  cityKey,
+  findHomeCandidates,
+  findHomePlace,
+} from "./places";
+export type { Place, CityMatch, HomeCandidate, HomePlaceLookup } from "./places";
+export {
+  listPendingPairs,
+  listCompanyStrings,
+  upsertLocationStrings,
+  activePairsSql,
+} from "./location-strings";
+export type { LocationPair, LocationStringRow } from "./location-strings";
+// locations:report / locations:explain reads.
+export {
+  coverageBySource,
+  pairStatus,
+  reportList,
+  explainJob,
+  cosineRankIgnoringLocation,
+} from "./location-report";
+export type {
+  SourceCoverage,
+  PairStatus,
+  ReportRow,
+  ReportList,
+  ExplainedString,
+  ExplainedJob,
+} from "./location-report";
 // Lifecycle closing — the first writers of lifecycle_state='closed' (feed-absence sweep + board-death + 410-close).
 export {
   sweepLifecycle,

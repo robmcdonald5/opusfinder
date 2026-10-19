@@ -39,15 +39,18 @@ integration (email ships in Phase 11 on the local dev runtime — locked at Phas
   AND by the 12a cadence cron, which carries `trigger:'cron'`; optional `userId` scopes it to one user)
   and `digest/user.requested` (one per recipient, fanned out by the orchestrator).
 - `src/digest.ts` — `createDigestFunctions(deps)` → `[orchestrator, perUser, cadence]`, plus the `DigestDeps`
-  injection seam (`db` + a `rerank` closure + the `batch` submit/poll/collect lifecycle + the Phase-11
-  `email` send/lastEvent pair) so the pipeline is stub-testable and the heavy `@opusfinder/llm` wiring
-  stays out of the function bodies.
+  injection seam (`db` + a `rerank` closure + the `batch` submit/poll/collect lifecycle + the location
+  normalizer's model (`@opusfinder/locations`) + the Phase-11 `email` send/lastEvent pair) so the pipeline is
+  stub-testable and the heavy `@opusfinder/llm` wiring stays out of the function bodies.
   - **Orchestrator** (`digest-orchestrator`): opens a `digest_run`, resolves recipients (single user
     when `event.data.userId` is set — runtime-validated as a uuid, since the event schema is
     compile-time only — else every eligible user keyset-swept, with `cadenceDue` passed through as
     `event.data.trigger === 'cron'` so a cron run filters to cadence-due users while a manual `--all`
-    sweep does not), fans out one `digest/user.requested`
-    each via `step.sendEvent`, and finalizes the run to the dispatch count. Fan-out is fire-and-forget,
+    sweep does not), resolves the active location strings no `location_strings` row covers yet
+    (`resolve-locations-<i>` steps, `SYNC_CHUNK` pairs each, until none are left; a request that keeps failing
+    fails the run instead of filtering on unresolved strings; more than 50 chunks means run
+    `pnpm locations:backfill`), fans out one `digest/user.requested`
+    each via `step.sendEvent`, and finalizes the run to the dispatch count (plus the location counts). Fan-out is fire-and-forget,
     so the run row records **dispatch**, not per-user completion (those land on `digests`). A step that
     exhausts its retries is caught and terminalized onto the run row (`status: 'error'` +
     `error_sample`) before the failure is rethrown.
@@ -62,14 +65,16 @@ integration (email ships in Phase 11 on the local dev runtime — locked at Phas
     (skip if no profile/embedding, unverified email, `!digestEnabled`, suppressed, or no send permit
     (`digest_approved_at` unset) — so even a manual single-user trigger respects an opt-out and matches
     the `--all` sweep's gate — or if this run already emailed the user, so a dashboard Rerun/Replay never
-    re-sends) → retrieve (geo +
-    exclusion keywords applied inside retrieval's post-filter — Phase-F3 merges `dealbreakers` into that
-    exclusions filter, and `locationMode` replaces the old `remoteOk` boolean — plus the Phase-F1 repost
+    re-sends) → retrieve (the location rule — `location_mode` + the home place and radius — runs in
+    retrieval's SQL before the cosine ranking, and the user's local-string count is recorded; exclusion
+    keywords are applied in retrieval's post-filter — Phase-F3 merges `dealbreakers` into that exclusions
+    filter — plus the Phase-F1 repost
     anti-join — `excludeSignatures` from `alreadyShownSignatures`, threaded alongside the id anti-join — and a
     same-signature display-collapse, all before its over-fetch trim) → sync
     rerank (top-K, with the prompt-cache counters for the gate) — Phase-F3 applies a `MIN_SCORE=0.5`
     quality floor that drops sub-floor reranked items BEFORE the top-K cut (a short/empty digest over
-    padding with weak fits), with a no-send skip (`'no-strong-matches'`) when none clear → submit the synthesis batch
+    padding with weak fits), with a no-send skip (`'no-strong-matches'`) when none clear; that skip and the
+    `'no-candidates'` one each leave a 0-item `digests` record whose counts say why (never emailed) → submit the synthesis batch
     (`custom_id = d{runId}-{jobId}`; the batch id is logged before the step memoizes, so a crash in the
     create→memoize window leaves a traceable orphan) → durable `step.sleep` + a **bounded poll loop**
     on a fast→slow schedule (2m for the first hour, then 10m) that spans the API's 24h batch SLA in one

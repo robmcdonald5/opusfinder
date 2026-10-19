@@ -119,7 +119,8 @@ function toRow(prefs?: Partial<UserPreferences>): Partial<typeof userPreferences
   const row: Partial<typeof userPreferences.$inferInsert> = {};
   if (!prefs) return row;
   if (prefs.locationMode !== undefined) row.locationMode = prefs.locationMode;
-  if (prefs.locations !== undefined) row.locations = prefs.locations;
+  if (prefs.homePlaceId !== undefined) row.homePlaceId = prefs.homePlaceId;
+  if (prefs.radiusMiles !== undefined) row.radiusMiles = prefs.radiusMiles;
   if (prefs.minSalary !== undefined) row.minSalary = prefs.minSalary;
   if (prefs.maxSalary !== undefined) row.maxSalary = prefs.maxSalary;
   if (prefs.yoeMin !== undefined) row.yoeMin = prefs.yoeMin;

@@ -63,16 +63,23 @@ export function maskEmail(email: string): string {
   return `${local[0]}***${local[local.length - 1]}${domain}`;
 }
 
+/** An on-site job's city must be within this many miles of the home city; 0 would drop every on-site job. */
+function parseRadiusMiles(value: string): number {
+  const n = parseIntFlag(value, "radius-miles");
+  if (n < 1 || n > 500) throw new Error(`--radius-miles must be 1..500 (got ${n})`);
+  return n;
+}
+
 /** Build a UserPreferences patch from the (already string-typed) preference flags; omits unset ones. The
  *  nullable bounds (min/max salary, min/max yoe) accept "clear" to write NULL; "" empties an array
- *  (locations/dealbreakers/exclusions). Locations are ';'-separated: a "City, Region" entry contains a
- *  comma, and splitting it would widen the location filter to the whole region. */
+ *  (dealbreakers/exclusions). The home place needs a database lookup, so user:set-prefs resolves
+ *  `--home` itself. */
 export function prefsFromFlags(
   values: Record<string, string | undefined>,
 ): Partial<UserPreferences> {
   const prefs: Partial<UserPreferences> = {};
   if (values["location-mode"] !== undefined) prefs.locationMode = parseLocationMode(values["location-mode"]);
-  if (values.locations !== undefined) prefs.locations = parseList(values.locations, ";");
+  if (values["radius-miles"] !== undefined) prefs.radiusMiles = parseRadiusMiles(values["radius-miles"]);
   if (values["min-salary"] !== undefined) prefs.minSalary = parseNullableInt(values["min-salary"], "min-salary");
   if (values["max-salary"] !== undefined) prefs.maxSalary = parseNullableInt(values["max-salary"], "max-salary");
   if (values["min-yoe"] !== undefined) prefs.yoeMin = parseNullableInt(values["min-yoe"], "min-yoe");

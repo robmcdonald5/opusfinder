@@ -21,6 +21,7 @@ pipeline, and delivers a personalized digest on a regular cadence. See
 | `packages/eval/`       | Matching-quality eval harness — metrics, rankers, reports ([README](packages/eval/README.md))                                                                                                     |
 | `packages/inngest/`    | Per-user digest pipeline on Inngest — orchestrator + per-user fn + cadence cron + F8 backfills, serve + trigger CLI (Phase 10; cadence/backfills Phase 12a) ([README](packages/inngest/README.md)) |
 | `packages/llm/`        | Claude (Haiku/Sonnet 5.5) through OpenRouter: prompt caching, structured output, effort/thinking controls, Batch API ([README](packages/llm/README.md))                                          |
+| `packages/locations/`  | Location normalizer — each company's location strings → GeoNames places, checked and stored once; sync / backfill / report / explain CLIs ([README](packages/locations/README.md))              |
 | `packages/profiles/`   | CV → semantic-profile pipeline — transcribe → structure → embed (Phase 9) ([README](packages/profiles/README.md))                                                                                 |
 | `packages/rerank/`     | Shared listwise LLM rerank core — `RerankCall` injection, runs in both the digest pipeline and eval (Phase 10) ([README](packages/rerank/README.md))                                              |
 | `packages/shared/`     | Shared brand types + validators ([README](packages/shared/README.md))                                                                                                                             |
@@ -83,13 +84,18 @@ pnpm db:ping      # round-trips SELECT 1 against Neon
 | `pnpm llm:test`                           | Call Haiku twice with a cached system prompt; assert cache write then read                                                                                                     |
 | `pnpm embeddings:backfill`                | Embed every job whose `embedding` is still NULL (idempotent)                                                                                                                   |
 | `pnpm embeddings:search "<q>"`            | Embed a query and print the nearest jobs by cosine distance (HNSW)                                                                                                             |
+| `pnpm locations:sync`                     | Resolve the active location strings that have no row yet (the digest's daily step, by hand)                                                                                    |
+| `pnpm locations:backfill`                 | Resolve every missing, stale-prompt or unanswered location string as one provider batch (`-- --dry-run` counts them)                                                          |
+| `pnpm locations:report`                   | Location coverage by source + worklists: no usable place, low confidence, failed GeoNames check, no answer                                                                     |
+| `pnpm locations:explain -- --email …`     | Why a job is or isn't local for a user (`--job <id>`), or the user's top candidates after the location filter (`--all` for every approved user)                               |
 | `pnpm eval`                               | Score a ranker over the labeled set; write a report + diff vs last run                                                                                                         |
 | `pnpm eval:compare`                       | Voyage vs OpenAI embedding retrieval, side-by-side                                                                                                                             |
 | `pnpm eval:hnsw`                          | Measure HNSW recall against the exact cosine top-k on the real Neon corpus (read-only)                                                                                         |
+| `pnpm eval:locations`                     | Score the location normalizer against the golden set, with and without company context (live model; on demand)                                                                |
 | `pnpm ingest-cv <cv.pdf> <email>`         | Ingest a CV PDF → R2 + `user_cv_files` + `user_profiles` (transcribe → structure → embed)                                                                                      |
 | `pnpm profiles:restructure <email>`       | Re-structure a profile from the cached R2 transcript (skips transcribe)                                                                                                        |
-| `pnpm user:create --email … --password …` | Create a verified user + default prefs (`[--name] [--location-mode] [--locations] [--min-salary] [--max-salary] [--min-yoe] [--max-yoe] [--dealbreakers] [--exclusions] [--recency-days] [--cadence] [--enabled]`) |
-| `pnpm user:set-prefs --email … [flags]`   | Patch a user's preferences (same pref flags)                                                                                                                                   |
+| `pnpm user:create --email … --password …` | Create a verified user + default prefs (`[--name] [--location-mode] [--min-salary] [--max-salary] [--min-yoe] [--max-yoe] [--dealbreakers] [--exclusions] [--recency-days] [--cadence] [--enabled]`) |
+| `pnpm user:set-prefs --email … [flags]`   | Patch a user's preferences (same pref flags, plus `--home "City, Region" \| <geonames id> \| none` and `--radius-miles N`; a home must match exactly one city)              |
 | `pnpm user:approve --email …`             | Grant the fail-closed digest send permit (`digest_approved_at`); a new user gets no digest until this runs (`[--revoke]`)                                                      |
 | `pnpm user:list`                          | List users — masked email, verified, approved, suppressed + bounce, cadence, enabled, has-profile, id                                                                          |
 | `pnpm digest`                             | Trigger a per-user digest run + poll for the result (`--user <uuid>` or `--all`; `[--timeout-ms] [--poll-ms]`)                                                                 |
@@ -115,6 +121,12 @@ The schedules live in two runtimes; a change ships per runtime, and the watchdog
 3. **Inngest crons** (`health-check-alert` `10 */2 * * *`, `digest-cadence` `10 12 * * *`): ship with the
    next `apps/web` deploy + Inngest app sync. They are paused in the Inngest dashboard until resumed.
 4. If `HEALTH_INGEST_MAX_AGE_H` is overridden anywhere (`packages/db/.env`, Vercel), set it to 5 or unset it.
+
+## Data attribution
+
+Place data (`places`, loaded by `pnpm --filter @opusfinder/db run places:load`) comes from
+[GeoNames](https://www.geonames.org/), licensed under
+[Creative Commons Attribution 4.0](https://creativecommons.org/licenses/by/4.0/).
 
 ## Documentation (local planning docs — not committed)
 

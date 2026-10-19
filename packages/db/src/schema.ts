@@ -9,11 +9,13 @@
 import { sql } from "drizzle-orm";
 import {
   boolean,
+  doublePrecision,
   foreignKey,
   index,
   integer,
   jsonb,
   pgTable,
+  primaryKey,
   real,
   serial,
   smallint,
@@ -30,9 +32,12 @@ import type {
   DigestFeedback,
   DigestTrigger,
   JobId,
+  LocationConfidence,
   LocationMode,
+  PlaceKind,
   SourceName,
   StructuredProfile,
+  UnmatchedPlace,
   UserId,
 } from "@opusfinder/shared";
 
@@ -340,6 +345,81 @@ export const userProfiles = pgTable(
   ],
 );
 
+// ─── Places (GeoNames) + resolved location strings ──────────────────────────────────────
+//
+// `places` is the GeoNames gazetteer, loaded by the owner-run `places:load` (upsert by geonames_id, never
+// delete). `location_strings` holds what each company's raw location text means, resolved once by the
+// location normalizer and checked against `places`. Ingestion and `jobs` are untouched: retrieval joins a
+// job's raw `locations` strings to these rows by (company_id, raw).
+
+/**
+ * One GeoNames city (cities500), first-level region (admin1) or country. The `*_norm` columns are the
+ * matching keys (see normalizePlaceName in @opusfinder/shared): `name_norm` from the name, `ascii_norm`
+ * from GeoNames' ASCII name, and `alt_names` the normalized Latin-script alternate names of a city
+ * ("New York" for New York City), consulted only when no city matches by name. A region's `region_code`
+ * is its own admin1 code; a city's is the code of the region it is in (NULL when GeoNames gives none).
+ * Coordinates and population are set for cities only.
+ */
+export const places = pgTable(
+  "places",
+  {
+    geonamesId: integer("geonames_id").primaryKey(),
+    kind: text("kind").$type<PlaceKind>().notNull(),
+    name: text("name").notNull(),
+    nameNorm: text("name_norm").notNull(),
+    asciiNorm: text("ascii_norm").notNull(),
+    altNames: text("alt_names")
+      .array()
+      .notNull()
+      .default(sql`'{}'::text[]`),
+    regionCode: text("region_code"),
+    regionName: text("region_name"),
+    countryCode: text("country_code").notNull(),
+    lat: doublePrecision("lat"),
+    lng: doublePrecision("lng"),
+    population: integer("population"),
+  },
+  (t) => [
+    // The normalizer's check and user:set-prefs look places up by name within a country.
+    index("places_country_name_idx").on(t.countryCode, t.nameNorm),
+    index("places_country_ascii_idx").on(t.countryCode, t.asciiNorm),
+    index("places_alt_names_idx").using("gin", t.altNames),
+  ],
+);
+
+/**
+ * What one company's raw location string means: one row per (company_id, raw), written once by the
+ * normalizer and re-written only when its prompt version changes (`locations:backfill`). `place_ids` are
+ * the GeoNames places that passed the check (every city the text names, or a region/country where it
+ * names no city); `remote_countries` the ISO-3166 alpha-2 codes a remote role is open to; `unmatched` the
+ * model's places that failed the check, kept for `locations:report`. Empty arrays = no usable place.
+ * `confidence` NULL means the model gave no usable answer (refused, cut off, off-schema); `reason` then
+ * says which. Keyed by company because the same text can mean different places for different companies
+ * (a bare "Dublin"). `company_id` is a plain reference, no FK, so a company delete never has to reach this
+ * table; an orphaned row is inert (serial ids are never reused).
+ */
+export const locationStrings = pgTable(
+  "location_strings",
+  {
+    companyId: integer("company_id").notNull(),
+    raw: text("raw").notNull(),
+    placeIds: integer("place_ids")
+      .array()
+      .notNull()
+      .default(sql`'{}'::integer[]`),
+    remoteCountries: text("remote_countries")
+      .array()
+      .notNull()
+      .default(sql`'{}'::text[]`),
+    unmatched: jsonb("unmatched").$type<UnmatchedPlace[]>().notNull().default([]),
+    confidence: text("confidence").$type<LocationConfidence>(),
+    reason: text("reason"),
+    promptVersion: text("prompt_version").notNull(),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ name: "location_strings_pk", columns: [t.companyId, t.raw] })],
+);
+
 // ─── Real identity (Better Auth-owned) + per-user preferences ───────────────────────────
 //
 // `user`/`session`/`account`/`verification` are OWNED by Better Auth (email+password now; magic-link /
@@ -484,10 +564,17 @@ export const userPreferences = pgTable(
     id: serial("id").primaryKey(),
     userId: uuid("user_id").$type<UserId>().notNull(),
     // --- user-settable filter prefs (deterministic filter) ---
+    // DEPRECATED, no longer read or written: the old free-text location filter, replaced by home_place_id +
+    // radius_miles. Dropped by a later migration once no deployed build selects it.
     locations: text("locations")
       .array()
       .notNull()
       .default(sql`'{}'::text[]`),
+    // The user's home city (a `places` row of kind 'city'); NULL = no home, so only location_mode filters.
+    // Retrieval keeps on-site jobs with a city within radius_miles of it, or that name its region and no
+    // city there, and remote jobs that name no country or its country. RESTRICT: places:load never deletes.
+    homePlaceId: integer("home_place_id"),
+    radiusMiles: smallint("radius_miles").notNull().default(50),
     minSalary: integer("min_salary"),
     // Salary ceiling. Nullable-no-default (null = "no cap") — a 0 default would read as a real "stated
     // $0", not "absent". A soft prompt signal (never a hard filter).
@@ -505,8 +592,8 @@ export const userPreferences = pgTable(
       .array()
       .notNull()
       .default(sql`'{}'::text[]`),
-    // Indeed/LinkedIn-style location filter — a TS string-union on plain text (no pgEnum); geoMatches
-    // branches on it.
+    // Indeed/LinkedIn-style location filter — a TS string-union on plain text (no pgEnum); the retrieval
+    // location rule (repos/location-rule.ts) branches on it.
     locationMode: text("location_mode").$type<LocationMode>().notNull().default("any"),
     // --- delivery prefs + state ---
     digestCadence: text("digest_cadence").$type<DigestCadence>().notNull().default("weekly"),
@@ -553,6 +640,11 @@ export const userPreferences = pgTable(
       foreignColumns: [user.id],
       name: "user_preferences_user_id_user_id_fk",
     }).onDelete("cascade"),
+    foreignKey({
+      columns: [t.homePlaceId],
+      foreignColumns: [places.geonamesId],
+      name: "user_preferences_home_place_id_places_geonames_id_fk",
+    }).onDelete("restrict"),
   ],
 );
 

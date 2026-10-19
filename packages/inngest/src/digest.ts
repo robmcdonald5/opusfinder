@@ -3,6 +3,7 @@ import { describeDbError } from "@opusfinder/db/errors";
 import {
   alreadyShownJobIds,
   alreadyShownSignatures,
+  countLocalStrings,
   deleteUserDigestForRun,
   finishDigestRun,
   getJobSnapshots,
@@ -19,6 +20,7 @@ import {
 } from "@opusfinder/db/repos";
 import { BatchEndedError, buildDigestSystem, renderDigestJob } from "@opusfinder/llm";
 import type { BatchCollection, BatchPoll, BatchRequest, BatchResult } from "@opusfinder/llm";
+import { SYNC_CHUNK, syncLocationStrings, type LocationModel } from "@opusfinder/locations";
 import type { RerankCandidate } from "@opusfinder/rerank";
 import type {
   LocationMode,
@@ -60,6 +62,9 @@ const SYNTH_SLOW_INTERVAL = "10m";
 const SYNTH_MAX_POLLS = SYNTH_FAST_POLLS + SYNTH_SLOW_POLLS;
 /** Consecutive failed polls (each after its own step retries) before the run gives up on the batch. */
 const SYNTH_MAX_FAILED_POLLS = 6;
+/** Location-resolve steps per run, SYNC_CHUNK pairs each (~2,000 pairs): far above a day's new strings. A
+ *  run that needs more throws; `pnpm locations:backfill` is the path for a large set. */
+const RESOLVE_MAX_STEPS = 50;
 
 /** Shared with the CLI's gate — the event schema is compile-time only, so the orchestrator re-checks at
  *  runtime (an empty string is falsy-shaped junk that must not widen into an all-recipients run). */
@@ -99,6 +104,9 @@ export interface DigestDeps {
     collect: (batchId: string) => Promise<BatchCollection>;
   };
   email: EmailSeam;
+  /** The location normalizer's model (@opusfinder/locations): resolves new location strings before the
+   *  fan-out. */
+  locations: LocationModel;
   /** The pre-send apply-URL liveness probe (one URL → verdict); the per-digest fan-out lives in
    *  `probeDigestLiveness`. Injected so the tests drive it with a fake. */
   probe: LivenessProbe;
@@ -135,7 +143,8 @@ export interface PerUserStepTools {
 
 interface FilterPrefs {
   locationMode: LocationMode;
-  locations: string[];
+  homePlaceId: number | null;
+  radiusMiles: number;
   recencyDays: number;
   exclusions: string[];
 }
@@ -149,7 +158,8 @@ interface FilterPrefs {
 function toFilterPrefs(prefs: UserPreferencesRow): FilterPrefs {
   return {
     locationMode: prefs.locationMode,
-    locations: prefs.locations,
+    homePlaceId: prefs.homePlaceId,
+    radiusMiles: prefs.radiusMiles,
     recencyDays: prefs.recencyDays,
     exclusions: [...prefs.exclusions, ...prefs.dealbreakers],
   };
@@ -243,6 +253,27 @@ export async function runOrchestrator(
       return ids;
     });
 
+    // Resolve the location strings no row covers yet, before any user's retrieval reads them: SYNC_CHUNK pairs
+    // per step (each step well inside the function's time limit), until none are left. A request that keeps
+    // failing throws out of its step, so the run fails visibly rather than filtering on unresolved strings.
+    const resolved = { resolved: 0, unanswered: 0, unmatchedPlaces: 0 };
+    if (recipients.length > 0) {
+      for (let i = 0; ; i++) {
+        if (i === RESOLVE_MAX_STEPS) {
+          throw new NonRetriableError(
+            `digest: more than ${RESOLVE_MAX_STEPS * SYNC_CHUNK} new location strings; run \`pnpm locations:backfill\`.`,
+          );
+        }
+        const chunk = await step.run(`resolve-locations-${i}`, () =>
+          syncLocationStrings(deps.db, deps.locations, { limit: SYNC_CHUNK }),
+        );
+        resolved.resolved += chunk.resolved;
+        resolved.unanswered += chunk.unanswered;
+        resolved.unmatchedPlaces += chunk.unmatchedPlaces;
+        if (!chunk.more) break;
+      }
+    }
+
     if (recipients.length > 0) {
       // One atomic fan-out (payload < 512 KB at this scale; paginate step.sendEvent beyond ~2.5k users).
       await step.sendEvent(
@@ -257,7 +288,13 @@ export async function runOrchestrator(
     await step.run("finish-run", () =>
       finishDigestRun(deps.db, runId, {
         status: "ok",
-        counts: { recipients: recipients.length, dispatched: recipients.length },
+        counts: {
+          recipients: recipients.length,
+          dispatched: recipients.length,
+          locationsResolved: resolved.resolved,
+          locationsUnanswered: resolved.unanswered,
+          locationsUnmatchedPlaces: resolved.unmatchedPlaces,
+        },
       }),
     );
     return { runId, recipients: recipients.length };
@@ -354,12 +391,13 @@ export async function runPerUser(deps: DigestDeps, event: PerUserEvent, step: Pe
   });
   if ("skip" in loaded) return { userId, skipped: loaded.skip };
 
-  // 2. Deterministic filter + vector retrieval. Geo AND exclusion keywords are applied inside
-  //    retrieval's post-filter (before its over-fetch trim — so exclusions can't empty the
-  //    returned set while fetched non-excluded rows are thrown away). Re-reads the embedding and reads
-  //    the shown-history here, and returns only the fields + description length the rerank/synthesis
-  //    prompts consume, keeping the memoized step output slim.
-  const candidates = await step.run("retrieve", async (): Promise<RerankCandidate[]> => {
+  // 2. Deterministic filter + vector retrieval. The location rule runs in retrieval's SQL; exclusion
+  //    keywords in its post-filter (before its over-fetch trim — so exclusions can't empty the returned set
+  //    while fetched non-excluded rows are thrown away). Re-reads the embedding and reads the shown-history
+  //    here, and returns only the fields + description length the rerank/synthesis prompts consume, keeping
+  //    the memoized step output slim. `localStrings` (how many location strings are local to the user's
+  //    home; null without one) goes on the digest record.
+  const retrieved = await step.run("retrieve", async () => {
     const [profile, excludeJobIds, excludeSignatures] = await Promise.all([
       getProfileForDigest(deps.db, userId),
       alreadyShownJobIds(deps.db, userId),
@@ -368,25 +406,38 @@ export async function runPerUser(deps: DigestDeps, event: PerUserEvent, step: Pe
     if (!profile?.embedding) {
       throw new Error(`digest: profile embedding disappeared mid-run (user ${userId}).`);
     }
-    const rawCandidates = await retrieveCandidatesForProfile(deps.db, profile.embedding, {
-      limit: RETRIEVE_LIMIT,
-      locationMode: loaded.prefs.locationMode,
-      locations: loaded.prefs.locations,
-      recencyDays: loaded.prefs.recencyDays,
-      exclusions: loaded.prefs.exclusions,
-      excludeJobIds,
-      excludeSignatures,
-    });
-    return rawCandidates.map((c) => ({
+    const { homePlaceId, radiusMiles } = loaded.prefs;
+    const home = homePlaceId === null ? null : { placeId: homePlaceId, radiusMiles };
+    const [rawCandidates, localStrings] = await Promise.all([
+      retrieveCandidatesForProfile(deps.db, profile.embedding, {
+        limit: RETRIEVE_LIMIT,
+        location: { mode: loaded.prefs.locationMode, home },
+        recencyDays: loaded.prefs.recencyDays,
+        exclusions: loaded.prefs.exclusions,
+        excludeJobIds,
+        excludeSignatures,
+      }),
+      home ? countLocalStrings(deps.db, home) : Promise.resolve(null),
+    ]);
+    const items: RerankCandidate[] = rawCandidates.map((c) => ({
       id: c.id,
       title: c.title,
       // +1 so a description that EXCEEDED the cap still trips the renderers' strict `> max`
       // checks and keeps their truncation marker; an exactly-capped slice would silently lose it.
       descriptionText: c.descriptionText.slice(0, DESCRIPTION_STATE_CHARS + 1),
     }));
+    return { items, localStrings };
   });
+  const candidates = retrieved.items;
+  /** The location count every digest record carries; absent for a user with no home place. */
+  const locationCounts: Record<string, number> =
+    retrieved.localStrings === null ? {} : { localStrings: retrieved.localStrings };
   if (candidates.length === 0) {
-    // Considered this cadence period (nothing retrieved) — back off so the daily cron doesn't re-run.
+    // Nothing retrieved: leave a 0-item digest record (its counts say why) and back off for the cadence
+    // period so the daily cron doesn't re-run. No email is sent for it.
+    await step.run("record-no-candidates", () =>
+      recordEmptyDigest(deps.db, userId, digestRunId, { candidates: 0, ...locationCounts }),
+    );
     await step.run("mark-considered-no-candidates", () =>
       markDigestConsidered(deps.db, userId, digestRunId),
     );
@@ -419,7 +470,16 @@ export async function runPerUser(deps: DigestDeps, event: PerUserEvent, step: Pe
   // No candidate cleared the quality floor — skip rather than send a digest of weak/bad-fit roles (or
   // an empty email). Distinct from "no-candidates": jobs matched here, but none scored well enough.
   if (reranked.items.length === 0) {
-    // Considered this period (matches found, none cleared the floor) — back off after the PAID rerank.
+    // Considered this period (matches found, none cleared the floor): leave a 0-item record with the rerank
+    // counts, and back off after the PAID rerank. No email is sent for it.
+    await step.run("record-no-strong", () =>
+      recordEmptyDigest(deps.db, userId, digestRunId, {
+        candidates: candidates.length,
+        ...locationCounts,
+        ...rerankCounts(reranked),
+        reranked: 0,
+      }),
+    );
     await step.run("mark-considered-no-strong", () =>
       markDigestConsidered(deps.db, userId, digestRunId),
     );
@@ -567,13 +627,9 @@ export async function runPerUser(deps: DigestDeps, event: PerUserEvent, step: Pe
       itemCount: kept.length,
       counts: {
         candidates: candidates.length,
+        ...locationCounts,
         reranked: reranked.items.length,
-        rerankScored: reranked.scored,
-        rerankInputTokens: reranked.usage.inputTokens,
-        rerankOutputTokens: reranked.usage.outputTokens,
-        rerankCacheReadTokens: reranked.cache.readInputTokens,
-        rerankCacheCreationTokens: reranked.cache.creationInputTokens,
-        rerankCostUsd: reranked.usage.costUsd,
+        ...rerankCounts(reranked),
         synthesisInputTokens: synthesis.usage.inputTokens,
         synthesisOutputTokens: synthesis.usage.outputTokens,
         synthesisCacheReadTokens: synthesis.usage.cacheReadInputTokens,
@@ -656,6 +712,43 @@ export async function runPerUser(deps: DigestDeps, event: PerUserEvent, step: Pe
     );
   }
   return { ...persisted, delivery };
+}
+
+/** The rerank step's counts as a digest record carries them. */
+function rerankCounts(reranked: {
+  scored: number;
+  usage: RerankOutcome["usage"];
+  cache: RerankOutcome["cache"];
+}): Record<string, number> {
+  return {
+    rerankScored: reranked.scored,
+    rerankInputTokens: reranked.usage.inputTokens,
+    rerankOutputTokens: reranked.usage.outputTokens,
+    rerankCacheReadTokens: reranked.cache.readInputTokens,
+    rerankCacheCreationTokens: reranked.cache.creationInputTokens,
+    rerankCostUsd: reranked.usage.costUsd,
+  };
+}
+
+/**
+ * The record a run leaves for a user it built no digest for (nothing retrieved, or nothing above the score
+ * floor): a 0-item digest row whose counts say why, the same shape the all-dead path leaves. Never
+ * replaces an emailed digest; retry-idempotent like persist (delete this run's row, insert fresh). The
+ * send path never sees it: delivery runs only after persist.
+ */
+async function recordEmptyDigest(
+  db: Db,
+  userId: UserId,
+  digestRunId: number,
+  counts: Record<string, number>,
+): Promise<void> {
+  if (await hasSentDigestForRun(db, userId, digestRunId)) {
+    throw new NonRetriableError(
+      `digest: user ${userId} was already emailed run ${digestRunId}'s digest — refusing to replace it.`,
+    );
+  }
+  await deleteUserDigestForRun(db, userId, digestRunId);
+  await insertDigest(db, { userId, digestRunId, itemCount: 0, counts });
 }
 
 /** Wraps runPerUser as the Inngest fn; the adapter passes Inngest's tools through (Jsonify→T cast). */

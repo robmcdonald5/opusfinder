@@ -12,7 +12,10 @@
     "./health": "./src/health.ts",
     "./errors": "./src/errors.ts",
     "./fixes": "./src/fixes.ts",
-    "./roles": "./src/roles.ts"
+    "./roles": "./src/roles.ts",
+    "./geonames": "./src/geonames.ts",
+    "./zip": "./src/zip.ts",
+    "./geonames-files": "./src/geonames-files.ts"
   },
   "types": "./src/client.ts",
   "scripts": {
@@ -21,6 +24,7 @@
     "backfill-snapshots": "tsx scripts/backfill-digest-item-snapshot.ts",
     "prune-stale": "tsx scripts/prune-stale-jobs.ts",
     "prune-oplog": "tsx scripts/prune-oplog.ts",
+    "places:load": "tsx scripts/places-load.ts",
     "generate": "drizzle-kit generate",
     "studio": "drizzle-kit studio",
     "ping": "tsx scripts/ping.ts",

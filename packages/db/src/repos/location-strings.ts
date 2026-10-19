@@ -1,0 +1,126 @@
+/**
+ * Persistence for `location_strings`: which (company, raw) pairs still need the location normalizer, the
+ * context it is given, and the upsert of its checked answers. "Active" means a string some active job
+ * lists; a blank string is never a pair.
+ */
+import { sql } from "drizzle-orm";
+
+import type { LocationConfidence, SourceName, UnmatchedPlace } from "@opusfinder/shared";
+
+import type { Db } from "../client";
+import { companies, jobs, locationStrings } from "../schema";
+import { intArrayLiteral, resultRows } from "./sql";
+
+/** A (company, raw) pair some active job lists, with how many active jobs list it. */
+export interface LocationPair {
+  companyId: number;
+  raw: string;
+  companySlug: string;
+  companySource: SourceName;
+  jobs: number;
+}
+
+/** A checked normalizer answer, as stored. */
+export interface LocationStringRow {
+  companyId: number;
+  raw: string;
+  placeIds: number[];
+  remoteCountries: string[];
+  unmatched: UnmatchedPlace[];
+  confidence: LocationConfidence | null;
+  reason: string | null;
+  promptVersion: string;
+}
+
+/**
+ * Pairs to (re)resolve, most-listed first. `missing` = no row yet (the digest's daily path). `stale` also
+ * takes rows from another prompt version and rows the model gave no answer for (confidence NULL): the
+ * backfill's set.
+ */
+export async function listPendingPairs(
+  db: Db,
+  opts: { scope: "missing" | "stale"; promptVersion: string; limit?: number },
+): Promise<LocationPair[]> {
+  const pending =
+    opts.scope === "missing"
+      ? sql`s.company_id IS NULL`
+      : sql`(s.company_id IS NULL OR s.prompt_version <> ${opts.promptVersion} OR s.confidence IS NULL)`;
+  const result = await db.execute(sql`
+    SELECT a.company_id, a.raw, c.slug, c.source, a.jobs
+    FROM (${activePairsSql()}) a
+    JOIN ${companies} c ON c.id = a.company_id
+    LEFT JOIN ${locationStrings} s ON s.company_id = a.company_id AND s.raw = a.raw
+    WHERE ${pending}
+    ORDER BY a.jobs DESC, a.company_id, a.raw
+    ${opts.limit === undefined ? sql`` : sql`LIMIT ${opts.limit}`}
+  `);
+  return resultRows(result).map((row) => {
+    const r = row as Record<string, unknown>;
+    return {
+      companyId: Number(r.company_id),
+      raw: String(r.raw),
+      companySlug: String(r.slug),
+      companySource: String(r.source) as SourceName,
+      jobs: Number(r.jobs),
+    };
+  });
+}
+
+/** Each company's active location strings, most-listed first, at most `perCompany` each. The normalizer
+ *  shows a pair the company's OTHER strings as context, so callers ask for one more than they show. */
+export async function listCompanyStrings(
+  db: Db,
+  companyIds: number[],
+  perCompany: number,
+): Promise<Map<number, string[]>> {
+  const out = new Map<number, string[]>();
+  if (companyIds.length === 0) return out;
+  const result = await db.execute(sql`
+    SELECT company_id, raw FROM (
+      SELECT a.company_id, a.raw,
+             row_number() OVER (PARTITION BY a.company_id ORDER BY a.jobs DESC, a.raw) AS rn
+      FROM (${activePairsSql(sql`AND j.company_id = ANY(${intArrayLiteral(companyIds)}::int[])`)}) a
+    ) ranked
+    WHERE rn <= ${perCompany}
+    ORDER BY company_id, rn
+  `);
+  for (const row of resultRows(result)) {
+    const r = row as Record<string, unknown>;
+    const id = Number(r.company_id);
+    out.set(id, [...(out.get(id) ?? []), String(r.raw)]);
+  }
+  return out;
+}
+
+const UPSERT_CHUNK = 500;
+
+/** Insert or replace rows by (company_id, raw), stamping resolved_at. */
+export async function upsertLocationStrings(db: Db, rows: LocationStringRow[]): Promise<void> {
+  for (let i = 0; i < rows.length; i += UPSERT_CHUNK) {
+    await db
+      .insert(locationStrings)
+      .values(rows.slice(i, i + UPSERT_CHUNK))
+      .onConflictDoUpdate({
+        target: [locationStrings.companyId, locationStrings.raw],
+        set: {
+          placeIds: sql`excluded.place_ids`,
+          remoteCountries: sql`excluded.remote_countries`,
+          unmatched: sql`excluded.unmatched`,
+          confidence: sql`excluded.confidence`,
+          reason: sql`excluded.reason`,
+          promptVersion: sql`excluded.prompt_version`,
+          resolvedAt: sql`now()`,
+        },
+      });
+  }
+}
+
+/** The (company_id, raw, jobs) pairs of active jobs, as a subquery. `extra` narrows the jobs scanned. */
+export function activePairsSql(extra = sql``) {
+  return sql`
+    SELECT j.company_id, l.raw, count(*)::int AS jobs
+    FROM ${jobs} j CROSS JOIN LATERAL jsonb_array_elements_text(j.locations) AS l(raw)
+    WHERE j.lifecycle_state = 'active' AND btrim(l.raw) <> '' ${extra}
+    GROUP BY j.company_id, l.raw
+  `;
+}

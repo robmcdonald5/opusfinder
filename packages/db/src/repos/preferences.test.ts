@@ -133,13 +133,14 @@ function stubDb(opts: StubOptions = {}): Stub {
 const USER = "00000000-0000-0000-0000-000000000001" as never;
 
 describe("updatePreferences — patches only the settable subset via toRow", () => {
-  it("full F3 patch maps ALL 11 settable columns, bumps updatedAt, keeps yoeMin=0, issues exactly one UPDATE", async () => {
+  it("full patch maps ALL 12 settable columns, bumps updatedAt, keeps yoeMin=0, issues exactly one UPDATE", async () => {
     const stub = stubDb();
     // Every settable column toRow maps, each with a DISTINCT value, so a mis-wired mapping (dropped or
     // cross-assigned column) can't hide behind a partial patch.
     const row = await updatePreferences(stub.db, USER, {
       locationMode: "remote_only",
-      locations: ["nyc", "sf"],
+      homePlaceId: 4509177,
+      radiusMiles: 25,
       minSalary: 90000,
       maxSalary: 180000,
       yoeMin: 0,
@@ -154,7 +155,8 @@ describe("updatePreferences — patches only the settable subset via toRow", () 
 
     expect(stub.updates()).toBe(1);
     expect(set.locationMode).toBe("remote_only");
-    expect(set.locations).toEqual(["nyc", "sf"]);
+    expect(set.homePlaceId).toBe(4509177);
+    expect(set.radiusMiles).toBe(25);
     expect(set.minSalary).toBe(90000);
     expect(set.maxSalary).toBe(180000);
     // Falsy-zero is a REAL value ("no floor needed"), not "unset" — it must survive the toRow map.

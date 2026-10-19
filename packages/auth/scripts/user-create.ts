@@ -11,7 +11,7 @@ import { maskEmail, prefsFromFlags } from "./cli-utils";
 
 const USAGE =
   "Usage: pnpm user:create --email <email> --password <pw> [--name <name>] " +
-  "[--location-mode any|remote_only|onsite_only] [--locations 'a; b'] [--min-salary N] [--max-salary N] " +
+  "[--location-mode any|remote_only|onsite_only] [--min-salary N] [--max-salary N] " +
   "[--min-yoe N] [--max-yoe N] [--dealbreakers a,b] [--exclusions a,b] " +
   "[--recency-days 14] [--cadence daily|weekly|monthly] [--enabled true|false]";
 
@@ -23,7 +23,6 @@ async function main(): Promise<void> {
       password: { type: "string" },
       name: { type: "string" },
       "location-mode": { type: "string" },
-      locations: { type: "string" },
       "min-salary": { type: "string" },
       "max-salary": { type: "string" },
       "min-yoe": { type: "string" },
