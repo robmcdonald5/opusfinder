@@ -85,6 +85,35 @@ describe.each([DATA_FIXER, SCRAPERS_WORKER])(
       await expect(pg.exec("CREATE TABLE sneaky (a int)")).rejects.toThrow(/permission denied/);
     });
 
+    it("can run exactly its allowlisted SECURITY DEFINER functions", async () => {
+      const prune = "public.prune_closed_jobs(integer, boolean)";
+      const { rows } = await pg.query<{ can: boolean }>(
+        `SELECT has_function_privilege('${role.name}', '${prune}', 'EXECUTE') AS can`,
+      );
+      const allowed = (role.functions ?? []).includes(prune);
+      expect(rows).toEqual([{ can: allowed }]);
+      await pg.exec(`SET ROLE ${role.name}`);
+      const call = pg.query(`SELECT public.prune_closed_jobs(0, false) AS n`);
+      if (allowed) await expect(call).resolves.toMatchObject({ rows: [{ n: 0 }] });
+      else await expect(call).rejects.toThrow(/permission denied/);
+    });
+
+    it("setup aborts when the role could run another SECURITY DEFINER function", async () => {
+      // Functions are executable by PUBLIC by default, so a definer function made without REVOKE reaches every role.
+      await pg.exec(
+        "CREATE FUNCTION public.sneaky() RETURNS integer LANGUAGE sql SECURITY DEFINER AS 'SELECT 1'",
+      );
+      try {
+        await expect(setUpRole(pg, role, "q".repeat(32))).rejects.toThrow(
+          new RegExp(
+            `${role.name} can run SECURITY DEFINER function\\(s\\) beyond its allowlist: sneaky\\(\\)`,
+          ),
+        );
+      } finally {
+        await pg.exec("DROP FUNCTION public.sneaky()");
+      }
+    });
+
     it("re-running the setup rotates the password and converges on the same grants", async () => {
       await setUpRole(pg, role, "q".repeat(32));
       await pg.exec(`SET ROLE ${role.name}`);

@@ -25,7 +25,7 @@ drift probes, no notifications, no observer agent.
 | `apps/control/src/ui/`           | The panel's server-rendered pages. Shared: `layout.ts` (page shell, sections, nav), `components.ts` (cards, rows, `controlRow` for every switch and setting, tables, tiles, tabs, filters), `vocab.ts` (how modes, wiring, targets and people are said), `format.ts` (times, numbers, money), `style.ts` (the stylesheet), `forms.ts` (the in-place controls: a mode dropdown or number field whose Confirm and Cancel appear only once it's changed), `log.ts` (the Log's tabs and page scaffold). Pages: one module per section (`home`, `approvals`, `stages`, `health`, `cost`) and per Log tab (`runs`, `changes`; closed proposals live in `approvals`). |
 | `apps/control/src/mailbox.ts`    | The billing mailbox: the `email()` handler's logic (Email Routing → one `statement` row per forwarded invoice).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | `apps/control/src/statements.ts` | Reading one invoice email: Gmail's forwarding code, the Workers AI read (JSON mode, PDF fallback), field validation.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| `apps/control/migrations/`       | `0001_init.sql` (tables), `0002_seed.sql` (today's reality), `0003_ledger_started.sql` (run-time indexes), `0004_statements.sql` (the Cost page's statements), `0005_statement_auth.sql` (the mailbox's auth evidence), `0006_change_reason_optional.sql` (the owner's changes need no reason), `0007_stale_sweep_enforce.sql` (stale_sweep on, with the scrapers Worker).                                                                                                                                                                                                                                                                                     |
+| `apps/control/migrations/`       | `0001_init.sql` (tables), `0002_seed.sql` (today's reality), `0003_ledger_started.sql` (run-time indexes), `0004_statements.sql` (the Cost page's statements), `0005_statement_auth.sql` (the mailbox's auth evidence), `0006_change_reason_optional.sql` (the owner's changes need no reason), `0007_stale_sweep_enforce.sql` (stale_sweep on, with the scrapers Worker), `0008_prune_policy.sql` (the weekly prune's switch).                                                                                                                                                                                                                                |
 | `packages/ctl`                   | `pnpm ctl`, the Node CLI agents use.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 
 ## Who can do what
@@ -252,8 +252,8 @@ pnpm exec wrangler d1 migrations apply opusfinder-control --remote
 pnpm exec wrangler d1 execute opusfinder-control --remote --command "SELECT key, value FROM state ORDER BY key"
 ```
 
-Expect 18 rows: global/ingest/discover/cv_ingest `on`, embed/alerts/digest/live_integration `off`,
-close and stale_sweep `enforce`, the 8 `health.*` `shadow`.
+Expect 19 rows: global/ingest/discover/cv_ingest `on`, embed/alerts/digest/live_integration `off`,
+close and stale_sweep `enforce`, prune and the 8 `health.*` `shadow`.
 
 **2. Deploy**
 
@@ -371,7 +371,7 @@ row at the end, in `ctx.waitUntil`:
   `control gate ingest: settings differ, not enforced: <key> <gate> (gate) vs <value> (in use), …` when
   the gate's knobs or policies differ from what the tick runs with: `boardsPerTick` vs the resolved
   `INGEST_LIMIT`; `limit` / `reprobeLimit` vs the Worker's constants; `close` / `stale_sweep` vs
-  `LIFECYCLE_CLOSE_ENFORCE` / `STALE_SWEEP`; `stale_sweep.ttlDays` vs `STALE_SWEEP_TTL_DAYS`.
+  `LIFECYCLE_CLOSE_ENFORCE` / `STALE_SWEEP` / `PRUNE`; `stale_sweep.ttlDays` vs `STALE_SWEEP_TTL_DAYS`.
 - **Ledger row:** `ok`, `partial` (the run budget stopped the run early) or `error` (the tick threw,
   recorded before the re-throw, or no ingest board succeeded and at least one failed); the gate mode it
   read (null when unreadable); the Worker's own start/finish clock; `cf.wall_ms`; a one-line `detail` (for
@@ -401,7 +401,7 @@ Worker has no subrequest counter, and Neon awake time is an estimate for the cos
     functions the serve routes register;
   - `ingest.boardsPerTick`'s default, min and max;
   - the `discover` knob defaults;
-  - the `close` and `stale_sweep` initial modes and `stale_sweep.ttlDays`'s default, against the
+  - the `close`, `stale_sweep` and `prune` initial modes and `stale_sweep.ttlDays`'s default, against the
     scrapers Worker's `wrangler.toml` vars;
   - the `health.*` check ids, threshold defaults and env var names.
 

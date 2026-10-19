@@ -125,6 +125,13 @@ LIFECYCLE_CLOSE_ENFORCE = "enforce"
 STALE_SWEEP = "enforce"
 STALE_SWEEP_TTL_DAYS = "21"
 
+# The weekly job prune, run after discovery (Sunday 03:00 UTC): jobs closed for 30+ days that no digest showed,
+# through the `prune_closed_jobs` SQL function (this Worker's login holds no DELETE, only EXECUTE on that).
+#   PRUNE unset/"shadow" : count-only — the `prune` source_runs row records `prunable`, deletes nothing (SHIPPED).
+#   PRUNE = "enforce"    : delete up to 20,000 a run (PRUNE_MAX_ROWS), so a backlog drains over a few weeks.
+# Flip it together with the panel's "Delete old closed jobs" switch, after one shadow run's `prunable` matches
+# `pnpm db:prune`. Deletes are permanent; a live posting deleted by mistake is re-ingested as a new row.
+
 # The control plane (apps/control, Worker `opusfinder-control`), read in SHADOW: each tick logs its stage's
 # gate and records one ledger row; behaviour still follows the vars above (src/control.ts). RPC to the
 # `ControlRpc` entrypoint over a service binding never touches the public hostname, so no Access token is

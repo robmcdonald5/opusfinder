@@ -32,8 +32,9 @@ and the library it calls owns its own `source_runs` row (`startRun`/`finishRun`)
 > As of **Phase 10** the deny list also covers the digest pipeline's server-only stack —
 > `@opusfinder/inngest` / `inngest` / `@opusfinder/llm` / `@opusfinder/rerank` / `@anthropic-ai/sdk` —
 > keeping the Inngest-hosted digest generation out of this bundle. **Phase 11** adds `@opusfinder/email`
-> + the `resend` SDK (email delivery is a trusted Node/server-runtime concern — like Better Auth and
-> Inngest before it — never in the Worker).
+>
+> - the `resend` SDK (email delivery is a trusted Node/server-runtime concern — like Better Auth and
+>   Inngest before it — never in the Worker).
 
 - **Ingestion is chunked** (Option-A chunked cron): each tick processes the next `INGEST_LIMIT` boards
   using an id-keyset cursor stored in the `INGEST_CURSOR` KV namespace; the corpus drains across ticks.
@@ -47,6 +48,10 @@ and the library it calls owns its own `source_runs` row (`startRun`/`finishRun`)
 - **Discovery** runs `runDiscovery({ ..., workerOnly: true })` bounded by `limit`/`reprobeLimit`.
   `workerOnly` restricts the run to fetch-only `workerSafe` lanes (the F5-LANES-2 guard that keeps a
   future Node-only lane out of the isolate).
+- **The weekly job prune** runs after discovery, in the same invocation: `runPrune` counts the jobs closed
+  for 30+ days that no digest showed and, with `PRUNE = "enforce"`, deletes up to 20,000 of them through
+  the `prune_closed_jobs` SQL function. It writes its own `prune` row to `source_runs`; a failure is logged
+  there and never fails discovery. It ships count-only (`PRUNE` unset).
 
 > **Health & liveness (Phase F6).** On each successful ingestion tick the Worker fires a content-free
 > heartbeat to an external watchdog (`env.HEALTH_PING_URL`, an optional `wrangler secret`); the watchdog
@@ -107,7 +112,8 @@ wrangler tail opusfinder-scrapers             # stream live cron invocations
 
 - **The Worker's `DATABASE_URL` is its own limited login, not yours.** With your owner `DATABASE_URL`
   exported (`packages/db/README.md` "Environment"), `worker-role:setup` creates the `scrapers_worker` role
-  (SELECT/INSERT/UPDATE on `companies`, `jobs` and `source_runs` only: `packages/db/src/roles.ts`) or rotates
+  (SELECT/INSERT/UPDATE on `companies`, `jobs` and `source_runs`, plus EXECUTE on the prune function:
+  `packages/db/src/roles.ts`) or rotates
   its password, then pipes its connection string into this Worker's `DATABASE_URL` on stdin; it applies at
   once. Run it while no tick is running (not the first ~15 min of an even UTC hour, nor Sunday 03:00 UTC):
   the old password stops working immediately. Never run two at once: the role could keep one run's password
@@ -116,7 +122,7 @@ wrangler tail opusfinder-scrapers             # stream live cron invocations
   then `psql "$DATABASE_URL" -c 'ALTER ROLE scrapers_worker NOLOGIN'` (a later setup run turns LOGIN back
   on). Don't `wrangler rollback` to a Worker version from before the switch: older versions carry the owner
   `DATABASE_URL`.
-- **A migration that adds a table or sequence the Worker uses** (add it to `SCRAPERS_WORKER` in
+- **A migration that adds a table, sequence or function the Worker uses** (add it to `SCRAPERS_WORKER` in
   `packages/db/src/roles.ts`) ships as ONE chain, or every tick fails with `permission denied`:
   `pnpm db:migrate && pnpm --filter @opusfinder/db run worker-role:setup && pnpm --filter @opusfinder/scrapers run deploy`.
 - **Workers Paid is required** (active): the Free plan caps an invocation at 50 subrequests, far below
@@ -126,7 +132,7 @@ wrangler tail opusfinder-scrapers             # stream live cron invocations
   must equal the cron period. For the current `0 */2 * * *`, set the healthchecks.io check to **period
   2 h, grace ~1 h** — the grace covers a tick's run time (≤ ~10 min) plus cron jitter yet stays under one
   period, so a single missed tick alerts within ~3 h. Do it BEFORE `pnpm --filter @opusfinder/scrapers run
-  deploy`: an hourly-period check would page on every healthy 2-hour gap. (If `HEALTH_INGEST_MAX_AGE_H` is
+deploy`: an hourly-period check would page on every healthy 2-hour gap. (If `HEALTH_INGEST_MAX_AGE_H` is
   set anywhere — `packages/db/.env`, Vercel — make it 5 or unset it; the code default is 5.)
 - **After any `[triggers]` change (a new cron string, a pause or a resume), confirm what actually fires.**
   The deploy output and the deployed schedules (`wrangler deployments list`, the dashboard Triggers page)

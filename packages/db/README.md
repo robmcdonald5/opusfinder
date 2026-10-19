@@ -51,15 +51,15 @@ the cwd. A value already in the shell wins over the file.
 
 Run from the repo root via the workspace filter so the cwd is `packages/db`:
 
-| Command                                  | Does                                                       |
-| ---------------------------------------- | ---------------------------------------------------------- |
-| `pnpm --filter @opusfinder/db migrate`   | Apply migrations from `./drizzle`                          |
-| `pnpm --filter @opusfinder/db generate`  | `drizzle-kit generate` (offline; no DB needed)             |
-| `pnpm --filter @opusfinder/db studio`    | Open Drizzle Studio                                        |
-| `pnpm --filter @opusfinder/db ping`      | Round-trip `SELECT 1` against Neon                         |
-| `pnpm --filter @opusfinder/db runs`      | Print the most recent `source_runs` rows (pipeline health) |
+| Command                                               | Does                                                                                  |
+| ----------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| `pnpm --filter @opusfinder/db migrate`                | Apply migrations from `./drizzle`                                                     |
+| `pnpm --filter @opusfinder/db generate`               | `drizzle-kit generate` (offline; no DB needed)                                        |
+| `pnpm --filter @opusfinder/db studio`                 | Open Drizzle Studio                                                                   |
+| `pnpm --filter @opusfinder/db ping`                   | Round-trip `SELECT 1` against Neon                                                    |
+| `pnpm --filter @opusfinder/db runs`                   | Print the most recent `source_runs` rows (pipeline health)                            |
 | `pnpm exec vitest run packages/db/src/health.test.ts` | Health-checker suite — pure `evaluateHealth` over canned signals (no creds; Phase F6) |
-| `pnpm --filter @opusfinder/db typecheck` | `tsc --noEmit`                                             |
+| `pnpm --filter @opusfinder/db typecheck`              | `tsc --noEmit`                                                                        |
 
 `migrate` and `ping` are also exposed at the root as `pnpm db:migrate` / `pnpm db:ping`.
 
@@ -168,7 +168,7 @@ Run from the repo root via the workspace filter so the cwd is `packages/db`:
 - **Schema (Phase F4) — job-side enrichment, REMOVED.** `drizzle/0013_cloudy_polaris.sql` originally added
   seven nullable `jobs` columns for job-side structured enrichment (`yoe_min`/`yoe_max`, `salary_min`/`salary_max`,
   `salary_currency`/`salary_period`, `enriched_at`). The feature was fully removed: `drizzle/0016` drops those
-  columns and `repos/enrichment.ts` no longer exists. The salary/YoE *user* preferences on `user_preferences`
+  columns and `repos/enrichment.ts` no longer exists. The salary/YoE _user_ preferences on `user_preferences`
   (Phase F3) are unaffected — they remain soft prompt signals only.
 - **Health checker (Phase F6) — NO migration.** `src/health.ts` (subpath `@opusfinder/db/health`) computes seven
   liveness checks (`ingestion_staleness`, `board_fail_ratio`, `discovery_window`, `embedding_backlog`,
@@ -202,7 +202,7 @@ Run from the repo root via the workspace filter so the cwd is `packages/db`:
   text from a posting, re-ingest the board. (Mirrors the `jobs` doc comment in `schema.ts:108-128`;
   `INGEST_LIMIT` was restored to 150 once storage was freed.) **APPLIED to prod.**
 - **Schema (Phase F4 enrichment cols DROPPED).** `drizzle/0016_friendly_rachel_grey.sql` (`DROP COLUMN IF
-  EXISTS`) removes the seven job-side enrichment columns added by 0013 (`yoe_min`/`yoe_max`,
+EXISTS`) removes the seven job-side enrichment columns added by 0013 (`yoe_min`/`yoe_max`,
   `salary_min`/`salary_max`, `salary_currency`/`salary_period`, `enriched_at`) — see the Phase F4 bullet
   above for the full removal story. **APPLIED to prod.**
 - **Index (Phase F8/F6) — `jobs_unembedded_idx`.** `drizzle/0017_uneven_doctor_spectrum.sql` (hand-guarded
@@ -214,7 +214,8 @@ Run from the repo root via the workspace filter so the cwd is `packages/db`:
 - **Migrations 0018-0024.** Each file's header has the detail; what an operator needs:
   - `0018` adds `jobs.closed_at`, the clock of the jobs prune (`pnpm db:prune` is a dry run; the script
     header has the `--apply` command). It deletes only jobs closed for 30+ days that no `digest_items` row
-    references.
+    references. Since `0028` that rule lives in the `prune_closed_jobs` SQL function, which the script and
+    the scrapers Worker's weekly prune both call.
   - `0019` snapshots the render fields onto `digest_items` and drops its `job_id` FK, so the prune can later
     reclaim recommended jobs too; until its `digest_items` clause is dropped, a shown job's signature keeps
     suppressing its relist. It also makes `digests.digest_run_id` NO ACTION, so the oplog prune

@@ -3,6 +3,7 @@ import { eq } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Db } from "@opusfinder/db";
+import { runPrune } from "@opusfinder/db/repos";
 import { SCRAPERS_WORKER } from "@opusfinder/db/roles";
 import { companies, jobs, sourceRuns } from "@opusfinder/db/schema";
 import { runDiscovery } from "@opusfinder/discovery";
@@ -15,9 +16,9 @@ import { truncate } from "@test/db/truncate";
 import { oneHot } from "@test/db/vectors";
 import { jsonResponse, routedFetch, textResponse, type Route } from "@test/http/fetch-router";
 
-// The scrapers Worker (apps/scrapers) connects as the scrapers_worker role. An ingest tick and a discovery run,
-// with the Worker's options and data that makes them insert, update and close in both close modes, must succeed
-// AS that role: a missing grant fails a query, which surfaces as a non-ok run or a non-zero failure tally. The
+// The scrapers Worker (apps/scrapers) connects as the scrapers_worker role. An ingest tick, a discovery run and
+// the weekly prune, with the Worker's options and data that makes them insert, update, close and delete in both
+// modes, must succeed AS that role: a missing grant fails a query, which surfaces as a non-ok run or a non-zero failure tally. The
 // role's exact grants are audited in packages/db/src/roles.integration.test.ts. This suite lives here because
 // discovery is the lowest package that imports both pipelines (apps/scrapers' tests compile under Workers
 // types, without PGlite).
@@ -217,6 +218,28 @@ describe("the scrapers Worker's pipelines as scrapers_worker (integration: real 
       expect((await company("newco"))!.active).toBe(true);
       expect((await company("backco"))!.active).toBe(true);
       expect((await company("goneco"))!.active).toBe(false);
+    },
+  );
+
+  it.each([false, true])(
+    "the weekly prune deletes only old closed jobs, through its function (apply=%s)",
+    async (apply) => {
+      const acme = await seedCompany({ slug: companySlug("acme") });
+      await seedJob(acme, "old", { lifecycleState: "closed", closedAt: daysAgo(40) });
+      await seedJob(acme, "recent", { lifecycleState: "closed", closedAt: daysAgo(5) });
+      await seedJob(acme, "live");
+
+      await pg.exec(`SET ROLE ${SCRAPERS_WORKER.name}`);
+      const counts = await runPrune(db, { apply, maxRows: 20_000 });
+      await pg.exec("RESET ROLE");
+
+      expect(counts).toEqual({ prunable: 1, deleted: apply ? 1 : 0 });
+      expect(await runRows()).toMatchObject([
+        { pipeline: "prune", status: "ok", errorSample: null },
+      ]);
+      expect(await job("old")).toEqual(apply ? undefined : expect.anything());
+      expect(await job("recent")).toBeDefined();
+      expect(await job("live")).toBeDefined();
     },
   );
 

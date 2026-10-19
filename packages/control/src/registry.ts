@@ -186,7 +186,7 @@ export const globalSwitch: GlobalDef = {
 // tests in those sources (control-registry.test.ts) pin SOME of them, so a change on one side fails there:
 //   - apps/scrapers: the ingest and discover crons (through the Worker's own dispatch),
 //     ingest.boardsPerTick's default, min and max, the discover knobs' defaults, and (against
-//     wrangler.toml's vars) the close / stale_sweep initial modes and stale_sweep.ttlDays's default;
+//     wrangler.toml's vars) the close / stale_sweep / prune initial modes and stale_sweep.ttlDays's default;
 //   - packages/inngest: each Inngest stage's platformId and the cron its served function registers;
 //   - packages/db (for the health.* policies below): the check ids, threshold defaults and env var names.
 // NOT pinned, so keep them in step by hand: live_integration's cron (.github/workflows/
@@ -418,6 +418,13 @@ export const policies = {
         legacyEnv: "STALE_SWEEP_TTL_DAYS",
       },
     },
+  },
+  prune: {
+    // The weekly delete of jobs closed for 30+ days that no digest showed (the scrapers Worker's PRUNE var).
+    label: "Delete old closed jobs",
+    modes: ["shadow", "enforce"],
+    initial: "shadow",
+    readBy: ["discover"],
   },
   // The 8 health checks. Ids are `health.<HealthCheckId>` (packages/db/src/health.ts); a sync test in
   // @opusfinder/db pins the two lists, each threshold default and its env var together. A later slice
