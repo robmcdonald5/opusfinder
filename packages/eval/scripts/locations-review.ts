@@ -1,11 +1,12 @@
 /**
  * Render the location golden set as a review sheet for the owner: every pair with its context and the
  * expected answer spelled out (place name, region, country, GeoNames link; remote countries), grouped by
- * category, so a wrong label is easy to spot. Corrections go into data/locations-golden.jsonl.
+ * category, so a wrong label is easy to spot. Corrections go into data/locations-golden.jsonl. Like the
+ * other label review sheets it is a regenerable aid, written under the gitignored data/reviews/.
  *
- *   pnpm --filter @opusfinder/eval run locations:review   (writes data/locations-golden.review.md)
+ *   pnpm --filter @opusfinder/eval run locations:review   (writes data/reviews/locations-golden.md)
  */
-import { writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { runScript } from "@opusfinder/shared/script";
@@ -14,7 +15,7 @@ import { loadGolden, type GoldenEntry } from "../src/locations-golden";
 import { PKG_ROOT, relativeToPkg } from "../src/runner";
 
 const GOLDEN = join(PKG_ROOT, "data", "locations-golden.jsonl");
-const SHEET = join(PKG_ROOT, "data", "locations-golden.review.md");
+const SHEET = join(PKG_ROOT, "data", "reviews", "locations-golden.md");
 
 await runScript("locations:review", () => {
   const golden = loadGolden(GOLDEN);
@@ -42,6 +43,7 @@ await runScript("locations:review", () => {
     }
     out.push("");
   }
+  mkdirSync(join(PKG_ROOT, "data", "reviews"), { recursive: true });
   writeFileSync(SHEET, `${out.join("\n")}\n`);
   console.log(`review sheet: ${relativeToPkg(SHEET)}`);
 });

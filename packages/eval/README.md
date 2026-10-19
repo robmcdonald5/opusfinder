@@ -57,9 +57,12 @@ This quantifies what turning ANN on would cost. Needs `DATABASE_URL` + `VOYAGE_A
 production on 2026-10-19, with each company's other strings as the production request shows them (up to
 20, most-listed first). The pull was weighted toward the hard cases: bare names that could be several
 places, office/HQ labels, company codes (`US-CA-Menlo Park`, `WBIR-TV Knoxville`), multi-place strings,
-remote phrases and world regions; `category` records the bucket. Each pair gets an `expected` answer
-(GeoNames place ids + remote countries) once it is drafted by a stronger model than the normalizer and
-reviewed by the owner; until then the pair is unlabeled and not scored.
+remote phrases and world regions; `category` records the bucket. Each pair's `expected` answer (GeoNames
+place ids + remote countries) was drafted by a stronger model than the normalizer, working only from
+`data/locations-golden.conventions.md` (never the normalizer's prompt), and resolved to GeoNames ids by
+`pnpm --filter @opusfinder/eval run locations:label -- --drafts <file>` through the production check. The
+owner reviews them on the sheet `locations:review` writes to `data/reviews/locations-golden.md` (gitignored,
+regenerated after a fix).
 
 `pnpm eval:locations` runs the production prompt, schema, model and GeoNames check over the labeled pairs,
 with and without the company context, and scores exact matches on the checked place ids + remote
