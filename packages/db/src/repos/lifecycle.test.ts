@@ -192,7 +192,7 @@ describe("markJobsPresent — positive 'I saw this job live' writer (refresh + r
     expect(r).toEqual({ revived: 0 });
   });
 
-  it("stamps last_seen_at, revives (active + clear closed_at), and carries the >1h no-op guard", async () => {
+  it("stamps last_seen_at, revives (active + clear closed_at), and carries the 1-day no-op guard", async () => {
     const { db, calls } = stubExecDb(() => [{ revived: "2" }]);
     await markJobsPresent(db, 7, ["a", "b"]);
     const { sql } = firstQuery(calls);
@@ -200,8 +200,8 @@ describe("markJobsPresent — positive 'I saw this job live' writer (refresh + r
     expect(sql).toContain("last_seen_at = now()");
     expect(sql).toContain("lifecycle_state = 'active'");
     expect(sql).toContain("closed_at = NULL");
-    // NO-OP GUARD: touch only rows stale >1h or needing revival — an unchanged board doesn't churn.
-    expect(sql).toContain("last_seen_at < now() - interval '1 hour'");
+    // NO-OP GUARD: touch only rows stamped over a day ago or needing revival — an unchanged board doesn't churn.
+    expect(sql).toContain("last_seen_at < now() - interval '1 day'");
     // The board is certified in the SAME statement: never without its jobs' stamps (the timer would close them).
     expect(sql).toMatch(
       /update\s+"companies"\s+set\s+last_ingested_at\s*=\s*now\(\)\s+where\s+id = \$\d+/i,

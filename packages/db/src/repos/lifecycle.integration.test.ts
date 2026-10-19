@@ -165,15 +165,15 @@ describe("lifecycle writers (integration: real PGlite Postgres)", () => {
       });
     });
 
-    it("leaves a row stamped within the hour alone and re-stamps an older one", async () => {
+    it("leaves a row stamped within the day alone and re-stamps an older one", async () => {
       const companyId = await seedBoard(["fresh", "aged"], sql`now()`);
       await db
         .update(jobs)
-        .set({ lastSeenAt: sql`now() - interval '30 minutes'` })
+        .set({ lastSeenAt: sql`now() - interval '23 hours'` })
         .where(eq(jobs.externalId, jobId("fresh")));
       await db
         .update(jobs)
-        .set({ lastSeenAt: sql`now() - interval '2 hours'` })
+        .set({ lastSeenAt: sql`now() - interval '25 hours'` })
         .where(eq(jobs.externalId, jobId("aged")));
       const freshSeen = (await jobRow("fresh")).lastSeenAt;
 
@@ -184,19 +184,19 @@ describe("lifecycle writers (integration: real PGlite Postgres)", () => {
   });
 
   describe("sweepStaleJobs board-health guard", () => {
-    // The job was last stamped just past the 21-day TTL. The board's last ingest came minutes later: a
-    // re-fetch inside markJobsPresent's 1-hour no-op window, which stamped the board but not the job.
+    // The job was last stamped just past the 21-day TTL. The board's last ingest came hours later: a
+    // re-fetch inside markJobsPresent's 1-day no-op window, which stamped the board but not the job.
     const lastSeen = sql`now() - interval '21 days' - interval '2 minutes'`;
 
     it("spares a job whose board was last ingested within the no-op window of its last stamp", async () => {
-      await seedBoard(["j1"], sql`now() - interval '21 days' + interval '3 minutes'`);
+      await seedBoard(["j1"], sql`now() - interval '21 days' + interval '23 hours'`);
       await db.update(jobs).set({ lastSeenAt: lastSeen });
 
       expect(await sweepStaleJobs(db)).toEqual({ closed: 0, wouldClose: 0 });
     });
 
     it("still counts the same stale job once its board has been ingested well after it was last seen", async () => {
-      await seedBoard(["j1"], sql`now() - interval '21 days' + interval '2 hours'`);
+      await seedBoard(["j1"], sql`now() - interval '21 days' + interval '25 hours'`);
       await db.update(jobs).set({ lastSeenAt: lastSeen });
 
       expect(await sweepStaleJobs(db)).toEqual({ closed: 0, wouldClose: 1 });

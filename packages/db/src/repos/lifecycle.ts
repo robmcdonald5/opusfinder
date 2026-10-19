@@ -246,8 +246,12 @@ export function closeJobsByIds(
 /**
  * markJobsPresent leaves a row stamped within this window untouched, so a job's last_seen_at can trail
  * its board's last_ingested_at by up to this much. sweepStaleJobs' board-health guard adds it as a margin.
+ * A day, not an hour: boards are re-fetched every ~12-16 h, so an hour skipped nothing and every visit
+ * rewrote every listed row (~120k HOT updates a day for ~1-3k real changes). A day halves that, and a
+ * stale close lands 20-21 days after a job was last listed instead of 21. Keep it well under the minimum
+ * stale TTL (7 days, MIN_STALE_TTL_DAYS in apps/scrapers): at or above it the guard spares every board.
  */
-const PRESENT_STAMP_WINDOW = sql`interval '1 hour'`;
+const PRESENT_STAMP_WINDOW = sql`interval '1 day'`;
 
 /**
  * The completeness-INDEPENDENT positive "I saw this job live" writer, called per board from runIngestion
@@ -262,12 +266,12 @@ const PRESENT_STAMP_WINDOW = sql`interval '1 hour'`;
  * visit whose sweep is skipped.
  *
  * Separate from upsertJobs (pure content persistence) and from its content-gated ON CONFLICT SET:
- * last_seen_at must advance on every re-fetch even when content is byte-unchanged, and reviving a closed
+ * last_seen_at must advance even when content is byte-unchanged, and reviving a closed
  * row must NOT be content-gated (the same reason sweepLifecycle lives outside upsertJobs). All written
  * columns are UN-indexed ⇒ HOT-eligible. A NO-OP GUARD in the WHERE skips rows already fresh-and-active, so
- * an unchanged board does NOT rewrite every present row every tick (which would defeat upsertJobs'
- * idempotency + churn dead tuples): a row is touched only if its clock is stale (>1h — far inside the
- * ≥~daily re-fetch cadence and the multi-week TTL) OR it needs reviving or a streak reset. Returns
+ * an unchanged board does NOT rewrite every present row every visit (which would defeat upsertJobs'
+ * idempotency + churn dead tuples): a row is touched only if its clock is older than
+ * {@link PRESENT_STAMP_WINDOW} (a day, against a multi-week TTL) OR it needs reviving or a streak reset. Returns
  * `revived` = closed→active revivals plus streak resets, sweepLifecycle's meaning; runIngestion sums the two
  * (the sweep's share is what this missed when it failed).
  *
@@ -351,13 +355,13 @@ export const DEFAULT_STALE_TTL_DAYS = 21;
  * stays a FAST-PATH for boards we see completely; this timer is the floor under all of them.
  *
  * BOARD-HEALTH GUARD (joins companies): a job closes ONLY if its company was SUCCESSFULLY ingested within the
- * same TTL window (`c.last_ingested_at >= cutoff + 1 hour`, stamped by {@link markJobsPresent} or
+ * same TTL window (`c.last_ingested_at >= cutoff + 1 day`, stamped by {@link markJobsPresent} or
  * {@link markCompanyIngested}). A board that is DOWN for >TTL has last_ingested_at older than the window (or
  * NULL pre-first-ingest), so its still-live jobs are SPARED — NOT false-closed because the cron simply
  * couldn't fetch them. Using the SAME cutoff for the job-staleness and the board-health window makes a failing
- * board's jobs become stale-eligible and board-excluded at the same moment; the 1-hour margin
+ * board's jobs become stale-eligible and board-excluded at the same moment; the 1-day margin
  * ({@link PRESENT_STAMP_WINDOW}) covers a job whose last_seen_at trails its board's last fetch, e.g. a board
- * fetched twice within the hour and then down for the TTL. A HEALTHY capped board keeps last_ingested_at
+ * fetched again within a day of a stamp and then down for the TTL. A HEALTHY capped board keeps last_ingested_at
  * fresh, so its aged-out tail still closes (the intended FRESHNESS close — see schema.ts last_seen_at; those
  * jobs are past recency and revive if they re-enter the fetch window).
  *
