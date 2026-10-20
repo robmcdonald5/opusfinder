@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { parseAdmin1, parseCities, parseCountries } from "./geonames";
+import { parseAdmin1, parseCities, parseCountries, parsePopulatedPlaces } from "./geonames";
 
 /** A cities500 line: the 19 tab-separated GeoNames fields, defaults for the ones a case doesn't vary. */
 function cityLine(
@@ -196,5 +196,40 @@ describe("parseCountries", () => {
     const { rows, skipped } = parseCountries(line("AN", "Netherlands Antilles", "300000", ""));
     expect(rows).toEqual([]);
     expect(skipped).toBe(1);
+  });
+});
+
+describe("parsePopulatedPlaces", () => {
+  /** A US.txt line: a cities500 line with its feature class and code set. */
+  const featureLine = (id: string, name: string, cls: string, code: string, pop = "0") =>
+    cityLine({ id, name, ascii: name, alts: "", code, pop }).replace("\tP\t", `\t${cls}\t`);
+
+  it("keeps populated places of any population and skips every other feature class", () => {
+    const text = [
+      featureLine("4435457", "McHenry", "P", "PPL"),
+      featureLine("4366327", "Quantico", "P", "PPL", "133"),
+      featureLine("5102430", "Township of Parsippany-Troy Hills", "A", "ADM3"),
+      featureLine("4436000", "McHenry Creek", "H", "STM"),
+      featureLine("4400000", "Old Town", "P", "PPLQ"),
+    ].join("\r\n");
+
+    const { rows, skipped } = parsePopulatedPlaces(new TextEncoder().encode(text), REGIONS);
+
+    expect(skipped).toBe(0);
+    expect(rows.map((r) => [r.geonamesId, r.name, r.population])).toEqual([
+      [4435457, "McHenry", 0],
+      [4366327, "Quantico", 133],
+    ]);
+  });
+
+  it("counts a malformed populated-place line as skipped", () => {
+    const text = [
+      featureLine("x1", "Broken", "P", "PPL"),
+      featureLine("1", "Fine", "P", "PPL"),
+    ].join("\n");
+    expect(parsePopulatedPlaces(new TextEncoder().encode(text), REGIONS)).toMatchObject({
+      skipped: 1,
+      rows: [expect.objectContaining({ name: "Fine" })],
+    });
   });
 });

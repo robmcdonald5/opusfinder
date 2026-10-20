@@ -353,7 +353,8 @@ export const userProfiles = pgTable(
 // job's raw `locations` strings to these rows by (company_id, raw).
 
 /**
- * One GeoNames city (cities500), first-level region (admin1) or country. The `*_norm` columns are the
+ * One GeoNames city (cities500, plus every US populated place from the US dump), first-level region
+ * (admin1) or country. The `*_norm` columns are the
  * matching keys (see normalizePlaceName in @opusfinder/shared): `name_norm` from the name, `ascii_norm`
  * from GeoNames' ASCII name, and `alt_names` the normalized Latin-script alternate names of a city
  * ("New York" for New York City), consulted only when no city matches by name. A region's `region_code`

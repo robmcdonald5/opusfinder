@@ -1,8 +1,9 @@
 /**
- * Parsers for the three GeoNames dump files `places:load` reads (download.geonames.org/export/dump,
- * CC BY 4.0): cities500.txt, admin1CodesASCII.txt and countryInfo.txt. The files are untrusted external
- * data, so every field is checked for type and range; a line that fails any check is skipped and
- * counted, never half-loaded. Pure: no I/O, so the tests drive it with small fixture strings.
+ * Parsers for the GeoNames dump files `places:load` reads (download.geonames.org/export/dump,
+ * CC BY 4.0): cities500.txt, admin1CodesASCII.txt, countryInfo.txt and the US country dump (US.txt). The
+ * files are untrusted external data, so every field is checked for type and range; a line that fails any
+ * check is skipped and counted, never half-loaded. Pure: no I/O, so the tests drive it with small fixture
+ * strings.
  */
 import { normalizePlaceName, type PlaceKind } from "@opusfinder/shared";
 
@@ -55,6 +56,30 @@ export function parseCities(text: string, regionNames: ReadonlyMap<string, strin
   let skipped = 0;
   for (const line of lines(text)) {
     const f = line.split("\t");
+    const row = f.length === 19 ? cityRow(f, regionNames) : null;
+    if (row === "dead") continue;
+    if (row) rows.push(row);
+    else skipped++;
+  }
+  return { rows, skipped };
+}
+
+/**
+ * Parse a GeoNames country dump (US.txt: the cities500 fields, for every feature GeoNames has in the
+ * country, ~300 MB). Only populated places (feature class P) are kept, with the same field checks and
+ * dead-code rule as cities500, of any population: the small towns and communities cities500 leaves out.
+ * Lines of other feature classes are not read further. The file is walked line by line from its bytes, so
+ * it is never one string.
+ */
+export function parsePopulatedPlaces(
+  data: Uint8Array,
+  regionNames: ReadonlyMap<string, string>,
+): ParseResult {
+  const rows: PlaceRow[] = [];
+  let skipped = 0;
+  for (const line of byteLines(data)) {
+    const f = line.split("\t");
+    if (f[6] !== "P") continue;
     const row = f.length === 19 ? cityRow(f, regionNames) : null;
     if (row === "dead") continue;
     if (row) rows.push(row);
@@ -230,6 +255,18 @@ export function parseCountries(text: string): ParseResult {
 /** Non-blank lines, CRLF-tolerant. */
 function lines(text: string): string[] {
   return text.split(/\r?\n/).filter((l) => l.trim().length > 0);
+}
+
+/** The non-blank lines of UTF-8 bytes, decoded one at a time. CRLF-tolerant. */
+function* byteLines(data: Uint8Array): Generator<string> {
+  const decoder = new TextDecoder("utf-8");
+  for (let start = 0; start < data.length; ) {
+    let end = data.indexOf(0x0a, start);
+    if (end === -1) end = data.length;
+    const line = decoder.decode(data.subarray(start, end)).replace(/\r$/, "");
+    if (line.trim().length > 0) yield line;
+    start = end + 1;
+  }
 }
 
 function parseId(value: string | undefined): number | null {

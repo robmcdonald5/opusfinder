@@ -28,7 +28,8 @@ export interface CityMatch {
 
 const UPSERT_CHUNK = 1000;
 
-/** Insert or update places by geonames_id; never deletes. Returns the number of rows written. */
+/** Insert or update places by geonames_id; never deletes. A row GeoNames hasn't changed is left alone, so a
+ *  re-run rewrites only what changed. Returns the number of rows sent. */
 export async function upsertPlaces(db: Db, rows: PlaceRow[]): Promise<number> {
   for (let i = 0; i < rows.length; i += UPSERT_CHUNK) {
     await db
@@ -49,6 +50,12 @@ export async function upsertPlaces(db: Db, rows: PlaceRow[]): Promise<number> {
           lng: sql`excluded.lng`,
           population: sql`excluded.population`,
         },
+        setWhere: sql`(${places.kind}, ${places.name}, ${places.nameNorm}, ${places.asciiNorm},
+          ${places.altNames}, ${places.regionCode}, ${places.regionName}, ${places.countryCode},
+          ${places.lat}, ${places.lng}, ${places.population})
+          IS DISTINCT FROM (excluded.kind, excluded.name, excluded.name_norm, excluded.ascii_norm,
+          excluded.alt_names, excluded.region_code, excluded.region_name, excluded.country_code,
+          excluded.lat, excluded.lng, excluded.population)`,
       });
   }
   return rows.length;
