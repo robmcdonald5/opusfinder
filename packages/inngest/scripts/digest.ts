@@ -136,6 +136,14 @@ async function main(): Promise<void> {
     console.log(
       `user ${short}…: digest #${d.id} (run ${d.digestRunId}) — ${d.itemCount} item(s); rerank cache read=${readTokens} create=${create}`,
     );
+    if (d.itemCount === 0) {
+      // A run that built no digest leaves a 0-item record whose counts say why (nothing retrieved, nothing
+      // above the score floor, every link dead); nothing was emailed.
+      const why = Object.entries(d.counts)
+        .map(([k, v]) => `${k}=${v}`)
+        .join(" ");
+      console.log(`   no digest built this run (${why})`);
+    }
     for (const it of d.items.slice(0, 5)) {
       console.log(`   #${it.rank} job ${it.jobId} (score ${it.score.toFixed(2)}): ${it.reason.slice(0, 100)}`);
     }

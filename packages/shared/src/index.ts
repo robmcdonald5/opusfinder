@@ -1,3 +1,6 @@
+export { normalizePlaceName } from "./places";
+export type { LocationConfidence, PlaceKind, UnmatchedPlace } from "./places";
+
 declare const __brand: unique symbol;
 type Brand<TBase, TBrand extends string> = TBase & { readonly [__brand]: TBrand };
 
@@ -88,13 +91,12 @@ export type DigestFeedback = "saved" | "applied" | "dismissed" | "not_interested
 
 /**
  * Indeed/LinkedIn-style location preference — a TS union on a plain text column (no pgEnum, same rule
- * as {@link DigestCadence}). Stored on `user_preferences.location_mode`; the digest retrieval
- * `geoMatches` filter branches on it. NO `hybrid` member: {@link NormalizedJob.remote} is a
- * best-effort boolean ("Hybrid → false"), so a hybrid mode could not be honestly distinguished from
- * `any`.
- * - `any` — remote roles pass; on-site roles pass when they match `locations` (or have no location data).
+ * as {@link DigestCadence}). Stored on `user_preferences.location_mode`; the digest retrieval location
+ * rule branches on it. NO `hybrid` member: {@link NormalizedJob.remote} is a best-effort boolean
+ * ("Hybrid → false"), so a hybrid mode could not be honestly distinguished from `any`.
+ * - `any` — remote and on-site roles both pass (each subject to the home-place rule when one is set).
  * - `remote_only` — only remote roles pass (excludes all on-site).
- * - `onsite_only` — only on-site roles pass (excludes all remote), still subject to `locations`.
+ * - `onsite_only` — only on-site roles pass (excludes all remote).
  */
 export type LocationMode = "any" | "remote_only" | "onsite_only";
 
@@ -103,17 +105,19 @@ export type LocationMode = "any" | "remote_only" | "onsite_only";
  * `user:set-prefs` CLI writes, and the conservative defaults applied at user creation. Deliberately
  * NOT the full table row: system-managed delivery STATE (unsubscribe token, bounce status,
  * suppression, last-sent markers) is owned by the pipeline, never set through this contract. The
- * deterministic-filter fields (`locationMode`/`locations`/`recencyDays`/`exclusions`/`dealbreakers`)
- * feed the digest retrieval filter; the judgment-context fields (`yoeMin`/`yoeMax`/`minSalary`/
- * `maxSalary`/`dealbreakers`) feed the rerank + synthesis prompt via {@link composePromptPrefs}
+ * deterministic-filter fields (`locationMode`/`homePlaceId`/`radiusMiles`/`recencyDays`/`exclusions`/
+ * `dealbreakers`) feed the digest retrieval filter; the judgment-context fields (`yoeMin`/`yoeMax`/
+ * `minSalary`/`maxSalary`/`dealbreakers`) feed the rerank + synthesis prompt via {@link composePromptPrefs}
  * (salary/YoE are soft prompt signals, never hard retrieval filters). Node-free shared (no db dep)
  * so the CLI and a future SvelteKit action share one shape.
  */
 export interface UserPreferences {
-  /** Indeed/LinkedIn-style location filter — a hard retrieval filter via geoMatches. */
+  /** Indeed/LinkedIn-style location filter — a hard retrieval filter. */
   locationMode: LocationMode;
-  /** Location strings the filter matches against; empty = no location constraint. */
-  locations: string[];
+  /** The home city's `places.geonames_id`; `null` = no home, so only `locationMode` filters. */
+  homePlaceId: number | null;
+  /** How far from the home city an on-site job's city may be, in miles. */
+  radiusMiles: number;
   /** Salary floor in whole currency units; `null` = no floor. A soft prompt signal (never a hard filter). */
   minSalary: number | null;
   /** Salary ceiling in whole currency units; `null` = no cap. Independent of `minSalary`. */

@@ -1,0 +1,27 @@
+{
+  "name": "@opusfinder/locations",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "types": "./src/index.ts",
+  "scripts": {
+    "sync": "tsx scripts/sync.ts",
+    "backfill": "tsx scripts/backfill.ts",
+    "report": "tsx scripts/report.ts",
+    "explain": "tsx scripts/explain.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@opusfinder/db": "workspace:*",
+    "@opusfinder/llm": "workspace:*",
+    "@opusfinder/shared": "workspace:*",
+    "drizzle-orm": "^0.45.2",
+    "zod": "^4"
+  },
+  "devDependencies": {
+    "tsx": "^4"
+  }
+}

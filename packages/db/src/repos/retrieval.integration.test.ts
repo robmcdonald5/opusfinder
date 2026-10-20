@@ -49,10 +49,10 @@ function toJob(spec: SeedSpec): NormalizedJob {
 // This file proves the digest retrieval read path (retrieveCandidatesForProfile) under REAL Postgres
 // semantics: the SQL predicates (embedding IS NOT NULL, lifecycle_state='active', the COALESCE
 // recency window, the id/signature anti-joins), `<=>` cosine ORDER BY (id tiebreak) deciding LIMIT
-// survival, and the geo/exclusion post-filters → signature collapse → trim pipeline, plus the
-// raw-row → JobCandidate mapping seam. NOT this file's job: the geoMatches truth table
-// (location-mode.test.ts) and collapseBySignature's unit surface (content-signature.test.ts) — each
-// gets exactly ONE wiring probe here; SQL TEXT + param binding stay with the unit render() seams.
+// survival, and the exclusion post-filter → signature collapse → trim pipeline, plus the raw-row →
+// JobCandidate mapping seam. NOT this file's job: the location rule's cases
+// (location-rule.integration.test.ts) and collapseBySignature's unit surface (content-signature.test.ts) —
+// each gets exactly ONE wiring probe here; SQL TEXT + param binding stay with the unit render() seams.
 describe("retrieveCandidatesForProfile — SQL filter + cosine rank + post-filter pipeline (integration: real PGlite semantics)", () => {
   let db: Db;
   let close: (() => Promise<void>) | undefined;
@@ -455,7 +455,7 @@ describe("retrieveCandidatesForProfile — SQL filter + cosine rank + post-filte
 
   // B16
   it("enforces locationMode through the real path — remote_only drops the nearest on-site job", async () => {
-    // Single wiring probe: the geoMatches truth table stays in location-mode.test.ts.
+    // Single wiring probe: the rule's cases live in location-rule.integration.test.ts.
     const seeded = await seedBoard([
       {
         externalId: "onsite",
@@ -474,17 +474,16 @@ describe("retrieveCandidatesForProfile — SQL filter + cosine rank + post-filte
     ]);
     const result = await retrieveCandidatesForProfile(db, oneHot(0), {
       limit: 10,
-      locationMode: "remote_only",
+      location: { mode: "remote_only", home: null },
     });
     expect(result).toHaveLength(1);
-    // The on-site job is NEAREST — removing the geoMatches term from the `displayable` filter
-    // surfaces it at rank 1.
+    // The on-site job is NEAREST — dropping the location rule from the SQL surfaces it at rank 1.
     expect(result[0]!.id).toBe(seeded[1]!);
     expect(result.map((c) => c.id)).not.toContain(seeded[0]!);
   });
 
   // B16b — the inverse wiring (absorbs verify-prefs-live PART A's on-site arm): onsite_only must drop the
-  // nearest REMOTE job. B16 covers remote_only; the geoMatches truth table stays in location-mode.test.ts.
+  // nearest REMOTE job. B16 covers remote_only.
   it("enforces locationMode onsite_only through the real path — drops the nearest remote job", async () => {
     const seeded = await seedBoard([
       {
@@ -504,7 +503,7 @@ describe("retrieveCandidatesForProfile — SQL filter + cosine rank + post-filte
     ]);
     const result = await retrieveCandidatesForProfile(db, oneHot(0), {
       limit: 10,
-      locationMode: "onsite_only",
+      location: { mode: "onsite_only", home: null },
     });
     expect(result).toHaveLength(1);
     // The remote job is NEAREST — onsite_only must surface only the on-site row.
@@ -513,7 +512,7 @@ describe("retrieveCandidatesForProfile — SQL filter + cosine rank + post-filte
   });
 
   // B17
-  it("maps raw rows faithfully — jsonb locations array, strict boolean remote, 32-hex signature, finite distance", async () => {
+  it("maps raw rows faithfully — description, 32-hex signature, finite distance", async () => {
     const seeded = await seedBoard([
       {
         externalId: "map",
@@ -529,10 +528,6 @@ describe("retrieveCandidatesForProfile — SQL filter + cosine rank + post-filte
     expect(result).toHaveLength(1);
     const candidate = result[0]!;
     expect(candidate.id).toBe(idMap);
-    // A jsonb-as-string driver shape would make parseLocations return [] — deep-equal pins the array.
-    expect(candidate.locations).toEqual(["Austin, TX", "Remote - US"]);
-    // A 't'-string boolean fails the strict `r.remote === true` mapping — toBe is strict equality.
-    expect(candidate.remote).toBe(true);
     expect(candidate.descriptionText).toBe("Own the platform runtime end to end");
     // A non-string signature scalar would map to null — the regex pins the 32-hex md5 shape…
     expect(candidate.contentSignature).toMatch(/^[0-9a-f]{32}$/);

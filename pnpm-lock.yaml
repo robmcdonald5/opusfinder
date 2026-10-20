@@ -241,6 +241,12 @@ importers:
 
   packages/eval:
     dependencies:
+      '@electric-sql/pglite':
+        specifier: 0.5.3
+        version: 0.5.3
+      '@electric-sql/pglite-pgvector':
+        specifier: 0.0.4
+        version: 0.0.4(@electric-sql/pglite@0.5.3)
       '@opusfinder/db':
         specifier: workspace:*
         version: link:../db
@@ -250,6 +256,9 @@ importers:
       '@opusfinder/llm':
         specifier: workspace:*
         version: link:../llm
+      '@opusfinder/locations':
+        specifier: workspace:*
+        version: link:../locations
       '@opusfinder/rerank':
         specifier: workspace:*
         version: link:../rerank
@@ -281,6 +290,9 @@ importers:
       '@opusfinder/llm':
         specifier: workspace:*
         version: link:../llm
+      '@opusfinder/locations':
+        specifier: workspace:*
+        version: link:../locations
       '@opusfinder/rerank':
         specifier: workspace:*
         version: link:../rerank
@@ -303,6 +315,28 @@ importers:
       '@opusfinder/shared':
         specifier: workspace:*
         version: link:../shared
+      zod:
+        specifier: ^4
+        version: 4.4.3
+    devDependencies:
+      tsx:
+        specifier: ^4
+        version: 4.22.3
+
+  packages/locations:
+    dependencies:
+      '@opusfinder/db':
+        specifier: workspace:*
+        version: link:../db
+      '@opusfinder/llm':
+        specifier: workspace:*
+        version: link:../llm
+      '@opusfinder/shared':
+        specifier: workspace:*
+        version: link:../shared
+      drizzle-orm:
+        specifier: ^0.45.2
+        version: 0.45.2(@cloudflare/workers-types@4.20260617.1)(@electric-sql/pglite@0.5.3)(@neondatabase/serverless@1.1.0)(@opentelemetry/api@1.9.0)(@types/pg@8.15.6)(kysely@0.29.2)
       zod:
         specifier: ^4
         version: 4.4.3

@@ -72,12 +72,17 @@ describe("prefsFromFlags — list fields", () => {
   it("exclusions wired ('a,b' → ['a','b'])", () => {
     expect(prefsFromFlags({ exclusions: "a,b" }).exclusions).toEqual(["a", "b"]);
   });
+});
 
-  it("locations split on ';' so a 'City, Region' entry stays whole", () => {
-    expect(prefsFromFlags({ locations: "Berlin, Germany; Austin, TX" }).locations).toEqual([
-      "Berlin, Germany",
-      "Austin, TX",
-    ]);
+describe("prefsFromFlags — radius-miles", () => {
+  it.each(["0", "501"])("%j throws (outside 1..500)", (value) => {
+    expect(() => prefsFromFlags({ "radius-miles": value })).toThrow(
+      /--radius-miles must be 1\.\.500/,
+    );
+  });
+
+  it("'25' → 25", () => {
+    expect(prefsFromFlags({ "radius-miles": "25" }).radiusMiles).toBe(25);
   });
 });
 

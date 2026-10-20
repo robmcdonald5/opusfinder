@@ -1,0 +1,364 @@
+{
+  "promptVersion": "3",
+  "labeled": 368,
+  "context-with": {
+    "score": {
+      "n": 368,
+      "correct": 360,
+      "accuracy": 0.9782608695652174,
+      "byCategory": {
+        "area": {
+          "n": 40,
+          "correct": 40
+        },
+        "bare": {
+          "n": 97,
+          "correct": 94
+        },
+        "coded": {
+          "n": 35,
+          "correct": 35
+        },
+        "label": {
+          "n": 44,
+          "correct": 44
+        },
+        "multi": {
+          "n": 53,
+          "correct": 53
+        },
+        "plain": {
+          "n": 44,
+          "correct": 40
+        },
+        "remote": {
+          "n": 55,
+          "correct": 54
+        }
+      },
+      "unseen": {
+        "n": 311,
+        "correct": 304,
+        "accuracy": 0.977491961414791
+      }
+    },
+    "failures": [
+      {
+        "id": "g074",
+        "raw": "provincia di Napoli",
+        "got": {
+          "placeIds": [],
+          "remoteCountries": [],
+          "unmatched": [
+            {
+              "kind": "region",
+              "city": null,
+              "region": "Metropolitan City of Naples",
+              "country": "IT",
+              "why": "unknown-region",
+              "countryCode": "IT",
+              "regionCode": null
+            }
+          ]
+        }
+      },
+      {
+        "id": "g075",
+        "raw": "Bulim Square",
+        "got": {
+          "placeIds": [
+            3094802
+          ],
+          "remoteCountries": [],
+          "unmatched": []
+        }
+      },
+      {
+        "id": "g104",
+        "raw": "Dublin",
+        "got": {
+          "placeIds": [
+            5152333
+          ],
+          "remoteCountries": [],
+          "unmatched": []
+        }
+      },
+      {
+        "id": "g256",
+        "raw": "Palasë, Vlorë County, Albania",
+        "got": {
+          "placeIds": [],
+          "remoteCountries": [],
+          "unmatched": [
+            {
+              "kind": "city",
+              "city": "Palasë",
+              "region": "Vlorë County",
+              "country": "AL",
+              "why": "unknown-city",
+              "countryCode": "AL",
+              "regionCode": "51"
+            }
+          ]
+        }
+      },
+      {
+        "id": "g283",
+        "raw": "Ireland, , United Kingdom",
+        "got": {
+          "placeIds": [
+            2963597
+          ],
+          "remoteCountries": [],
+          "unmatched": []
+        }
+      },
+      {
+        "id": "g294",
+        "raw": "Søborg, , Denmark",
+        "got": {
+          "placeIds": [],
+          "remoteCountries": [],
+          "unmatched": [
+            {
+              "kind": "city",
+              "city": "Søborg",
+              "region": "Capital Region",
+              "country": "DK",
+              "why": "unknown-city",
+              "countryCode": "DK",
+              "regionCode": "17"
+            }
+          ]
+        }
+      },
+      {
+        "id": "g296",
+        "raw": "Wood Lake, MN, United States",
+        "got": {
+          "placeIds": [],
+          "remoteCountries": [],
+          "unmatched": [
+            {
+              "kind": "city",
+              "city": "Wood Lake",
+              "region": "Minnesota",
+              "country": "US",
+              "why": "unknown-city",
+              "countryCode": "US",
+              "regionCode": "MN"
+            }
+          ]
+        }
+      },
+      {
+        "id": "g310",
+        "raw": "NY, US, IL, US - Remote",
+        "got": {
+          "placeIds": [
+            5128638,
+            4896861
+          ],
+          "remoteCountries": [
+            "US"
+          ],
+          "unmatched": []
+        }
+      }
+    ]
+  },
+  "context-without": {
+    "score": {
+      "n": 368,
+      "correct": 356,
+      "accuracy": 0.967391304347826,
+      "byCategory": {
+        "area": {
+          "n": 40,
+          "correct": 40
+        },
+        "bare": {
+          "n": 97,
+          "correct": 89
+        },
+        "coded": {
+          "n": 35,
+          "correct": 35
+        },
+        "label": {
+          "n": 44,
+          "correct": 44
+        },
+        "multi": {
+          "n": 53,
+          "correct": 53
+        },
+        "plain": {
+          "n": 44,
+          "correct": 41
+        },
+        "remote": {
+          "n": 55,
+          "correct": 54
+        }
+      },
+      "unseen": {
+        "n": 311,
+        "correct": 303,
+        "accuracy": 0.9742765273311897
+      }
+    },
+    "failures": [
+      {
+        "id": "g037",
+        "raw": "Cambridge",
+        "got": {
+          "placeIds": [
+            2653941
+          ],
+          "remoteCountries": [],
+          "unmatched": []
+        }
+      },
+      {
+        "id": "g050",
+        "raw": "San Jose",
+        "got": {
+          "placeIds": [
+            5392171
+          ],
+          "remoteCountries": [],
+          "unmatched": []
+        }
+      },
+      {
+        "id": "g065",
+        "raw": "Süddeutschland",
+        "got": {
+          "placeIds": [
+            2921044
+          ],
+          "remoteCountries": [],
+          "unmatched": []
+        }
+      },
+      {
+        "id": "g069",
+        "raw": "Georgia",
+        "got": {
+          "placeIds": [
+            4197000
+          ],
+          "remoteCountries": [],
+          "unmatched": []
+        }
+      },
+      {
+        "id": "g074",
+        "raw": "provincia di Napoli",
+        "got": {
+          "placeIds": [
+            3181042
+          ],
+          "remoteCountries": [],
+          "unmatched": []
+        }
+      },
+      {
+        "id": "g075",
+        "raw": "Bulim Square",
+        "got": {
+          "placeIds": [
+            1819729
+          ],
+          "remoteCountries": [],
+          "unmatched": []
+        }
+      },
+      {
+        "id": "g120",
+        "raw": "Georgia",
+        "got": {
+          "placeIds": [
+            4197000
+          ],
+          "remoteCountries": [],
+          "unmatched": []
+        }
+      },
+      {
+        "id": "g121",
+        "raw": "Georgia",
+        "got": {
+          "placeIds": [
+            4197000
+          ],
+          "remoteCountries": [],
+          "unmatched": []
+        }
+      },
+      {
+        "id": "g283",
+        "raw": "Ireland, , United Kingdom",
+        "got": {
+          "placeIds": [
+            2963597,
+            2635167
+          ],
+          "remoteCountries": [],
+          "unmatched": []
+        }
+      },
+      {
+        "id": "g294",
+        "raw": "Søborg, , Denmark",
+        "got": {
+          "placeIds": [],
+          "remoteCountries": [],
+          "unmatched": [
+            {
+              "kind": "city",
+              "city": "Søborg",
+              "region": "Capital Region",
+              "country": "DK",
+              "why": "unknown-city",
+              "countryCode": "DK",
+              "regionCode": "17"
+            }
+          ]
+        }
+      },
+      {
+        "id": "g296",
+        "raw": "Wood Lake, MN, United States",
+        "got": {
+          "placeIds": [],
+          "remoteCountries": [],
+          "unmatched": [
+            {
+              "kind": "city",
+              "city": "Wood Lake",
+              "region": "Minnesota",
+              "country": "US",
+              "why": "unknown-city",
+              "countryCode": "US",
+              "regionCode": "MN"
+            }
+          ]
+        }
+      },
+      {
+        "id": "g330",
+        "raw": "US; Remote, US",
+        "got": {
+          "placeIds": [],
+          "remoteCountries": [
+            "US"
+          ],
+          "unmatched": []
+        }
+      }
+    ]
+  }
+}

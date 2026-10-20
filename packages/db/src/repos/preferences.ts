@@ -6,7 +6,7 @@
  * here. `unsubscribeToken` is generated ONCE by the caller (generateUnsubscribeToken) at creation and
  * never rotated by these functions.
  */
-import { eq, sql } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, sql } from "drizzle-orm";
 
 import type { UserId, UserPreferences } from "@opusfinder/shared";
 
@@ -32,6 +32,17 @@ export interface CreatePreferencesInput {
   unsubscribeToken: string;
   /** Optional initial overrides on the column defaults (CLI flags / form fields). */
   prefs?: Partial<UserPreferences>;
+}
+
+/** Whether any of these users has a home place: only those users' retrieval reads resolved locations. */
+export async function anyHasHomePlace(db: Db, userIds: UserId[]): Promise<boolean> {
+  if (userIds.length === 0) return false;
+  const rows = await db
+    .select({ id: userPreferences.id })
+    .from(userPreferences)
+    .where(and(inArray(userPreferences.userId, userIds), isNotNull(userPreferences.homePlaceId)))
+    .limit(1);
+  return rows.length > 0;
 }
 
 /**
@@ -119,7 +130,8 @@ function toRow(prefs?: Partial<UserPreferences>): Partial<typeof userPreferences
   const row: Partial<typeof userPreferences.$inferInsert> = {};
   if (!prefs) return row;
   if (prefs.locationMode !== undefined) row.locationMode = prefs.locationMode;
-  if (prefs.locations !== undefined) row.locations = prefs.locations;
+  if (prefs.homePlaceId !== undefined) row.homePlaceId = prefs.homePlaceId;
+  if (prefs.radiusMiles !== undefined) row.radiusMiles = prefs.radiusMiles;
   if (prefs.minSalary !== undefined) row.minSalary = prefs.minSalary;
   if (prefs.maxSalary !== undefined) row.maxSalary = prefs.maxSalary;
   if (prefs.yoeMin !== undefined) row.yoeMin = prefs.yoeMin;

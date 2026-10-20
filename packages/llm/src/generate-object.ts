@@ -17,6 +17,8 @@ import { openRouterRequest } from "./openrouter";
 export interface GenerateObjectParams<T> extends CallOptions {
   /** Zod schema for the object to extract; the reply is decoded against it and validated with it. */
   schema: z.ZodType<T>;
+  /** A deadline over the whole call, retries included: when it aborts, the call throws its reason. */
+  signal?: AbortSignal;
 }
 
 export interface GenerateObjectResult<T> {
@@ -75,7 +77,9 @@ export async function generateObject<T>(
   let lastError: unknown;
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     const reply = readMessage(
-      await openRouterRequest<MessagesResponse>("POST", "/messages", request),
+      await openRouterRequest<MessagesResponse>("POST", "/messages", request, {
+        signal: params.signal,
+      }),
     );
     addUsage(totals, reply);
     if (reply.stopReason === "max_tokens") {

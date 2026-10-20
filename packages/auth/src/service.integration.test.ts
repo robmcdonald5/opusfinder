@@ -258,7 +258,7 @@ describe("auth service — createUserWithPreferences / getOrCreateUserByEmail / 
       expect((await prefsRow(userId)).unsubscribeToken).toMatch(TOKEN_RE);
     });
 
-    it("applies overrides (locationMode/recencyDays/digestCadence) while keeping untouched defaults (digestEnabled true, locations [])", async () => {
+    it("applies overrides (locationMode/recencyDays/digestCadence) while keeping untouched defaults (digestEnabled true, no home place)", async () => {
       const { userId } = await createUserWithPreferences(db, auth, {
         email: "overrides@svc.test",
         password: "pw-longenough-1",
@@ -270,7 +270,7 @@ describe("auth service — createUserWithPreferences / getOrCreateUserByEmail / 
       expect(prefs.recencyDays).toBe(7);
       expect(prefs.digestCadence).toBe("daily");
       expect(prefs.digestEnabled).toBe(true);
-      expect(prefs.locations).toEqual([]);
+      expect(prefs.homePlaceId).toBeNull();
     });
 
     it("no prefs → pure column defaults incl. digestApprovedAt NULL (fail-closed permit), recencyDays 14, cadence weekly, locationMode any", async () => {
@@ -281,7 +281,8 @@ describe("auth service — createUserWithPreferences / getOrCreateUserByEmail / 
       const prefs = await prefsRow(userId);
       expect(prefs.digestEnabled).toBe(true);
       expect(prefs.digestCadence).toBe("weekly");
-      expect(prefs.locations).toEqual([]);
+      expect(prefs.homePlaceId).toBeNull();
+      expect(prefs.radiusMiles).toBe(50);
       expect(prefs.recencyDays).toBe(14);
       expect(prefs.locationMode).toBe("any");
       expect(prefs.exclusions).toEqual([]);

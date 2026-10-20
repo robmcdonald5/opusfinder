@@ -40,17 +40,21 @@ export class OpenRouterError extends Error {
  * reported inside a 200 retry with the shared backoff (a 429's Retry-After wins); any other failure throws
  * {@link OpenRouterError}. A 2xx whose body can't be read is retried only for a GET: the server already
  * acted on a POST. `maxRetries: 0` makes a POST that must not run twice (a batch submit) a single attempt.
+ * `signal` is the caller's deadline over every attempt: once it aborts, the request in flight is cancelled
+ * and nothing is retried.
  */
 export async function openRouterRequest<T>(
   method: "GET" | "POST",
   path: string,
   body?: unknown,
-  opts: { maxRetries?: number } = {},
+  opts: { maxRetries?: number; signal?: AbortSignal } = {},
 ): Promise<T> {
   const apiKey = getOpenRouterApiKey();
   const maxRetries = opts.maxRetries ?? DEFAULT_MAX_RETRIES;
   for (let attempt = 0; ; attempt++) {
-    const canRetry = attempt < maxRetries;
+    opts.signal?.throwIfAborted();
+    const canRetry = attempt < maxRetries && !opts.signal?.aborted;
+    const timeout = AbortSignal.timeout(TIMEOUT_MS);
     let res: Response;
     try {
       res = await fetch(`${BASE_URL}${path}`, {
@@ -61,10 +65,10 @@ export async function openRouterRequest<T>(
           "X-Title": "opusfinder",
         },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-        signal: AbortSignal.timeout(TIMEOUT_MS),
+        signal: opts.signal ? AbortSignal.any([timeout, opts.signal]) : timeout,
       });
     } catch (err) {
-      if (canRetry) {
+      if (canRetry && !opts.signal?.aborted) {
         await backoff(attempt);
         continue;
       }

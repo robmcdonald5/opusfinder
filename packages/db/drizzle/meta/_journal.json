@@ -204,6 +204,13 @@
       "when": 1792359860222,
       "tag": "0028_prune_closed_jobs_fn",
       "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1792386617987,
+      "tag": "0029_location_places",
+      "breakpoints": true
     }
   ]
 }
