@@ -8,9 +8,9 @@
  * Continents and their parts are the UN Statistics Division's M49 regions
  * (https://unstats.un.org/unsd/methodology/m49/), plus the two codes M49 leaves out that GeoNames has:
  * Taiwan (TW, Eastern Asia) and Kosovo (XK, Southern Europe). The business blocs (EMEA, APAC, Middle East,
- * CIS) have no standard; each is defined below, from M49 parts where it can be. Picked from the area labels
- * that production location strings use; vaguer ones (Western Europe, whose M49 meaning leaves out the UK
- * and Ireland that postings mean) are left out on purpose.
+ * CIS, MENA) have no standard; each is defined below, from M49 parts where it can be. Picked from the area
+ * labels that production location strings use; vaguer ones (Western Europe, whose M49 meaning leaves out
+ * the UK and Ireland that postings mean) are left out on purpose.
  */
 import { normalizePlaceName } from "@opusfinder/shared";
 
@@ -46,6 +46,7 @@ const OCEANIA = codes(
   "AU CX CC HM NZ NF FJ NC PG SB VU GU KI MH FM NR MP PW UM AS CK PF NU PN WS TK TO TV WF",
 );
 
+const US = ["US"];
 const AFRICA = union(NORTHERN_AFRICA, SUB_SAHARAN_AFRICA);
 // Plus Cyprus: an EU member that M49 files under Western Asia, and that postings mean by Europe.
 const EUROPE = union(EASTERN_EUROPE, NORTHERN_EUROPE, SOUTHERN_EUROPE, WESTERN_EUROPE, ["CY"]);
@@ -92,6 +93,27 @@ export const AREAS = {
   "North America": NORTHERN_AMERICA,
   Oceania: OCEANIA,
   "South America": SOUTH_AMERICA,
+  // M49 parts.
+  "East Asia": EASTERN_ASIA,
+  "Southeast Asia": SOUTH_EASTERN_ASIA,
+  "South Asia": SOUTHERN_ASIA,
+  "Northern Europe": NORTHERN_EUROPE,
+  "Southern Europe": SOUTHERN_EUROPE,
+  // The Middle East (above) and M49 Northern Africa.
+  MENA: codes("AE BH CY EG IL IQ IR JO KW LB OM PS QA SA SY TR YE DZ LY MA SD TN EH"),
+  // Regions of the United States: two of the Census Bureau's four (Northeast, Midwest; "South" and "West"
+  // alone mean too many things), two of its divisions (New England, Mid-Atlantic) and the labels postings
+  // use with the US named. A remote role limited to one is open to the United States: the rule checks
+  // countries, not parts of one.
+  "US Northeast": US,
+  "US Midwest": US,
+  "US Southeast": US,
+  "US Southwest": US,
+  "US West Coast": US,
+  "US East Coast": US,
+  "US Pacific Northwest": US,
+  "New England": US,
+  "Mid-Atlantic": US,
 } as const satisfies Record<string, readonly string[]>;
 
 export type AreaName = keyof typeof AREAS;
@@ -105,7 +127,12 @@ const ALIASES: Record<string, AreaName> = {
   apj: "APAC",
   eu: "European Union",
   latam: "Latin America",
+  "middle east and north africa": "MENA",
+  "middle east north africa": "MENA",
+  midwest: "US Midwest",
   namer: "North America",
+  "northeast asia": "East Asia",
+  "south east asia": "Southeast Asia",
   noram: "North America",
   nordic: "Nordics",
   "nordic countries": "Nordics",

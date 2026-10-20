@@ -3,7 +3,7 @@
  * context it is given, and the upsert of its checked answers. "Active" means a string some active job
  * lists; a blank string is never a pair, and neither is one over {@link MAX_LOCATION_RAW_BYTES}.
  */
-import { sql, type SQL } from "drizzle-orm";
+import { and, eq, sql, type SQL } from "drizzle-orm";
 
 import type { LocationConfidence, SourceName, UnmatchedPlace } from "@opusfinder/shared";
 
@@ -144,6 +144,44 @@ export async function upsertLocationStrings(db: Db, rows: LocationStringRow[]): 
         },
         setWhere: sql`excluded.confidence IS NOT NULL OR ${locationStrings.confidence} IS NULL`,
       });
+  }
+}
+
+/** What the check decided for a stored row: the parts `locations:recheck` re-derives without the model. */
+export interface CheckedPlacesRow {
+  companyId: number;
+  raw: string;
+  placeIds: number[];
+  remoteCountries: string[];
+  unmatched: UnmatchedPlace[];
+}
+
+/** Every stored row with something on its `unmatched` list. */
+export async function listUnmatchedLocationStrings(db: Db): Promise<CheckedPlacesRow[]> {
+  return db
+    .select({
+      companyId: locationStrings.companyId,
+      raw: locationStrings.raw,
+      placeIds: locationStrings.placeIds,
+      remoteCountries: locationStrings.remoteCountries,
+      unmatched: locationStrings.unmatched,
+    })
+    .from(locationStrings)
+    .where(sql`jsonb_array_length(${locationStrings.unmatched}) > 0`);
+}
+
+/** Replace rows' checked places, remote countries and unmatched lists; the model's answer (confidence,
+ *  reason, prompt version) and `resolved_at` stay as they were. */
+export async function updateCheckedPlaces(db: Db, rows: CheckedPlacesRow[]): Promise<void> {
+  for (const row of rows) {
+    await db
+      .update(locationStrings)
+      .set({
+        placeIds: row.placeIds,
+        remoteCountries: row.remoteCountries,
+        unmatched: row.unmatched,
+      })
+      .where(and(eq(locationStrings.companyId, row.companyId), eq(locationStrings.raw, row.raw)));
   }
 }
 

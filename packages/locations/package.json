@@ -10,6 +10,7 @@
   "scripts": {
     "sync": "tsx scripts/sync.ts",
     "backfill": "tsx scripts/backfill.ts",
+    "recheck": "tsx scripts/recheck.ts",
     "report": "tsx scripts/report.ts",
     "explain": "tsx scripts/explain.ts",
     "typecheck": "tsc --noEmit"

@@ -158,11 +158,70 @@ describe("the GeoNames check (integration: real PGlite)", () => {
       answer([], [], ["Worldwide"]),
     );
     // The fixture gazetteer's countries in M49 Europe; codes it lacks are dropped.
-    expect(europe!.remoteCountries.sort()).toEqual(["DE", "FR", "GB", "IE"]);
+    expect(europe!.remoteCountries.sort()).toEqual(["AT", "CH", "DE", "FR", "GB", "IE"]);
     expect(europe!.unmatched).toEqual([]);
-    expect(mixed!.remoteCountries.sort()).toEqual(["TR", "US"]);
+    expect(mixed!.remoteCountries.sort()).toEqual(["PE", "TR", "US"]); // LATAM: Peru in the fixture
     expect(mixed!.unmatched).toEqual([{ kind: "area", name: "Atlantic Rim", why: "unknown-area" }]);
     expect(noLimit).toEqual({ placeIds: [], remoteCountries: [], unmatched: [] });
+  });
+
+  it("reads a region by its name without the words that only say it is a region", async () => {
+    const region = (name: string, country: string): AnsweredPlace => ({
+      city: null,
+      region: name,
+      country,
+      kind: "region",
+    });
+    const [ogun, salzburgState, ambiguous] = await check(
+      answer([region("Ogun", "NG")]),
+      answer([region("Salzburg State", "AT")]),
+      // "Almaty Region" and "Almaty" both reduce to "almaty": no guess between them.
+      answer([region("Almaty Oblysy", "KZ")]),
+    );
+    expect(ogun!.placeIds).toEqual([P.OGUN_STATE]);
+    expect(salzburgState!.placeIds).toEqual([P.SALZBURG]);
+    expect(ambiguous!.unmatched[0]).toMatchObject({ why: "unknown-region" });
+  });
+
+  it("treats a region named like the city, admin words aside, as the city's own municipality", async () => {
+    const [almaty, lima, kl] = await check(
+      answer([city("Almaty", "Almaty Region", "KZ")]),
+      answer([city("Lima", "Lima Region", "PE")]),
+      // Not a namesake: Kuala Lumpur is a federal territory, not part of Selangor (the prompt's job).
+      answer([city("Kuala Lumpur", "Selangor", "MY")]),
+    );
+    expect(almaty!.placeIds).toEqual([P.ALMATY]);
+    expect(lima!.placeIds).toEqual([P.LIMA]);
+    expect(kl!.unmatched[0]).toMatchObject({ why: "unknown-city", regionCode: "12" });
+  });
+
+  it("matches St./Saint either way, in a city and in a region", async () => {
+    const [stJoseph, stGallen] = await check(
+      answer([city("St. Joseph", "Michigan", "US")]),
+      answer([city("Rapperswil", "St. Gallen", "CH")]),
+    );
+    expect(stJoseph!.placeIds).toEqual([P.SAINT_JOSEPH_MI]);
+    expect(stGallen!.placeIds).toEqual([P.RAPPERSWIL]);
+  });
+
+  it("matches a hyphenated compound by a part, only inside a region it knows", async () => {
+    const [wals, rapperswil, noRegion] = await check(
+      answer([city("Wals-Siezenheim", "Salzburg", "AT")]),
+      answer([city("Rapperswil-Jona", "St. Gallen", "CH")]),
+      answer([city("Wals-Siezenheim", null, "AT")]),
+    );
+    expect(wals!.placeIds).toEqual([P.WALS]);
+    expect(rapperswil!.placeIds).toEqual([P.RAPPERSWIL]);
+    expect(noRegion!.placeIds).toEqual([]);
+  });
+
+  it("keeps a small town in the state named, never its larger namesake elsewhere", async () => {
+    const [mississippi, bare] = await check(
+      answer([city("McHenry", "Mississippi", "US")]),
+      answer([city("McHenry", null, "US")]),
+    );
+    expect(mississippi!.placeIds).toEqual([P.MCHENRY_MS]);
+    expect(bare!.placeIds).toEqual([P.MCHENRY_IL]); // no state: the largest McHenry
   });
 
   it("refuses to run against an empty gazetteer", async () => {

@@ -42,6 +42,34 @@ export const P = {
   OUTSIDE_50: 900011,
   FAIRVIEW_SMALL_OH: 900020,
   FAIRVIEW_BIG_OH: 900021,
+  // Real rows for the check's spelling tolerance (names.ts).
+  KZ: 1522867,
+  NG: 2328926,
+  AT: 2782113,
+  CH: 2658434,
+  PE: 3932488,
+  MY: 1733045,
+  ALMATY_REGION: 1537162,
+  ALMATY_CITY_REGION: 1526395,
+  OGUN_STATE: 2327546,
+  SALZBURG: 2766823,
+  SAINT_GALLEN: 2658821,
+  LIMA_REGION: 3936452,
+  LIMA_PROVINCE: 3936451,
+  MICHIGAN: 5001836,
+  MISSISSIPPI: 4436296,
+  ILLINOIS: 4896861,
+  SELANGOR: 1733037,
+  KUALA_LUMPUR_REGION: 1733046,
+  ALMATY: 1526384,
+  WALS: 2761941,
+  RAPPERSWIL: 2659099,
+  LIMA: 3936456,
+  SAINT_JOSEPH_MI: 5008327,
+  KUALA_LUMPUR: 1735161,
+  // From the US dump: a community of no recorded population, and the larger namesake in another state.
+  MCHENRY_MS: 4435457,
+  MCHENRY_IL: 4901663,
 } as const;
 
 const COLUMBUS = { lat: 39.96118, lng: -82.99879 };
@@ -92,6 +120,10 @@ function city(
   });
 }
 
+function region(geonamesId: number, name: string, countryCode: string, regionCode: string) {
+  return place(geonamesId, "region", name, countryCode, { regionCode, regionName: name });
+}
+
 export const PLACE_ROWS: PlaceRow[] = [
   place(P.US, "country", "United States", "US"),
   place(P.GB, "country", "United Kingdom", "GB"),
@@ -131,6 +163,32 @@ export const PLACE_ROWS: PlaceRow[] = [
   city(P.OUTSIDE_50, "Outsideville", "US", "OH", "Ohio", COLUMBUS.lat + 0.7309, COLUMBUS.lng, 600),
   city(P.FAIRVIEW_SMALL_OH, "Fairview", "US", "OH", "Ohio", 41.04, -81.6, 700),
   city(P.FAIRVIEW_BIG_OH, "Fairview", "US", "OH", "Ohio", 41.45, -81.85, 9000),
+  place(P.KZ, "country", "Kazakhstan", "KZ"),
+  place(P.NG, "country", "Nigeria", "NG"),
+  place(P.AT, "country", "Austria", "AT"),
+  place(P.CH, "country", "Switzerland", "CH"),
+  place(P.PE, "country", "Peru", "PE"),
+  place(P.MY, "country", "Malaysia", "MY"),
+  region(P.ALMATY_REGION, "Almaty Region", "KZ", "01"),
+  region(P.ALMATY_CITY_REGION, "Almaty", "KZ", "02"),
+  region(P.OGUN_STATE, "Ogun State", "NG", "16"),
+  region(P.SALZBURG, "Salzburg", "AT", "05"),
+  region(P.SAINT_GALLEN, "Saint Gallen", "CH", "SG"),
+  region(P.LIMA_REGION, "Lima region", "PE", "15"),
+  region(P.LIMA_PROVINCE, "Lima Province", "PE", "LMA"),
+  region(P.MICHIGAN, "Michigan", "US", "MI"),
+  region(P.MISSISSIPPI, "Mississippi", "US", "MS"),
+  region(P.ILLINOIS, "Illinois", "US", "IL"),
+  region(P.SELANGOR, "Selangor", "MY", "12"),
+  region(P.KUALA_LUMPUR_REGION, "Kuala Lumpur", "MY", "14"),
+  city(P.ALMATY, "Almaty", "KZ", "02", "Almaty", 43.25249, 76.9115, 1977011, ["alma ata"]),
+  city(P.WALS, "Wals", "AT", "05", "Salzburg", 47.78333, 12.96667, 3626),
+  city(P.RAPPERSWIL, "Rapperswil", "CH", "SG", "Saint Gallen", 47.22557, 8.82228, 34776),
+  city(P.LIMA, "Lima", "PE", "LMA", "Lima Province", -12.04318, -77.02824, 7737002),
+  city(P.SAINT_JOSEPH_MI, "Saint Joseph", "US", "MI", "Michigan", 42.10976, -86.48002, 8365),
+  city(P.KUALA_LUMPUR, "Kuala Lumpur", "MY", "14", "Kuala Lumpur", 3.1412, 101.68653, 1453975),
+  city(P.MCHENRY_MS, "McHenry", "US", "MS", "Mississippi", 30.70769, -89.13838, 0),
+  city(P.MCHENRY_IL, "McHenry", "US", "IL", "Illinois", 42.33335, -88.26675, 26657),
 ];
 
 /** Load the fixture gazetteer through the real upsert. */
