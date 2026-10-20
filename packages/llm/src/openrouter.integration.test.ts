@@ -1,4 +1,4 @@
-import { http, HttpResponse } from "msw";
+import { delay, http, HttpResponse } from "msw";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { messagesReply, OPENROUTER_MESSAGES_URL } from "@test/msw/fixtures/openrouter";
@@ -152,6 +152,24 @@ describe("openRouterRequest", () => {
 
     expect(hits).toBe(1);
     expect(err).toMatchObject({ status: 503 });
+  });
+
+  it("stops at the caller's deadline: cancels the attempt in flight and retries nothing", async () => {
+    let hits = 0;
+    server.use(
+      http.post(OPENROUTER_MESSAGES_URL, async () => {
+        hits += 1;
+        await delay("infinite");
+        return HttpResponse.json(messagesReply());
+      }),
+    );
+
+    const err = await rejectionOf(
+      openRouterRequest("POST", "/messages", {}, { signal: AbortSignal.timeout(50) }),
+    );
+
+    expect(hits).toBe(1);
+    expect(err).toMatchObject({ name: "TimeoutError" });
   });
 
   it("gives up after the retries on a persistent 5xx, reading the last reply's error", async () => {
