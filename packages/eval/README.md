@@ -60,7 +60,9 @@ places, office/HQ labels, company codes (`US-CA-Menlo Park`, `WBIR-TV Knoxville`
 remote phrases and world regions; `category` records the bucket. Each pair's `expected` answer (GeoNames
 place ids, remote countries, and areas by their names on the list in `@opusfinder/locations`) was drafted by a stronger model than the normalizer, working only from
 `data/locations-golden.conventions.md` (never the normalizer's prompt), and resolved to GeoNames ids by
-`pnpm --filter @opusfinder/eval run locations:label -- --drafts <file>` through the production check. The
+`pnpm --filter @opusfinder/eval run locations:label -- --drafts <file>` through the production check (where
+the answer is a judgment between equally fair places, such as the nearest town to a site GeoNames doesn't
+list, other place sets are added by hand as `alternatives`, and any of them counts). The
 owner reviews them on the sheet `locations:review` writes to `data/reviews/locations-golden.md` (gitignored,
 regenerated after a fix).
 

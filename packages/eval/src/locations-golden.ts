@@ -9,15 +9,20 @@ import { readFileSync } from "node:fs";
 import { AREAS, readArea, type AreaName } from "@opusfinder/locations";
 import { isRecord, type UnmatchedPlace } from "@opusfinder/shared";
 
+/** A labeled place: its GeoNames id, with the names shown on the review sheet (the id is what's scored). */
+export interface GoldenPlace {
+  geonamesId: number;
+  name: string;
+  region: string | null;
+  country: string;
+  kind: string;
+}
+
 export interface GoldenExpected {
-  /** GeoNames ids, with the names shown on the review sheet (the ids are what's scored). */
-  places: {
-    geonamesId: number;
-    name: string;
-    region: string | null;
-    country: string;
-    kind: string;
-  }[];
+  places: GoldenPlace[];
+  /** Other place sets that count as right too, where the answer is a judgment between equally fair places
+   *  (the nearest town to a site GeoNames doesn't list). Written by hand. */
+  alternatives?: GoldenPlace[][];
   remoteCountries: string[];
   /** Areas the job is limited to; scored as the countries they cover, with the remote countries. */
   areas: AreaName[];
@@ -85,27 +90,18 @@ function validateExpected(value: unknown, at: string): GoldenExpected {
   if (!isRecord(value) || !Array.isArray(value.places) || !isStringArray(value.remoteCountries)) {
     throw new Error(`${at}: expected must be { places[], remoteCountries[] }.`);
   }
-  const places = value.places.map((p, j) => {
-    if (
-      !isRecord(p) ||
-      typeof p.geonamesId !== "number" ||
-      typeof p.name !== "string" ||
-      typeof p.country !== "string"
-    ) {
-      throw new Error(`${at}: expected.places[${j}] needs geonamesId, name, country.`);
-    }
-    return {
-      geonamesId: p.geonamesId,
-      name: p.name,
-      region: typeof p.region === "string" ? p.region : null,
-      country: p.country,
-      kind: typeof p.kind === "string" ? p.kind : "city",
-    };
-  });
+  const places = validatePlaces(value.places, `${at}: expected.places`);
+  if (value.alternatives !== undefined && !Array.isArray(value.alternatives)) {
+    throw new Error(`${at}: expected.alternatives must be an array of place lists.`);
+  }
+  const alternatives = value.alternatives?.map((alt, j) =>
+    validatePlaces(alt, `${at}: expected.alternatives[${j}]`),
+  );
   const areas = value.areas === undefined ? [] : value.areas;
   if (!isStringArray(areas)) throw new Error(`${at}: expected.areas must be a string[].`);
   return {
     places,
+    ...(alternatives ? { alternatives } : {}),
     remoteCountries: value.remoteCountries,
     areas: areas.map((a) => {
       const area = readArea(a);
@@ -120,20 +116,43 @@ function validateExpected(value: unknown, at: string): GoldenExpected {
   };
 }
 
+function validatePlaces(value: unknown, at: string): GoldenPlace[] {
+  if (!Array.isArray(value)) throw new Error(`${at} must be an array.`);
+  return value.map((p, j) => {
+    if (
+      !isRecord(p) ||
+      typeof p.geonamesId !== "number" ||
+      typeof p.name !== "string" ||
+      typeof p.country !== "string"
+    ) {
+      throw new Error(`${at}[${j}] needs geonamesId, name, country.`);
+    }
+    return {
+      geonamesId: p.geonamesId,
+      name: p.name,
+      region: typeof p.region === "string" ? p.region : null,
+      country: p.country,
+      kind: typeof p.kind === "string" ? p.kind : "city",
+    };
+  });
+}
+
 function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((v) => typeof v === "string");
 }
 
-/** Exact match: the same set of place ids, the same set of remote countries (the expected areas'
- *  countries included), and no area off the list. */
+/** Exact match: the same set of place ids as the expected places or one of their alternatives, the same
+ *  set of remote countries (the expected areas' countries included), and no area off the list. */
 export function answerMatches(
   expected: GoldenExpected,
   got: { placeIds: number[]; remoteCountries: string[]; unmatched?: UnmatchedPlace[] },
 ): boolean {
   return (
-    sameSet(
-      expected.places.map((p) => p.geonamesId),
-      got.placeIds,
+    [expected.places, ...(expected.alternatives ?? [])].some((places) =>
+      sameSet(
+        places.map((p) => p.geonamesId),
+        got.placeIds,
+      ),
     ) &&
     sameSet(
       [...expected.remoteCountries, ...expected.areas.flatMap((a) => AREAS[a])],

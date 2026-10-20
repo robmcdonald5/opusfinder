@@ -1,15 +1,15 @@
 {
-  "promptVersion": "2",
+  "promptVersion": "3",
   "labeled": 368,
   "context-with": {
     "score": {
       "n": 368,
-      "correct": 359,
-      "accuracy": 0.9755434782608695,
+      "correct": 360,
+      "accuracy": 0.9782608695652174,
       "byCategory": {
         "area": {
           "n": 40,
-          "correct": 38
+          "correct": 40
         },
         "bare": {
           "n": 97,
@@ -29,109 +29,37 @@
         },
         "plain": {
           "n": 44,
-          "correct": 43
+          "correct": 40
         },
         "remote": {
           "n": 55,
-          "correct": 52
+          "correct": 54
         }
       },
       "unseen": {
         "n": 311,
-        "correct": 303,
-        "accuracy": 0.9742765273311897
+        "correct": 304,
+        "accuracy": 0.977491961414791
       }
     },
     "failures": [
       {
-        "id": "g009",
-        "raw": "West Coast, Canada, LATAM",
-        "got": {
-          "placeIds": [],
-          "remoteCountries": [
-            "CA",
-            "AI",
-            "AG",
-            "AW",
-            "BS",
-            "BB",
-            "BQ",
-            "VG",
-            "KY",
-            "CU",
-            "CW",
-            "DM",
-            "DO",
-            "GD",
-            "GP",
-            "HT",
-            "JM",
-            "MQ",
-            "MS",
-            "PR",
-            "BL",
-            "KN",
-            "LC",
-            "MF",
-            "VC",
-            "SX",
-            "TT",
-            "TC",
-            "VI",
-            "BZ",
-            "CR",
-            "SV",
-            "GT",
-            "HN",
-            "MX",
-            "NI",
-            "PA",
-            "AR",
-            "BO",
-            "BV",
-            "BR",
-            "CL",
-            "CO",
-            "EC",
-            "FK",
-            "GF",
-            "GY",
-            "PY",
-            "PE",
-            "GS",
-            "SR",
-            "UY",
-            "VE"
-          ],
-          "unmatched": []
-        }
-      },
-      {
-        "id": "g025",
-        "raw": "Durham, NORTH AMERICA, United States",
-        "got": {
-          "placeIds": [
-            4464368
-          ],
-          "remoteCountries": [
-            "BM",
-            "CA",
-            "GL",
-            "PM",
-            "US"
-          ],
-          "unmatched": []
-        }
-      },
-      {
         "id": "g074",
         "raw": "provincia di Napoli",
         "got": {
-          "placeIds": [
-            3181042
-          ],
+          "placeIds": [],
           "remoteCountries": [],
-          "unmatched": []
+          "unmatched": [
+            {
+              "kind": "region",
+              "city": null,
+              "region": "Metropolitan City of Naples",
+              "country": "IT",
+              "why": "unknown-region",
+              "countryCode": "IT",
+              "regionCode": null
+            }
+          ]
         }
       },
       {
@@ -157,15 +85,71 @@
         }
       },
       {
+        "id": "g256",
+        "raw": "Palasë, Vlorë County, Albania",
+        "got": {
+          "placeIds": [],
+          "remoteCountries": [],
+          "unmatched": [
+            {
+              "kind": "city",
+              "city": "Palasë",
+              "region": "Vlorë County",
+              "country": "AL",
+              "why": "unknown-city",
+              "countryCode": "AL",
+              "regionCode": "51"
+            }
+          ]
+        }
+      },
+      {
         "id": "g283",
         "raw": "Ireland, , United Kingdom",
         "got": {
           "placeIds": [
-            2963597,
-            2635167
+            2963597
           ],
           "remoteCountries": [],
           "unmatched": []
+        }
+      },
+      {
+        "id": "g294",
+        "raw": "Søborg, , Denmark",
+        "got": {
+          "placeIds": [],
+          "remoteCountries": [],
+          "unmatched": [
+            {
+              "kind": "city",
+              "city": "Søborg",
+              "region": "Capital Region",
+              "country": "DK",
+              "why": "unknown-city",
+              "countryCode": "DK",
+              "regionCode": "17"
+            }
+          ]
+        }
+      },
+      {
+        "id": "g296",
+        "raw": "Wood Lake, MN, United States",
+        "got": {
+          "placeIds": [],
+          "remoteCountries": [],
+          "unmatched": [
+            {
+              "kind": "city",
+              "city": "Wood Lake",
+              "region": "Minnesota",
+              "country": "US",
+              "why": "unknown-city",
+              "countryCode": "US",
+              "regionCode": "MN"
+            }
+          ]
         }
       },
       {
@@ -181,38 +165,14 @@
           ],
           "unmatched": []
         }
-      },
-      {
-        "id": "g311",
-        "raw": "UK Remote & Travel",
-        "got": {
-          "placeIds": [
-            2635167
-          ],
-          "remoteCountries": [
-            "GB"
-          ],
-          "unmatched": []
-        }
-      },
-      {
-        "id": "g338",
-        "raw": "United States, Remote",
-        "got": {
-          "placeIds": [
-            6252001
-          ],
-          "remoteCountries": [],
-          "unmatched": []
-        }
       }
     ]
   },
   "context-without": {
     "score": {
       "n": 368,
-      "correct": 355,
-      "accuracy": 0.9646739130434783,
+      "correct": 356,
+      "accuracy": 0.967391304347826,
       "byCategory": {
         "area": {
           "n": 40,
@@ -228,7 +188,7 @@
         },
         "label": {
           "n": 44,
-          "correct": 43
+          "correct": 44
         },
         "multi": {
           "n": 53,
@@ -236,17 +196,17 @@
         },
         "plain": {
           "n": 44,
-          "correct": 42
+          "correct": 41
         },
         "remote": {
           "n": 55,
-          "correct": 53
+          "correct": 54
         }
       },
       "unseen": {
         "n": 311,
-        "correct": 302,
-        "accuracy": 0.9710610932475884
+        "correct": 303,
+        "accuracy": 0.9742765273311897
       }
     },
     "failures": [
@@ -277,7 +237,7 @@
         "raw": "Süddeutschland",
         "got": {
           "placeIds": [
-            2951839
+            2921044
           ],
           "remoteCountries": [],
           "unmatched": []
@@ -309,7 +269,9 @@
         "id": "g075",
         "raw": "Bulim Square",
         "got": {
-          "placeIds": [],
+          "placeIds": [
+            1819729
+          ],
           "remoteCountries": [],
           "unmatched": []
         }
@@ -337,17 +299,6 @@
         }
       },
       {
-        "id": "g191",
-        "raw": "Stennis Space Center, Mississippi",
-        "got": {
-          "placeIds": [
-            4436296
-          ],
-          "remoteCountries": [],
-          "unmatched": []
-        }
-      },
-      {
         "id": "g283",
         "raw": "Ireland, , United Kingdom",
         "got": {
@@ -360,28 +311,41 @@
         }
       },
       {
-        "id": "g296",
-        "raw": "Wood Lake, MN, United States",
+        "id": "g294",
+        "raw": "Søborg, , Denmark",
         "got": {
-          "placeIds": [
-            5037779
-          ],
+          "placeIds": [],
           "remoteCountries": [],
-          "unmatched": []
+          "unmatched": [
+            {
+              "kind": "city",
+              "city": "Søborg",
+              "region": "Capital Region",
+              "country": "DK",
+              "why": "unknown-city",
+              "countryCode": "DK",
+              "regionCode": "17"
+            }
+          ]
         }
       },
       {
-        "id": "g310",
-        "raw": "NY, US, IL, US - Remote",
+        "id": "g296",
+        "raw": "Wood Lake, MN, United States",
         "got": {
-          "placeIds": [
-            5128638,
-            4896861
-          ],
-          "remoteCountries": [
-            "US"
-          ],
-          "unmatched": []
+          "placeIds": [],
+          "remoteCountries": [],
+          "unmatched": [
+            {
+              "kind": "city",
+              "city": "Wood Lake",
+              "region": "Minnesota",
+              "country": "US",
+              "why": "unknown-city",
+              "countryCode": "US",
+              "regionCode": "MN"
+            }
+          ]
         }
       },
       {

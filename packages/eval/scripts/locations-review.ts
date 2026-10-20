@@ -59,7 +59,10 @@ function expected(e: GoldenEntry): string {
       ? [`remote: ${e.expected.remoteCountries.join(", ")}`]
       : [];
   const areas = e.expected.areas.length > 0 ? [`areas: ${e.expected.areas.join(", ")}`] : [];
-  return [...places, ...remote, ...areas].join("<br>") || "no place";
+  const alternatives = (e.expected.alternatives ?? []).map(
+    (alt) => `or: ${cell(alt.map((p) => `${p.name}, ${p.country}`).join(" + "))}`,
+  );
+  return [...places, ...alternatives, ...remote, ...areas].join("<br>") || "no place";
 }
 
 /** The first few of the company's other strings, so a bare name can be judged in context. */

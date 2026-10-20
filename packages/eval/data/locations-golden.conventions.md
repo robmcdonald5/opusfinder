@@ -25,7 +25,11 @@ and resolves it to a GeoNames id.
 3. A neighborhood, borough or district inside a city → that city ("Union Square, New York City" → New York
    City; "Canary Wharf" → London). A metro area → its main city ("San Francisco Bay Area" → San Francisco;
    "Greater Seattle Area" → Seattle; "Delhi-NCR" → New Delhi). A suburb that is its own city stays itself
-   (Santa Monica, Palo Alto, South San Francisco, Westerville).
+   (Santa Monica, Palo Alto, South San Francisco, Westerville). A ward, district, facility, base, port,
+   industrial park or village too small for GeoNames' list of places over ~500 people → the nearest town
+   or city that contains or borders it (a ward of Tokyo → Tokyo; a NASA site → its nearest town). When
+   several towns are equally fair, give one and list the others in the note; they are added to the label
+   as `alternatives` by hand.
 4. An office / HQ / campus / data center / station / site / store label around a place → that place
    ("NYC Office" → New York City; "Mercor HQ, 181 Fremont Street" → San Francisco only if the context makes
    the city clear, else no place). A label with no place in it ("HQ", "Central Office", "Field",
@@ -63,9 +67,11 @@ and resolves it to a GeoNames id.
    When you are unsure of the region's name, or the country has no meaningful first-level region for the
    city (Singapore, Hong Kong), use `region: null`: the checker then takes the largest city of that name in
    the country. Give the region whenever the country has several cities of that name and you know which one
-   is meant.
+   is meant. Give the city's actual current region even when the text's is wrong or outdated (Hyderabad →
+   Telangana; Berlin → its own state), and never pick a different same-named city to fit the text's region.
 10. Countries: ISO 3166-1 alpha-2 (GB for the United Kingdom, US, IE for "Republic of Ireland", TR for
-    Türkiye, HK for Hong Kong, KR for South Korea, CZ for Czechia/Czech Republic, AE for the UAE).
+    Türkiye, HK for Hong Kong, KR for South Korea, CZ for Czechia/Czech Republic, AE for the UAE). Hong Kong,
+    Macau and Taiwan are countries (HK, MO, TW), never regions of China.
 11. A bare name that could be several places ("Dublin", "Portland", "Cambridge", "Vancouver", "Georgia",
     "San Jose", "Valencia", "London", "Melbourne", "Paris") means the one the company's other strings point
     to (a company whose other offices are all in Ohio → Dublin, Ohio; a company with "Valencia, Spain" among

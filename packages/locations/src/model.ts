@@ -28,8 +28,8 @@ export function outputBudget(raw: string): number {
   return Math.min(MAX_OUTPUT_TOKENS, BASE_OUTPUT_TOKENS + TOKENS_PER_PART * parts);
 }
 
-/** Requests per provider batch. Every request repeats the ~10 KB system block plus ~1 KB of pair and
- *  context, so 1,500 keep a submit near 17 MB; a larger set goes out as several batches. */
+/** Requests per provider batch. Every request repeats the ~12 KB system block plus ~1 KB of pair and
+ *  context, so 1,500 keep a submit near 20 MB; a larger set goes out as several batches. */
 export const BATCH_SIZE = 1500;
 
 export interface LocationRequest {

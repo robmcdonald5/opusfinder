@@ -64,6 +64,33 @@ describe("golden set", () => {
     expect(() => loadGolden(alias)).toThrow(/"LATAM", which is not an area's name/);
   });
 
+  it("accepts an alternative place set as right, and validates alternatives on load", () => {
+    const town = (geonamesId: number) => ({
+      geonamesId,
+      name: `T${geonamesId}`,
+      region: null,
+      country: "US",
+      kind: "city",
+    });
+    const nearest: GoldenExpected = {
+      places: [town(1)],
+      alternatives: [[town(2)], [town(3)]],
+      remoteCountries: [],
+      areas: [],
+    };
+    expect(answerMatches(nearest, { placeIds: [3], remoteCountries: [] })).toBe(true);
+    expect(answerMatches(nearest, { placeIds: [4], remoteCountries: [] })).toBe(false);
+    expect(answerMatches(nearest, { placeIds: [1, 2], remoteCountries: [] })).toBe(false);
+
+    const dir = mkdtempSync(join(tmpdir(), "golden-"));
+    const bad = join(dir, "bad-alt.jsonl");
+    writeFileSync(
+      bad,
+      JSON.stringify({ ...entry(), expected: { ...DUBLIN_OH, alternatives: [[{ name: "x" }]] } }),
+    );
+    expect(() => loadGolden(bad)).toThrow(/alternatives\[0\]\[0\] needs geonamesId/);
+  });
+
   it("scores expected areas as the countries they cover, and an area off the list as a miss", () => {
     const dach: GoldenExpected = { places: [], remoteCountries: ["US"], areas: ["DACH"] };
     expect(answerMatches(dach, { placeIds: [], remoteCountries: ["AT", "CH", "DE", "US"] })).toBe(

@@ -102,6 +102,7 @@ await runScript("eval:locations", async () => {
         console.log(
           `  ✗ ${f.entry.id} ${f.entry.company.slug} · ${JSON.stringify(f.entry.raw)}\n` +
             `      expected ${expected.places.map((p) => `${p.name}(${p.geonamesId})`).join(", ") || "no place"}` +
+            `${(expected.alternatives ?? []).map((alt) => ` or ${alt.map((p) => `${p.name}(${p.geonamesId})`).join(", ")}`).join("")}` +
             `${expected.remoteCountries.length ? ` · remote ${expected.remoteCountries.join(",")}` : ""}` +
             `${expected.areas.length ? ` · areas ${expected.areas.join(",")}` : ""}\n` +
             `      got      ${f.got ? describeGot(f.got) : `no answer (${"problem" in f ? f.problem : ""})`}` +
