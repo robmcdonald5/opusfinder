@@ -68,6 +68,7 @@ describe("parseCities", () => {
         lat: 39.96118,
         lng: -82.99879,
         population: 913175,
+        source: "main",
       },
     ]);
   });
@@ -138,6 +139,7 @@ describe("parseAdmin1", () => {
       regionCode: "11",
       countryCode: "FR",
       lat: null,
+      source: "main",
     });
   });
 
@@ -188,6 +190,7 @@ describe("parseCountries", () => {
         name: "United Kingdom",
         countryCode: "GB",
         population: 68138484,
+        source: "main",
       }),
     ]);
   });
@@ -216,9 +219,9 @@ describe("parsePopulatedPlaces", () => {
     const { rows, skipped } = parsePopulatedPlaces(new TextEncoder().encode(text), REGIONS);
 
     expect(skipped).toBe(0);
-    expect(rows.map((r) => [r.geonamesId, r.name, r.population])).toEqual([
-      [4435457, "McHenry", 0],
-      [4366327, "Quantico", 133],
+    expect(rows.map((r) => [r.geonamesId, r.name, r.population, r.source])).toEqual([
+      [4435457, "McHenry", 0, "us-dump"],
+      [4366327, "Quantico", 133, "us-dump"],
     ]);
   });
 

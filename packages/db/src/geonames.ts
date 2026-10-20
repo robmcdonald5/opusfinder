@@ -5,7 +5,7 @@
  * check is skipped and counted, never half-loaded. Pure: no I/O, so the tests drive it with small fixture
  * strings.
  */
-import { normalizePlaceName, type PlaceKind } from "@opusfinder/shared";
+import { normalizePlaceName, type PlaceKind, type PlaceSource } from "@opusfinder/shared";
 
 /** One `places` row, ready to upsert. */
 export interface PlaceRow {
@@ -21,6 +21,7 @@ export interface PlaceRow {
   lat: number | null;
   lng: number | null;
   population: number | null;
+  source: PlaceSource;
 }
 
 export interface ParseResult {
@@ -56,7 +57,7 @@ export function parseCities(text: string, regionNames: ReadonlyMap<string, strin
   let skipped = 0;
   for (const line of lines(text)) {
     const f = line.split("\t");
-    const row = f.length === 19 ? cityRow(f, regionNames) : null;
+    const row = f.length === 19 ? cityRow(f, regionNames, "main") : null;
     if (row === "dead") continue;
     if (row) rows.push(row);
     else skipped++;
@@ -80,7 +81,7 @@ export function parsePopulatedPlaces(
   for (const line of byteLines(data)) {
     const f = line.split("\t");
     if (f[6] !== "P") continue;
-    const row = f.length === 19 ? cityRow(f, regionNames) : null;
+    const row = f.length === 19 ? cityRow(f, regionNames, "us-dump") : null;
     if (row === "dead") continue;
     if (row) rows.push(row);
     else skipped++;
@@ -88,7 +89,11 @@ export function parsePopulatedPlaces(
   return { rows, skipped };
 }
 
-function cityRow(f: string[], regionNames: ReadonlyMap<string, string>): PlaceRow | "dead" | null {
+function cityRow(
+  f: string[],
+  regionNames: ReadonlyMap<string, string>,
+  source: PlaceSource,
+): PlaceRow | "dead" | null {
   const [
     id,
     name,
@@ -144,6 +149,7 @@ function cityRow(f: string[], regionNames: ReadonlyMap<string, string>): PlaceRo
     lat: latitude,
     lng: longitude,
     population: pop,
+    source,
   };
 }
 
@@ -204,6 +210,7 @@ export function parseAdmin1(text: string): ParseResult & { names: Map<string, st
       lat: null,
       lng: null,
       population: null,
+      source: "main",
     });
   }
   return { rows, skipped, names };
@@ -247,6 +254,7 @@ export function parseCountries(text: string): ParseResult {
       lat: null,
       lng: null,
       population,
+      source: "main",
     });
   }
   return { rows, skipped };

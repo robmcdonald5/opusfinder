@@ -22,13 +22,15 @@ those rows; nothing here runs at retrieval time.
    (`src/areas.ts`: UN M49 regions and parts, explicitly defined blocs such as EMEA, APAC, MENA, CIS, DACH,
    and regions of the United States, which open a remote role to the US) is expanded
    into its countries among the remote countries; an area off the list is kept as `unmatched`, and the rule
-   treats its string as unresolved. Spelling tolerance (`src/names.ts`), always inside the scope the check
-   would use anyway: a region name also matches without the words that only say it is a region ("Ogun" is
-   GeoNames' "Ogun State", "Haifa District" its "Haifa"), and so does the namesake rule ("Almaty, Almaty
-   Region"); "St."/"Saint", "Mt."/"Mount" and "Ft."/"Fort" match either way; a hyphenated compound
-   GeoNames doesn't list whole matches by its first or last part, only inside a region the check knows
-   ("Wals-Siezenheim, Salzburg" → Wals). Nothing ever falls back to a same-named city elsewhere in the
-   country (that would put McHenry, MS in Illinois).
+   treats its string as unresolved. The main list (cities500) always decides when any of its cities
+   matches in scope, by name or alternate name; a US-dump place (`places.source = 'us-dump'`) only fills
+   a gap, when it is the one dump place of that name in scope, never by an alternate name. Spelling
+   tolerance (`src/names.ts`), always inside the scope the check would use anyway: a region name also
+   matches without the words that only say it is a region ("Ogun" is GeoNames' "Ogun State", "Haifa
+   District" its "Haifa"), unless a city-region shares the name ("Kyiv" is Kyiv City or Kyiv Oblast), and
+   so does the namesake rule ("Almaty, Almaty Region"); "St."/"Saint", "Mt."/"Mount" and "Ft."/"Fort"
+   match either way. Nothing ever falls back to a same-named city elsewhere in the country (that would put
+   McHenry, MS in Illinois); where a name could be read two ways it stays unmatched.
 3. **Store** (`src/resolve.ts`): one row per `(company_id, raw)` with the place ids, remote countries,
    confidence, reason and `PROMPT_VERSION`. A deterministic outcome with no usable answer (a refusal, a
    reply cut off or off-schema, the provider rejecting the request's content) is stored with `confidence`
@@ -51,7 +53,7 @@ fails transiently is skipped for the rest of the run; a call fails only when eve
 | ------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------- |
 | `pnpm locations:sync`                            | The digest's daily step by hand: resolve every active pair with no row, a few requests at a time                      |
 | `pnpm locations:backfill [-- --dry-run]`         | Provider batches over every pair with no row, a row from another prompt version, or no answer                         |
-| `pnpm locations:recheck [-- --dry-run]`          | Re-run the check over the places stored answers failed, without the model (after `places:load` or a check change)     |
+| `pnpm locations:recheck [-- --dry-run]`          | Re-run the check over the current prompt version's failed places, without the model (a check-only change)             |
 | `pnpm locations:backfill -- --collect <id>`      | Store a batch an earlier backfill submitted (its id is printed at submit), without sending anything                   |
 | `pnpm locations:report [-- --limit 25]`          | On-site coverage by source; worklists by active-job count (no usable place, low confidence, failed check, no answer)  |
 | `pnpm locations:explain -- --email … --job <id>` | Each of the job's strings: places, confidence, reason, version, miles from home; the rule case + verdict; cosine rank |

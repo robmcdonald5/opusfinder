@@ -5,7 +5,7 @@
  */
 import { inArray, sql } from "drizzle-orm";
 
-import { normalizePlaceName, type PlaceKind } from "@opusfinder/shared";
+import { normalizePlaceName, type PlaceKind, type PlaceSource } from "@opusfinder/shared";
 
 import type { Db } from "../client";
 import type { PlaceRow } from "../geonames";
@@ -15,10 +15,11 @@ import { resultRows, textArrayLiteral } from "./sql";
 export type Place = typeof places.$inferSelect;
 
 /** A city found by {@link findCities}: `key` is the "CC|name" it answered, `byAlt` whether it matched an
- *  alternate name rather than its name or ASCII name. */
+ *  alternate name rather than its name or ASCII name, `source` the GeoNames list it came from. */
 export interface CityMatch {
   key: string;
   byAlt: boolean;
+  source: PlaceSource;
   geonamesId: number;
   name: string;
   regionCode: string | null;
@@ -49,13 +50,14 @@ export async function upsertPlaces(db: Db, rows: PlaceRow[]): Promise<number> {
           lat: sql`excluded.lat`,
           lng: sql`excluded.lng`,
           population: sql`excluded.population`,
+          source: sql`excluded.source`,
         },
         setWhere: sql`(${places.kind}, ${places.name}, ${places.nameNorm}, ${places.asciiNorm},
           ${places.altNames}, ${places.regionCode}, ${places.regionName}, ${places.countryCode},
-          ${places.lat}, ${places.lng}, ${places.population})
+          ${places.lat}, ${places.lng}, ${places.population}, ${places.source})
           IS DISTINCT FROM (excluded.kind, excluded.name, excluded.name_norm, excluded.ascii_norm,
           excluded.alt_names, excluded.region_code, excluded.region_name, excluded.country_code,
-          excluded.lat, excluded.lng, excluded.population)`,
+          excluded.lat, excluded.lng, excluded.population, excluded.source)`,
       });
   }
   return rows.length;
@@ -111,7 +113,7 @@ async function matchCities(
       : sql`p.alt_names @> ARRAY[k.name]`;
   const result = await db.execute(sql`
     SELECT k.country || '|' || k.name AS key, p.geonames_id, p.name, p.region_code, p.country_code,
-           COALESCE(p.population, 0) AS population
+           COALESCE(p.population, 0) AS population, p.source
     FROM unnest(${countries}::text[], ${names}::text[]) AS k(country, name)
     JOIN ${places} p ON p.kind = 'city' AND p.country_code = k.country AND ${match}
   `);
@@ -120,6 +122,7 @@ async function matchCities(
     return {
       key: String(r.key),
       byAlt: by === "alt",
+      source: String(r.source) as PlaceSource,
       geonamesId: Number(r.geonames_id),
       name: String(r.name),
       regionCode: r.region_code === null ? null : String(r.region_code),
@@ -130,9 +133,11 @@ async function matchCities(
 }
 
 /**
- * Cities a typed home could mean, from its normalized parts (normalizePlaceName): the city matched by
- * name or ASCII name (else by alternate name), narrowed by a region given as its code or name and a
- * country given as its ISO code or name. Largest first, at most `limit`.
+ * Cities a typed home could mean, from its normalized parts (normalizePlaceName): a main-list city matched
+ * by name or ASCII name, else by alternate name, else a US-dump place by name or ASCII name (the dump only
+ * fills gaps, so "Columbus, Ohio" never turns ambiguous over a hamlet of the same name), narrowed by a
+ * region given as its code or name and a country given as its ISO code or name. Largest first, at most
+ * `limit`.
  */
 export async function findHomeCandidates(
   db: Db,
@@ -149,9 +154,11 @@ export async function findHomeCandidates(
     ? sql`AND (p.country_code = upper(${country}) OR EXISTS (SELECT 1 FROM ${places} c
         WHERE c.kind = 'country' AND c.country_code = p.country_code AND c.name_norm = ${country}))`
     : sql``;
+  const byName = sql`(p.name_norm = ${city} OR p.ascii_norm = ${city})`;
   for (const match of [
-    sql`(p.name_norm = ${city} OR p.ascii_norm = ${city})`,
-    sql`p.alt_names @> ARRAY[${city}]::text[]`,
+    sql`p.source = 'main' AND ${byName}`,
+    sql`p.source = 'main' AND p.alt_names @> ARRAY[${city}]::text[]`,
+    sql`p.source = 'us-dump' AND ${byName}`,
   ]) {
     const result = await db.execute(sql`
       SELECT p.geonames_id, p.name, p.region_code, p.region_name, p.country_code, p.lat, p.lng, p.population

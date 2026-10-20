@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { normalizePlaceName } from "@opusfinder/shared";
 
-import { compoundParts, nameVariants, regionCore } from "./names";
+import { cityRegionCore, nameVariants, regionCore } from "./names";
 
 const core = (name: string) => regionCore(normalizePlaceName(name));
 
@@ -44,22 +44,12 @@ describe("nameVariants", () => {
   });
 });
 
-describe("compoundParts", () => {
-  it("offers the first and last parts of a hyphenated compound", () => {
-    expect(compoundParts("Wals-Siezenheim", normalizePlaceName)).toEqual(["wals", "siezenheim"]);
-    expect(compoundParts("Ottignies-Louvain-la-Neuve", normalizePlaceName)).toEqual([
-      "ottignies",
-      "neuve",
-    ]);
-    expect(compoundParts("Parsippany-Troy Hills", normalizePlaceName)).toEqual([
-      "parsippany",
-      "troy hills",
-    ]);
-  });
-
-  it("leaves out parts that are no place alone, and names without a hyphen", () => {
-    expect(compoundParts("Saint-Barthélemy-d'Anjou", normalizePlaceName)).toEqual(["d anjou"]);
-    expect(compoundParts("San-Ho", normalizePlaceName)).toEqual([]);
-    expect(compoundParts("Columbus", normalizePlaceName)).toEqual([]);
+describe("cityRegionCore", () => {
+  it("names the city of a city-region, and nothing for other regions", () => {
+    expect(cityRegionCore("kyiv city")).toBe("kyiv");
+    expect(cityRegionCore("maputo city")).toBe("maputo");
+    expect(cityRegionCore("city of zagreb")).toBe("zagreb");
+    expect(cityRegionCore("kyiv oblast")).toBeNull();
+    expect(cityRegionCore("mexico")).toBeNull();
   });
 });

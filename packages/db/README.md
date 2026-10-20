@@ -230,7 +230,8 @@ EXISTS`) removes the seven job-side enrichment columns added by 0013 (`yoe_min`/
 - **Location places (0029).** `places` is the GeoNames gazetteer (every city of 500+ people, every US
   populated place of any size from GeoNames' US dump, first-level regions and countries: ~403k rows, ~140
   MB with indexes; `places:load` upserts it by `geonames_id`, rewrites only rows GeoNames changed, and
-  never deletes). `location_strings` holds
+  never deletes; `0030` adds `source`, `main` or `us-dump`, so the check can let the dump only fill
+  gaps). `location_strings` holds
   what each company's raw location string means, keyed `(company_id, raw)`: the place ids that passed the
   GeoNames check, remote countries (an area such as "Europe" stored as its countries), the model's
   confidence + one-line reason, what failed the check (`unmatched`: places, with the country/region codes

@@ -1,7 +1,8 @@
 /**
  * Deterministic spelling tolerance for the GeoNames check, on normalized names (`normalizePlaceName`).
  * Each rule only widens how a name is read; none moves a lookup outside the scope the check would use
- * anyway (the named region, else the country), so a tolerance can't put a city in another state.
+ * anyway (the named region, else the country), so a tolerance can't put a city in another state, and
+ * where a rule could read a name two ways it reads it neither way.
  */
 
 /** Words that only say what kind of first-level region a name is. GeoNames writes "Ogun State", "Riyadh
@@ -102,59 +103,9 @@ export function nameVariants(norm: string): string[] {
   return [...out];
 }
 
-/** Parts of a compound name that are no place on their own. */
-const NOT_A_PART: ReadonlySet<string> = new Set([
-  "al",
-  "bad",
-  "ciudad",
-  "de",
-  "del",
-  "east",
-  "el",
-  "fort",
-  "great",
-  "la",
-  "le",
-  "les",
-  "little",
-  "lower",
-  "mount",
-  "new",
-  "north",
-  "notre",
-  "nueva",
-  "nuevo",
-  "old",
-  "port",
-  "puerto",
-  "saint",
-  "sainte",
-  "san",
-  "sankt",
-  "santa",
-  "santo",
-  "sao",
-  "south",
-  "st",
-  "ste",
-  "upper",
-  "villa",
-  "west",
-]);
-
-/**
- * The first and last parts of a hyphenated compound, normalized, for a merged municipality or a
- * town-plus-district GeoNames lists by one part ("Wals-Siezenheim" → Wals, "Rapperswil-Jona" →
- * Rapperswil, "Parsippany-Troy Hills" → Parsippany). Parts that are no place alone ("Saint", "San",
- * "Bad") or shorter than three letters are left out. The check tries them only inside a region it knows.
- */
-export function compoundParts(name: string, normalize: (s: string) => string): string[] {
-  const parts = name.split(/\s*[-‐‑–—]\s*/).filter(Boolean);
-  if (parts.length < 2) return [];
-  const out: string[] = [];
-  for (const part of [parts[0]!, parts[parts.length - 1]!]) {
-    const norm = normalize(part);
-    if (norm.length >= 3 && !NOT_A_PART.has(norm) && !out.includes(norm)) out.push(norm);
-  }
-  return out;
+/** The X of a city-region's name ("kyiv city", "city of zagreb" → "kyiv", "zagreb"); null for any other
+ *  region. A country with one makes a bare X ambiguous between the city-region and the region around it. */
+export function cityRegionCore(norm: string): string | null {
+  const m = /^(.+) city$/.exec(norm) ?? /^city of (.+)$/.exec(norm);
+  return m ? m[1]! : null;
 }

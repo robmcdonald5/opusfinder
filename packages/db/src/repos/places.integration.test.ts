@@ -83,6 +83,15 @@ describe("places repo (integration: real PGlite)", () => {
       expect("place" in found && found.place.geonamesId).toBe(id);
     });
 
+    it("takes a main-list city over US-dump namesakes, and a dump place only when it is the one", async () => {
+      const powhatan = await findHomePlace(db, "Powhatan, Virginia");
+      expect("place" in powhatan && powhatan.place.geonamesId).toBe(P.POWHATAN_VA);
+      const mchenry = await findHomePlace(db, "McHenry, Mississippi");
+      expect("place" in mchenry && mchenry.place.geonamesId).toBe(P.MCHENRY_MS);
+      const brooklyn = await findHomePlace(db, "Brooklyn, Georgia");
+      expect("candidates" in brooklyn && brooklyn.candidates).toHaveLength(2);
+    });
+
     it("lists the candidates, largest first, when the name is ambiguous", async () => {
       const found = await findHomePlace(db, "London");
       expect("candidates" in found && found.candidates.map((c) => c.geonamesId)).toEqual([
