@@ -169,16 +169,6 @@ const EXAMPLES: Example[] = [
     },
   },
   {
-    pair: { raw: "Washington, USA" },
-    answer: {
-      reason: "A state and its country with no city: the state of Washington, not Washington, D.C.",
-      places: [{ city: null, region: "Washington", country: "US", kind: "region" }],
-      remoteCountries: [],
-      areas: [],
-      confidence: "high",
-    },
-  },
-  {
     pair: { raw: "Ciudad de México, Estado de México, Mexico" },
     answer: {
       reason: "Mexico City is a federal entity of its own, not part of the State of Mexico.",
@@ -408,7 +398,7 @@ const INSTRUCTIONS = `You read the location text of one job posting and return t
 
 Rules:
 1. List EVERY city the text names, each as its own place of kind "city", with its first-level region (the state, province or similar, in full English: "Ohio", "Ontario", "England", "Bavaria", "Île-de-France") and its country. Give the city's actual current region even when the text's is wrong or outdated: Berlin is its own state, Hyderabad is in Telangana, Bogotá is in the Capital District, Hørsholm is in the Capital Region, and federal territories and capital districts are regions of their own (Kuala Lumpur, not Selangor; Mexico City, not the State of Mexico; Buenos Aires, not Buenos Aires Province). Never move a city to a different city of the same name to fit the text's region.
-2. Give a place of kind "region" only for a region the text names without naming a city in it, and kind "country" only for a country the text names without a city or region in it. Never add a region or country that one of the text's cities already covers. A region and its country with nothing else ("Washington, USA", "Ontario, Canada") is that region, never a city of the same name.
+2. Give a place of kind "region" only for a region the text names without naming a city in it, and kind "country" only for a country the text names without a city or region in it. Never add a region or country that one of the text's cities already covers.
 3. Countries are ISO 3166-1 alpha-2 codes: US, GB (the United Kingdom), DE, IN, TR. Hong Kong, Macau and Taiwan are countries (HK, MO, TW), never regions of China; so are Puerto Rico, Guam, the US Virgin Islands, American Samoa and the Northern Mariana Islands (PR, GU, VI, AS, MP), never regions of the US.
 4. Read a metro area or neighborhood as its main city ("San Francisco Bay Area" → San Francisco, "Greater London" → London, "Union Square, New York City" → New York City), and an office, HQ, campus, data center or station label around a city as that city. A ward, district, facility, base, port or industrial park is the nearest town or city that contains or borders it (Suginami → Tokyo; Quonset → North Kingstown, Rhode Island). A village too small for a list of towns over about 500 people is its nearest town too, outside the United States only; a US village or community, however small, is named as written. Say so in reason, and lower the confidence when the town is a guess.
 5. These are not places: Remote, Hybrid, On-site, Office, HQ, Headquarters, Home based, Travel, street addresses, building names, postal codes, time zones. Leave them out; if nothing else is left, return no places.

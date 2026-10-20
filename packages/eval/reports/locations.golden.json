@@ -1,19 +1,19 @@
 {
   "promptVersion": "4",
-  "labeled": 368,
+  "labeled": 371,
   "context-with": {
     "score": {
-      "n": 368,
-      "correct": 356,
-      "accuracy": 0.967391304347826,
+      "n": 371,
+      "correct": 362,
+      "accuracy": 0.9757412398921833,
       "byCategory": {
         "area": {
           "n": 40,
-          "correct": 38
+          "correct": 40
         },
         "bare": {
           "n": 97,
-          "correct": 93
+          "correct": 92
         },
         "coded": {
           "n": 35,
@@ -25,101 +25,43 @@
         },
         "multi": {
           "n": 53,
-          "correct": 52
+          "correct": 53
         },
         "plain": {
-          "n": 44,
-          "correct": 42
+          "n": 47,
+          "correct": 45
         },
         "remote": {
           "n": 55,
-          "correct": 52
+          "correct": 53
         }
       },
       "unseen": {
-        "n": 311,
-        "correct": 300,
-        "accuracy": 0.9646302250803859
+        "n": 314,
+        "correct": 307,
+        "accuracy": 0.9777070063694268
       }
     },
     "failures": [
       {
-        "id": "g009",
-        "raw": "West Coast, Canada, LATAM",
+        "id": "g037",
+        "raw": "Cambridge",
         "got": {
-          "placeIds": [],
-          "remoteCountries": [
-            "CA",
-            "AI",
-            "AG",
-            "AW",
-            "BS",
-            "BB",
-            "BQ",
-            "VG",
-            "KY",
-            "CU",
-            "CW",
-            "DM",
-            "DO",
-            "GD",
-            "GP",
-            "HT",
-            "JM",
-            "MQ",
-            "MS",
-            "PR",
-            "BL",
-            "KN",
-            "LC",
-            "MF",
-            "VC",
-            "SX",
-            "TT",
-            "TC",
-            "VI",
-            "BZ",
-            "CR",
-            "SV",
-            "GT",
-            "HN",
-            "MX",
-            "NI",
-            "PA",
-            "AR",
-            "BO",
-            "BV",
-            "BR",
-            "CL",
-            "CO",
-            "EC",
-            "FK",
-            "GF",
-            "GY",
-            "PY",
-            "PE",
-            "GS",
-            "SR",
-            "UY",
-            "VE"
+          "placeIds": [
+            2653941
           ],
+          "remoteCountries": [],
           "unmatched": []
         }
       },
       {
-        "id": "g025",
-        "raw": "Durham, NORTH AMERICA, United States",
+        "id": "g065",
+        "raw": "Süddeutschland",
         "got": {
           "placeIds": [
-            4464368
+            2921044
           ],
-          "remoteCountries": [
-            "BM",
-            "CA",
-            "GL",
-            "PM",
-            "US"
-          ],
+          "remoteCountries": [],
           "unmatched": []
         }
       },
@@ -127,19 +69,11 @@
         "id": "g074",
         "raw": "provincia di Napoli",
         "got": {
-          "placeIds": [],
+          "placeIds": [
+            3181042
+          ],
           "remoteCountries": [],
-          "unmatched": [
-            {
-              "kind": "region",
-              "city": null,
-              "region": "Naples",
-              "country": "IT",
-              "why": "unknown-region",
-              "countryCode": "IT",
-              "regionCode": null
-            }
-          ]
+          "unmatched": []
         }
       },
       {
@@ -147,18 +81,7 @@
         "raw": "Bulim Square",
         "got": {
           "placeIds": [
-            1609350
-          ],
-          "remoteCountries": [],
-          "unmatched": []
-        }
-      },
-      {
-        "id": "g076",
-        "raw": "San Jose",
-        "got": {
-          "placeIds": [
-            3621849
+            3094802
           ],
           "remoteCountries": [],
           "unmatched": []
@@ -176,24 +99,11 @@
         }
       },
       {
-        "id": "g236",
-        "raw": "Hong Kong; Vietnam",
-        "got": {
-          "placeIds": [
-            1819730,
-            1562822
-          ],
-          "remoteCountries": [],
-          "unmatched": []
-        }
-      },
-      {
         "id": "g283",
         "raw": "Ireland, , United Kingdom",
         "got": {
           "placeIds": [
-            2963597,
-            2635167
+            2963597
           ],
           "remoteCountries": [],
           "unmatched": []
@@ -209,11 +119,11 @@
             {
               "kind": "city",
               "city": "Søborg",
-              "region": "Capital Region",
+              "region": "Capital Region of Denmark",
               "country": "DK",
               "why": "unknown-city",
               "countryCode": "DK",
-              "regionCode": "17"
+              "regionCode": null
             }
           ]
         }
@@ -244,27 +154,14 @@
           ],
           "unmatched": []
         }
-      },
-      {
-        "id": "g344",
-        "raw": "MY-Malaysia-Remote",
-        "got": {
-          "placeIds": [
-            1733045
-          ],
-          "remoteCountries": [
-            "MY"
-          ],
-          "unmatched": []
-        }
       }
     ]
   },
   "context-without": {
     "score": {
-      "n": 368,
-      "correct": 354,
-      "accuracy": 0.9619565217391305,
+      "n": 371,
+      "correct": 357,
+      "accuracy": 0.9622641509433962,
       "byCategory": {
         "area": {
           "n": 40,
@@ -284,11 +181,11 @@
         },
         "multi": {
           "n": 53,
-          "correct": 52
+          "correct": 53
         },
         "plain": {
-          "n": 44,
-          "correct": 42
+          "n": 47,
+          "correct": 44
         },
         "remote": {
           "n": 55,
@@ -296,9 +193,9 @@
         }
       },
       "unseen": {
-        "n": 311,
-        "correct": 302,
-        "accuracy": 0.9710610932475884
+        "n": 314,
+        "correct": 305,
+        "accuracy": 0.9713375796178344
       }
     },
     "failures": [
@@ -351,7 +248,7 @@
         "raw": "Bulim Square",
         "got": {
           "placeIds": [
-            1846918
+            1835848
           ],
           "remoteCountries": [],
           "unmatched": []
@@ -396,17 +293,6 @@
         "got": {
           "placeIds": [
             4436296
-          ],
-          "remoteCountries": [],
-          "unmatched": []
-        }
-      },
-      {
-        "id": "g210",
-        "raw": "Home Based - Americas; Home based - EMEA; Office Based - London, UK",
-        "got": {
-          "placeIds": [
-            2643743
           ],
           "remoteCountries": [],
           "unmatched": []
@@ -458,15 +344,24 @@
         }
       },
       {
-        "id": "g349",
-        "raw": "Tucson, AZ (Remote)",
+        "id": "g330",
+        "raw": "US; Remote, US",
         "got": {
-          "placeIds": [
-            5318313
-          ],
+          "placeIds": [],
           "remoteCountries": [
             "US"
           ],
+          "unmatched": []
+        }
+      },
+      {
+        "id": "g371",
+        "raw": "Washington, United States",
+        "got": {
+          "placeIds": [
+            6252001
+          ],
+          "remoteCountries": [],
           "unmatched": []
         }
       }

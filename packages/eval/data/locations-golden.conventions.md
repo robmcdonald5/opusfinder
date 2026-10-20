@@ -75,8 +75,9 @@ and resolves it to a GeoNames id.
    the country. Give the region whenever the country has several cities of that name and you know which one
    is meant. Give the city's actual current region even when the text's is wrong or outdated (Hyderabad →
    Telangana; Berlin → its own state; Kuala Lumpur, Mexico City and Buenos Aires are regions of their own),
-   and never pick a different same-named city to fit the text's region. A region and its country with
-   nothing else ("Washington, United States") is the region, never a city of that name.
+   and never pick a different same-named city to fit the text's region. A city and its country
+   ("New York, United States", "Sofia, Bulgaria") is the city; "Washington, United States" can be the
+   state or D.C., so both count (`alternatives`).
 10. Countries: ISO 3166-1 alpha-2 (GB for the United Kingdom, US, IE for "Republic of Ireland", TR for
     Türkiye, HK for Hong Kong, KR for South Korea, CZ for Czechia/Czech Republic, AE for the UAE). Hong Kong,
     Macau and Taiwan are countries (HK, MO, TW), never regions of China; Puerto Rico, Guam, the US Virgin
