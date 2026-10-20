@@ -15,6 +15,7 @@ import {
 const DUBLIN_OH: GoldenExpected = {
   places: [{ geonamesId: 5152333, name: "Dublin", region: "Ohio", country: "US", kind: "city" }],
   remoteCountries: [],
+  areas: [],
 };
 
 function entry(over: Partial<GoldenEntry> = {}): GoldenEntry {
@@ -51,6 +52,34 @@ describe("golden set", () => {
       JSON.stringify({ ...entry(), expected: { places: [{ name: "x" }], remoteCountries: [] } }),
     );
     expect(() => loadGolden(bad)).toThrow(/geonamesId/);
+
+    const alias = join(dir, "alias.jsonl");
+    writeFileSync(
+      alias,
+      JSON.stringify({
+        ...entry(),
+        expected: { places: [], remoteCountries: [], areas: ["LATAM"] },
+      }),
+    );
+    expect(() => loadGolden(alias)).toThrow(/"LATAM", which is not an area's name/);
+  });
+
+  it("scores expected areas as the countries they cover, and an area off the list as a miss", () => {
+    const dach: GoldenExpected = { places: [], remoteCountries: ["US"], areas: ["DACH"] };
+    expect(answerMatches(dach, { placeIds: [], remoteCountries: ["AT", "CH", "DE", "US"] })).toBe(
+      true,
+    );
+    expect(answerMatches(dach, { placeIds: [], remoteCountries: ["DE", "US"] })).toBe(false);
+    expect(
+      answerMatches(
+        { places: [], remoteCountries: [], areas: [] },
+        {
+          placeIds: [],
+          remoteCountries: [],
+          unmatched: [{ kind: "area", name: "Atlantic Rim", why: "unknown-area" }],
+        },
+      ),
+    ).toBe(false);
   });
 
   it("matches exactly on place-id and remote-country sets, in any order", () => {
@@ -60,6 +89,7 @@ describe("golden set", () => {
         { geonamesId: 2, name: "B", region: null, country: "US", kind: "city" },
       ],
       remoteCountries: ["CA", "US"],
+      areas: [],
     };
     expect(answerMatches(two, { placeIds: [2, 1], remoteCountries: ["US", "CA"] })).toBe(true);
     expect(answerMatches(two, { placeIds: [1], remoteCountries: ["US", "CA"] })).toBe(false);

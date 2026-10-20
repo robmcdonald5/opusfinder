@@ -7,18 +7,27 @@
  *   pnpm --filter @opusfinder/eval run locations:label -- --drafts <drafts.jsonl> [--geonames <dir>]
  *
  * A drafts line: {"id":"g001","places":[{"city":null,"region":null,"country":"US","kind":"country"}],
- *                 "remoteCountries":[],"note":"optional"}
+ *                 "remoteCountries":[],"areas":[],"note":"optional"}
+ * Areas are kept by the list's names (an alias like "LATAM" is written as "Latin America"); one that
+ * isn't on the list fails the draft.
  */
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { getPlaces } from "@opusfinder/db/repos";
-import { checkAnswers, loadGazetteer, LocationAnswerSchema } from "@opusfinder/locations";
+import {
+  checkAnswers,
+  describeUnmatched,
+  loadGazetteer,
+  LocationAnswerSchema,
+  readArea,
+  type AreaName,
+} from "@opusfinder/locations";
 import { runScript } from "@opusfinder/shared/script";
 
 import { getFlag } from "../src/cli";
 import { openLocalGazetteer } from "../src/gazetteer";
-import { loadGolden } from "../src/locations-golden";
+import { loadGolden, type GoldenEntry } from "../src/locations-golden";
 import { PKG_ROOT, relativeToPkg } from "../src/runner";
 
 const GOLDEN = join(PKG_ROOT, "data", "locations-golden.jsonl");
@@ -38,17 +47,18 @@ await runScript("locations:label", async () => {
       return {
         id: d.id,
         note: d.note,
-        answer: LocationAnswerSchema.parse({ reason: "", confidence: "high", ...d }),
+        answer: LocationAnswerSchema.parse({ reason: "", confidence: "high", areas: [], ...d }),
       };
     });
 
   const gazetteerDb = await openLocalGazetteer({ from: getFlag(args, "--geonames") });
   try {
     const gazetteer = await loadGazetteer(gazetteerDb.db);
+    // Areas are labeled by name, not as their countries: check the rest, then read each area.
     const checked = await checkAnswers(
       gazetteerDb.db,
       gazetteer,
-      drafts.map((d) => d.answer),
+      drafts.map((d) => ({ ...d.answer, areas: [] })),
     );
     const places = new Map(
       (await getPlaces(gazetteerDb.db, [...new Set(checked.flatMap((c) => c.placeIds))])).map(
@@ -58,11 +68,14 @@ await runScript("locations:label", async () => {
     let labeled = 0;
     drafts.forEach((draft, i) => {
       const c = checked[i]!;
-      if (c.unmatched.length > 0) {
+      const areas = draft.answer.areas.map(readArea);
+      const offList = draft.answer.areas.filter((_, j) => areas[j] === null);
+      if (c.unmatched.length > 0 || offList.length > 0) {
         console.log(
-          `  ✗ ${draft.id} ${JSON.stringify(byId.get(draft.id)!.raw)}: ${c.unmatched
-            .map((u) => `${[u.city, u.region, u.country].filter(Boolean).join(", ")} (${u.why})`)
-            .join("; ")}`,
+          `  ✗ ${draft.id} ${JSON.stringify(byId.get(draft.id)!.raw)}: ${[
+            ...c.unmatched.map(describeUnmatched),
+            ...offList.map((a) => `${a} (not an area on the list)`),
+          ].join("; ")}`,
         );
         return;
       }
@@ -78,13 +91,21 @@ await runScript("locations:label", async () => {
           };
         }),
         remoteCountries: c.remoteCountries,
+        areas: [...new Set(areas.filter((a): a is AreaName => a !== null && a !== "no-limit"))],
         ...(draft.note ? { note: draft.note } : {}),
       };
       labeled++;
     });
-    writeFileSync(GOLDEN, `${golden.map((e) => JSON.stringify(e)).join("\n")}\n`);
+    writeFileSync(GOLDEN, `${golden.map(serialize).join("\n")}\n`);
     console.log(`labeled ${labeled} of ${drafts.length} drafts → ${relativeToPkg(GOLDEN)}`);
   } finally {
     await gazetteerDb.close();
   }
 });
+
+/** One golden line; an empty `areas` is left out, as most labels have none. */
+function serialize(entry: GoldenEntry): string {
+  if (!entry.expected || entry.expected.areas.length > 0) return JSON.stringify(entry);
+  const { areas: _none, ...expected } = entry.expected;
+  return JSON.stringify({ ...entry, expected });
+}

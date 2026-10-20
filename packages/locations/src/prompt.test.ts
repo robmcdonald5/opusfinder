@@ -13,7 +13,7 @@ describe("location request", () => {
     });
     expect(a.system).toBe(b.system);
     expect(a.schema).toBe(LocationAnswerSchema);
-    expect(a).toMatchObject({ id: "p0", effort: "low", thinking: "off", maxOutputTokens: 1024 });
+    expect(a).toMatchObject({ id: "p0", effort: "low", thinking: "off", maxOutputTokens: 4096 });
     expect(b.user).not.toBe(a.user);
   });
 

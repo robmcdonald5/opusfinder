@@ -1,15 +1,15 @@
 {
-  "promptVersion": "1",
-  "labeled": 354,
+  "promptVersion": "2",
+  "labeled": 368,
   "context-with": {
     "score": {
-      "n": 354,
-      "correct": 345,
-      "accuracy": 0.9745762711864406,
+      "n": 368,
+      "correct": 359,
+      "accuracy": 0.9755434782608695,
       "byCategory": {
         "area": {
-          "n": 26,
-          "correct": 25
+          "n": 40,
+          "correct": 38
         },
         "bare": {
           "n": 97,
@@ -21,11 +21,11 @@
         },
         "label": {
           "n": 44,
-          "correct": 43
+          "correct": 44
         },
         "multi": {
           "n": 53,
-          "correct": 52
+          "correct": 53
         },
         "plain": {
           "n": 44,
@@ -33,13 +33,13 @@
         },
         "remote": {
           "n": 55,
-          "correct": 53
+          "correct": 52
         }
       },
       "unseen": {
-        "n": 306,
-        "correct": 298,
-        "accuracy": 0.9738562091503268
+        "n": 311,
+        "correct": 303,
+        "accuracy": 0.9742765273311897
       }
     },
     "failures": [
@@ -49,7 +49,76 @@
         "got": {
           "placeIds": [],
           "remoteCountries": [
-            "CA"
+            "CA",
+            "AI",
+            "AG",
+            "AW",
+            "BS",
+            "BB",
+            "BQ",
+            "VG",
+            "KY",
+            "CU",
+            "CW",
+            "DM",
+            "DO",
+            "GD",
+            "GP",
+            "HT",
+            "JM",
+            "MQ",
+            "MS",
+            "PR",
+            "BL",
+            "KN",
+            "LC",
+            "MF",
+            "VC",
+            "SX",
+            "TT",
+            "TC",
+            "VI",
+            "BZ",
+            "CR",
+            "SV",
+            "GT",
+            "HN",
+            "MX",
+            "NI",
+            "PA",
+            "AR",
+            "BO",
+            "BV",
+            "BR",
+            "CL",
+            "CO",
+            "EC",
+            "FK",
+            "GF",
+            "GY",
+            "PY",
+            "PE",
+            "GS",
+            "SR",
+            "UY",
+            "VE"
+          ],
+          "unmatched": []
+        }
+      },
+      {
+        "id": "g025",
+        "raw": "Durham, NORTH AMERICA, United States",
+        "got": {
+          "placeIds": [
+            4464368
+          ],
+          "remoteCountries": [
+            "BM",
+            "CA",
+            "GL",
+            "PM",
+            "US"
           ],
           "unmatched": []
         }
@@ -88,34 +157,12 @@
         }
       },
       {
-        "id": "g191",
-        "raw": "Stennis Space Center, Mississippi",
-        "got": {
-          "placeIds": [
-            4417205
-          ],
-          "remoteCountries": [],
-          "unmatched": []
-        }
-      },
-      {
-        "id": "g249",
-        "raw": "London OR Paris OR Germany",
-        "got": {
-          "placeIds": [
-            2643743,
-            2988507
-          ],
-          "remoteCountries": [],
-          "unmatched": []
-        }
-      },
-      {
         "id": "g283",
         "raw": "Ireland, , United Kingdom",
         "got": {
           "placeIds": [
-            2963597
+            2963597,
+            2635167
           ],
           "remoteCountries": [],
           "unmatched": []
@@ -136,15 +183,26 @@
         }
       },
       {
+        "id": "g311",
+        "raw": "UK Remote & Travel",
+        "got": {
+          "placeIds": [
+            2635167
+          ],
+          "remoteCountries": [
+            "GB"
+          ],
+          "unmatched": []
+        }
+      },
+      {
         "id": "g338",
         "raw": "United States, Remote",
         "got": {
           "placeIds": [
             6252001
           ],
-          "remoteCountries": [
-            "US"
-          ],
+          "remoteCountries": [],
           "unmatched": []
         }
       }
@@ -152,13 +210,13 @@
   },
   "context-without": {
     "score": {
-      "n": 354,
-      "correct": 342,
-      "accuracy": 0.9661016949152542,
+      "n": 368,
+      "correct": 355,
+      "accuracy": 0.9646739130434783,
       "byCategory": {
         "area": {
-          "n": 26,
-          "correct": 26
+          "n": 40,
+          "correct": 40
         },
         "bare": {
           "n": 97,
@@ -178,7 +236,7 @@
         },
         "plain": {
           "n": 44,
-          "correct": 43
+          "correct": 42
         },
         "remote": {
           "n": 55,
@@ -186,9 +244,9 @@
         }
       },
       "unseen": {
-        "n": 306,
-        "correct": 298,
-        "accuracy": 0.9738562091503268
+        "n": 311,
+        "correct": 302,
+        "accuracy": 0.9710610932475884
       }
     },
     "failures": [
@@ -240,17 +298,11 @@
         "id": "g074",
         "raw": "provincia di Napoli",
         "got": {
-          "placeIds": [],
+          "placeIds": [
+            3181042
+          ],
           "remoteCountries": [],
-          "unmatched": [
-            {
-              "city": null,
-              "region": "Metropolitan City of Naples",
-              "country": "IT",
-              "kind": "region",
-              "why": "unknown-region"
-            }
-          ]
+          "unmatched": []
         }
       },
       {
@@ -308,10 +360,24 @@
         }
       },
       {
-        "id": "g330",
-        "raw": "US; Remote, US",
+        "id": "g296",
+        "raw": "Wood Lake, MN, United States",
         "got": {
-          "placeIds": [],
+          "placeIds": [
+            5037779
+          ],
+          "remoteCountries": [],
+          "unmatched": []
+        }
+      },
+      {
+        "id": "g310",
+        "raw": "NY, US, IL, US - Remote",
+        "got": {
+          "placeIds": [
+            5128638,
+            4896861
+          ],
           "remoteCountries": [
             "US"
           ],
@@ -319,14 +385,13 @@
         }
       },
       {
-        "id": "g347",
-        "raw": "US-SF, US-NYC, US-Remote",
+        "id": "g330",
+        "raw": "US; Remote, US",
         "got": {
-          "placeIds": [
-            5391959,
-            5128581
+          "placeIds": [],
+          "remoteCountries": [
+            "US"
           ],
-          "remoteCountries": [],
           "unmatched": []
         }
       }

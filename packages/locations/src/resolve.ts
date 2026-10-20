@@ -3,21 +3,28 @@
  * check its answers against GeoNames, store them. Two entry points over the same request builder and the
  * same answer handling: {@link syncLocationStrings}, the daily path (pairs with no row yet, a few
  * requests at a time, run by the digest before its fan-out and by `locations:sync`), and
- * {@link backfillLocationStrings}, one provider batch over every missing, stale or unanswered pair
- * (`locations:backfill`).
+ * {@link backfillLocationStrings}, provider batches over every missing, stale or unanswered pair
+ * (`locations:backfill`), with {@link collectLocationBatch} to store a batch submitted by an earlier run.
+ *
+ * What gets stored: a checked answer, and an unresolved row (confidence NULL) for a deterministic
+ * no-answer, which `locations:report` lists and only the backfill asks again. A transient failure stores
+ * nothing, so the next run asks again.
  */
+import { createHash } from "node:crypto";
+
 import type { Db } from "@opusfinder/db";
 import {
   listCompanyStrings,
   listPendingPairs,
   upsertLocationStrings,
   type LocationPair,
+  type LocationPairKey,
   type LocationStringRow,
 } from "@opusfinder/db/repos";
-import { backoff } from "@opusfinder/shared/async";
 
 import { checkAnswers, loadGazetteer, type Gazetteer } from "./check";
 import {
+  BATCH_SIZE,
   buildLocationRequest,
   type LocationAnswer,
   type LocationModel,
@@ -26,18 +33,20 @@ import {
 import { PROMPT_VERSION, SIBLING_CONTEXT, type PromptPair } from "./prompt";
 import { LocationAnswerSchema, type LocationAnswerValue } from "./schema";
 
-/** Pairs resolved per daily-path call: a digest step must finish well inside the 300 s function limit. */
-export const SYNC_CHUNK = 40;
-const SYNC_CONCURRENCY = 5;
-/** Attempts per request on the daily path, on top of the transport's own retries. */
-const GENERATE_ATTEMPTS = 3;
+/** Pairs resolved per daily-path call. A digest step must finish inside the 300 s function limit: with
+ *  SYNC_CONCURRENCY requests in flight and the transport's ~60 s deadline on each, 30 take at most ~3 min. */
+export const SYNC_CHUNK = 30;
+const SYNC_CONCURRENCY = 10;
+/** A call where every request failed transiently means the provider is down, but only past a few
+ *  requests: one or two pairs that keep failing must not fail every run. */
+const OUTAGE_MIN_REQUESTS = 3;
 
 export interface ResolveCounts {
   /** Pairs stored with a checked answer. */
   resolved: number;
-  /** Pairs stored as unresolved: the model gave no usable answer. */
+  /** Pairs stored as unresolved: a deterministic no-answer. */
   unanswered: number;
-  /** Pairs left without a row: the request never completed (batch only). */
+  /** Pairs left without a row: the request failed transiently, so a later run asks again. */
   failed: number;
   /** Places the model named that failed the GeoNames check, across the stored pairs. */
   unmatchedPlaces: number;
@@ -46,6 +55,8 @@ export interface ResolveCounts {
 export interface SyncResult extends ResolveCounts {
   /** True when the call hit its chunk size, so more pairs may be waiting. */
   more: boolean;
+  /** The pairs that failed transiently, for the caller's later calls in the same run to skip. */
+  failedPairs: LocationPairKey[];
 }
 
 /** One pair's outcome, for the CLIs' failure listings. */
@@ -56,78 +67,169 @@ export interface PairOutcome {
   problem?: string;
 }
 
+/** One provider batch of a backfill: stored, or failed (its submit, its wait, or the batch itself). */
+export interface BatchOutcome {
+  /** Null when the submit failed. */
+  batchId: string | null;
+  pairs: number;
+  error?: string;
+}
+
 /**
- * The daily path: resolve up to `limit` active pairs that have no row yet, most-listed first. A request
- * that still fails after its retries is stored as unresolved (the backfill tries it again), so one string
- * the provider keeps rejecting can't block every run. When EVERY request in the chunk fails, that is an
- * outage: it throws and stores nothing, so the caller's run fails visibly instead of filtering on strings
- * nobody resolved.
+ * The daily path: resolve up to `limit` active pairs that have no row yet, most-listed first, skipping
+ * `exclude` (the pairs that already failed earlier in the same run). Each answer is stored as soon as it
+ * comes back, so a call cut off by its time limit and retried doesn't pay for those pairs again. Throws
+ * only when the provider is clearly down (every request of the call failed transiently); a transient
+ * failure otherwise stores nothing and is counted, for the next run to ask again.
  */
 export async function syncLocationStrings(
   db: Db,
   model: LocationModel,
-  opts: { limit?: number; gazetteer?: Gazetteer } = {},
+  opts: { limit?: number; gazetteer?: Gazetteer; exclude?: LocationPairKey[] } = {},
 ): Promise<SyncResult> {
   const limit = opts.limit ?? SYNC_CHUNK;
   const pairs = await listPendingPairs(db, {
     scope: "missing",
     promptVersion: PROMPT_VERSION,
     limit,
+    exclude: opts.exclude,
   });
-  if (pairs.length === 0)
-    return { resolved: 0, unanswered: 0, failed: 0, unmatchedPlaces: 0, more: false };
+  if (pairs.length === 0) return { ...countOutcomes([]), more: false, failedPairs: [] };
   const gazetteer = opts.gazetteer ?? (await loadGazetteer(db));
   const requests = await buildRequests(db, pairs);
-  const settled = await mapConcurrent(
-    requests,
+  const outcomes = await mapConcurrent(
+    pairs.map((pair, i) => ({ pair, request: requests[i]! })),
     SYNC_CONCURRENCY,
-    async (r): Promise<{ ok: true; answer: LocationAnswer } | { ok: false; error: unknown }> => {
-      try {
-        return { ok: true, answer: await generateWithRetries(model, r) };
-      } catch (error) {
-        return { ok: false, error };
-      }
-    },
+    async ({ pair, request }) =>
+      (await storeAnswers(db, gazetteer, [pair], [await model.generate(request)]))[0]!,
   );
-  const failures = settled.flatMap((s) => (s.ok ? [] : [s.error]));
-  if (failures.length === settled.length) throw failures[0];
-  const answers = settled.map(
-    (s): LocationAnswer =>
-      s.ok
-        ? s.answer
-        : { status: "no-answer", reason: `the request failed (${errorName(s.error)})` },
-  );
-  const outcomes = await storeAnswers(db, gazetteer, pairs, answers);
-  return { ...countOutcomes(outcomes), more: pairs.length === limit };
+  const failed = outcomes.filter((o) => !o.row);
+  if (failed.length === outcomes.length && outcomes.length >= OUTAGE_MIN_REQUESTS) {
+    throw new Error(
+      `The location model is unavailable: all ${outcomes.length} requests failed (${failed[0]!.problem}).`,
+    );
+  }
+  return {
+    ...countOutcomes(outcomes),
+    more: pairs.length === limit,
+    failedPairs: failed.map(({ pair }) => ({ companyId: pair.companyId, raw: pair.raw })),
+  };
 }
 
 /**
  * The backfill: every active pair with no row, a row from another prompt version, or an unresolved row,
- * as ONE provider batch. Returns every pair's outcome so the CLI can list the unresolved ones.
+ * as provider batches of {@link BATCH_SIZE} submitted together. Each batch's answers are stored as soon as
+ * it ends; a batch that fails (its submit, its wait, or the batch itself) leaves its pairs for the next
+ * run and never costs the others. `onSubmitted` gets every batch id as it is submitted, for
+ * {@link collectLocationBatch} to pick up if this process doesn't live to collect it.
  */
 export async function backfillLocationStrings(
   db: Db,
   model: LocationModel,
-): Promise<{ counts: ResolveCounts; outcomes: PairOutcome[] }> {
+  opts: { onSubmitted?: (batchId: string, pairs: number) => void } = {},
+): Promise<{ counts: ResolveCounts; outcomes: PairOutcome[]; batches: BatchOutcome[] }> {
   const pairs = await listPendingPairs(db, { scope: "stale", promptVersion: PROMPT_VERSION });
-  if (pairs.length === 0) return { counts: countOutcomes([]), outcomes: [] };
+  if (pairs.length === 0) return { counts: countOutcomes([]), outcomes: [], batches: [] };
   const gazetteer = await loadGazetteer(db);
   const requests = await buildRequests(db, pairs);
-  const results = await model.batch(requests);
-  const answers = requests.map(
-    (r): LocationAnswer =>
-      results.get(r.id) ?? { status: "failed", reason: "missing from the batch results" },
+  const byId = new Map(requests.map((r, i) => [r.id, pairs[i]!]));
+  const chunks: LocationRequest[][] = [];
+  for (let i = 0; i < requests.length; i += BATCH_SIZE)
+    chunks.push(requests.slice(i, i + BATCH_SIZE));
+
+  const outcomes: PairOutcome[] = [];
+  const batches = await Promise.all(
+    chunks.map(async (chunk): Promise<BatchOutcome> => {
+      let batchId: string | null = null;
+      try {
+        batchId = await model.submitBatch(chunk);
+        opts.onSubmitted?.(batchId, chunk.length);
+        outcomes.push(
+          ...(await collectAndStore(
+            db,
+            gazetteer,
+            model,
+            batchId,
+            byId,
+            chunk.map((r) => r.id),
+          )),
+        );
+        return { batchId, pairs: chunk.length };
+      } catch (error) {
+        return { batchId, pairs: chunk.length, error: errorSummary(error) };
+      }
+    }),
   );
-  const outcomes = await storeAnswers(db, gazetteer, pairs, answers);
-  return { counts: countOutcomes(outcomes), outcomes };
+  return { counts: countOutcomes(outcomes), outcomes, batches };
+}
+
+/**
+ * Store the answers of a batch an earlier backfill submitted (its id printed at submit), without
+ * submitting anything. Only answers for pairs still pending under this prompt version are stored; the
+ * rest are counted as `skipped`.
+ */
+export async function collectLocationBatch(
+  db: Db,
+  model: LocationModel,
+  batchId: string,
+): Promise<{ counts: ResolveCounts; outcomes: PairOutcome[]; skipped: number }> {
+  const pairs = await listPendingPairs(db, { scope: "stale", promptVersion: PROMPT_VERSION });
+  const byId = new Map(pairs.map((p) => [requestId(p), p]));
+  const answers = await model.collectBatch(batchId);
+  const outcomes = await storeBatchAnswers(db, await loadGazetteer(db), answers, byId, []);
+  const skipped = [...answers.keys()].filter((id) => !byId.has(id)).length;
+  return { counts: countOutcomes(outcomes), outcomes, skipped };
+}
+
+async function collectAndStore(
+  db: Db,
+  gazetteer: Gazetteer,
+  model: LocationModel,
+  batchId: string,
+  byId: ReadonlyMap<string, LocationPair>,
+  ids: string[],
+): Promise<PairOutcome[]> {
+  const answers = await model.collectBatch(batchId);
+  return storeBatchAnswers(db, gazetteer, answers, byId, ids);
+}
+
+/** Store a batch's answers for the pairs in `byId`; an id in `expected` with no answer is a failure. */
+async function storeBatchAnswers(
+  db: Db,
+  gazetteer: Gazetteer,
+  answers: ReadonlyMap<string, LocationAnswer>,
+  byId: ReadonlyMap<string, LocationPair>,
+  expected: string[],
+): Promise<PairOutcome[]> {
+  const pairs: LocationPair[] = [];
+  const list: LocationAnswer[] = [];
+  for (const [id, answer] of answers) {
+    const pair = byId.get(id);
+    if (!pair) continue;
+    pairs.push(pair);
+    list.push(answer);
+  }
+  for (const id of expected) {
+    if (answers.has(id)) continue;
+    pairs.push(byId.get(id)!);
+    list.push({ status: "failed", reason: "missing from the batch results" });
+  }
+  return storeAnswers(db, gazetteer, pairs, list);
+}
+
+/** A request id that names its pair and prompt version, so a batch's results map back to their pairs in a
+ *  later process: `v<version>-<company id>-<hash of the text>` (the Batch API's id pattern, ≤ 64 chars). */
+export function requestId(pair: LocationPairKey): string {
+  const hash = createHash("sha256").update(pair.raw).digest("hex").slice(0, 32);
+  return `v${PROMPT_VERSION.replace(/[^a-zA-Z0-9]/g, "_")}-${pair.companyId}-${hash}`;
 }
 
 /** The requests for a set of pairs, each with up to {@link SIBLING_CONTEXT} of its company's other strings. */
 async function buildRequests(db: Db, pairs: LocationPair[]): Promise<LocationRequest[]> {
   const companyIds = [...new Set(pairs.map((p) => p.companyId))];
   const strings = await listCompanyStrings(db, companyIds, SIBLING_CONTEXT + 1);
-  return pairs.map((pair, i) =>
-    buildLocationRequest(`p${i}`, {
+  return pairs.map((pair) =>
+    buildLocationRequest(requestId(pair), {
       raw: pair.raw,
       company: {
         slug: pair.companySlug,
@@ -227,23 +329,9 @@ function countOutcomes(outcomes: PairOutcome[]): ResolveCounts {
   return counts;
 }
 
-async function generateWithRetries(
-  model: LocationModel,
-  request: LocationRequest,
-): Promise<LocationAnswer> {
-  for (let attempt = 0; ; attempt++) {
-    try {
-      return await model.generate(request);
-    } catch (err) {
-      if (attempt + 1 >= GENERATE_ATTEMPTS) throw err;
-      await backoff(attempt);
-    }
-  }
-}
-
-/** The error's class name: enough to tell an outage from a rejected request, and never a secret. */
-function errorName(error: unknown): string {
-  return error instanceof Error ? error.name : "error";
+/** An error's class and message, capped: the transport's errors carry no request or response body. */
+function errorSummary(error: unknown): string {
+  return error instanceof Error ? `${error.name}: ${error.message}`.slice(0, 300) : "error";
 }
 
 /** Map with at most `limit` calls in flight; results keep the input order. */

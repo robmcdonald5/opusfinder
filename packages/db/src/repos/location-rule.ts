@@ -5,11 +5,14 @@
  *
  * 1. No home place: only `location_mode` applies (remote_only → remote jobs, onsite_only → on-site jobs).
  * 2. Remote job (unless the user is on-site only): passes if it names no country, or names the user's.
- *    "Names a country" = any country among its strings' places or remote countries, so plain "Remote"
- *    passes for everyone and "Remote, Türkiye" only for users in Türkiye.
+ *    "Names a country" = any country among its strings' places or remote countries (an area such as
+ *    "Europe" is stored as its countries), so plain "Remote" passes for everyone and "Remote, Türkiye"
+ *    only for users in Türkiye.
  * 3. On-site job (unless the user is remote only): passes if one of its places is a city within the
  *    user's radius, or it names the user's region and no city in that region (the most specific place
- *    wins: "Dallas, TX" + "Texas" is a Dallas job).
+ *    wins: "Dallas, TX" + "Texas" is a Dallas job). A city the GeoNames check dropped still counts as a
+ *    city in the user's region when it was named in the user's country and region (or with a region the
+ *    check couldn't read).
  * Everything else is not local: no usable place (unresolved, "Hybrid", no strings), on-site country-only,
  * remote open only to other countries.
  *
@@ -19,15 +22,16 @@
  * location_strings key.
  *
  * A pass that rests on something being ABSENT ("names no country", "names your region and no city in
- * it") holds only when every one of the job's strings is resolved: a string with no row yet, or one the
- * model gave no answer for, could name exactly what is missing. Passes that rest on something present
- * (a city within the radius, the user's country) hold regardless.
+ * it") holds only when every one of the job's strings is resolved: a string with no row yet, one the
+ * model gave no answer for, or one naming an area off the list could name exactly what is missing.
+ * Passes that rest on something present (a city within the radius, the user's country) hold regardless.
  */
 import { sql, type SQL } from "drizzle-orm";
 
 import type { LocationMode } from "@opusfinder/shared";
 
 import { jobs, locationStrings, places } from "../schema";
+import { locationTextsSql } from "./location-strings";
 
 /** Earth's mean radius in miles, for the haversine distance. */
 export const EARTH_RADIUS_MILES = 3958.8;
@@ -79,11 +83,12 @@ export function locationRule(filter: LocationFilter, jobFilter: SQL): LocationRu
              bool_or(f.near_city) AS near_city,
              bool_or(f.home_region) AS home_region,
              bool_or(f.city_in_home_region) AS city_in_home_region,
+             bool_or(f.unplaced_city_in_home_region) AS unplaced_city_in_home_region,
              bool_or(f.home_country) AS home_country,
              bool_or(f.names_country) AS names_country,
              bool_and(COALESCE(f.resolved, false)) AS all_resolved
       FROM ${jobs} j
-      CROSS JOIN LATERAL jsonb_array_elements_text(j.locations) AS l(raw)
+      CROSS JOIN LATERAL ${locationTextsSql(sql`j.locations`)} AS l(raw)
       LEFT JOIN string_flags f ON f.company_id = j.company_id AND f.raw = l.raw
       WHERE ${jobFilter} AND btrim(l.raw) <> ''
       GROUP BY j.id
@@ -96,9 +101,10 @@ export function locationRule(filter: LocationFilter, jobFilter: SQL): LocationRu
 
 /**
  * The `home` and `string_flags` CTEs (without the WITH keyword): per location string, whether it names
- * a city within the radius, the home region, a city in the home region, the home country, any country
- * (a place, a remote country, or a place that failed the check), and whether the model answered it at
- * all. Exported for the digest's local-string count.
+ * a city within the radius, the home region, a city in the home region (checked, or dropped by the check
+ * but named in the home country and region), the home country, any country (a place, a remote country,
+ * or a place that failed the check), and whether it is resolved (the model answered it, and named no
+ * area off the list). Exported for the digest's local-string count.
  */
 export function homeAndStringFlagsSql(home: { placeId: number; radiusMiles: number }): SQL {
   const miles = milesBetween(sql`h.lat`, sql`h.lng`, sql`p.lat`, sql`p.lng`);
@@ -113,16 +119,23 @@ export function homeAndStringFlagsSql(home: { placeId: number; radiusMiles: numb
                               AND p.region_code = h.region_code), false) AS home_region,
              COALESCE(bool_or(p.kind = 'city' AND p.country_code = h.country_code
                               AND p.region_code = h.region_code), false) AS city_in_home_region,
+             EXISTS (SELECT 1 FROM jsonb_array_elements(s.unmatched) x
+                     WHERE x->>'kind' = 'city' AND x->>'countryCode' = h.country_code
+                       AND (x->>'regionCode' IS NULL OR x->>'regionCode' = h.region_code))
+               AS unplaced_city_in_home_region,
              (COALESCE(bool_or(p.country_code = h.country_code), false)
               OR h.country_code = ANY(s.remote_countries)) AS home_country,
              (count(p.geonames_id) > 0 OR cardinality(s.remote_countries) > 0
-              OR jsonb_array_length(s.unmatched) > 0) AS names_country,
-             s.confidence IS NOT NULL AS resolved
+              OR EXISTS (SELECT 1 FROM jsonb_array_elements(s.unmatched) x WHERE x->>'kind' <> 'area'))
+               AS names_country,
+             (s.confidence IS NOT NULL
+              AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(s.unmatched) x WHERE x->>'kind' = 'area'))
+               AS resolved
       FROM ${locationStrings} s
       CROSS JOIN home h
       LEFT JOIN LATERAL unnest(s.place_ids) AS u(place_id) ON true
       LEFT JOIN ${places} p ON p.geonames_id = u.place_id
-      GROUP BY s.company_id, s.raw, h.country_code
+      GROUP BY s.company_id, s.raw, h.country_code, h.region_code
     )`;
 }
 
@@ -168,14 +181,20 @@ function ruleCases({ mode, home }: LocationFilter): RuleCase[] {
         label: `on-site job with a city within ${home.radiusMiles} mi`,
       },
       {
-        when: sql`jf.home_region AND NOT jf.city_in_home_region AND jf.all_resolved`,
+        when: sql`jf.home_region AND NOT jf.city_in_home_region AND NOT jf.unplaced_city_in_home_region
+                  AND jf.all_resolved`,
         pass: true,
         label: "on-site job naming your region and no city in it",
       },
       {
-        when: sql`jf.home_region AND NOT jf.city_in_home_region`,
+        when: sql`jf.home_region AND NOT jf.city_in_home_region AND NOT jf.unplaced_city_in_home_region`,
         pass: false,
         label: "on-site job naming your region, with a location not resolved yet",
+      },
+      {
+        when: sql`jf.home_region AND NOT jf.city_in_home_region`,
+        pass: false,
+        label: "on-site job naming your region and a city the GeoNames check couldn't place",
       },
       {
         when: sql`jf.home_region`,

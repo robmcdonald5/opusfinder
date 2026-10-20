@@ -35,6 +35,7 @@ describe("locationRule — what it emits per user", () => {
       "on-site job with a city within 25 mi",
       "on-site job naming your region and no city in it",
       "on-site job naming your region, with a location not resolved yet",
+      "on-site job naming your region and a city the GeoNames check couldn't place",
       "on-site job naming a city in your region beyond 25 mi",
       "on-site job with no usable place",
       "on-site job with no place near you",

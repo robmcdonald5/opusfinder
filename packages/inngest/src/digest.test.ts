@@ -43,7 +43,7 @@ const llm = vi.hoisted(() => ({
 }));
 vi.mock("@opusfinder/llm", () => llm);
 
-const locations = vi.hoisted(() => ({ syncLocationStrings: vi.fn(), SYNC_CHUNK: 40 }));
+const locations = vi.hoisted(() => ({ syncLocationStrings: vi.fn(), SYNC_CHUNK: 30 }));
 vi.mock("@opusfinder/locations", () => locations);
 
 const probeMod = vi.hoisted(() => ({ probeDigestLiveness: vi.fn() }));
@@ -73,7 +73,7 @@ function makeDeps(enforceLifecycle = false): DigestDeps {
     rerank,
     batch: { submit: batchSubmit, poll: batchPoll, collect: batchCollect },
     email,
-    locations: { generate: vi.fn(), batch: vi.fn() },
+    locations: { generate: vi.fn(), submitBatch: vi.fn(), collectBatch: vi.fn() },
     probe,
     enforceLifecycle,
   };
@@ -115,7 +115,12 @@ beforeEach(() => {
   repos.hasSentDigestForRun.mockResolvedValue(false);
   repos.deleteUserDigestForRun.mockResolvedValue(undefined);
   repos.insertDigest.mockResolvedValue({ id: 500 });
-  repos.getJobSnapshots.mockResolvedValue(new Map([[1, {}], [2, {}]]));
+  repos.getJobSnapshots.mockResolvedValue(
+    new Map([
+      [1, {}],
+      [2, {}],
+    ]),
+  );
   repos.insertDigestItems.mockResolvedValue(undefined);
   llm.buildDigestSystem.mockReturnValue("SYSTEM");
   llm.renderDigestJob.mockReturnValue("RENDERED");
@@ -158,9 +163,21 @@ beforeEach(() => {
   repos.anyHasHomePlace.mockResolvedValue(true);
 });
 
-const NOTHING_TO_RESOLVE = { resolved: 0, unanswered: 0, failed: 0, unmatchedPlaces: 0, more: false };
+const NOTHING_TO_RESOLVE = {
+  resolved: 0,
+  unanswered: 0,
+  failed: 0,
+  unmatchedPlaces: 0,
+  more: false,
+  failedPairs: [],
+};
 /** finish-run's counts when the resolve step had nothing to do. */
-const NO_LOCATION_COUNTS = { locationsResolved: 0, locationsUnanswered: 0, locationsUnmatchedPlaces: 0 };
+const NO_LOCATION_COUNTS = {
+  locationsResolved: 0,
+  locationsUnanswered: 0,
+  locationsFailed: 0,
+  locationsUnmatchedPlaces: 0,
+};
 
 // ════════════════════════════════════════ runOrchestrator ══════════════════════════════════════════
 describe("runOrchestrator", () => {
@@ -172,7 +189,11 @@ describe("runOrchestrator", () => {
   it("single valid-UUID user → fans out one event + finishes ok, no recipient sweep", async () => {
     const { runs, sentEvents, tools } = recordingStep();
 
-    const out = await runOrchestrator(makeDeps(), event({ trigger: "manual", userId: UUID }), tools);
+    const out = await runOrchestrator(
+      makeDeps(),
+      event({ trigger: "manual", userId: UUID }),
+      tools,
+    );
 
     expect(repos.listDigestRecipients).not.toHaveBeenCalled(); // single-user path skips the sweep
     expect(sentEvents).toEqual([
@@ -186,14 +207,24 @@ describe("runOrchestrator", () => {
       counts: { recipients: 1, dispatched: 1, ...NO_LOCATION_COUNTS },
     });
     expect(out).toEqual({ runId: 42, recipients: 1 });
-    expect(runs).toEqual(["start-run", "fetch-recipients", "check-home-places", "resolve-locations-0", "finish-run"]);
+    expect(runs).toEqual([
+      "start-run",
+      "fetch-recipients",
+      "check-home-places",
+      "resolve-locations-0",
+      "finish-run",
+    ]);
   });
 
   it("lowercases an uppercase single-user UUID, so the per-user singleton key matches the cron's", async () => {
     const lower = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
     const { sentEvents, tools } = recordingStep();
 
-    await runOrchestrator(makeDeps(), event({ trigger: "manual", userId: lower.toUpperCase() }), tools);
+    await runOrchestrator(
+      makeDeps(),
+      event({ trigger: "manual", userId: lower.toUpperCase() }),
+      tools,
+    );
 
     expect(sentEvents[0]!.events).toEqual([
       { name: "digest/user.requested", data: { userId: lower, digestRunId: 42 } },
@@ -213,7 +244,10 @@ describe("runOrchestrator", () => {
     expect(repos.finishDigestRun).toHaveBeenCalledWith(
       expect.anything(),
       42,
-      expect.objectContaining({ status: "error", errorSample: expect.stringContaining("not a uuid") }),
+      expect.objectContaining({
+        status: "error",
+        errorSample: expect.stringContaining("not a uuid"),
+      }),
     );
     expect(runs).toEqual(["start-run", "fetch-recipients", "fail-run"]);
   });
@@ -277,9 +311,17 @@ describe("runOrchestrator", () => {
   });
 
   it("resolves new location strings a chunk per step until none are left, before the fan-out", async () => {
+    const flaky = { companyId: 7, raw: "Atlantis" };
     locations.syncLocationStrings
-      .mockResolvedValueOnce({ resolved: 38, unanswered: 2, failed: 0, unmatchedPlaces: 3, more: true })
-      .mockResolvedValueOnce({ resolved: 5, unanswered: 0, failed: 0, unmatchedPlaces: 0, more: false });
+      .mockResolvedValueOnce({
+        resolved: 26,
+        unanswered: 2,
+        failed: 2,
+        unmatchedPlaces: 3,
+        more: true,
+        failedPairs: [flaky, { companyId: 7, raw: "Lemuria" }],
+      })
+      .mockResolvedValueOnce({ ...NOTHING_TO_RESOLVE, resolved: 5 });
     const { runs, tools } = recordingStep();
 
     await runOrchestrator(makeDeps(), event({ trigger: "manual", userId: UUID }), tools);
@@ -297,10 +339,16 @@ describe("runOrchestrator", () => {
       counts: {
         recipients: 1,
         dispatched: 1,
-        locationsResolved: 43,
+        locationsResolved: 31,
         locationsUnanswered: 2,
+        locationsFailed: 2,
         locationsUnmatchedPlaces: 3,
       },
+    });
+    // A later step skips the pairs that already failed transiently in this run.
+    expect(locations.syncLocationStrings.mock.calls[1]![2]).toEqual({
+      limit: 30,
+      exclude: [flaky, { companyId: 7, raw: "Lemuria" }],
     });
   });
 
@@ -324,11 +372,21 @@ describe("runOrchestrator", () => {
     ).rejects.toThrow(/model unavailable/);
 
     expect(sentEvents).toEqual([]);
-    expect(runs).toEqual(["start-run", "fetch-recipients", "check-home-places", "resolve-locations-0", "fail-run"]);
+    expect(runs).toEqual([
+      "start-run",
+      "fetch-recipients",
+      "check-home-places",
+      "resolve-locations-0",
+      "fail-run",
+    ]);
   });
 
   it("refuses to run the daily path over more strings than its step cap", async () => {
-    locations.syncLocationStrings.mockResolvedValue({ ...NOTHING_TO_RESOLVE, resolved: 40, more: true });
+    locations.syncLocationStrings.mockResolvedValue({
+      ...NOTHING_TO_RESOLVE,
+      resolved: 30,
+      more: true,
+    });
     const { sentEvents, tools } = recordingStep();
 
     await expect(
@@ -344,9 +402,9 @@ describe("runOrchestrator", () => {
     repos.listDigestRecipients.mockRejectedValue(new Error(longMessage));
     const { runs, tools } = recordingStep();
 
-    await expect(
-      runOrchestrator(makeDeps(), event({ trigger: "cron" }), tools),
-    ).rejects.toThrow(/boom/);
+    await expect(runOrchestrator(makeDeps(), event({ trigger: "cron" }), tools)).rejects.toThrow(
+      /boom/,
+    );
 
     const failCall = repos.finishDigestRun.mock.calls.at(-1)!;
     expect(failCall[2]).toMatchObject({ status: "error" });
@@ -389,8 +447,8 @@ describe("runPerUser", () => {
 
     expect(out).toEqual({ userId: USER, digestId: 500, itemCount: 2, delivery: "delivered" });
     expect(runs).toEqual([
-      "load",
-      "retrieve",
+      "load-v2",
+      "retrieve-v2",
       "rerank",
       "submit-synthesis",
       "poll-synthesis-0",
@@ -450,7 +508,7 @@ describe("runPerUser", () => {
       rerank,
       batch: { submit: batchSubmit, poll: batchPoll, collect: batchCollect },
       email,
-      locations: { generate: vi.fn(), batch: vi.fn() },
+      locations: { generate: vi.fn(), submitBatch: vi.fn(), collectBatch: vi.fn() },
       probe,
     };
     const { tools } = recordingStep();
@@ -473,7 +531,7 @@ describe("runPerUser", () => {
     const out = await runPerUser(makeDeps(), event(), tools);
 
     expect(out).toEqual({ userId: USER, skipped: "no-profile-or-embedding" });
-    expect(runs).toEqual(["load"]);
+    expect(runs).toEqual(["load-v2"]);
     expect(rerank).not.toHaveBeenCalled();
   });
 
@@ -491,7 +549,7 @@ describe("runPerUser", () => {
     const out = await runPerUser(makeDeps(), event(), tools);
 
     expect(out).toEqual({ userId: USER, skipped: "no-profile-or-embedding" });
-    expect(runs).toEqual(["load"]);
+    expect(runs).toEqual(["load-v2"]);
     expect(repos.retrieveCandidatesForProfile).not.toHaveBeenCalled();
   });
 
@@ -527,7 +585,7 @@ describe("runPerUser", () => {
     const out = await runPerUser(makeDeps(), event(), tools);
 
     expect(out).toEqual({ userId: USER, skipped: "ineligible" });
-    expect(runs).toEqual(["load"]);
+    expect(runs).toEqual(["load-v2"]);
   });
 
   it("skips ineligible when the preferences row is missing (null)", async () => {
@@ -539,7 +597,7 @@ describe("runPerUser", () => {
     const out = await runPerUser(makeDeps(), event(), tools);
 
     expect(out).toEqual({ userId: USER, skipped: "ineligible" });
-    expect(runs).toEqual(["load"]);
+    expect(runs).toEqual(["load-v2"]);
     expect(rerank).not.toHaveBeenCalled();
   });
 
@@ -564,7 +622,7 @@ describe("runPerUser", () => {
     const out = await runPerUser(makeDeps(), event(), tools);
 
     expect(out).toEqual({ userId: USER, skipped: "not-approved" });
-    expect(runs).toEqual(["load"]);
+    expect(runs).toEqual(["load-v2"]);
     expect(rerank).not.toHaveBeenCalled();
   });
 
@@ -575,7 +633,7 @@ describe("runPerUser", () => {
     const out = await runPerUser(makeDeps(), event(), tools);
 
     expect(out).toEqual({ userId: USER, skipped: "already-sent" });
-    expect(runs).toEqual(["load"]);
+    expect(runs).toEqual(["load-v2"]);
     expect(rerank).not.toHaveBeenCalled();
     expect(repos.deleteUserDigestForRun).not.toHaveBeenCalled();
   });
@@ -607,7 +665,7 @@ describe("runPerUser", () => {
     await expect(runPerUser(makeDeps(), event(), tools)).rejects.toThrow(
       /profile embedding disappeared mid-run/,
     );
-    expect(runs).toEqual(["load", "retrieve"]);
+    expect(runs).toEqual(["load-v2", "retrieve-v2"]);
     expect(repos.retrieveCandidatesForProfile).not.toHaveBeenCalled();
   });
 
@@ -618,7 +676,12 @@ describe("runPerUser", () => {
     const out = await runPerUser(makeDeps(), event(), tools);
 
     expect(out).toEqual({ userId: USER, skipped: "no-candidates" });
-    expect(runs).toEqual(["load", "retrieve", "record-no-candidates", "mark-considered-no-candidates"]);
+    expect(runs).toEqual([
+      "load-v2",
+      "retrieve-v2",
+      "record-no-candidates",
+      "mark-considered-no-candidates",
+    ]);
     expect(rerank).not.toHaveBeenCalled();
     // A 0-item record whose counts say why; nothing is ever sent for it.
     expect(repos.insertDigest).toHaveBeenCalledWith(expect.anything(), {
@@ -659,7 +722,10 @@ describe("runPerUser", () => {
       expect.objectContaining({ location: { mode: "onsite_only", home } }),
     );
     expect(repos.countLocalStrings).toHaveBeenCalledWith(expect.anything(), home);
-    expect(repos.insertDigest.mock.calls[0]![1].counts).toEqual({ candidates: 0, localStrings: 17 });
+    expect(repos.insertDigest.mock.calls[0]![1].counts).toEqual({
+      candidates: 0,
+      localStrings: 17,
+    });
   });
 
   it("never replaces an emailed digest with an empty record", async () => {
@@ -689,7 +755,13 @@ describe("runPerUser", () => {
     const out = await runPerUser(makeDeps(), event(), tools);
 
     expect(out).toEqual({ userId: USER, skipped: "no-strong-matches" });
-    expect(runs).toEqual(["load", "retrieve", "rerank", "record-no-strong", "mark-considered-no-strong"]);
+    expect(runs).toEqual([
+      "load-v2",
+      "retrieve-v2",
+      "rerank",
+      "record-no-strong",
+      "mark-considered-no-strong",
+    ]);
     expect(batchSubmit).not.toHaveBeenCalled();
     expect(repos.insertDigest.mock.calls[0]![1]).toEqual({
       userId: USER,
@@ -742,7 +814,12 @@ describe("runPerUser", () => {
 
     const out = await runPerUser(makeDeps(), event(), tools);
 
-    expect(out).toEqual({ userId: USER, digestId: 500, itemCount: 2, delivery: "skipped-unapproved" });
+    expect(out).toEqual({
+      userId: USER,
+      digestId: 500,
+      itemCount: 2,
+      delivery: "skipped-unapproved",
+    });
     expect(runs).toContain("mark-considered-unapproved");
   });
 
@@ -839,7 +916,9 @@ describe("runPerUser", () => {
   });
 
   it("fails the run without retries when the batch ended without results", async () => {
-    batchCollect.mockRejectedValue(new llm.BatchEndedError("batch batch-1 is expired, not completed"));
+    batchCollect.mockRejectedValue(
+      new llm.BatchEndedError("batch batch-1 is expired, not completed"),
+    );
     const { tools } = recordingStep();
 
     const err = await rejectionOf(runPerUser(makeDeps(), event(), tools));
@@ -905,7 +984,10 @@ describe("runPerUser", () => {
       expect.anything(),
       expect.objectContaining({ itemCount: 1 }),
     );
-    const items = repos.insertDigestItems.mock.calls.at(-1)![3] as Array<{ jobId: number; rank: number }>;
+    const items = repos.insertDigestItems.mock.calls.at(-1)![3] as Array<{
+      jobId: number;
+      rank: number;
+    }>;
     expect(items).toHaveLength(1);
     expect(items[0]).toMatchObject({ jobId: 2, rank: 1 }); // renumbered from its pre-filter index of 1
   });

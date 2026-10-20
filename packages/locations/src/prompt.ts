@@ -6,9 +6,10 @@
  * Bump {@link PROMPT_VERSION} on ANY change to the system block, the user message or the answer schema:
  * stored rows remember the version that wrote them, and `locations:backfill` re-resolves the rest.
  */
+import { AREA_NAMES } from "./areas";
 import type { LocationAnswerValue } from "./schema";
 
-export const PROMPT_VERSION = "1";
+export const PROMPT_VERSION = "2";
 
 /** How many of the company's other location strings a request shows as context. */
 export const SIBLING_CONTEXT = 20;
@@ -34,6 +35,7 @@ const EXAMPLES: Example[] = [
       reason: "City with its US state code.",
       places: [city("Columbus", "Ohio", "US")],
       remoteCountries: [],
+      areas: [],
       confidence: "high",
     },
   },
@@ -43,6 +45,7 @@ const EXAMPLES: Example[] = [
       reason: "City, state and country; the empty field is a gap in the company's format.",
       places: [city("Rochester", "New York", "US")],
       remoteCountries: [],
+      areas: [],
       confidence: "high",
     },
   },
@@ -56,6 +59,7 @@ const EXAMPLES: Example[] = [
         city("Seattle", "Washington", "US"),
       ],
       remoteCountries: [],
+      areas: [],
       confidence: "high",
     },
   },
@@ -65,6 +69,7 @@ const EXAMPLES: Example[] = [
       reason: "Two offices, or remote in Canada or the US.",
       places: [city("Boston", "Massachusetts", "US"), city("Chicago", "Illinois", "US")],
       remoteCountries: ["CA", "US"],
+      areas: [],
       confidence: "high",
     },
   },
@@ -74,6 +79,7 @@ const EXAMPLES: Example[] = [
       reason: "Two cities; Hybrid is a work arrangement, not a place.",
       places: [city("Denver", "Colorado", "US"), city("Atlanta", "Georgia", "US")],
       remoteCountries: [],
+      areas: [],
       confidence: "high",
     },
   },
@@ -83,6 +89,7 @@ const EXAMPLES: Example[] = [
       reason: "An office label around Los Angeles.",
       places: [city("Los Angeles", "California", "US")],
       remoteCountries: [],
+      areas: [],
       confidence: "high",
     },
   },
@@ -92,6 +99,7 @@ const EXAMPLES: Example[] = [
       reason: "A metro area, read as its main city.",
       places: [city("Boston", "Massachusetts", "US")],
       remoteCountries: [],
+      areas: [],
       confidence: "high",
     },
   },
@@ -101,6 +109,7 @@ const EXAMPLES: Example[] = [
       reason: "A neighborhood of New York City.",
       places: [city("New York City", "New York", "US")],
       remoteCountries: [],
+      areas: [],
       confidence: "high",
     },
   },
@@ -110,6 +119,7 @@ const EXAMPLES: Example[] = [
       reason: "A state with no city.",
       places: [{ city: null, region: "Texas", country: "US", kind: "region" }],
       remoteCountries: [],
+      areas: [],
       confidence: "high",
     },
   },
@@ -119,6 +129,7 @@ const EXAMPLES: Example[] = [
       reason: "A country with no city or region.",
       places: [{ city: null, region: null, country: "DE", kind: "country" }],
       remoteCountries: [],
+      areas: [],
       confidence: "high",
     },
   },
@@ -128,6 +139,7 @@ const EXAMPLES: Example[] = [
       reason: "Remote, open to Canada.",
       places: [],
       remoteCountries: ["CA"],
+      areas: [],
       confidence: "high",
     },
   },
@@ -137,6 +149,7 @@ const EXAMPLES: Example[] = [
       reason: "Remote with no country given.",
       places: [],
       remoteCountries: [],
+      areas: [],
       confidence: "high",
     },
   },
@@ -146,15 +159,57 @@ const EXAMPLES: Example[] = [
       reason: "A work arrangement with no place.",
       places: [],
       remoteCountries: [],
+      areas: [],
       confidence: "high",
     },
   },
   {
     pair: { raw: "APAC" },
     answer: {
-      reason: "A world region, not a place.",
+      reason: "A world region on the list.",
       places: [],
       remoteCountries: [],
+      areas: ["APAC"],
+      confidence: "high",
+    },
+  },
+  {
+    pair: { raw: "Remote (LATAM or US)" },
+    answer: {
+      reason: "Remote, open to Latin America or the US.",
+      places: [],
+      remoteCountries: ["US"],
+      areas: ["Latin America"],
+      confidence: "high",
+    },
+  },
+  {
+    pair: { raw: "Worldwide (Remote)" },
+    answer: {
+      reason: "Remote with no limit; Worldwide is not an area.",
+      places: [],
+      remoteCountries: [],
+      areas: [],
+      confidence: "high",
+    },
+  },
+  {
+    pair: { raw: "Lisbon, Portugal, EMEA" },
+    answer: {
+      reason: "A city; EMEA only qualifies it, so it adds nothing.",
+      places: [city("Lisbon", "Lisbon", "PT")],
+      remoteCountries: [],
+      areas: [],
+      confidence: "high",
+    },
+  },
+  {
+    pair: { raw: "Remote - Benelux & Nordics" },
+    answer: {
+      reason: "Remote, open to two blocs on the list.",
+      places: [],
+      remoteCountries: [],
+      areas: ["Benelux", "Nordics"],
       confidence: "high",
     },
   },
@@ -164,6 +219,7 @@ const EXAMPLES: Example[] = [
       reason: "Remote, open to Spain.",
       places: [],
       remoteCountries: ["ES"],
+      areas: [],
       confidence: "high",
     },
   },
@@ -173,6 +229,7 @@ const EXAMPLES: Example[] = [
       reason: "Remote, limited to the state of Colorado.",
       places: [{ city: null, region: "Colorado", country: "US", kind: "region" }],
       remoteCountries: [],
+      areas: [],
       confidence: "high",
     },
   },
@@ -182,6 +239,7 @@ const EXAMPLES: Example[] = [
       reason: "Remote, open to the Netherlands.",
       places: [],
       remoteCountries: ["NL"],
+      areas: [],
       confidence: "high",
     },
   },
@@ -198,6 +256,7 @@ const EXAMPLES: Example[] = [
       reason: "The company's country-state-city code.",
       places: [city("Bellevue", "Washington", "US")],
       remoteCountries: [],
+      areas: [],
       confidence: "high",
     },
   },
@@ -214,6 +273,7 @@ const EXAMPLES: Example[] = [
       reason: "A TV station call sign and its city; the company's stations are in the US.",
       places: [city("Detroit", "Michigan", "US")],
       remoteCountries: [],
+      areas: [],
       confidence: "high",
     },
   },
@@ -230,6 +290,7 @@ const EXAMPLES: Example[] = [
       reason: "A bare Dublin from a company whose other sites are all in Ohio: Dublin, Ohio.",
       places: [city("Dublin", "Ohio", "US")],
       remoteCountries: [],
+      areas: [],
       confidence: "medium",
     },
   },
@@ -242,6 +303,7 @@ const EXAMPLES: Example[] = [
       reason: "A bare Cambridge from a company in UK cities: Cambridge, England.",
       places: [city("Cambridge", "England", "GB")],
       remoteCountries: [],
+      areas: [],
       confidence: "medium",
     },
   },
@@ -251,6 +313,7 @@ const EXAMPLES: Example[] = [
       reason: "No specific place is named.",
       places: [],
       remoteCountries: [],
+      areas: [],
       confidence: "high",
     },
   },
@@ -265,7 +328,7 @@ Rules:
 4. Read a metro area or neighborhood as its main city ("San Francisco Bay Area" → San Francisco, "Union Square, New York City" → New York City), and an office, HQ, campus, data center or station label around a city as that city.
 5. These are not places: Remote, Hybrid, On-site, Office, HQ, Headquarters, Home based, Travel, street addresses, building names, postal codes, time zones. Leave them out; if nothing else is left, return no places.
 6. remoteCountries lists the countries a remote role is open to ("Remote - USA" → ["US"], "Remote within Canada or United States" → ["CA", "US"], "Remote, Türkiye" → ["TR"]). Plain "Remote" → []. A country that only qualifies the remote option goes in remoteCountries, never also in places. A remote option limited to something smaller than a country (a state, a city) names that place instead, as a region or city, and adds no remote country.
-7. World regions, blocs and sub-national areas without a name of their own (EMEA, APAC, LATAM, Europe, North America, Global, Worldwide, Midwest, Pacific Northwest) are not places and not remote countries: leave them out.
+7. A world region or bloc the job is limited to goes in areas, by its name in this list: ${AREA_NAMES.join(", ")}. Read the text's own label as the list's name for it ("LATAM" → "Latin America", "AMER" → "Americas", "NAMER" → "North America", "APJ" → "APAC", "EU" → "European Union"). A region or bloc that is not on the list goes in areas as the text writes it. A bloc that only qualifies a place inside it adds nothing: leave it out ("Bengaluru, India, APAC", "EMEA - UK", "Asia, Korea, Seoul", "Remote, Spain, EMEA"). Global, Worldwide and Anywhere set no limit: leave them out. Areas inside one country without a name of their own (Midwest, West Coast, Pacific Northwest) are not places and not areas: leave them out.
 8. Decode a company's own formats: "US-CA-Menlo Park" is Menlo Park, California, US; "GB-London" is London; "IN-HR-Gurugram-418" is Gurugram, Haryana, IN; a TV station call sign like "WBIR-TV Knoxville" is the city it names.
 9. A bare name that could be several places ("Dublin", "Portland", "Cambridge", "Vancouver", "Georgia") means the one the company's other location strings point to. With no useful context, pick the best-known place and lower the confidence.
 10. Name cities in English as GeoNames does, in full: "New York City" (not "NYC" or "New York"), "Washington" in "District of Columbia", "Bengaluru", "Gurugram", "Zürich".

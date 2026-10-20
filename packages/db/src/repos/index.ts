@@ -72,8 +72,10 @@ export {
   listCompanyStrings,
   upsertLocationStrings,
   activePairsSql,
+  locationTextsSql,
+  MAX_LOCATION_RAW_BYTES,
 } from "./location-strings";
-export type { LocationPair, LocationStringRow } from "./location-strings";
+export type { LocationPair, LocationPairKey, LocationStringRow } from "./location-strings";
 // locations:report / locations:explain reads.
 export {
   coverageBySource,

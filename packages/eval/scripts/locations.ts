@@ -19,10 +19,12 @@ import {
   buildLocationRequest,
   checkAnswers,
   createLocationModel,
+  describeUnmatched,
   loadGazetteer,
   parseAnswer,
   PROMPT_STRINGS,
   PROMPT_VERSION,
+  type CheckedAnswer,
   type LocationAnswer,
   type LocationModel,
   type LocationRequest,
@@ -100,8 +102,9 @@ await runScript("eval:locations", async () => {
         console.log(
           `  ✗ ${f.entry.id} ${f.entry.company.slug} · ${JSON.stringify(f.entry.raw)}\n` +
             `      expected ${expected.places.map((p) => `${p.name}(${p.geonamesId})`).join(", ") || "no place"}` +
-            `${expected.remoteCountries.length ? ` · remote ${expected.remoteCountries.join(",")}` : ""}\n` +
-            `      got      ${f.got ? `${f.got.placeIds.join(", ") || "no place"}${f.got.remoteCountries.length ? ` · remote ${f.got.remoteCountries.join(",")}` : ""}` : `no answer (${"problem" in f ? f.problem : ""})`}` +
+            `${expected.remoteCountries.length ? ` · remote ${expected.remoteCountries.join(",")}` : ""}` +
+            `${expected.areas.length ? ` · areas ${expected.areas.join(",")}` : ""}\n` +
+            `      got      ${f.got ? describeGot(f.got) : `no answer (${"problem" in f ? f.problem : ""})`}` +
             `${"reason" in f && f.reason ? ` · ${f.reason}` : ""}`,
         );
       }
@@ -140,14 +143,12 @@ async function viaGenerate(
     Array.from({ length: CONCURRENCY }, async () => {
       while (next < requests.length) {
         const i = next++;
-        out[i] = await model
-          .generate(requests[i]!)
-          .catch(
-            (err: unknown): LocationAnswer => ({
-              status: "failed",
-              reason: err instanceof Error ? err.message : String(err),
-            }),
-          );
+        out[i] = await model.generate(requests[i]!).catch(
+          (err: unknown): LocationAnswer => ({
+            status: "failed",
+            reason: err instanceof Error ? err.message : String(err),
+          }),
+        );
       }
     }),
   );
@@ -158,9 +159,18 @@ async function viaBatch(
   model: LocationModel,
   requests: LocationRequest[],
 ): Promise<LocationAnswer[]> {
-  const results = await model.batch(requests);
+  const results = await model.collectBatch(await model.submitBatch(requests));
   return requests.map(
     (r) => results.get(r.id) ?? { status: "failed", reason: "missing from the batch results" },
+  );
+}
+
+function describeGot(got: CheckedAnswer): string {
+  const remote = got.remoteCountries;
+  return (
+    `${got.placeIds.join(", ") || "no place"}` +
+    `${remote.length ? ` · remote ${remote.length > 8 ? `${remote.length} countries` : remote.join(",")}` : ""}` +
+    `${got.unmatched.length ? ` · unmatched ${got.unmatched.map(describeUnmatched).join("; ")}` : ""}`
   );
 }
 

@@ -15,6 +15,8 @@ export const P = {
   IE: 2963597,
   TR: 298795,
   TW: 1668284,
+  DE: 2921044,
+  FR: 3017382,
   TAIPEI_REGION: 7280290,
   TAIWAN_REGION: 7280291,
   TAIPEI: 1668341,
@@ -96,6 +98,8 @@ export const PLACE_ROWS: PlaceRow[] = [
   place(P.IE, "country", "Ireland", "IE"),
   place(P.TR, "country", "Türkiye", "TR", { asciiNorm: "turkiye" }),
   place(P.TW, "country", "Taiwan", "TW"),
+  place(P.DE, "country", "Germany", "DE"),
+  place(P.FR, "country", "France", "FR"),
   // GeoNames' legacy Taiwan admin1: the city of Taipei is filed under "Taiwan" (04), not "Taipei" (03).
   place(P.TAIPEI_REGION, "region", "Taipei", "TW", { regionCode: "03", regionName: "Taipei" }),
   place(P.TAIWAN_REGION, "region", "Taiwan", "TW", { regionCode: "04", regionName: "Taiwan" }),

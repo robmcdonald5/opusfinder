@@ -1,12 +1,13 @@
 /**
  * The location normalizer's golden set (data/locations-golden.jsonl): real (company, location string)
  * pairs from production with the company's other strings as context, and, once labeled and reviewed,
- * the expected answer as GeoNames place ids + remote countries. eval:locations scores the normalizer's
- * checked answer against it by exact match.
+ * the expected answer as GeoNames place ids, remote countries and areas (by the list's names, from
+ * @opusfinder/locations). eval:locations scores the normalizer's checked answer against it by exact match.
  */
 import { readFileSync } from "node:fs";
 
-import { isRecord } from "@opusfinder/shared";
+import { AREAS, readArea, type AreaName } from "@opusfinder/locations";
+import { isRecord, type UnmatchedPlace } from "@opusfinder/shared";
 
 export interface GoldenExpected {
   /** GeoNames ids, with the names shown on the review sheet (the ids are what's scored). */
@@ -18,6 +19,8 @@ export interface GoldenExpected {
     kind: string;
   }[];
   remoteCountries: string[];
+  /** Areas the job is limited to; scored as the countries they cover, with the remote countries. */
+  areas: AreaName[];
   note?: string;
 }
 
@@ -99,9 +102,20 @@ function validateExpected(value: unknown, at: string): GoldenExpected {
       kind: typeof p.kind === "string" ? p.kind : "city",
     };
   });
+  const areas = value.areas === undefined ? [] : value.areas;
+  if (!isStringArray(areas)) throw new Error(`${at}: expected.areas must be a string[].`);
   return {
     places,
     remoteCountries: value.remoteCountries,
+    areas: areas.map((a) => {
+      const area = readArea(a);
+      if (area === null || area === "no-limit" || area !== a) {
+        throw new Error(
+          `${at}: expected.areas has "${a}", which is not an area's name on the list.`,
+        );
+      }
+      return area;
+    }),
     ...(typeof value.note === "string" ? { note: value.note } : {}),
   };
 }
@@ -110,16 +124,22 @@ function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((v) => typeof v === "string");
 }
 
-/** Exact match: the same set of place ids and the same set of remote countries. */
+/** Exact match: the same set of place ids, the same set of remote countries (the expected areas'
+ *  countries included), and no area off the list. */
 export function answerMatches(
   expected: GoldenExpected,
-  got: { placeIds: number[]; remoteCountries: string[] },
+  got: { placeIds: number[]; remoteCountries: string[]; unmatched?: UnmatchedPlace[] },
 ): boolean {
   return (
     sameSet(
       expected.places.map((p) => p.geonamesId),
       got.placeIds,
-    ) && sameSet(expected.remoteCountries, got.remoteCountries)
+    ) &&
+    sameSet(
+      [...expected.remoteCountries, ...expected.areas.flatMap((a) => AREAS[a])],
+      got.remoteCountries,
+    ) &&
+    !(got.unmatched ?? []).some((u) => u.kind === "area")
   );
 }
 

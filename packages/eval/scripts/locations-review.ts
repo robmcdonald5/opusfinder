@@ -1,6 +1,6 @@
 /**
  * Render the location golden set as a review sheet for the owner: every pair with its context and the
- * expected answer spelled out (place name, region, country, GeoNames link; remote countries), grouped by
+ * expected answer spelled out (place name, region, country, GeoNames link; remote countries; areas), grouped by
  * category, so a wrong label is easy to spot. Corrections go into data/locations-golden.jsonl. Like the
  * other label review sheets it is a regenerable aid, written under the gitignored data/reviews/.
  *
@@ -58,7 +58,8 @@ function expected(e: GoldenEntry): string {
     e.expected.remoteCountries.length > 0
       ? [`remote: ${e.expected.remoteCountries.join(", ")}`]
       : [];
-  return [...places, ...remote].join("<br>") || "no place";
+  const areas = e.expected.areas.length > 0 ? [`areas: ${e.expected.areas.join(", ")}`] : [];
+  return [...places, ...remote, ...areas].join("<br>") || "no place";
 }
 
 /** The first few of the company's other strings, so a bare name can be judged in context. */

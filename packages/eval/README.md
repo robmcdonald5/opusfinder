@@ -53,12 +53,12 @@ This quantifies what turning ANN on would cost. Needs `DATABASE_URL` + `VOYAGE_A
 
 ## Location golden set
 
-`data/locations-golden.jsonl` holds 354 real (company, location string) pairs pulled read-only from
-production on 2026-10-19, with each company's other strings as the production request shows them (up to
+`data/locations-golden.jsonl` holds 368 real (company, location string) pairs pulled read-only from
+production on 2026-10-19 (14 region-scoped ones added the same day), with each company's other strings as the production request shows them (up to
 20, most-listed first). The pull was weighted toward the hard cases: bare names that could be several
 places, office/HQ labels, company codes (`US-CA-Menlo Park`, `WBIR-TV Knoxville`), multi-place strings,
 remote phrases and world regions; `category` records the bucket. Each pair's `expected` answer (GeoNames
-place ids + remote countries) was drafted by a stronger model than the normalizer, working only from
+place ids, remote countries, and areas by their names on the list in `@opusfinder/locations`) was drafted by a stronger model than the normalizer, working only from
 `data/locations-golden.conventions.md` (never the normalizer's prompt), and resolved to GeoNames ids by
 `pnpm --filter @opusfinder/eval run locations:label -- --drafts <file>` through the production check. The
 owner reviews them on the sheet `locations:review` writes to `data/reviews/locations-golden.md` (gitignored,
@@ -66,7 +66,7 @@ regenerated after a fix).
 
 `pnpm eval:locations` runs the production prompt, schema, model and GeoNames check over the labeled pairs,
 with and without the company context, and scores exact matches on the checked place ids + remote
-countries, overall, per category, and over the pairs the prompt doesn't quote. The check runs against a
+countries (an expected area counts as its countries; an area off the list is a miss), overall, per category, and over the pairs the prompt doesn't quote. The check runs against a
 local PGlite copy of the gazetteer built from the GeoNames files (`-- --geonames <dir>` to skip the
 download), so it needs no database credential. Run it on demand and before any prompt or model change; it
 writes `reports/locations.golden.json`. Not a CI gate: the model is live.

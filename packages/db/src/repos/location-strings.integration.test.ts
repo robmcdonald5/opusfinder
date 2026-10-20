@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import type { Db } from "@opusfinder/db";
@@ -109,6 +109,40 @@ describe("location_strings repos (integration: real PGlite)", () => {
     expect(pending[0]).toMatchObject({ companyId: acme, companySource: "greenhouse" });
   });
 
+  it("leaves out the pairs a caller excludes", async () => {
+    const pending = await listPendingPairs(db, {
+      scope: "missing",
+      promptVersion: "1",
+      exclude: [
+        { companyId: acme, raw: "Hybrid" },
+        { companyId: globex, raw: "Columbus, OH" }, // another company's text: no effect
+      ],
+    });
+    expect(pending.map((p) => p.raw)).toEqual(["Columbus, OH", "Remote", "Dublin", "Low Guess"]);
+  });
+
+  it("never lists a string over the byte cap, nor one from a malformed locations value; counts the long ones", async () => {
+    // upsertJobs keeps a location to 500 characters, so only another writer gets past the cap.
+    const atCap = "東".repeat(666) + "xy"; // 1,998 + 2 bytes
+    await seedJobs("initech", "ashby", [{ key: "i1", locations: ["placeholder"] }]);
+    await db.execute(sql`
+      UPDATE ${jobs} SET locations = jsonb_build_array(${atCap}::text, ${`${atCap}!`}::text)
+      WHERE external_id = 'i1'
+    `);
+    await db.execute(
+      sql`UPDATE ${jobs} SET locations = '"Columbus, OH"'::jsonb WHERE external_id = 'g2'`,
+    );
+
+    const raws = (await listPendingPairs(db, { scope: "missing", promptVersion: "1" })).map(
+      (p) => p.raw,
+    );
+
+    expect(raws).toContain(atCap);
+    expect(raws).not.toContain(`${atCap}!`);
+    expect(raws).not.toContain("Low Guess");
+    expect((await pairStatus(db, "1")).tooLong).toBe(1);
+  });
+
   it("the stale scope adds rows from another prompt version and rows with no answer", async () => {
     await upsertLocationStrings(db, [
       row(acme, "Columbus, OH", { promptVersion: "0" }),
@@ -162,11 +196,13 @@ describe("location_strings repos (integration: real PGlite)", () => {
       row(globex, "Dublin", {
         unmatched: [
           {
+            kind: "city",
             city: "Dublin",
             region: "Atlantis",
             country: "XX",
-            kind: "city",
             why: "unknown-country",
+            countryCode: null,
+            regionCode: null,
           },
         ],
       }),
@@ -177,7 +213,13 @@ describe("location_strings repos (integration: real PGlite)", () => {
       { source: "greenhouse", onsite: 3, onsitePlaced: 2, remote: 1 },
       { source: "lever", onsite: 2, onsitePlaced: 1, remote: 0 },
     ]);
-    expect(await pairStatus(db, "1")).toEqual({ active: 5, missing: 0, stale: 1, unresolved: 0 });
+    expect(await pairStatus(db, "1")).toEqual({
+      active: 5,
+      missing: 0,
+      stale: 1,
+      unresolved: 0,
+      tooLong: 0,
+    });
     // By active jobs, then company slug.
     expect((await reportList(db, "no-place", 10)).map((r) => r.raw)).toEqual([
       "Remote",

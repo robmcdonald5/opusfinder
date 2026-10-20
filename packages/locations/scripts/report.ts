@@ -4,6 +4,7 @@ import { createDb } from "@opusfinder/db";
 import { getDatabaseUrl } from "@opusfinder/db/env";
 import {
   coverageBySource,
+  MAX_LOCATION_RAW_BYTES,
   pairStatus,
   reportList,
   type ReportList,
@@ -11,19 +12,19 @@ import {
 } from "@opusfinder/db/repos";
 import { runScript } from "@opusfinder/shared/script";
 
-import { PROMPT_VERSION } from "../src/index";
+import { describeUnmatched, PROMPT_VERSION } from "../src/index";
 
 /**
  * How well the stored location strings cover active jobs, and the worklists: strings with no usable
- * place, low-confidence answers, places that failed the GeoNames check, and strings the model gave no
- * answer for, each by active-job count. Read-only.
+ * place, low-confidence answers, places that failed the GeoNames check (and areas not on the fixed list),
+ * and strings the model gave no answer for, each by active-job count. Read-only.
  *
  *   pnpm locations:report [-- --limit 25]
  */
 const LISTS: [ReportList, string][] = [
   ["no-place", "No usable place (no place, no remote country)"],
   ["low-confidence", "Low confidence"],
-  ["unmatched", "Places that failed the GeoNames check"],
+  ["unmatched", "Places that failed the GeoNames check, and areas off the list"],
   ["unresolved", "No answer from the model"],
 ];
 
@@ -38,7 +39,8 @@ await runScript("locations:report", async () => {
   const status = await pairStatus(db, PROMPT_VERSION);
   console.log(
     `Pairs (prompt version ${PROMPT_VERSION}): ${status.active} active; ${status.missing} without a row, ` +
-      `${status.stale} from another version, ${status.unresolved} with no answer.\n`,
+      `${status.stale} from another version, ${status.unresolved} with no answer; ` +
+      `${status.tooLong} too long to resolve (over ${MAX_LOCATION_RAW_BYTES} bytes).\n`,
   );
 
   console.log("Active on-site jobs with at least one place, by source:");
@@ -66,10 +68,7 @@ await runScript("locations:report", async () => {
 function formatRow(row: ReportRow, list: ReportList): string {
   const head = `${String(row.jobs).padStart(5)} jobs  ${row.companySlug} · ${JSON.stringify(row.raw)}`;
   if (list === "unmatched") {
-    const failed = row.unmatched.map(
-      (u) => `${[u.city, u.region, u.country].filter(Boolean).join(", ")} (${u.why})`,
-    );
-    return `${head} — ${failed.join("; ")}`;
+    return `${head} — ${row.unmatched.map(describeUnmatched).join("; ")}`;
   }
   return `${head} — ${row.reason ?? ""}`;
 }

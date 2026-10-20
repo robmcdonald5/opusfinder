@@ -7,7 +7,7 @@ import { createTestDb } from "@test/db/pglite";
 import { P, seedPlaces } from "@test/db/places";
 import { truncate } from "@test/db/truncate";
 
-import { checkAnswers, loadGazetteer, type Gazetteer } from "./check";
+import { checkAnswers, describeUnmatched, loadGazetteer, type Gazetteer } from "./check";
 import type { AnsweredPlace, LocationAnswerValue } from "./schema";
 
 const city = (name: string, region: string | null, country: string): AnsweredPlace => ({
@@ -17,8 +17,12 @@ const city = (name: string, region: string | null, country: string): AnsweredPla
   kind: "city",
 });
 
-function answer(placesNamed: AnsweredPlace[], remoteCountries: string[] = []): LocationAnswerValue {
-  return { reason: "r", places: placesNamed, remoteCountries, confidence: "high" };
+function answer(
+  placesNamed: AnsweredPlace[],
+  remoteCountries: string[] = [],
+  areas: string[] = [],
+): LocationAnswerValue {
+  return { reason: "r", places: placesNamed, remoteCountries, areas, confidence: "high" };
 }
 
 describe("the GeoNames check (integration: real PGlite)", () => {
@@ -49,20 +53,51 @@ describe("the GeoNames check (integration: real PGlite)", () => {
     expect(byCode!.placeIds).toEqual([P.COLUMBUS_GA]);
   });
 
-  it("drops an unknown city and records why", async () => {
+  it("drops an unknown city and records why, with the country and region codes that did check", async () => {
     const [result] = await check(
-      answer([city("Atlantis", "Ohio", "US"), city("Westerville", "Ohio", "US")]),
+      answer([
+        city("Atlantis", "Ohio", "US"),
+        city("Westerville", "Ohio", "US"),
+        city("Smallville", "Kansas", "US"),
+        city("Gotham", null, "XX"),
+      ]),
     );
     expect(result!.placeIds).toEqual([P.WESTERVILLE_OH]);
     expect(result!.unmatched).toEqual([
-      { city: "Atlantis", region: "Ohio", country: "US", kind: "city", why: "unknown-city" },
+      {
+        kind: "city",
+        city: "Atlantis",
+        region: "Ohio",
+        country: "US",
+        why: "unknown-city",
+        countryCode: "US",
+        regionCode: "OH",
+      },
+      {
+        kind: "city",
+        city: "Smallville",
+        region: "Kansas", // not in the fixture gazetteer: no region code
+        country: "US",
+        why: "unknown-city",
+        countryCode: "US",
+        regionCode: null,
+      },
+      {
+        kind: "city",
+        city: "Gotham",
+        region: null,
+        country: "XX",
+        why: "unknown-country",
+        countryCode: null,
+        regionCode: null,
+      },
     ]);
   });
 
   it("drops a city placed in the wrong state", async () => {
     const [result] = await check(answer([city("Westerville", "Texas", "US")]));
     expect(result!.placeIds).toEqual([]);
-    expect(result!.unmatched[0]!.why).toBe("unknown-city");
+    expect(result!.unmatched[0]).toMatchObject({ why: "unknown-city", regionCode: "TX" });
   });
 
   it("takes the larger of two same-named cities in one region", async () => {
@@ -109,11 +144,25 @@ describe("the GeoNames check (integration: real PGlite)", () => {
     );
     expect(result!.placeIds).toEqual([P.TEXAS, P.GB]);
     expect(result!.remoteCountries).toEqual(["US", "TR"]);
-    expect(result!.unmatched.map((u) => [u.region ?? u.country, u.why])).toEqual([
-      ["Narnia", "unknown-region"],
-      ["UK", "unknown-country"],
-      ["XX", "unknown-country"],
+    expect(result!.unmatched.map(describeUnmatched)).toEqual([
+      "Narnia, US (unknown-region)",
+      "UK (unknown-country)",
+      "XX (unknown-country)",
     ]);
+  });
+
+  it("expands areas on the list into their countries, and keeps one off the list as unmatched", async () => {
+    const [europe, mixed, noLimit] = await check(
+      answer([], [], ["Europe"]),
+      answer([], ["US"], ["LATAM", "Middle East", "Atlantic Rim"]),
+      answer([], [], ["Worldwide"]),
+    );
+    // The fixture gazetteer's countries in M49 Europe; codes it lacks are dropped.
+    expect(europe!.remoteCountries.sort()).toEqual(["DE", "FR", "GB", "IE"]);
+    expect(europe!.unmatched).toEqual([]);
+    expect(mixed!.remoteCountries.sort()).toEqual(["TR", "US"]);
+    expect(mixed!.unmatched).toEqual([{ kind: "area", name: "Atlantic Rim", why: "unknown-area" }]);
+    expect(noLimit).toEqual({ placeIds: [], remoteCountries: [], unmatched: [] });
   });
 
   it("refuses to run against an empty gazetteer", async () => {

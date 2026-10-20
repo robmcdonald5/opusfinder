@@ -10,6 +10,7 @@ and resolves it to a GeoNames id.
 
 - `places`: the places the text names, each `{city, region, country, kind}`.
 - `remoteCountries`: ISO 3166-1 alpha-2 codes of the countries a remote option is limited to.
+- `areas`: world regions or blocs the job is limited to, by the list's names (rule 7).
 - `note` (optional): one short sentence when you made a judgment call (ambiguous name, unusual format), so
   the owner reviewing the labels knows what to double-check. Omit it when the answer is obvious.
 
@@ -35,12 +36,24 @@ and resolves it to a GeoNames id.
    is ambiguous).
 6. These are not places: Remote, Hybrid, On-site/Onsite, In-Office, Office, HQ, Headquarters, Home based,
    Distributed, Travel, Field, client sites, street addresses, postal codes, time zones.
-7. World regions and blocs are not places and not remote countries: EMEA, APAC, APJ, LATAM, AMER, NAMER,
-   Americas, Europe, European Union, Asia, North America, South America, Global, Worldwide, DACH, Nordics,
-   Benelux, CIS, "Middle East", "UK & Ireland" as a region label, and US sub-regions like "West Coast",
-   "East Coast", "Northeast Region", "Pacific Coast". A string that is ONLY such a label → no places. When a
-   bloc label prefixes a real place ("Asia, Taiwan, Taipei"; "EMEA - U.K."), ignore the bloc and keep the
-   place.
+7. World regions and blocs go in `areas`, by their name in this list (and only these names):
+   Africa, Americas, APAC, Asia, Benelux, Central America, CIS, DACH, Eastern Europe, EMEA, Europe,
+   European Union, Iberia, Latin America, Middle East, Nordics, North America, Oceania, South America.
+   Write the text's own label as the list's name: LATAM → Latin America, AMER → Americas, NAMER →
+   North America, APJ / Asia-Pacific → APAC, EU → European Union. A bloc not on the list whose
+   countries are plain (UK & Ireland → GB, IE) is those countries. Any other bloc not on the list
+   (Western Europe, Pacific Rim) goes in `areas` exactly as the text writes it, with a note: the label
+   script refuses it, and the pair is reviewed by hand (production treats such a string as unresolved).
+   - A bloc that only qualifies a place inside it adds nothing: "Asia, Taiwan, Taipei" → Taipei only;
+     "EMEA - U.K." → the country GB only; "Bengaluru, Karnataka, India, APAC" → Bengaluru only;
+     "Remote, Japan, APAC" → remoteCountries ["JP"] only.
+   - A bloc that is its own scope next to other places stays: "United States & EMEA" → the country US
+     and areas ["EMEA"]; "Home Based - Americas; Home based - EMEA; Office Based - London, UK" → London
+     and areas ["Americas", "EMEA"].
+   - Global, Worldwide, Anywhere, International set no limit: no area.
+   - US sub-regions with no name of their own ("West Coast", "East Coast", "Northeast Region",
+     "Midwest", "Pacific Coast") are not places and not areas: leave them out.
+     A string that is ONLY such a label (or only a no-limit label) → no places and no areas.
 8. Use English names as GeoNames gives them for cities: "New York City" (for "New York, NY", "NYC",
    "New York City"), "Washington" with region "District of Columbia" for Washington DC, "Bengaluru"
    (Bangalore), "Gurugram" (Gurgaon), "Kyiv", "Zürich", "Munich", "Mexico City", "São Paulo",
@@ -63,9 +76,9 @@ and resolves it to a GeoNames id.
 
 12. `remoteCountries` lists the countries a remote option is limited to: "Remote - USA" → ["US"];
     "Remote within Canada or United States" → ["CA", "US"]; "Remote, Türkiye" → ["TR"];
-    "Canada - Remote; Germany - Remote" → ["CA", "DE"]. Plain "Remote" (or "Remote" with only a bloc, like
-    "Remote-EMEA") → []. A country that only qualifies a remote option goes in `remoteCountries`, NOT in
-    `places`.
+    "Canada - Remote; Germany - Remote" → ["CA", "DE"]. Plain "Remote" → []. "Remote-EMEA" → [] with
+    areas ["EMEA"] (rule 7). A country that only qualifies a remote option goes in `remoteCountries`, NOT
+    in `places`.
 13. A remote option limited to something finer than a country names that place: "Seattle, WA (Remote)" →
     the city Seattle; "Remote, California" → the region California; "Tucson, AZ (Remote)" → Tucson. Do not
     also add the country to `remoteCountries` in that case.
@@ -77,6 +90,8 @@ and resolves it to a GeoNames id.
 
 Write one JSON object per line (JSONL), in the same order as the input, for EVERY input id:
 
-{"id":"g001","places":[{"city":"Columbus","region":"Ohio","country":"US","kind":"city"}],"remoteCountries":[],"note":"optional"}
+{"id":"g001","places":[{"city":"Columbus","region":"Ohio","country":"US","kind":"city"}],"remoteCountries":[],"areas":[],"note":"optional"}
 
-A pair with no usable place: {"id":"g002","places":[],"remoteCountries":[]}
+A pair with no usable place: {"id":"g002","places":[],"remoteCountries":[],"areas":[]}
+
+A bloc: {"id":"g003","places":[],"remoteCountries":[],"areas":["Europe"]}

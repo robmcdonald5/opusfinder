@@ -13,7 +13,7 @@ import {
   type LocationFilter,
 } from "@opusfinder/db/repos";
 import { companies, jobs, locationStrings, places } from "@opusfinder/db/schema";
-import { companySlug, jobId, type LocationMode } from "@opusfinder/shared";
+import { companySlug, jobId, type LocationMode, type UnmatchedPlace } from "@opusfinder/shared";
 
 import { P, seedPlaces } from "@test/db/places";
 import { truncate } from "@test/db/truncate";
@@ -37,9 +37,24 @@ interface StringSpec {
   remoteCountries?: string[];
   /** The model gave no usable answer (confidence NULL). */
   unanswered?: boolean;
-  /** A place the model named that failed the GeoNames check. */
-  unmatchedCountry?: string;
+  /** What the model named that failed the check. */
+  unmatched?: UnmatchedPlace[];
 }
+
+/** A city the GeoNames check dropped, with the codes that did check. */
+const unplacedCity = (
+  city: string,
+  countryCode: string | null,
+  regionCode: string | null,
+): UnmatchedPlace => ({
+  kind: "city",
+  city,
+  region: regionCode,
+  country: countryCode ?? "XX",
+  why: countryCode ? "unknown-city" : "unknown-country",
+  countryCode,
+  regionCode,
+});
 
 const COLUMBUS_50: LocationFilter["home"] = { placeId: P.COLUMBUS_OH, radiusMiles: 50 };
 
@@ -100,17 +115,7 @@ describe("location rule in retrieval (integration: real PGlite)", () => {
         raw: s.raw,
         placeIds: s.placeIds ?? [],
         remoteCountries: s.remoteCountries ?? [],
-        unmatched: s.unmatchedCountry
-          ? [
-              {
-                city: null,
-                region: null,
-                country: s.unmatchedCountry,
-                kind: "country" as const,
-                why: "unknown-country" as const,
-              },
-            ]
-          : [],
+        unmatched: s.unmatched ?? [],
         confidence: s.unanswered ? null : ("high" as const),
         reason: "fixture",
         promptVersion: "test",
@@ -201,7 +206,20 @@ describe("location rule in retrieval (integration: real PGlite)", () => {
           { raw: "Remote, Türkiye", remoteCountries: ["TR"] },
           { raw: "London, UK", placeIds: [P.LONDON_GB] },
           { raw: "Refused Remote", unanswered: true },
-          { raw: "Remote, Deutschland", unmatchedCountry: "DEU" },
+          {
+            raw: "Remote, Deutschland",
+            unmatched: [
+              {
+                kind: "country",
+                city: null,
+                region: null,
+                country: "DEU",
+                why: "unknown-country",
+                countryCode: null,
+                regionCode: null,
+              },
+            ],
+          },
         ],
       );
       // A pass that rests on something being absent (no country named; the region and no city in it) needs
@@ -274,6 +292,97 @@ describe("location rule in retrieval (integration: real PGlite)", () => {
         await retrievedKeys(ids, { mode: "any", home: { placeId: P.DALLAS_TX, radiusMiles: 50 } }),
       ).toEqual(["dallas-and-texas", "texas-only"]);
     });
+  });
+
+  describe("a city the GeoNames check dropped", () => {
+    it("still names a city in your region, so a job listing the region too is not a region-wide job", async () => {
+      const ids = await seed(
+        [
+          { key: "texas-and-unplaced-tx-city", locations: ["Texas", "Smallville, TX"] },
+          { key: "texas-and-unplaced-city-no-region", locations: ["Texas", "Smallville, US"] },
+          { key: "texas-and-unplaced-ny-city", locations: ["Texas", "Gotham, NY"] },
+          { key: "texas-and-unplaced-uk-city", locations: ["Texas", "Ambridge, UK"] },
+          { key: "texas-and-unplaced-unknown-country", locations: ["Texas", "Atlantis"] },
+        ],
+        [
+          { raw: "Texas", placeIds: [P.TEXAS] },
+          { raw: "Smallville, TX", unmatched: [unplacedCity("Smallville", "US", "TX")] },
+          { raw: "Smallville, US", unmatched: [unplacedCity("Smallville", "US", null)] },
+          { raw: "Gotham, NY", unmatched: [unplacedCity("Gotham", "US", "NY")] },
+          { raw: "Ambridge, UK", unmatched: [unplacedCity("Ambridge", "GB", "ENG")] },
+          { raw: "Atlantis", unmatched: [unplacedCity("Atlantis", null, null)] },
+        ],
+      );
+      const houston = { mode: "any" as const, home: { placeId: P.HOUSTON_TX, radiusMiles: 50 } };
+
+      expect(await retrievedKeys(ids, houston)).toEqual(
+        [
+          "texas-and-unplaced-ny-city",
+          "texas-and-unplaced-uk-city",
+          "texas-and-unplaced-unknown-country",
+        ].sort(),
+      );
+      const explained = await explainJob(db, ids.get("texas-and-unplaced-tx-city")!, houston);
+      expect(explained).toMatchObject({
+        passes: false,
+        verdict: "on-site job naming your region and a city the GeoNames check couldn't place",
+      });
+    });
+  });
+
+  describe("areas", () => {
+    // The check stores an area on the list as its countries; one off the list as an unmatched area.
+    const offList: UnmatchedPlace = { kind: "area", name: "Atlantic Rim", why: "unknown-area" };
+    const specs: JobSpec[] = [
+      { key: "remote-europe", locations: ["Remote - Europe"], remote: true },
+      { key: "remote-off-list", locations: ["Remote - Atlantic Rim"], remote: true },
+      {
+        key: "remote-plain-and-off-list",
+        locations: ["Remote", "Remote - Atlantic Rim"],
+        remote: true,
+      },
+      {
+        key: "remote-us-and-off-list",
+        locations: ["Remote - USA", "Remote - Atlantic Rim"],
+        remote: true,
+      },
+    ];
+    const strings: StringSpec[] = [
+      { raw: "Remote - Europe", remoteCountries: ["DE", "FR", "GB", "IE"] },
+      { raw: "Remote - Atlantic Rim", unmatched: [offList] },
+      { raw: "Remote" },
+      { raw: "Remote - USA", remoteCountries: ["US"] },
+    ];
+
+    it("a region-scoped remote job is open to its countries only; an area off the list never passes by absence", async () => {
+      const ids = await seed(specs, strings);
+
+      expect(await retrievedKeys(ids, { mode: "any", home: COLUMBUS_50 })).toEqual([
+        "remote-us-and-off-list",
+      ]);
+      expect(
+        await retrievedKeys(ids, { mode: "any", home: { placeId: P.LONDON_GB, radiusMiles: 50 } }),
+      ).toEqual(["remote-europe"]);
+      expect(
+        (await explainJob(db, ids.get("remote-off-list")!, { mode: "any", home: COLUMBUS_50 }))!
+          .verdict,
+      ).toBe("remote job with a location not resolved yet");
+    });
+  });
+
+  it("skips a job whose locations value isn't an array instead of failing the query", async () => {
+    const ids = await seed(
+      [
+        { key: "suburb", locations: ["Westerville, OH"] },
+        { key: "malformed", locations: ["Westerville, OH"] },
+      ],
+      [{ raw: "Westerville, OH", placeIds: [P.WESTERVILLE_OH] }],
+    );
+    await db.execute(
+      sql`UPDATE ${jobs} SET locations = '{"city": "Westerville"}'::jsonb WHERE id = ${ids.get("malformed")!}`,
+    );
+
+    expect(await retrievedKeys(ids, { mode: "any", home: COLUMBUS_50 })).toEqual(["suburb"]);
   });
 
   it("reads a string by its company: the same bare text can mean different places", async () => {

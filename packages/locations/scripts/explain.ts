@@ -20,6 +20,8 @@ import { user, userPreferences } from "@opusfinder/db/schema";
 import type { UserId } from "@opusfinder/shared";
 import { runScript } from "@opusfinder/shared/script";
 
+import { describeUnmatched } from "../src/index";
+
 /**
  * Why a job is or isn't local for a user, from the location rule's own SQL (the builder retrieval uses).
  *
@@ -172,14 +174,19 @@ function printJob(job: ExplainedJob): void {
         `${[p.name, p.kind === "city" ? p.regionName : null, p.countryCode].filter(Boolean).join(", ")} ` +
         `(${p.kind}${p.miles === null ? "" : `, ${p.miles} mi`})`,
     );
-    const remote = s.remoteCountries.length > 0 ? ` · remote: ${s.remoteCountries.join(", ")}` : "";
+    const remote = s.remoteCountries.length > 0 ? ` · remote: ${countries(s.remoteCountries)}` : "";
     const failed =
       s.unmatched.length > 0
-        ? ` · failed check: ${s.unmatched.map((u) => u.city ?? u.region ?? u.country).join(", ")}`
+        ? ` · failed check: ${s.unmatched.map(describeUnmatched).join(", ")}`
         : "";
     console.log(
       `  ${JSON.stringify(s.raw)} → ${places.join("; ") || "no place"}${remote}${failed} · ` +
         `${s.confidence ?? "no answer"} · v${s.promptVersion} · ${s.reason ?? ""}`,
     );
   }
+}
+
+/** A remote-country list, short: an area such as EMEA is stored as dozens of countries. */
+function countries(codes: string[]): string {
+  return codes.length <= 8 ? codes.join(", ") : `${codes.length} countries`;
 }

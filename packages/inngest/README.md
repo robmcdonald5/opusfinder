@@ -48,7 +48,8 @@ integration (email ships in Phase 11 on the local dev runtime — locked at Phas
     `event.data.trigger === 'cron'` so a cron run filters to cadence-due users while a manual `--all`
     sweep does not), resolves the active location strings no `location_strings` row covers yet when any
     recipient has a home place (`resolve-locations-<i>` steps, `SYNC_CHUNK` pairs each, until none are left;
-    a request that keeps failing is stored as unresolved, a chunk whose every request fails fails the run;
+    a deterministic no-answer is stored as unresolved, a transient failure stores nothing and is skipped by
+    the later steps, and only a step whose every request (three or more) failed transiently fails the run;
     more than 50 chunks means run `pnpm locations:backfill`), fans out one `digest/user.requested`
     each via `step.sendEvent`, and finalizes the run to the dispatch count (plus the location counts). Fan-out is fire-and-forget,
     so the run row records **dispatch**, not per-user completion (those land on `digests`). A step that
@@ -65,7 +66,8 @@ integration (email ships in Phase 11 on the local dev runtime — locked at Phas
     (skip if no profile/embedding, unverified email, `!digestEnabled`, suppressed, or no send permit
     (`digest_approved_at` unset) — so even a manual single-user trigger respects an opt-out and matches
     the `--all` sweep's gate — or if this run already emailed the user, so a dashboard Rerun/Replay never
-    re-sends) → retrieve (the location rule — `location_mode` + the home place and radius — runs in
+    re-sends; step id `load-v2`) → retrieve (step id `retrieve-v2`: both outputs changed shape with the
+    location rule, so a run replaying state memoized under the old ids can't feed it to this code; the location rule — `location_mode` + the home place and radius — runs in
     retrieval's SQL before the cosine ranking, and the user's local-string count is recorded; exclusion
     keywords are applied in retrieval's post-filter — Phase-F3 merges `dealbreakers` into that exclusions
     filter — plus the Phase-F1 repost
@@ -212,10 +214,10 @@ tail finishes (watch the dashboard before checking the delivery columns).
 
 ## Agent-can-do vs User-must-do (deploy split)
 
-| Step | Who |
-|---|---|
-| All package code, the local dev server (`pnpm inngest:dev` — keyless), the end-to-end gate | **Agent** |
-| Provide `DATABASE_URL` + `OPENROUTER_API_KEY` (the OpenRouter key replaced `ANTHROPIC_API_KEY` in 2026-10) | **User** |
-| **Resend account + API key + verified sending domain (SPF/DKIM/DMARC) + `EMAIL_FROM`** | **User (Phase 11)** |
-| Production serve route (SvelteKit-on-Vercel, `apps/web`) + the cadence cron (`10 12 * * *`; `0 13 * * *` until 2026-10) + the F8 backfill cron | Built + deployed (12a; live 2026-06-17) |
-| **Inngest Cloud account + app sync; `INNGEST_SIGNING_KEY`/`INNGEST_EVENT_KEY` auto-provisioned by the Inngest↔Vercel integration (`INNGEST_DEV` UNSET)** | Done (User, deployed 2026-06-17) |
+| Step                                                                                                                                                     | Who                                     |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------- |
+| All package code, the local dev server (`pnpm inngest:dev` — keyless), the end-to-end gate                                                               | **Agent**                               |
+| Provide `DATABASE_URL` + `OPENROUTER_API_KEY` (the OpenRouter key replaced `ANTHROPIC_API_KEY` in 2026-10)                                               | **User**                                |
+| **Resend account + API key + verified sending domain (SPF/DKIM/DMARC) + `EMAIL_FROM`**                                                                   | **User (Phase 11)**                     |
+| Production serve route (SvelteKit-on-Vercel, `apps/web`) + the cadence cron (`10 12 * * *`; `0 13 * * *` until 2026-10) + the F8 backfill cron           | Built + deployed (12a; live 2026-06-17) |
+| **Inngest Cloud account + app sync; `INNGEST_SIGNING_KEY`/`INNGEST_EVENT_KEY` auto-provisioned by the Inngest↔Vercel integration (`INNGEST_DEV` UNSET)** | Done (User, deployed 2026-06-17)        |

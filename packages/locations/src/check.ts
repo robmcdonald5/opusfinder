@@ -7,7 +7,9 @@
  * a wrong state, not a spelling. The one exception is a region named exactly like the city ("Taipei,
  * Taipei", "Buenos Aires, Buenos Aires"): that names the city's own municipality, which GeoNames sometimes
  * files under another region, so the city is looked up across the country. Two same-named cities in one
- * scope: the larger wins.
+ * scope: the larger wins. A place that fails keeps the country and region codes that did check, for the
+ * location rule. Areas expand to their countries (areas.ts) among the remote countries; an area not on the
+ * list is kept as unmatched.
  */
 import type { Db } from "@opusfinder/db";
 import {
@@ -19,6 +21,7 @@ import {
 } from "@opusfinder/db/repos";
 import { normalizePlaceName, type UnmatchedPlace } from "@opusfinder/shared";
 
+import { areaCountries } from "./areas";
 import type { AnsweredPlace, LocationAnswerValue } from "./schema";
 
 /** Countries by ISO code and each country's regions: ~4k rows, loaded once per run. */
@@ -75,21 +78,23 @@ function checkAnswer(
   const placeIds = new Set<number>();
   const unmatched: UnmatchedPlace[] = [];
   for (const place of answer.places) {
-    const fail = (why: UnmatchedPlace["why"]) =>
+    const code = countryCode(place);
+    const country = gazetteer.countries.get(code);
+    const region = country && place.region ? findRegion(gazetteer, code, place.region) : null;
+    const fail = (why: "unknown-country" | "unknown-region" | "unknown-city") =>
       unmatched.push({
+        kind: place.kind,
         city: place.city,
         region: place.region,
         country: place.country,
-        kind: place.kind,
         why,
+        countryCode: country ? code : null,
+        regionCode: region?.regionCode ?? null,
       });
-    const code = countryCode(place);
-    const country = gazetteer.countries.get(code);
     if (!country) {
       fail("unknown-country");
       continue;
     }
-    const region = place.region ? findRegion(gazetteer, code, place.region) : null;
     if (place.city) {
       const cityNorm = normalizePlaceName(place.city);
       const matches = cities.get(cityKey(code, cityNorm)) ?? [];
@@ -114,14 +119,31 @@ function checkAnswer(
     if (gazetteer.countries.has(code)) remoteCountries.add(code);
     else
       unmatched.push({
+        kind: "country",
         city: null,
         region: null,
         country: raw,
-        kind: "country",
         why: "unknown-country",
+        countryCode: null,
+        regionCode: null,
       });
   }
+  for (const name of answer.areas) {
+    const covered = areaCountries(name);
+    if (!covered) {
+      unmatched.push({ kind: "area", name: name.trim().slice(0, 100), why: "unknown-area" });
+      continue;
+    }
+    for (const code of covered) if (gazetteer.countries.has(code)) remoteCountries.add(code);
+  }
   return { placeIds: [...placeIds], remoteCountries: [...remoteCountries], unmatched };
+}
+
+/** One unmatched entry as the CLIs print it. */
+export function describeUnmatched(u: UnmatchedPlace): string {
+  const what =
+    u.kind === "area" ? u.name : [u.city, u.region, u.country].filter(Boolean).join(", ");
+  return `${what} (${u.why})`;
 }
 
 function countryCode(place: AnsweredPlace): string {

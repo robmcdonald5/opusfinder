@@ -17,6 +17,7 @@ import {
   markDigestConsidered,
   retrieveCandidatesForProfile,
   startDigestRun,
+  type LocationPairKey,
   type UserPreferencesRow,
 } from "@opusfinder/db/repos";
 import { BatchEndedError, buildDigestSystem, renderDigestJob } from "@opusfinder/llm";
@@ -63,7 +64,7 @@ const SYNTH_SLOW_INTERVAL = "10m";
 const SYNTH_MAX_POLLS = SYNTH_FAST_POLLS + SYNTH_SLOW_POLLS;
 /** Consecutive failed polls (each after its own step retries) before the run gives up on the batch. */
 const SYNTH_MAX_FAILED_POLLS = 6;
-/** Location-resolve steps per run, SYNC_CHUNK pairs each (~2,000 pairs): far above a day's new strings. A
+/** Location-resolve steps per run, SYNC_CHUNK pairs each (~1,500 pairs): far above a day's new strings. A
  *  run that needs more throws; `pnpm locations:backfill` is the path for a large set. */
 const RESOLVE_MAX_STEPS = 50;
 
@@ -256,9 +257,12 @@ export async function runOrchestrator(
 
     // Resolve the location strings no row covers yet, before any user's retrieval reads them: SYNC_CHUNK pairs
     // per step (each step well inside the function's time limit), until none are left. Only a user with a home
-    // place reads them, so a run with none skips this (and its model spend). A chunk whose every request fails
-    // throws out of its step, so the run fails visibly rather than filtering on unresolved strings.
-    const resolved = { resolved: 0, unanswered: 0, unmatchedPlaces: 0 };
+    // place reads them, so a run with none skips this (and its model spend). A pair whose request failed
+    // transiently is skipped by the later steps (the next run asks again); a step where every request failed
+    // transiently throws, so a provider outage fails the run visibly instead of filtering on strings nobody
+    // resolved.
+    const resolved = { resolved: 0, unanswered: 0, failed: 0, unmatchedPlaces: 0 };
+    const failedPairs: LocationPairKey[] = [];
     const needsLocations =
       recipients.length > 0 &&
       (await step.run("check-home-places", () => anyHasHomePlace(deps.db, recipients as UserId[])));
@@ -270,11 +274,16 @@ export async function runOrchestrator(
           );
         }
         const chunk = await step.run(`resolve-locations-${i}`, () =>
-          syncLocationStrings(deps.db, deps.locations, { limit: SYNC_CHUNK }),
+          syncLocationStrings(deps.db, deps.locations, {
+            limit: SYNC_CHUNK,
+            exclude: failedPairs,
+          }),
         );
         resolved.resolved += chunk.resolved;
         resolved.unanswered += chunk.unanswered;
+        resolved.failed += chunk.failed;
         resolved.unmatchedPlaces += chunk.unmatchedPlaces;
+        failedPairs.push(...chunk.failedPairs);
         if (!chunk.more) break;
       }
     }
@@ -298,6 +307,7 @@ export async function runOrchestrator(
           dispatched: recipients.length,
           locationsResolved: resolved.resolved,
           locationsUnanswered: resolved.unanswered,
+          locationsFailed: resolved.failed,
           locationsUnmatchedPlaces: resolved.unmatchedPlaces,
         },
       }),
@@ -366,7 +376,9 @@ export async function runPerUser(deps: DigestDeps, event: PerUserEvent, step: Pe
   //    step state is re-shipped on every poll-loop replay (the vector is 1024 floats; the history grows
   //    with every digest the user receives). A digest this run already emailed means a dashboard
   //    Rerun/Replay of a run that failed after its send — stop before any spend.
-  const loaded = await step.run("load", async () => {
+  //    The -v2 step ids (load, retrieve): both outputs changed shape with the location rule, and a run
+  //    replaying memoized state under its old ids must not hand that state to this code.
+  const loaded = await step.run("load-v2", async () => {
     const [profile, prefs, alreadySent] = await Promise.all([
       getProfileForDigest(deps.db, userId),
       getPreferences(deps.db, userId),
@@ -402,7 +414,7 @@ export async function runPerUser(deps: DigestDeps, event: PerUserEvent, step: Pe
   //    here, and returns only the fields + description length the rerank/synthesis prompts consume, keeping
   //    the memoized step output slim. `localStrings` (how many location strings are local to the user's
   //    home; null without one) goes on the digest record.
-  const retrieved = await step.run("retrieve", async () => {
+  const retrieved = await step.run("retrieve-v2", async () => {
     const [profile, excludeJobIds, excludeSignatures] = await Promise.all([
       getProfileForDigest(deps.db, userId),
       alreadyShownJobIds(deps.db, userId),

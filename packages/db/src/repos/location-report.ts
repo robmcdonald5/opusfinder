@@ -10,7 +10,7 @@ import type { LocationConfidence, PlaceKind, SourceName, UnmatchedPlace } from "
 
 import type { Db } from "../client";
 import { companies, jobs, locationStrings, places } from "../schema";
-import { activePairsSql } from "./location-strings";
+import { activePairsSql, locationTextsSql, MAX_LOCATION_RAW_BYTES } from "./location-strings";
 import { locationRule, milesBetween, type LocationFilter } from "./location-rule";
 import { candidateFilterSql } from "./retrieval";
 import { resultRows, VECTOR_CAST, vectorLiteral } from "./sql";
@@ -32,6 +32,8 @@ export interface PairStatus {
   unresolved: number;
   /** Active pairs in total. */
   active: number;
+  /** Active pairs never resolved: longer than MAX_LOCATION_RAW_BYTES (not in `active`). */
+  tooLong: number;
 }
 
 /** A stored row as the report lists it, with how many active jobs carry it. */
@@ -53,7 +55,7 @@ export async function coverageBySource(db: Db): Promise<SourceCoverage[]> {
     ),
     placed AS (
       SELECT DISTINCT a.id FROM active a
-      CROSS JOIN LATERAL jsonb_array_elements_text(a.locations) AS l(raw)
+      CROSS JOIN LATERAL ${locationTextsSql(sql`a.locations`)} AS l(raw)
       JOIN ${locationStrings} s ON s.company_id = a.company_id AND s.raw = l.raw
       WHERE cardinality(s.place_ids) > 0
     )
@@ -85,12 +87,18 @@ export async function pairStatus(db: Db, promptVersion: string): Promise<PairSta
     FROM (${activePairsSql()}) a
     LEFT JOIN ${locationStrings} s ON s.company_id = a.company_id AND s.raw = a.raw
   `);
+  const tooLong = await db.execute(sql`
+    SELECT count(DISTINCT (j.company_id, l.raw))::int AS n
+    FROM ${jobs} j CROSS JOIN LATERAL ${locationTextsSql(sql`j.locations`)} AS l(raw)
+    WHERE j.lifecycle_state = 'active' AND octet_length(l.raw) > ${sql.raw(String(MAX_LOCATION_RAW_BYTES))}
+  `);
   const r = (resultRows(result)[0] ?? {}) as Record<string, unknown>;
   return {
     active: Number(r.active ?? 0),
     missing: Number(r.missing ?? 0),
     stale: Number(r.stale ?? 0),
     unresolved: Number(r.unresolved ?? 0),
+    tooLong: Number((resultRows(tooLong)[0] as { n?: unknown } | undefined)?.n ?? 0),
   };
 }
 
@@ -190,7 +198,7 @@ export async function explainJob(
              'miles', CASE WHEN p.kind = 'city' THEN round((${miles})::numeric, 1) END
            ) ORDER BY u.ord) FILTER (WHERE p.geonames_id IS NOT NULL), '[]') AS places
     FROM ${jobs} j
-    CROSS JOIN LATERAL jsonb_array_elements_text(j.locations) WITH ORDINALITY AS l(raw, ord)
+    CROSS JOIN LATERAL ${locationTextsSql(sql`j.locations`)} WITH ORDINALITY AS l(raw, ord)
     CROSS JOIN ${home} h
     LEFT JOIN ${locationStrings} s ON s.company_id = j.company_id AND s.raw = l.raw
     LEFT JOIN LATERAL unnest(s.place_ids) WITH ORDINALITY AS u(place_id, ord) ON true
