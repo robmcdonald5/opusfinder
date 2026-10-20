@@ -1,19 +1,19 @@
 {
-  "promptVersion": "3",
+  "promptVersion": "4",
   "labeled": 368,
   "context-with": {
     "score": {
       "n": 368,
-      "correct": 360,
-      "accuracy": 0.9782608695652174,
+      "correct": 356,
+      "accuracy": 0.967391304347826,
       "byCategory": {
         "area": {
           "n": 40,
-          "correct": 40
+          "correct": 38
         },
         "bare": {
           "n": 97,
-          "correct": 94
+          "correct": 93
         },
         "coded": {
           "n": 35,
@@ -25,24 +25,104 @@
         },
         "multi": {
           "n": 53,
-          "correct": 53
+          "correct": 52
         },
         "plain": {
           "n": 44,
-          "correct": 40
+          "correct": 42
         },
         "remote": {
           "n": 55,
-          "correct": 54
+          "correct": 52
         }
       },
       "unseen": {
         "n": 311,
-        "correct": 304,
-        "accuracy": 0.977491961414791
+        "correct": 300,
+        "accuracy": 0.9646302250803859
       }
     },
     "failures": [
+      {
+        "id": "g009",
+        "raw": "West Coast, Canada, LATAM",
+        "got": {
+          "placeIds": [],
+          "remoteCountries": [
+            "CA",
+            "AI",
+            "AG",
+            "AW",
+            "BS",
+            "BB",
+            "BQ",
+            "VG",
+            "KY",
+            "CU",
+            "CW",
+            "DM",
+            "DO",
+            "GD",
+            "GP",
+            "HT",
+            "JM",
+            "MQ",
+            "MS",
+            "PR",
+            "BL",
+            "KN",
+            "LC",
+            "MF",
+            "VC",
+            "SX",
+            "TT",
+            "TC",
+            "VI",
+            "BZ",
+            "CR",
+            "SV",
+            "GT",
+            "HN",
+            "MX",
+            "NI",
+            "PA",
+            "AR",
+            "BO",
+            "BV",
+            "BR",
+            "CL",
+            "CO",
+            "EC",
+            "FK",
+            "GF",
+            "GY",
+            "PY",
+            "PE",
+            "GS",
+            "SR",
+            "UY",
+            "VE"
+          ],
+          "unmatched": []
+        }
+      },
+      {
+        "id": "g025",
+        "raw": "Durham, NORTH AMERICA, United States",
+        "got": {
+          "placeIds": [
+            4464368
+          ],
+          "remoteCountries": [
+            "BM",
+            "CA",
+            "GL",
+            "PM",
+            "US"
+          ],
+          "unmatched": []
+        }
+      },
       {
         "id": "g074",
         "raw": "provincia di Napoli",
@@ -53,7 +133,7 @@
             {
               "kind": "region",
               "city": null,
-              "region": "Metropolitan City of Naples",
+              "region": "Naples",
               "country": "IT",
               "why": "unknown-region",
               "countryCode": "IT",
@@ -67,7 +147,18 @@
         "raw": "Bulim Square",
         "got": {
           "placeIds": [
-            3094802
+            1609350
+          ],
+          "remoteCountries": [],
+          "unmatched": []
+        }
+      },
+      {
+        "id": "g076",
+        "raw": "San Jose",
+        "got": {
+          "placeIds": [
+            3621849
           ],
           "remoteCountries": [],
           "unmatched": []
@@ -85,214 +176,12 @@
         }
       },
       {
-        "id": "g256",
-        "raw": "Palasë, Vlorë County, Albania",
-        "got": {
-          "placeIds": [],
-          "remoteCountries": [],
-          "unmatched": [
-            {
-              "kind": "city",
-              "city": "Palasë",
-              "region": "Vlorë County",
-              "country": "AL",
-              "why": "unknown-city",
-              "countryCode": "AL",
-              "regionCode": "51"
-            }
-          ]
-        }
-      },
-      {
-        "id": "g283",
-        "raw": "Ireland, , United Kingdom",
+        "id": "g236",
+        "raw": "Hong Kong; Vietnam",
         "got": {
           "placeIds": [
-            2963597
-          ],
-          "remoteCountries": [],
-          "unmatched": []
-        }
-      },
-      {
-        "id": "g294",
-        "raw": "Søborg, , Denmark",
-        "got": {
-          "placeIds": [],
-          "remoteCountries": [],
-          "unmatched": [
-            {
-              "kind": "city",
-              "city": "Søborg",
-              "region": "Capital Region",
-              "country": "DK",
-              "why": "unknown-city",
-              "countryCode": "DK",
-              "regionCode": "17"
-            }
-          ]
-        }
-      },
-      {
-        "id": "g296",
-        "raw": "Wood Lake, MN, United States",
-        "got": {
-          "placeIds": [],
-          "remoteCountries": [],
-          "unmatched": [
-            {
-              "kind": "city",
-              "city": "Wood Lake",
-              "region": "Minnesota",
-              "country": "US",
-              "why": "unknown-city",
-              "countryCode": "US",
-              "regionCode": "MN"
-            }
-          ]
-        }
-      },
-      {
-        "id": "g310",
-        "raw": "NY, US, IL, US - Remote",
-        "got": {
-          "placeIds": [
-            5128638,
-            4896861
-          ],
-          "remoteCountries": [
-            "US"
-          ],
-          "unmatched": []
-        }
-      }
-    ]
-  },
-  "context-without": {
-    "score": {
-      "n": 368,
-      "correct": 356,
-      "accuracy": 0.967391304347826,
-      "byCategory": {
-        "area": {
-          "n": 40,
-          "correct": 40
-        },
-        "bare": {
-          "n": 97,
-          "correct": 89
-        },
-        "coded": {
-          "n": 35,
-          "correct": 35
-        },
-        "label": {
-          "n": 44,
-          "correct": 44
-        },
-        "multi": {
-          "n": 53,
-          "correct": 53
-        },
-        "plain": {
-          "n": 44,
-          "correct": 41
-        },
-        "remote": {
-          "n": 55,
-          "correct": 54
-        }
-      },
-      "unseen": {
-        "n": 311,
-        "correct": 303,
-        "accuracy": 0.9742765273311897
-      }
-    },
-    "failures": [
-      {
-        "id": "g037",
-        "raw": "Cambridge",
-        "got": {
-          "placeIds": [
-            2653941
-          ],
-          "remoteCountries": [],
-          "unmatched": []
-        }
-      },
-      {
-        "id": "g050",
-        "raw": "San Jose",
-        "got": {
-          "placeIds": [
-            5392171
-          ],
-          "remoteCountries": [],
-          "unmatched": []
-        }
-      },
-      {
-        "id": "g065",
-        "raw": "Süddeutschland",
-        "got": {
-          "placeIds": [
-            2921044
-          ],
-          "remoteCountries": [],
-          "unmatched": []
-        }
-      },
-      {
-        "id": "g069",
-        "raw": "Georgia",
-        "got": {
-          "placeIds": [
-            4197000
-          ],
-          "remoteCountries": [],
-          "unmatched": []
-        }
-      },
-      {
-        "id": "g074",
-        "raw": "provincia di Napoli",
-        "got": {
-          "placeIds": [
-            3181042
-          ],
-          "remoteCountries": [],
-          "unmatched": []
-        }
-      },
-      {
-        "id": "g075",
-        "raw": "Bulim Square",
-        "got": {
-          "placeIds": [
-            1819729
-          ],
-          "remoteCountries": [],
-          "unmatched": []
-        }
-      },
-      {
-        "id": "g120",
-        "raw": "Georgia",
-        "got": {
-          "placeIds": [
-            4197000
-          ],
-          "remoteCountries": [],
-          "unmatched": []
-        }
-      },
-      {
-        "id": "g121",
-        "raw": "Georgia",
-        "got": {
-          "placeIds": [
-            4197000
+            1819730,
+            1562822
           ],
           "remoteCountries": [],
           "unmatched": []
@@ -330,29 +219,251 @@
         }
       },
       {
-        "id": "g296",
-        "raw": "Wood Lake, MN, United States",
+        "id": "g310",
+        "raw": "NY, US, IL, US - Remote",
+        "got": {
+          "placeIds": [
+            5128638,
+            4896861
+          ],
+          "remoteCountries": [
+            "US"
+          ],
+          "unmatched": []
+        }
+      },
+      {
+        "id": "g338",
+        "raw": "United States, Remote",
+        "got": {
+          "placeIds": [
+            6252001
+          ],
+          "remoteCountries": [
+            "US"
+          ],
+          "unmatched": []
+        }
+      },
+      {
+        "id": "g344",
+        "raw": "MY-Malaysia-Remote",
+        "got": {
+          "placeIds": [
+            1733045
+          ],
+          "remoteCountries": [
+            "MY"
+          ],
+          "unmatched": []
+        }
+      }
+    ]
+  },
+  "context-without": {
+    "score": {
+      "n": 368,
+      "correct": 354,
+      "accuracy": 0.9619565217391305,
+      "byCategory": {
+        "area": {
+          "n": 40,
+          "correct": 40
+        },
+        "bare": {
+          "n": 97,
+          "correct": 89
+        },
+        "coded": {
+          "n": 35,
+          "correct": 35
+        },
+        "label": {
+          "n": 44,
+          "correct": 43
+        },
+        "multi": {
+          "n": 53,
+          "correct": 52
+        },
+        "plain": {
+          "n": 44,
+          "correct": 42
+        },
+        "remote": {
+          "n": 55,
+          "correct": 53
+        }
+      },
+      "unseen": {
+        "n": 311,
+        "correct": 302,
+        "accuracy": 0.9710610932475884
+      }
+    },
+    "failures": [
+      {
+        "id": "g037",
+        "raw": "Cambridge",
+        "got": {
+          "placeIds": [
+            2653941
+          ],
+          "remoteCountries": [],
+          "unmatched": []
+        }
+      },
+      {
+        "id": "g050",
+        "raw": "San Jose",
+        "got": {
+          "placeIds": [
+            5392171
+          ],
+          "remoteCountries": [],
+          "unmatched": []
+        }
+      },
+      {
+        "id": "g069",
+        "raw": "Georgia",
+        "got": {
+          "placeIds": [
+            4197000
+          ],
+          "remoteCountries": [],
+          "unmatched": []
+        }
+      },
+      {
+        "id": "g074",
+        "raw": "provincia di Napoli",
+        "got": {
+          "placeIds": [
+            3181042
+          ],
+          "remoteCountries": [],
+          "unmatched": []
+        }
+      },
+      {
+        "id": "g075",
+        "raw": "Bulim Square",
+        "got": {
+          "placeIds": [
+            1846918
+          ],
+          "remoteCountries": [],
+          "unmatched": []
+        }
+      },
+      {
+        "id": "g090",
+        "raw": "District of Columbia",
+        "got": {
+          "placeIds": [
+            4140963
+          ],
+          "remoteCountries": [],
+          "unmatched": []
+        }
+      },
+      {
+        "id": "g120",
+        "raw": "Georgia",
+        "got": {
+          "placeIds": [
+            4197000
+          ],
+          "remoteCountries": [],
+          "unmatched": []
+        }
+      },
+      {
+        "id": "g121",
+        "raw": "Georgia",
+        "got": {
+          "placeIds": [
+            4197000
+          ],
+          "remoteCountries": [],
+          "unmatched": []
+        }
+      },
+      {
+        "id": "g191",
+        "raw": "Stennis Space Center, Mississippi",
+        "got": {
+          "placeIds": [
+            4436296
+          ],
+          "remoteCountries": [],
+          "unmatched": []
+        }
+      },
+      {
+        "id": "g210",
+        "raw": "Home Based - Americas; Home based - EMEA; Office Based - London, UK",
+        "got": {
+          "placeIds": [
+            2643743
+          ],
+          "remoteCountries": [],
+          "unmatched": []
+        }
+      },
+      {
+        "id": "g283",
+        "raw": "Ireland, , United Kingdom",
+        "got": {
+          "placeIds": [
+            2963597,
+            2635167
+          ],
+          "remoteCountries": [],
+          "unmatched": []
+        }
+      },
+      {
+        "id": "g294",
+        "raw": "Søborg, , Denmark",
         "got": {
           "placeIds": [],
           "remoteCountries": [],
           "unmatched": [
             {
               "kind": "city",
-              "city": "Wood Lake",
-              "region": "Minnesota",
-              "country": "US",
+              "city": "Søborg",
+              "region": "Capital Region",
+              "country": "DK",
               "why": "unknown-city",
-              "countryCode": "US",
-              "regionCode": "MN"
+              "countryCode": "DK",
+              "regionCode": "17"
             }
           ]
         }
       },
       {
-        "id": "g330",
-        "raw": "US; Remote, US",
+        "id": "g310",
+        "raw": "NY, US, IL, US - Remote",
         "got": {
-          "placeIds": [],
+          "placeIds": [
+            5128638,
+            4896861
+          ],
+          "remoteCountries": [
+            "US"
+          ],
+          "unmatched": []
+        }
+      },
+      {
+        "id": "g349",
+        "raw": "Tucson, AZ (Remote)",
+        "got": {
+          "placeIds": [
+            5318313
+          ],
           "remoteCountries": [
             "US"
           ],
