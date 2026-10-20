@@ -5,12 +5,12 @@ import { getDatabaseUrl } from "@opusfinder/db/env";
 import { getPlaces } from "@opusfinder/db/repos";
 import { runScript } from "@opusfinder/shared/script";
 
-import { recheckLocationStrings } from "../src/index";
+import { PROMPT_VERSION, recheckLocationStrings } from "../src/index";
 
 /**
- * Re-run the GeoNames check over the places stored answers failed, without the model: run it after
- * `places:load` or a change to the check or the area list. Free and quick; writes only the rows it changes
- * (owner-run).
+ * Re-run the GeoNames check over the places stored answers failed, without the model: for a change to
+ * the check, the area list or `places` alone (a prompt change needs `locations:backfill`). Only rows of
+ * the current prompt version; free and quick; writes only the rows it changes (owner-run).
  *
  *   pnpm locations:recheck              (re-check and store)
  *   pnpm locations:recheck -- --dry-run (show what would change)
@@ -37,7 +37,9 @@ await runScript("locations:recheck", async () => {
     );
   }
   console.log(
-    `locations:recheck${dryRun ? " (dry run, nothing written)" : ""}: ${result.rows} rows with unmatched ` +
-      `places; ${result.recovered} place(s) now pass, on ${result.changed} row(s); ${result.stillUnmatched} still unmatched.`,
+    `locations:recheck${dryRun ? " (dry run, nothing written)" : ""}: ${result.rows} rows of prompt ` +
+      `version ${PROMPT_VERSION} with unmatched places; ${result.recovered} place(s) now pass, on ` +
+      `${result.changed} row(s)${dryRun ? "" : ` (${result.written} written; the rest changed meanwhile)`}; ` +
+      `${result.stillUnmatched} still unmatched.`,
   );
 });

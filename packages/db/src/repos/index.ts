@@ -79,6 +79,7 @@ export {
 } from "./location-strings";
 export type {
   CheckedPlacesRow,
+  CheckedPlacesUpdate,
   LocationPair,
   LocationPairKey,
   LocationStringRow,

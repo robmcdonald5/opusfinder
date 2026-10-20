@@ -1,39 +1,42 @@
 /**
- * Re-run the GeoNames check over what stored answers kept as unmatched, without the model. After
- * `places:load` adds places, or the check learns a spelling or the area list a bloc, a failed place in a
- * stored answer can pass: this moves it into the row's place ids (an area into its remote countries) and
- * leaves the rest on `unmatched`. Unknown country codes can't change, so they stay. The model's answer
- * (confidence, reason, prompt version) is kept, so a later prompt-version backfill still re-resolves the
- * row as usual.
+ * Re-run the GeoNames check over what stored answers kept as unmatched, without the model, for a change
+ * to the check, the area list or `places` alone. A failed place that passes now moves into the row's place
+ * ids (an area into its remote countries); the rest stays on `unmatched`, and unknown country codes can't
+ * change. Only rows the current prompt version wrote are rechecked (an older answer was read under older
+ * rules; the backfill re-resolves it), and a row rewritten meanwhile is left alone. The model's answer
+ * (confidence, reason, prompt version) is kept.
  */
 import type { Db } from "@opusfinder/db";
 import {
   listUnmatchedLocationStrings,
   updateCheckedPlaces,
-  type CheckedPlacesRow,
+  type CheckedPlacesUpdate,
 } from "@opusfinder/db/repos";
 import type { UnmatchedPlace } from "@opusfinder/shared";
 
 import { checkAnswers, loadGazetteer, type Gazetteer } from "./check";
+import { PROMPT_VERSION } from "./prompt";
 import type { LocationAnswerValue } from "./schema";
 
 export interface RecheckResult {
-  /** Rows with something unmatched before the recheck. */
+  /** Rows of the current prompt version with something unmatched before the recheck. */
   rows: number;
   /** Rows the recheck changed. */
   changed: number;
+  /** Changed rows actually written; the rest were rewritten by something else meanwhile (0 on a dry run). */
+  written: number;
   /** Unmatched entries that now pass, and those that still fail. */
   recovered: number;
   stillUnmatched: number;
   /** The changed rows, as they will be (or were) written. */
-  updates: CheckedPlacesRow[];
+  updates: CheckedPlacesUpdate[];
 }
 
 export async function recheckLocationStrings(
   db: Db,
   opts: { gazetteer?: Gazetteer; dryRun?: boolean } = {},
 ): Promise<RecheckResult> {
-  const rows = await listUnmatchedLocationStrings(db);
+  const rows = await listUnmatchedLocationStrings(db, PROMPT_VERSION);
   const gazetteer = opts.gazetteer ?? (await loadGazetteer(db));
   const split = rows.map((row) => ({
     row,
@@ -45,7 +48,7 @@ export async function recheckLocationStrings(
     gazetteer,
     split.map(({ retry }) => answerOf(retry)),
   );
-  const updates: CheckedPlacesRow[] = [];
+  const updates: CheckedPlacesUpdate[] = [];
   let recovered = 0;
   let stillUnmatched = 0;
   split.forEach(({ row, retry, keep }, i) => {
@@ -58,10 +61,18 @@ export async function recheckLocationStrings(
       placeIds: [...new Set([...row.placeIds, ...c.placeIds])],
       remoteCountries: [...new Set([...row.remoteCountries, ...c.remoteCountries])],
       unmatched: [...keep, ...c.unmatched],
+      previousUnmatched: row.unmatched,
     });
   });
-  if (!opts.dryRun) await updateCheckedPlaces(db, updates);
-  return { rows: rows.length, changed: updates.length, recovered, stillUnmatched, updates };
+  const written = opts.dryRun ? 0 : await updateCheckedPlaces(db, updates);
+  return {
+    rows: rows.length,
+    changed: updates.length,
+    written,
+    recovered,
+    stillUnmatched,
+    updates,
+  };
 }
 
 /** The unmatched entries as an answer the check reads: places as the model named them, areas by name. */
