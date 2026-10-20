@@ -43,7 +43,7 @@ describe("createLocationModel", () => {
       system: request.system,
       cacheSystem: true,
       messages: [{ role: "user", content: request.user }],
-      maxOutputTokens: 4096,
+      maxOutputTokens: request.maxOutputTokens,
       effort: "low",
       thinking: "off",
       schema: LocationAnswerSchema,
@@ -118,7 +118,7 @@ describe("createLocationModel", () => {
       effort: "low",
       thinking: "off",
       cacheSystem: true,
-      maxOutputTokens: 4096,
+      maxOutputTokens: requests[0]!.maxOutputTokens,
       schema: LocationAnswerSchema,
     });
     const answers = await model.collectBatch("batch-1");

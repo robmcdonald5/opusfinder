@@ -8,10 +8,25 @@
 import { LOCATION_SYSTEM, renderPair, type PromptPair } from "./prompt";
 import { LocationAnswerSchema } from "./schema";
 
-/** Output budget for the longest string a job stores: 500 characters (upsertJobs' cap) name at most ~85
- *  places at 6 characters each ("Rome, "), ~25 tokens each in the answer, plus the reason; doubled for
- *  margin. A reply cut off anyway is stored as unresolved. */
+const PLACE_SEPARATORS = /[,;|/&\n]|\b(?:or|and)\b/gi;
+const BASE_OUTPUT_TOKENS = 256;
+const TOKENS_PER_PART = 48;
 const MAX_OUTPUT_TOKENS = 4096;
+
+/**
+ * Each request's output budget, sized to the answer its text can need. The provider reserves a request's
+ * whole budget against the key's credit until it finishes, and a backfill's batches hold every request's
+ * at once, so one flat cap sized for the longest string reserved many times what the answers use. A place
+ * in the answer is ~30 tokens and the text separates the places it names (",", ";", "|", "/", "&", "or",
+ * "and"): a base for the reason, the JSON frame and a place or two, plus an allowance per separated part,
+ * capped for the longest string a job stores (500 characters name at most ~85 places). The busiest golden
+ * strings use under half their budget. Sized from the text alone, so a reply cut off at its budget is a
+ * deterministic outcome, stored as unresolved.
+ */
+export function outputBudget(raw: string): number {
+  const parts = 1 + (raw.match(PLACE_SEPARATORS) ?? []).length;
+  return Math.min(MAX_OUTPUT_TOKENS, BASE_OUTPUT_TOKENS + TOKENS_PER_PART * parts);
+}
 
 /** Requests per provider batch. Every request repeats the ~10 KB system block plus ~1 KB of pair and
  *  context, so 1,500 keep a submit near 17 MB; a larger set goes out as several batches. */
@@ -61,7 +76,7 @@ export function buildLocationRequest(id: string, pair: PromptPair): LocationRequ
     system: LOCATION_SYSTEM,
     user: renderPair(pair),
     schema: LocationAnswerSchema,
-    maxOutputTokens: MAX_OUTPUT_TOKENS,
+    maxOutputTokens: outputBudget(pair.raw),
     effort: "low",
     thinking: "off",
   };

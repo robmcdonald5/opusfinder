@@ -1,4 +1,4 @@
-export { BATCH_SIZE, buildLocationRequest } from "./model";
+export { BATCH_SIZE, buildLocationRequest, outputBudget } from "./model";
 export type { LocationAnswer, LocationModel, LocationRequest } from "./model";
 export { createLocationModel } from "./transport";
 export { AREA_NAMES, AREAS, areaCountries, readArea } from "./areas";

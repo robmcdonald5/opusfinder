@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { buildLocationRequest } from "./model";
+import { buildLocationRequest, outputBudget } from "./model";
 import { LOCATION_SYSTEM, PROMPT_STRINGS, renderPair } from "./prompt";
 import { LocationAnswerSchema } from "./schema";
 
@@ -13,8 +13,19 @@ describe("location request", () => {
     });
     expect(a.system).toBe(b.system);
     expect(a.schema).toBe(LocationAnswerSchema);
-    expect(a).toMatchObject({ id: "p0", effort: "low", thinking: "off", maxOutputTokens: 4096 });
+    expect(a).toMatchObject({ id: "p0", effort: "low", thinking: "off", maxOutputTokens: 352 });
     expect(b.user).not.toBe(a.user);
+  });
+
+  it("sizes the output budget to the places the text can name, capped", () => {
+    expect(outputBudget("Remote")).toBe(304);
+    expect(outputBudget("Columbus, OH")).toBe(352);
+    // Separated parts: Boston | Chicago or Remote / US & Canada, and Denver; Austin
+    expect(outputBudget("Boston | Chicago or Remote / US & Canada, and Denver; Austin")).toBe(
+      256 + 48 * 8,
+    );
+    expect(outputBudget("Oregon, Portland")).toBe(352); // "or" only as a word
+    expect(outputBudget("A, ".repeat(200))).toBe(4096);
   });
 
   it("puts the company and its other strings in the user message, JSON-quoted", () => {
