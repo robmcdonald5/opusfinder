@@ -38,7 +38,8 @@ The abstraction was **extracted** from concrete Greenhouse + Lever + SmartRecrui
   Greenhouse keeps `cleanHtml(..., ["decode","strip","decode","collapse"])` directly; plain-text
   fields use `cleanHtml(..., ["collapse"])`.
 - **`fields.ts` (`src/adapters/fields.ts`)** — shared `NormalizedJob` field-derivation atoms:
-  `inferRemoteFromText(locations)` (the word-boundary "remote" fallback, applied only after any
+  `inferRemoteFromText(locations)` (the word-boundary remote-word fallback: "remote", "home based",
+  "work from home" / "WFH", "telecommute", or "Anywhere" as the location; applied only after any
   authoritative structured signal) and `joinParts(parts)` (compose one location string from
   ordered city/region/country parts). The invariant lives once; per-source variation stays in
   `mapItem`. Pure string ops — Worker-safe (Phase 8).

@@ -19,21 +19,32 @@ export function joinParts(parts: unknown[]): string {
     .join(", ");
 }
 
-/** A "remote" that doesn't make a location remote: negated ("Non-Remote", "not remote") or qualified
- *  as hybrid ("Hybrid Remote", "Hybrid, remote 2 days/week", "Remote (Hybrid)"). No comma after
- *  "remote": "Remote, Hybrid or On-site" lists options and stays remote. */
-const NOT_REMOTE =
-  /\b(?:non|not|no)[- ]?remote\b|\bhybrid[\s,(-]*remote\b|\bremote[\s(-]*hybrid\b/gi;
+/** Words that make a location remote: "remote", home-based work ("Home based - EMEA", "Home-based",
+ *  "Homebased"), "work from home" / "WFH", "telecommute" / "telecommuting", and "Anywhere" as the
+ *  location itself ("Anywhere", "Anywhere in the US", "Work from anywhere"; not "Anywhere Real Estate"). */
+const REMOTE_WORD =
+  "remote|home[\\s-]?based|work(?:ing)?[\\s-]+from[\\s-]+(?:home|anywhere)|wfh|telecommut(?:e|er|ing)";
+const REMOTE = new RegExp(`\\b(?:${REMOTE_WORD})\\b|^\\s*anywhere\\s*(?:$|[,(\\-–]|in\\b)`, "i");
+
+/** A remote word that doesn't make a location remote: negated ("Non-Remote", "not remote") or qualified
+ *  as hybrid ("Hybrid Remote", "Hybrid, remote 2 days/week", "Remote (Hybrid)", "Hybrid (WFH 2 days)",
+ *  "Home based - Hybrid"). No comma after the remote word: "Remote, Hybrid or On-site" lists options and
+ *  stays remote. */
+const NOT_REMOTE = new RegExp(
+  `\\b(?:non|not|no)[- ]?remote\\b|\\bhybrid[\\s,(-]*(?:${REMOTE_WORD})\\b|\\b(?:${REMOTE_WORD})[\\s(-]*hybrid\\b`,
+  "gi",
+);
 
 /**
- * Best-effort remote inference from location strings: true iff any location contains the word
- * "remote" (word-boundary, case-insensitive) outside a NOT_REMOTE phrase, so Hybrid resolves to false
- * per the NormalizedJob contract. Each location is judged alone: "Remote - US" beside "NYC (Hybrid)"
- * stays remote, as does "Remote or Hybrid". The shared FALLBACK used by every adapter that has no
- * authoritative structured remote signal — or as the last resort AFTER one.
+ * Best-effort remote inference from location strings: true iff any location carries a remote word
+ * ({@link REMOTE}, word-boundary, case-insensitive) outside a NOT_REMOTE phrase, so Hybrid resolves to
+ * false per the NormalizedJob contract. Each location is judged alone: "Remote - US" beside "NYC
+ * (Hybrid)" stays remote, as does "Remote or Hybrid" and "Home based - EMEA; Office Based - London". The
+ * shared FALLBACK used by every adapter that has no authoritative structured remote signal — or as the
+ * last resort AFTER one.
  */
 export function inferRemoteFromText(locations: string[]): boolean {
-  return locations.some((location) => /\bremote\b/i.test(location.replace(NOT_REMOTE, " ")));
+  return locations.some((location) => REMOTE.test(location.replace(NOT_REMOTE, " ")));
 }
 
 /**
