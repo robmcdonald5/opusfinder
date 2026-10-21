@@ -35,6 +35,7 @@ import type {
   LocationConfidence,
   LocationMode,
   PlaceKind,
+  PlaceSource,
   SourceName,
   StructuredProfile,
   UnmatchedPlace,
@@ -353,12 +354,15 @@ export const userProfiles = pgTable(
 // job's raw `locations` strings to these rows by (company_id, raw).
 
 /**
- * One GeoNames city (cities500), first-level region (admin1) or country. The `*_norm` columns are the
+ * One GeoNames city (cities500, plus every US populated place from the US dump), first-level region
+ * (admin1) or country. The `*_norm` columns are the
  * matching keys (see normalizePlaceName in @opusfinder/shared): `name_norm` from the name, `ascii_norm`
  * from GeoNames' ASCII name, and `alt_names` the normalized Latin-script alternate names of a city
  * ("New York" for New York City), consulted only when no city matches by name. A region's `region_code`
  * is its own admin1 code; a city's is the code of the region it is in (NULL when GeoNames gives none).
- * Coordinates and population are set for cities only.
+ * Coordinates and population are set for cities only. `source` says which GeoNames list the row came
+ * from: the check prefers a `main` city and takes a `us-dump` one only to fill a gap (see
+ * @opusfinder/locations check.ts).
  */
 export const places = pgTable(
   "places",
@@ -378,6 +382,7 @@ export const places = pgTable(
     lat: doublePrecision("lat"),
     lng: doublePrecision("lng"),
     population: integer("population"),
+    source: text("source").$type<PlaceSource>().notNull().default("main"),
   },
   (t) => [
     // The normalizer's check and user:set-prefs look places up by name within a country.

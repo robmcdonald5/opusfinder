@@ -1,6 +1,10 @@
 /** A `places` row's kind: a GeoNames city, first-level region (state, province, admin1) or country. */
 export type PlaceKind = "city" | "region" | "country";
 
+/** Which GeoNames list a `places` row came from: the main gazetteer (cities500, admin1, countries) or the
+ *  US dump, which only fills gaps the main list leaves (small US towns and communities). */
+export type PlaceSource = "main" | "us-dump";
+
 /** How sure the location normalizer was of its answer for one location string. */
 export type LocationConfidence = "high" | "medium" | "low";
 

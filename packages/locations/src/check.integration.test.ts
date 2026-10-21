@@ -158,11 +158,119 @@ describe("the GeoNames check (integration: real PGlite)", () => {
       answer([], [], ["Worldwide"]),
     );
     // The fixture gazetteer's countries in M49 Europe; codes it lacks are dropped.
-    expect(europe!.remoteCountries.sort()).toEqual(["DE", "FR", "GB", "IE"]);
+    expect(europe!.remoteCountries.sort()).toEqual(["AT", "CH", "DE", "FR", "GB", "IE", "UA"]);
     expect(europe!.unmatched).toEqual([]);
-    expect(mixed!.remoteCountries.sort()).toEqual(["TR", "US"]);
+    expect(mixed!.remoteCountries.sort()).toEqual(["PE", "TR", "US"]); // LATAM: Peru in the fixture
     expect(mixed!.unmatched).toEqual([{ kind: "area", name: "Atlantic Rim", why: "unknown-area" }]);
     expect(noLimit).toEqual({ placeIds: [], remoteCountries: [], unmatched: [] });
+  });
+
+  it("reads a region by its name without the words that only say it is a region", async () => {
+    const region = (name: string, country: string): AnsweredPlace => ({
+      city: null,
+      region: name,
+      country,
+      kind: "region",
+    });
+    const [ogun, salzburgState, ambiguous] = await check(
+      answer([region("Ogun", "NG")]),
+      answer([region("Salzburg State", "AT")]),
+      // "Almaty Region" and "Almaty" both reduce to "almaty": no guess between them.
+      answer([region("Almaty Oblysy", "KZ")]),
+    );
+    expect(ogun!.placeIds).toEqual([P.OGUN_STATE]);
+    expect(salzburgState!.placeIds).toEqual([P.SALZBURG]);
+    expect(ambiguous!.unmatched[0]).toMatchObject({ why: "unknown-region" });
+  });
+
+  it("treats a region named like the city, admin words aside, as the city's own municipality", async () => {
+    const [almaty, lima, kl] = await check(
+      answer([city("Almaty", "Almaty Region", "KZ")]),
+      answer([city("Lima", "Lima Region", "PE")]),
+      // Not a namesake: Kuala Lumpur is a federal territory, not part of Selangor (the prompt's job).
+      answer([city("Kuala Lumpur", "Selangor", "MY")]),
+    );
+    expect(almaty!.placeIds).toEqual([P.ALMATY]);
+    expect(lima!.placeIds).toEqual([P.LIMA]);
+    expect(kl!.unmatched[0]).toMatchObject({ why: "unknown-city", regionCode: "12" });
+  });
+
+  it("matches St./Saint either way, in a city and in a region", async () => {
+    const [stJoseph, stGallen] = await check(
+      answer([city("St. Joseph", "Michigan", "US")]),
+      answer([city("Rapperswil", "St. Gallen", "CH")]),
+    );
+    expect(stJoseph!.placeIds).toEqual([P.SAINT_JOSEPH_MI]);
+    expect(stGallen!.placeIds).toEqual([P.RAPPERSWIL]);
+  });
+
+  it("leaves a compound GeoNames doesn't list whole unplaced, never one of its parts", async () => {
+    const [winstonSalem, stockton, wals] = await check(
+      answer([city("Winston-Salem", "Virginia", "US")]), // Salem and Winston are other Virginia towns
+      answer([city("Stockton-on-Tees", "England", "GB")]), // Stockton is a village 255 km away
+      answer([city("Wals-Siezenheim", "Salzburg", "AT")]),
+    );
+    for (const result of [winstonSalem, stockton, wals]) {
+      expect(result!.placeIds).toEqual([]);
+      expect(result!.unmatched[0]).toMatchObject({ why: "unknown-city" });
+    }
+  });
+
+  it("lets a main-list city decide whenever one matches, by name or alternate name", async () => {
+    // Each US-dump namesake (or alternate spelling) sits 60-600 km from the city the text means.
+    const [powhatan, marlboro, radcliffe, simi, bigSprings] = await check(
+      answer([city("Powhatan", "Virginia", "US")]),
+      answer([city("Marlboro", "Massachusetts", "US")]),
+      answer([city("Radcliffe", "Kentucky", "US")]),
+      answer([city("Simi", "California", "US")]),
+      answer([city("Big Springs", "Texas", "US")]),
+    );
+    expect(powhatan!.placeIds).toEqual([P.POWHATAN_VA]);
+    expect(marlboro!.placeIds).toEqual([P.MARLBOROUGH_MA]);
+    expect(radcliffe!.placeIds).toEqual([P.RADCLIFF_KY]);
+    expect(simi!.placeIds).toEqual([P.SIMI_VALLEY_CA]);
+    expect(bigSprings!.placeIds).toEqual([P.BIG_SPRING_TX]);
+  });
+
+  it("fills a gap from the US dump only with the one place of that name in scope, never by an alternate name", async () => {
+    const [brooklyn, altOnly] = await check(
+      answer([city("Brooklyn", "Georgia", "US")]), // two dump places: no guess between them
+      answer([city("Gumbo", "Mississippi", "US")]),
+    );
+    expect(brooklyn!.placeIds).toEqual([]);
+    expect(brooklyn!.unmatched[0]).toMatchObject({ why: "unknown-city", regionCode: "GA" });
+    expect(altOnly!.placeIds).toEqual([]);
+  });
+
+  it("reads no region for a bare name that a city-region shares, but the exact names still match", async () => {
+    const region = (name: string, country: string): AnsweredPlace => ({
+      city: null,
+      region: name,
+      country,
+      kind: "region",
+    });
+    const [kyiv, maputo, osh, oblast, kyivCity] = await check(
+      answer([region("Kyiv", "UA")]),
+      answer([region("Maputo", "MZ")]),
+      answer([region("Osh", "KG")]),
+      answer([region("Kyiv Oblast", "UA")]),
+      answer([city("Kyiv", "Kyiv", "UA")]), // the city itself: looked up across the country
+    );
+    for (const result of [kyiv, maputo, osh]) {
+      expect(result!.placeIds).toEqual([]);
+      expect(result!.unmatched[0]).toMatchObject({ why: "unknown-region" });
+    }
+    expect(oblast!.placeIds).toEqual([P.KYIV_OBLAST]);
+    expect(kyivCity!.placeIds).toEqual([P.KYIV]);
+  });
+
+  it("keeps a small town in the state named, never its larger namesake elsewhere", async () => {
+    const [mississippi, bare] = await check(
+      answer([city("McHenry", "Mississippi", "US")]),
+      answer([city("McHenry", null, "US")]),
+    );
+    expect(mississippi!.placeIds).toEqual([P.MCHENRY_MS]);
+    expect(bare!.placeIds).toEqual([P.MCHENRY_IL]); // no state: the largest McHenry
   });
 
   it("refuses to run against an empty gazetteer", async () => {

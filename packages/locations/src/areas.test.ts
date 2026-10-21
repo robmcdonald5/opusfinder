@@ -34,12 +34,38 @@ describe("areas", () => {
     expect(AREAS.APAC).not.toContain("IR");
     expect(AREAS["North America"]).not.toContain("MX");
     expect(AREAS["European Union"]).toHaveLength(27);
+    expect(has("MENA", [...AREAS["Middle East"], "DZ", "EG", "LY", "MA", "SD", "TN", "EH"])).toBe(
+      true,
+    );
+    expect(
+      has("Asia", [...AREAS["East Asia"], ...AREAS["Southeast Asia"], ...AREAS["South Asia"]]),
+    ).toBe(true);
+    expect(has("Europe", [...AREAS["Northern Europe"], ...AREAS["Southern Europe"]])).toBe(true);
+  });
+
+  it("opens a region of the United States to the United States", () => {
+    for (const name of [
+      "US Northeast",
+      "US Midwest",
+      "US West Coast",
+      "New England",
+      "Mid-Atlantic",
+    ]) {
+      expect(areaCountries(name), name).toEqual(["US"]);
+    }
+    expect(readArea("Midwest")).toBe("US Midwest");
+    // Bare labels that mean other things elsewhere are not aliased.
+    expect(readArea("West Coast")).toBeNull();
+    expect(readArea("Central")).toBeNull();
   });
 
   it("reads a label by the list's name or an alias, and knows the labels that set no limit", () => {
     expect(readArea("LATAM")).toBe("Latin America");
     expect(readArea("apj")).toBe("APAC");
     expect(readArea("Asia-Pacific")).toBe("APAC");
+    expect(readArea("Middle East & North Africa")).toBe("MENA");
+    expect(readArea("South East Asia")).toBe("Southeast Asia");
+    expect(readArea("Northeast Asia")).toBe("East Asia");
     expect(readArea("the Nordics")).toBeNull();
     expect(readArea("Worldwide")).toBe("no-limit");
     expect(areaCountries("Global")).toEqual([]);

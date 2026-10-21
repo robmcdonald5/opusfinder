@@ -74,8 +74,16 @@ export {
   activePairsSql,
   locationTextsSql,
   MAX_LOCATION_RAW_BYTES,
+  listUnmatchedLocationStrings,
+  updateCheckedPlaces,
 } from "./location-strings";
-export type { LocationPair, LocationPairKey, LocationStringRow } from "./location-strings";
+export type {
+  CheckedPlacesRow,
+  CheckedPlacesUpdate,
+  LocationPair,
+  LocationPairKey,
+  LocationStringRow,
+} from "./location-strings";
 // locations:report / locations:explain reads.
 export {
   coverageBySource,

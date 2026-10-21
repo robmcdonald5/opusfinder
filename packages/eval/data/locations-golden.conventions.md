@@ -27,7 +27,8 @@ and resolves it to a GeoNames id.
    "Greater Seattle Area" → Seattle; "Delhi-NCR" → New Delhi). A suburb that is its own city stays itself
    (Santa Monica, Palo Alto, South San Francisco, Westerville). A ward, district, facility, base, port,
    industrial park or village too small for GeoNames' list of places over ~500 people → the nearest town
-   or city that contains or borders it (a ward of Tokyo → Tokyo; a NASA site → its nearest town). When
+   or city that contains or borders it (a ward of Tokyo → Tokyo; a NASA site → its nearest town). In the
+   US, GeoNames lists every populated place, however small: name a US village or community itself. When
    several towns are equally fair, give one and list the others in the note; they are added to the label
    as `alternatives` by hand.
 4. An office / HQ / campus / data center / station / site / store label around a place → that place
@@ -41,8 +42,9 @@ and resolves it to a GeoNames id.
 6. These are not places: Remote, Hybrid, On-site/Onsite, In-Office, Office, HQ, Headquarters, Home based,
    Distributed, Travel, Field, client sites, street addresses, postal codes, time zones.
 7. World regions and blocs go in `areas`, by their name in this list (and only these names):
-   Africa, Americas, APAC, Asia, Benelux, Central America, CIS, DACH, Eastern Europe, EMEA, Europe,
-   European Union, Iberia, Latin America, Middle East, Nordics, North America, Oceania, South America.
+   Africa, Americas, APAC, Asia, Benelux, Central America, CIS, DACH, East Asia, Eastern Europe, EMEA,
+   Europe, European Union, Iberia, Latin America, MENA, Middle East, Nordics, North America, Northern
+   Europe, Oceania, South America, South Asia, Southeast Asia, Southern Europe, and the US areas below.
    Write the text's own label as the list's name: LATAM → Latin America, AMER → Americas, NAMER →
    North America, APJ / Asia-Pacific → APAC, EU → European Union. A bloc not on the list whose
    countries are plain (UK & Ireland → GB, IE) is those countries. Any other bloc not on the list
@@ -55,8 +57,12 @@ and resolves it to a GeoNames id.
      and areas ["EMEA"]; "Home Based - Americas; Home based - EMEA; Office Based - London, UK" → London
      and areas ["Americas", "EMEA"].
    - Global, Worldwide, Anywhere, International set no limit: no area.
-   - US sub-regions with no name of their own ("West Coast", "East Coast", "Northeast Region",
-     "Midwest", "Pacific Coast") are not places and not areas: leave them out.
+   - A region of the United States named without a state is the list's US area for it when the text
+     names the United States or the label is US-only (Midwest, New England, Mid-Atlantic, Pacific
+     Northwest): US Northeast, US Midwest, US Southeast, US Southwest, US West Coast, US East Coast, US
+     Pacific Northwest, New England, Mid-Atlantic ("Northeast - United States" → US Northeast; "Remote -
+     Midwest" → US Midwest). A bare "East Coast", "West Coast", "South" or "Central" with no US named is
+     no area, and neither is an unnamed area of any other country ("Northern Italy", "Süddeutschland").
      A string that is ONLY such a label (or only a no-limit label) → no places and no areas.
 8. Use English names as GeoNames gives them for cities: "New York City" (for "New York, NY", "NYC",
    "New York City"), "Washington" with region "District of Columbia" for Washington DC, "Bengaluru"
@@ -68,10 +74,14 @@ and resolves it to a GeoNames id.
    city (Singapore, Hong Kong), use `region: null`: the checker then takes the largest city of that name in
    the country. Give the region whenever the country has several cities of that name and you know which one
    is meant. Give the city's actual current region even when the text's is wrong or outdated (Hyderabad →
-   Telangana; Berlin → its own state), and never pick a different same-named city to fit the text's region.
+   Telangana; Berlin → its own state; Kuala Lumpur, Mexico City and Buenos Aires are regions of their own),
+   and never pick a different same-named city to fit the text's region. A city and its country
+   ("New York, United States", "Sofia, Bulgaria") is the city; "Washington, United States" can be the
+   state or D.C., so both count (`alternatives`).
 10. Countries: ISO 3166-1 alpha-2 (GB for the United Kingdom, US, IE for "Republic of Ireland", TR for
     Türkiye, HK for Hong Kong, KR for South Korea, CZ for Czechia/Czech Republic, AE for the UAE). Hong Kong,
-    Macau and Taiwan are countries (HK, MO, TW), never regions of China.
+    Macau and Taiwan are countries (HK, MO, TW), never regions of China; Puerto Rico, Guam, the US Virgin
+    Islands, American Samoa and the Northern Mariana Islands are countries too (PR, GU, VI, AS, MP).
 11. A bare name that could be several places ("Dublin", "Portland", "Cambridge", "Vancouver", "Georgia",
     "San Jose", "Valencia", "London", "Melbourne", "Paris") means the one the company's other strings point
     to (a company whose other offices are all in Ohio → Dublin, Ohio; a company with "Valencia, Spain" among

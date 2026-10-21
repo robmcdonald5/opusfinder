@@ -10,6 +10,16 @@
  * scope: the larger wins. A place that fails keeps the country and region codes that did check, for the
  * location rule. Areas expand to their countries (areas.ts) among the remote countries; an area not on the
  * list is kept as unmatched.
+ *
+ * The main list (cities500, admin1, countries) always decides when any of its cities matches in scope.
+ * A US-dump place (a small town or community) only fills a gap: it is taken when no main-list city
+ * matches and it is the ONLY dump place of that name (or ASCII name; never an alternate name) in scope.
+ * Otherwise the city stays unmatched: unplaced beats wrong.
+ *
+ * Spelling tolerance (names.ts), all within the same scopes: a region name also matches without the words
+ * that only say it is a region ("Ogun" is GeoNames' "Ogun State", "Haifa District" its "Haifa"), unless
+ * the country also has a city-region of that name ("Kyiv" is Kyiv City or Kyiv Oblast), and so does the
+ * namesake rule ("Almaty, Almaty Region"); "St."/"Saint", "Mt."/"Mount" and "Ft."/"Fort" match either way.
  */
 import type { Db } from "@opusfinder/db";
 import {
@@ -22,6 +32,7 @@ import {
 import { normalizePlaceName, type UnmatchedPlace } from "@opusfinder/shared";
 
 import { areaCountries } from "./areas";
+import { cityRegionCore, nameVariants, regionCore } from "./names";
 import type { AnsweredPlace, LocationAnswerValue } from "./schema";
 
 /** Countries by ISO code and each country's regions: ~4k rows, loaded once per run. */
@@ -60,7 +71,9 @@ export async function checkAnswers(
 ): Promise<CheckedAnswer[]> {
   const keys = answers.flatMap((a) =>
     a.places.flatMap((p) =>
-      p.city ? [{ countryCode: countryCode(p), nameNorm: normalizePlaceName(p.city) }] : [],
+      p.city
+        ? cityNames(p.city).map((nameNorm) => ({ countryCode: countryCode(p), nameNorm }))
+        : [],
     ),
   );
   const cities = new Map<string, CityMatch[]>();
@@ -97,12 +110,16 @@ function checkAnswer(
     }
     if (place.city) {
       const cityNorm = normalizePlaceName(place.city);
-      const matches = cities.get(cityKey(code, cityNorm)) ?? [];
+      const matches = [cityNorm, ...nameVariants(cityNorm)].flatMap(
+        (n) => cities.get(cityKey(code, n)) ?? [],
+      );
+      const main = matches.filter((m) => m.source === "main");
+      const regionNorm = normalizePlaceName(place.region ?? "");
+      const namesake = region !== null && [regionNorm, regionCore(regionNorm)].includes(cityNorm);
       const city =
-        pickCity(matches, region) ??
-        (region && normalizePlaceName(place.region ?? "") === cityNorm
-          ? pickCity(matches, null)
-          : null);
+        pickCity(main, region) ??
+        (namesake ? pickCity(main, null) : null) ??
+        onlyGapFill(matches, region);
       if (city) placeIds.add(city.geonamesId);
       else fail("unknown-city");
     } else if (place.region) {
@@ -150,16 +167,45 @@ function countryCode(place: AnsweredPlace): string {
   return place.country.trim().toUpperCase();
 }
 
-/** A region of the country by code ("OH", "ENG") or by name ("Ohio", "Île-de-France"). */
+/** Every name a city is looked up under: its own and its "St."/"Saint" spellings. */
+function cityNames(city: string): string[] {
+  const norm = normalizePlaceName(city);
+  return [norm, ...nameVariants(norm)];
+}
+
+/** The US-dump place to fill a gap the main list leaves: the one dump place matching by name or ASCII name
+ *  in scope (the named region, else the country), or none when there are several or none. */
+function onlyGapFill(matches: CityMatch[], region: Place | null): CityMatch | null {
+  const inScope = new Map(
+    matches
+      .filter((m) => m.source === "us-dump" && !m.byAlt)
+      .filter((m) => !region || m.regionCode === region.regionCode)
+      .map((m) => [m.geonamesId, m]),
+  );
+  return inScope.size === 1 ? [...inScope.values()][0]! : null;
+}
+
+/** A region of the country by code ("OH", "ENG"), by name ("Ohio", "Île-de-France", "Saint Gallen" for
+ *  "St. Gallen"), else by its name without the admin words when that picks exactly one region ("Ogun" →
+ *  "Ogun State", "Riyadh Province" → "Riyadh Region") and no city-region shares the name: a bare "Kyiv"
+ *  could be Kyiv City as much as Kyiv Oblast, so it matches neither. */
 function findRegion(gazetteer: Gazetteer, country: string, text: string): Place | null {
   const code = text.trim().toUpperCase();
   const norm = normalizePlaceName(text);
+  const names = [norm, ...nameVariants(norm)];
   const regions = gazetteer.regions.get(country) ?? [];
-  return (
-    regions.find((r) => r.regionCode?.toUpperCase() === code) ??
-    regions.find((r) => r.nameNorm === norm || r.asciiNorm === norm) ??
-    null
+  const byCode = regions.find((r) => r.regionCode?.toUpperCase() === code);
+  if (byCode) return byCode;
+  const byName = regions.find((r) => names.includes(r.nameNorm) || names.includes(r.asciiNorm));
+  if (byName) return byName;
+  const cores = new Set(names.map(regionCore));
+  const byCore = regions.filter(
+    (r) => cores.has(regionCore(r.nameNorm)) || cores.has(regionCore(r.asciiNorm)),
   );
+  const cityRegion = regions.some((r) =>
+    [r.nameNorm, r.asciiNorm].some((n) => cores.has(cityRegionCore(n) ?? "")),
+  );
+  return byCore.length === 1 && !cityRegion ? byCore[0]! : null;
 }
 
 /** The largest city matching by name in scope, else the largest matching by alternate name. Ties go to

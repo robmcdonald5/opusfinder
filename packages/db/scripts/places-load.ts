@@ -8,10 +8,12 @@ import { loadGeonames } from "../src/geonames-files";
 import { upsertPlaces } from "../src/repos/places";
 
 /**
- * Load the GeoNames gazetteer into `places`: countries, first-level regions, then every city of 500+
- * people. Downloads cities500.zip, admin1CodesASCII.txt and countryInfo.txt from download.geonames.org
+ * Load the GeoNames gazetteer into `places`: countries, first-level regions, every city of 500+ people,
+ * and every other US populated place (the US dump; ~160k small towns and communities). Downloads
+ * cities500.zip, US.zip (~70 MB), admin1CodesASCII.txt and countryInfo.txt from download.geonames.org
  * (CC BY 4.0), checks every field, and upserts by geonames_id. Never deletes, so it is safe to re-run to
- * pick up GeoNames' updates, and a home place a user points at can't disappear.
+ * pick up GeoNames' updates, and a home place a user points at can't disappear. Run `pnpm
+ * locations:recheck` afterwards: stored answers whose places were missing can pass now.
  *
  *   pnpm --filter @opusfinder/db run places:load
  *   pnpm --filter @opusfinder/db run places:load -- --from <dir>   (use already-downloaded files)

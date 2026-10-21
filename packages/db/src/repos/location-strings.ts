@@ -3,7 +3,7 @@
  * context it is given, and the upsert of its checked answers. "Active" means a string some active job
  * lists; a blank string is never a pair, and neither is one over {@link MAX_LOCATION_RAW_BYTES}.
  */
-import { sql, type SQL } from "drizzle-orm";
+import { and, eq, sql, type SQL } from "drizzle-orm";
 
 import type { LocationConfidence, SourceName, UnmatchedPlace } from "@opusfinder/shared";
 
@@ -145,6 +145,72 @@ export async function upsertLocationStrings(db: Db, rows: LocationStringRow[]): 
         setWhere: sql`excluded.confidence IS NOT NULL OR ${locationStrings.confidence} IS NULL`,
       });
   }
+}
+
+/** What the check decided for a stored row: the parts `locations:recheck` re-derives without the model. */
+export interface CheckedPlacesRow {
+  companyId: number;
+  raw: string;
+  placeIds: number[];
+  remoteCountries: string[];
+  unmatched: UnmatchedPlace[];
+  promptVersion: string;
+}
+
+/** A recheck's new values for a row, and the `unmatched` list it read them from. */
+export interface CheckedPlacesUpdate extends CheckedPlacesRow {
+  previousUnmatched: UnmatchedPlace[];
+}
+
+/** Every row a prompt version wrote with something on its `unmatched` list. */
+export async function listUnmatchedLocationStrings(
+  db: Db,
+  promptVersion: string,
+): Promise<CheckedPlacesRow[]> {
+  return db
+    .select({
+      companyId: locationStrings.companyId,
+      raw: locationStrings.raw,
+      placeIds: locationStrings.placeIds,
+      remoteCountries: locationStrings.remoteCountries,
+      unmatched: locationStrings.unmatched,
+      promptVersion: locationStrings.promptVersion,
+    })
+    .from(locationStrings)
+    .where(
+      and(
+        eq(locationStrings.promptVersion, promptVersion),
+        sql`jsonb_array_length(${locationStrings.unmatched}) > 0`,
+      ),
+    );
+}
+
+/** Replace rows' checked places, remote countries and unmatched lists, each only while the row still holds
+ *  the unmatched list and prompt version it was read with: a row a backfill or sync rewrote meanwhile is
+ *  left alone. The model's answer (confidence, reason) and `resolved_at` stay as they were. Returns the
+ *  number of rows written. */
+export async function updateCheckedPlaces(db: Db, rows: CheckedPlacesUpdate[]): Promise<number> {
+  let written = 0;
+  for (const row of rows) {
+    const updated = await db
+      .update(locationStrings)
+      .set({
+        placeIds: row.placeIds,
+        remoteCountries: row.remoteCountries,
+        unmatched: row.unmatched,
+      })
+      .where(
+        and(
+          eq(locationStrings.companyId, row.companyId),
+          eq(locationStrings.raw, row.raw),
+          eq(locationStrings.promptVersion, row.promptVersion),
+          sql`${locationStrings.unmatched} = ${JSON.stringify(row.previousUnmatched)}::jsonb`,
+        ),
+      )
+      .returning({ raw: locationStrings.raw });
+    written += updated.length;
+  }
+  return written;
 }
 
 /** The (company_id, raw, jobs) pairs of active jobs, as a subquery. `extra` narrows the jobs scanned. */

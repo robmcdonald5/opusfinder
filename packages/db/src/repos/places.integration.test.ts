@@ -1,7 +1,9 @@
+import { sql } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import type { Db } from "@opusfinder/db";
 import { cityKey, findCities, findHomePlace, getPlaces, upsertPlaces } from "@opusfinder/db/repos";
+import { resultRows } from "./sql";
 import { places } from "@opusfinder/db/schema";
 
 import { createTestDb } from "@test/db/pglite";
@@ -30,6 +32,24 @@ describe("places repo (integration: real PGlite)", () => {
     expect(rows).toHaveLength(PLACE_ROWS.length);
     const [westerville] = await getPlaces(db, [P.WESTERVILLE_OH]);
     expect(westerville!.population).toBe(40000);
+  });
+
+  it("leaves a row GeoNames hasn't changed untouched on a re-run", async () => {
+    const version = async (id: number) => {
+      const result = await db.execute(
+        sql`SELECT xmin::text AS v FROM ${places} WHERE geonames_id = ${id}`,
+      );
+      return (resultRows(result)[0] as { v: string }).v;
+    };
+    const [columbus, dublin] = [await version(P.COLUMBUS_OH), await version(P.DUBLIN_OH)];
+
+    await upsertPlaces(
+      db,
+      PLACE_ROWS.map((r) => (r.geonamesId === P.DUBLIN_OH ? { ...r, population: 50000 } : r)),
+    );
+
+    expect(await version(P.COLUMBUS_OH)).toBe(columbus);
+    expect(await version(P.DUBLIN_OH)).not.toBe(dublin);
   });
 
   it("finds cities by name within a country, and by alternate name", async () => {
@@ -61,6 +81,15 @@ describe("places repo (integration: real PGlite)", () => {
     ])("%s → exactly one city", async (text, id) => {
       const found = await findHomePlace(db, text);
       expect("place" in found && found.place.geonamesId).toBe(id);
+    });
+
+    it("takes a main-list city over US-dump namesakes, and a dump place only when it is the one", async () => {
+      const powhatan = await findHomePlace(db, "Powhatan, Virginia");
+      expect("place" in powhatan && powhatan.place.geonamesId).toBe(P.POWHATAN_VA);
+      const mchenry = await findHomePlace(db, "McHenry, Mississippi");
+      expect("place" in mchenry && mchenry.place.geonamesId).toBe(P.MCHENRY_MS);
+      const brooklyn = await findHomePlace(db, "Brooklyn, Georgia");
+      expect("candidates" in brooklyn && brooklyn.candidates).toHaveLength(2);
     });
 
     it("lists the candidates, largest first, when the name is ambiguous", async () => {

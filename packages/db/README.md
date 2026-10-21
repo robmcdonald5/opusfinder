@@ -58,7 +58,7 @@ Run from the repo root via the workspace filter so the cwd is `packages/db`:
 | `pnpm --filter @opusfinder/db studio`                 | Open Drizzle Studio                                                                   |
 | `pnpm --filter @opusfinder/db ping`                   | Round-trip `SELECT 1` against Neon                                                    |
 | `pnpm --filter @opusfinder/db runs`                   | Print the most recent `source_runs` rows (pipeline health)                            |
-| `pnpm --filter @opusfinder/db run places:load`        | Download GeoNames (cities500, admin1, countries) and upsert `places`; never deletes   |
+| `pnpm --filter @opusfinder/db run places:load`        | Download GeoNames (cities500, US, admin1, countries); upsert `places`, never deletes  |
 | `pnpm exec vitest run packages/db/src/health.test.ts` | Health-checker suite — pure `evaluateHealth` over canned signals (no creds; Phase F6) |
 | `pnpm --filter @opusfinder/db typecheck`              | `tsc --noEmit`                                                                        |
 
@@ -227,8 +227,11 @@ EXISTS`) removes the seven job-side enrichment columns added by 0013 (`yoe_min`/
   - `0022` / `0023` add the send permit `user_preferences.digest_approved_at`: NULL means no digest is sent
     (fail-closed); grant it with `pnpm user:approve --email …`.
   - `0024` adds `data_fixes`, the record of applied data fixes (see `fixes/README.md`).
-- **Location places (0029).** `places` is the GeoNames gazetteer (every city of 500+ people, first-level
-  region and country; `places:load` upserts it by `geonames_id` and never deletes). `location_strings` holds
+- **Location places (0029).** `places` is the GeoNames gazetteer (every city of 500+ people, every US
+  populated place of any size from GeoNames' US dump, first-level regions and countries: ~403k rows, ~140
+  MB with indexes; `places:load` upserts it by `geonames_id`, rewrites only rows GeoNames changed, and
+  never deletes; `0030` adds `source`, `main` or `us-dump`, so the check can let the dump only fill
+  gaps). `location_strings` holds
   what each company's raw location string means, keyed `(company_id, raw)`: the place ids that passed the
   GeoNames check, remote countries (an area such as "Europe" stored as its countries), the model's
   confidence + one-line reason, what failed the check (`unmatched`: places, with the country/region codes

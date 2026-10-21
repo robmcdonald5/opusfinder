@@ -24,3 +24,5 @@ export {
   SYNC_CHUNK,
 } from "./resolve";
 export type { BatchOutcome, PairOutcome, ResolveCounts, SyncResult } from "./resolve";
+export { recheckLocationStrings } from "./recheck";
+export type { RecheckResult } from "./recheck";

@@ -1,11 +1,11 @@
 {
-  "promptVersion": "3",
-  "labeled": 368,
+  "promptVersion": "4",
+  "labeled": 371,
   "context-with": {
     "score": {
-      "n": 368,
-      "correct": 360,
-      "accuracy": 0.9782608695652174,
+      "n": 371,
+      "correct": 362,
+      "accuracy": 0.9757412398921833,
       "byCategory": {
         "area": {
           "n": 40,
@@ -13,7 +13,7 @@
         },
         "bare": {
           "n": 97,
-          "correct": 94
+          "correct": 92
         },
         "coded": {
           "n": 35,
@@ -28,38 +28,52 @@
           "correct": 53
         },
         "plain": {
-          "n": 44,
-          "correct": 40
+          "n": 47,
+          "correct": 45
         },
         "remote": {
           "n": 55,
-          "correct": 54
+          "correct": 53
         }
       },
       "unseen": {
-        "n": 311,
-        "correct": 304,
-        "accuracy": 0.977491961414791
+        "n": 314,
+        "correct": 307,
+        "accuracy": 0.9777070063694268
       }
     },
     "failures": [
       {
+        "id": "g037",
+        "raw": "Cambridge",
+        "got": {
+          "placeIds": [
+            2653941
+          ],
+          "remoteCountries": [],
+          "unmatched": []
+        }
+      },
+      {
+        "id": "g065",
+        "raw": "Süddeutschland",
+        "got": {
+          "placeIds": [
+            2921044
+          ],
+          "remoteCountries": [],
+          "unmatched": []
+        }
+      },
+      {
         "id": "g074",
         "raw": "provincia di Napoli",
         "got": {
-          "placeIds": [],
+          "placeIds": [
+            3181042
+          ],
           "remoteCountries": [],
-          "unmatched": [
-            {
-              "kind": "region",
-              "city": null,
-              "region": "Metropolitan City of Naples",
-              "country": "IT",
-              "why": "unknown-region",
-              "countryCode": "IT",
-              "regionCode": null
-            }
-          ]
+          "unmatched": []
         }
       },
       {
@@ -85,25 +99,6 @@
         }
       },
       {
-        "id": "g256",
-        "raw": "Palasë, Vlorë County, Albania",
-        "got": {
-          "placeIds": [],
-          "remoteCountries": [],
-          "unmatched": [
-            {
-              "kind": "city",
-              "city": "Palasë",
-              "region": "Vlorë County",
-              "country": "AL",
-              "why": "unknown-city",
-              "countryCode": "AL",
-              "regionCode": "51"
-            }
-          ]
-        }
-      },
-      {
         "id": "g283",
         "raw": "Ireland, , United Kingdom",
         "got": {
@@ -124,30 +119,11 @@
             {
               "kind": "city",
               "city": "Søborg",
-              "region": "Capital Region",
+              "region": "Capital Region of Denmark",
               "country": "DK",
               "why": "unknown-city",
               "countryCode": "DK",
-              "regionCode": "17"
-            }
-          ]
-        }
-      },
-      {
-        "id": "g296",
-        "raw": "Wood Lake, MN, United States",
-        "got": {
-          "placeIds": [],
-          "remoteCountries": [],
-          "unmatched": [
-            {
-              "kind": "city",
-              "city": "Wood Lake",
-              "region": "Minnesota",
-              "country": "US",
-              "why": "unknown-city",
-              "countryCode": "US",
-              "regionCode": "MN"
+              "regionCode": null
             }
           ]
         }
@@ -165,14 +141,27 @@
           ],
           "unmatched": []
         }
+      },
+      {
+        "id": "g338",
+        "raw": "United States, Remote",
+        "got": {
+          "placeIds": [
+            6252001
+          ],
+          "remoteCountries": [
+            "US"
+          ],
+          "unmatched": []
+        }
       }
     ]
   },
   "context-without": {
     "score": {
-      "n": 368,
-      "correct": 356,
-      "accuracy": 0.967391304347826,
+      "n": 371,
+      "correct": 357,
+      "accuracy": 0.9622641509433962,
       "byCategory": {
         "area": {
           "n": 40,
@@ -188,25 +177,25 @@
         },
         "label": {
           "n": 44,
-          "correct": 44
+          "correct": 43
         },
         "multi": {
           "n": 53,
           "correct": 53
         },
         "plain": {
-          "n": 44,
-          "correct": 41
+          "n": 47,
+          "correct": 44
         },
         "remote": {
           "n": 55,
-          "correct": 54
+          "correct": 53
         }
       },
       "unseen": {
-        "n": 311,
-        "correct": 303,
-        "accuracy": 0.9742765273311897
+        "n": 314,
+        "correct": 305,
+        "accuracy": 0.9713375796178344
       }
     },
     "failures": [
@@ -227,17 +216,6 @@
         "got": {
           "placeIds": [
             5392171
-          ],
-          "remoteCountries": [],
-          "unmatched": []
-        }
-      },
-      {
-        "id": "g065",
-        "raw": "Süddeutschland",
-        "got": {
-          "placeIds": [
-            2921044
           ],
           "remoteCountries": [],
           "unmatched": []
@@ -270,7 +248,18 @@
         "raw": "Bulim Square",
         "got": {
           "placeIds": [
-            1819729
+            1835848
+          ],
+          "remoteCountries": [],
+          "unmatched": []
+        }
+      },
+      {
+        "id": "g090",
+        "raw": "District of Columbia",
+        "got": {
+          "placeIds": [
+            4140963
           ],
           "remoteCountries": [],
           "unmatched": []
@@ -293,6 +282,17 @@
         "got": {
           "placeIds": [
             4197000
+          ],
+          "remoteCountries": [],
+          "unmatched": []
+        }
+      },
+      {
+        "id": "g191",
+        "raw": "Stennis Space Center, Mississippi",
+        "got": {
+          "placeIds": [
+            4436296
           ],
           "remoteCountries": [],
           "unmatched": []
@@ -330,22 +330,17 @@
         }
       },
       {
-        "id": "g296",
-        "raw": "Wood Lake, MN, United States",
+        "id": "g310",
+        "raw": "NY, US, IL, US - Remote",
         "got": {
-          "placeIds": [],
-          "remoteCountries": [],
-          "unmatched": [
-            {
-              "kind": "city",
-              "city": "Wood Lake",
-              "region": "Minnesota",
-              "country": "US",
-              "why": "unknown-city",
-              "countryCode": "US",
-              "regionCode": "MN"
-            }
-          ]
+          "placeIds": [
+            5128638,
+            4896861
+          ],
+          "remoteCountries": [
+            "US"
+          ],
+          "unmatched": []
         }
       },
       {
@@ -356,6 +351,17 @@
           "remoteCountries": [
             "US"
           ],
+          "unmatched": []
+        }
+      },
+      {
+        "id": "g371",
+        "raw": "Washington, United States",
+        "got": {
+          "placeIds": [
+            6252001
+          ],
+          "remoteCountries": [],
           "unmatched": []
         }
       }

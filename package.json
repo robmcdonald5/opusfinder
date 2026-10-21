@@ -41,6 +41,7 @@
     "embeddings:search": "pnpm --filter @opusfinder/embeddings run search",
     "locations:sync": "pnpm --filter @opusfinder/locations run sync",
     "locations:backfill": "pnpm --filter @opusfinder/locations run backfill",
+    "locations:recheck": "pnpm --filter @opusfinder/locations run recheck",
     "locations:report": "pnpm --filter @opusfinder/locations run report",
     "locations:explain": "pnpm --filter @opusfinder/locations run explain",
     "eval": "pnpm --filter @opusfinder/eval run eval",

@@ -1,5 +1,5 @@
 export { normalizePlaceName } from "./places";
-export type { LocationConfidence, PlaceKind, UnmatchedPlace } from "./places";
+export type { LocationConfidence, PlaceKind, PlaceSource, UnmatchedPlace } from "./places";
 
 declare const __brand: unique symbol;
 type Brand<TBase, TBrand extends string> = TBase & { readonly [__brand]: TBrand };
