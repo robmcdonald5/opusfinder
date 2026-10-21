@@ -569,12 +569,6 @@ export const userPreferences = pgTable(
     id: serial("id").primaryKey(),
     userId: uuid("user_id").$type<UserId>().notNull(),
     // --- user-settable filter prefs (deterministic filter) ---
-    // DEPRECATED, no longer read or written: the old free-text location filter, replaced by home_place_id +
-    // radius_miles. Dropped by a later migration once no deployed build selects it.
-    locations: text("locations")
-      .array()
-      .notNull()
-      .default(sql`'{}'::text[]`),
     // The user's home city (a `places` row of kind 'city'); NULL = no home, so only location_mode filters.
     // Retrieval keeps on-site jobs with a city within radius_miles of it, or that name its region and no
     // city there, and remote jobs that name no country or its country. RESTRICT: places:load never deletes.

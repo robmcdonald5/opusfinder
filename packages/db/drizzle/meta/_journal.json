@@ -218,6 +218,13 @@
       "when": 1792475193005,
       "tag": "0030_places_source",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1792546832413,
+      "tag": "0031_drop_preferences_locations",
+      "breakpoints": true
     }
   ]
 }
