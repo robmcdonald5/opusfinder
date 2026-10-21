@@ -8,9 +8,9 @@ const NBSP = String.fromCharCode(0xa0);
 // Leaf pure-unit (no workspace deps). These two helpers encode the location/remote INVARIANTS
 // every ATS adapter shares, so a regression here silently corrupts `locations` + the `remote`
 // flag across every source. Locks: joinParts drops non-string/blank parts and trims survivors
-// (but does NOT dedupe), and inferRemoteFromText matches only the whole word "remote"
-// (word-boundary, case-insensitive) so "remotely" and the empty case stay false, and never a
-// negated or hybrid-qualified "remote" (Hybrid resolves to false per the NormalizedJob contract).
+// (but does NOT dedupe), and inferRemoteFromText matches only whole remote words ("remote", "home
+// based", "WFH", …; word-boundary, case-insensitive) so "remotely" and the empty case stay false, and
+// never a negated or hybrid-qualified one (Hybrid resolves to false per the NormalizedJob contract).
 describe("joinParts", () => {
   it.each([
     { name: "all valid", parts: ["Austin", "TX", "USA"], expected: "Austin, TX, USA" },
@@ -18,14 +18,30 @@ describe("joinParts", () => {
     { name: "drops null", parts: ["Austin", null, "USA"], expected: "Austin, USA" },
     { name: "drops undefined", parts: ["Austin", undefined, "USA"], expected: "Austin, USA" },
     { name: "drops empty string", parts: ["Austin", "", "USA"], expected: "Austin, USA" },
-    { name: "drops whitespace-only string", parts: ["Austin", "   ", "USA"], expected: "Austin, USA" },
-    { name: "drops unicode NBSP-only string", parts: ["Austin", NBSP + NBSP, "USA"], expected: "Austin, USA" },
-    { name: "drops non-string scalars", parts: ["Austin", 42, true, "USA"], expected: "Austin, USA" },
+    {
+      name: "drops whitespace-only string",
+      parts: ["Austin", "   ", "USA"],
+      expected: "Austin, USA",
+    },
+    {
+      name: "drops unicode NBSP-only string",
+      parts: ["Austin", NBSP + NBSP, "USA"],
+      expected: "Austin, USA",
+    },
+    {
+      name: "drops non-string scalars",
+      parts: ["Austin", 42, true, "USA"],
+      expected: "Austin, USA",
+    },
     { name: "drops nested arrays/objects", parts: [["x"], { a: 1 }, "USA"], expected: "USA" },
     { name: "single survivor → no separator", parts: [null, "Austin", ""], expected: "Austin" },
     { name: "empty input → empty string", parts: [], expected: "" },
     { name: "all blank/invalid → empty string", parts: [null, undefined, "", "  "], expected: "" },
-    { name: "preserves duplicates (no dedupe)", parts: ["Remote", "Remote"], expected: "Remote, Remote" },
+    {
+      name: "preserves duplicates (no dedupe)",
+      parts: ["Remote", "Remote"],
+      expected: "Remote, Remote",
+    },
     { name: "keeps internal whitespace", parts: ["New York"], expected: "New York" },
   ])("$name", ({ parts, expected }) => {
     expect(joinParts(parts as unknown[])).toBe(expected);
@@ -44,7 +60,34 @@ describe("inferRemoteFromText", () => {
     { name: "match in a later element", locations: ["Austin", "Fully remote"] },
     { name: "remote offered beside hybrid", locations: ["Remote or Hybrid - NYC"] },
     { name: "comma-listed options", locations: ["Remote, Hybrid or On-site"] },
-    { name: "a hybrid location doesn't cancel a remote one", locations: ["New York (Hybrid)", "Remote - US"] },
+    {
+      name: "a hybrid location doesn't cancel a remote one",
+      locations: ["New York (Hybrid)", "Remote - US"],
+    },
+    // Real production strings stored remote = false before the home-based words counted.
+    { name: "home based, worldwide", locations: ["Home based - Worldwide"] },
+    { name: "home based, a bloc", locations: ["Home based - EMEA"] },
+    { name: "home based, two blocs", locations: ["Home Based - Americas; Home based - EMEA"] },
+    {
+      name: "home based beside an office option",
+      locations: ["Home based - EMEA; Office Based - London, UK"],
+    },
+    { name: "home-based, hyphenated", locations: ["Home-based, United Kingdom"] },
+    { name: "homebased, one word", locations: ["Homebased - Germany"] },
+    { name: "work from home", locations: ["Work from Home - India"] },
+    { name: "WFH", locations: ["WFH - Bangalore"] },
+    { name: "telecommute", locations: ["Telecommute"] },
+    { name: "telecommuting", locations: ["Telecommuting - US"] },
+    { name: "anywhere, alone", locations: ["Anywhere"] },
+    {
+      name: "anywhere in a country",
+      locations: ["Anywhere in United States, Texas, United States"],
+    },
+    {
+      name: "anywhere in a bloc",
+      locations: ["Anywhere in EMEA region, Greater London, United Kingdom"],
+    },
+    { name: "work from anywhere", locations: ["Work from anywhere"] },
   ])("true: $name", ({ locations }) => {
     expect(inferRemoteFromText(locations)).toBe(true);
   });
@@ -57,7 +100,17 @@ describe("inferRemoteFromText", () => {
     { name: "substring false-positive 'remotely'", locations: ["Works remotely sometimes"] },
     { name: "substring false-positive 'remoteness'", locations: ["remoteness"] },
     { name: "substring false-positive 'unremote'", locations: ["unremote"] },
-    { name: "telecommute synonym not matched", locations: ["Telecommute"] },
+    { name: "a place named like home", locations: ["Homestead, FL", "Homer, Alaska"] },
+    {
+      name: "the UK Home Office is an employer, not remote work",
+      locations: ["Home Office - London"],
+    },
+    { name: "office based", locations: ["Office Based - London, UK"] },
+    { name: "a company named Anywhere", locations: ["Anywhere Real Estate - Madison, NJ"] },
+    { name: "anywhere not as the location", locations: ["Travel anywhere in the region"] },
+    { name: "home based, hybrid", locations: ["Home based - Hybrid, Berlin"] },
+    { name: "hybrid with WFH days", locations: ["Hybrid (WFH 2 days), Pune"] },
+    { name: "hybrid home-based", locations: ["Hybrid home-based - Leeds"] },
     { name: "hybrid remote", locations: ["Hybrid Remote - New York, NY"] },
     { name: "hybrid, remote N days", locations: ["New York, NY (Hybrid, remote 2 days/week)"] },
     { name: "remote (hybrid)", locations: ["Remote (Hybrid)"] },
@@ -74,12 +127,48 @@ describe("nextOffset", () => {
   const at = (offset: number) => ({ kind: "offset" as const, offset });
 
   it.each([
-    { name: "first page below the total advances by the page size", total: 300, prev: null, count: 100, next: at(100) },
-    { name: "advances by the ACTUAL count (a server-clamped page)", total: 300, prev: at(100), count: 50, next: at(150) },
-    { name: "stops once the window covers the total", total: 300, prev: at(200), count: 100, next: null },
-    { name: "an empty page stops, even short of the total", total: 300, prev: at(100), count: 0, next: null },
-    { name: "no total: a full page continues", total: undefined, prev: at(100), count: 100, next: at(200) },
-    { name: "no total: a short page stops", total: undefined, prev: at(100), count: 37, next: null },
+    {
+      name: "first page below the total advances by the page size",
+      total: 300,
+      prev: null,
+      count: 100,
+      next: at(100),
+    },
+    {
+      name: "advances by the ACTUAL count (a server-clamped page)",
+      total: 300,
+      prev: at(100),
+      count: 50,
+      next: at(150),
+    },
+    {
+      name: "stops once the window covers the total",
+      total: 300,
+      prev: at(200),
+      count: 100,
+      next: null,
+    },
+    {
+      name: "an empty page stops, even short of the total",
+      total: 300,
+      prev: at(100),
+      count: 0,
+      next: null,
+    },
+    {
+      name: "no total: a full page continues",
+      total: undefined,
+      prev: at(100),
+      count: 100,
+      next: at(200),
+    },
+    {
+      name: "no total: a short page stops",
+      total: undefined,
+      prev: at(100),
+      count: 37,
+      next: null,
+    },
   ])("$name", ({ total, prev, count, next }) => {
     expect(nextOffset(total, prev, count, 100)).toEqual(next);
   });

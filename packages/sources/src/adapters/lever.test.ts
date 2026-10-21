@@ -93,7 +93,11 @@ describe("leverAdapter.mapItem", () => {
 
   describe("applyUrl fallback (applyUrl || hostedUrl, else skip)", () => {
     it("prefers applyUrl when both are present", () => {
-      const job = mapJob({ ...RAW_JOB, applyUrl: "https://a.example/apply", hostedUrl: "https://h.example" });
+      const job = mapJob({
+        ...RAW_JOB,
+        applyUrl: "https://a.example/apply",
+        hostedUrl: "https://h.example",
+      });
       expect(job?.applyUrl).toBe("https://a.example/apply");
     });
 
@@ -126,10 +130,13 @@ describe("leverAdapter.mapItem", () => {
     });
 
     it.each([
-      ["missing createdAt", (() => {
-        const { createdAt: _c, ...rest } = RAW_JOB;
-        return rest;
-      })()],
+      [
+        "missing createdAt",
+        (() => {
+          const { createdAt: _c, ...rest } = RAW_JOB;
+          return rest;
+        })(),
+      ],
       ["createdAt is an ISO string", { ...RAW_JOB, createdAt: "2024-06-01T00:00:00.000Z" }],
       ["createdAt is NaN", { ...RAW_JOB, createdAt: Number.NaN }],
       ["createdAt is Infinity", { ...RAW_JOB, createdAt: Number.POSITIVE_INFINITY }],
@@ -146,26 +153,34 @@ describe("leverAdapter.mapItem", () => {
       ["remote", "Austin, TX", true],
       ["onsite", "Remote - United States", false],
       ["hybrid", "Remote - United States", false],
-    ])("workplaceType %j is authoritative over location %j → remote=%s", (workplaceType, loc, expected) => {
-      const job = mapJob({
-        ...RAW_JOB,
-        workplaceType,
-        categories: { allLocations: [loc] },
-      });
-      expect(job?.remote).toBe(expected);
-    });
+      ["onsite", "Home based - EMEA", false],
+    ])(
+      "workplaceType %j is authoritative over location %j → remote=%s",
+      (workplaceType, loc, expected) => {
+        const job = mapJob({
+          ...RAW_JOB,
+          workplaceType,
+          categories: { allLocations: [loc] },
+        });
+        expect(job?.remote).toBe(expected);
+      },
+    );
 
-    // Any UNKNOWN/absent value (incl. wrong casing) infers from the location text via \bremote\b.
+    // Any UNKNOWN/absent value (incl. wrong casing) infers from the location text (inferRemoteFromText).
     it.each([
       ["unspecified", "Remote - United States", true],
+      ["unspecified", "Home based - EMEA", true],
       ["work-from-home", "Remote, EMEA", true],
       ["REMOTE", "Austin, TX", false],
       ["unspecified", "Austin, TX", false],
       ["unspecified", "Remoteville, OH", false],
-    ])("unknown workplaceType %j infers from location %j → remote=%s", (workplaceType, loc, expected) => {
-      const job = mapJob({ ...RAW_JOB, workplaceType, categories: { allLocations: [loc] } });
-      expect(job?.remote).toBe(expected);
-    });
+    ])(
+      "unknown workplaceType %j infers from location %j → remote=%s",
+      (workplaceType, loc, expected) => {
+        const job = mapJob({ ...RAW_JOB, workplaceType, categories: { allLocations: [loc] } });
+        expect(job?.remote).toBe(expected);
+      },
+    );
 
     it("infers from location text when workplaceType is absent entirely", () => {
       const { workplaceType: _omit, ...rest } = RAW_JOB;
@@ -174,7 +189,11 @@ describe("leverAdapter.mapItem", () => {
     });
 
     it("infers from location text when workplaceType is a non-string", () => {
-      const job = mapJob({ ...RAW_JOB, workplaceType: 1, categories: { allLocations: ["Remote - US"] } });
+      const job = mapJob({
+        ...RAW_JOB,
+        workplaceType: 1,
+        categories: { allLocations: ["Remote - US"] },
+      });
       expect(job?.remote).toBe(true);
     });
   });
@@ -218,15 +237,21 @@ describe("leverAdapter.mapItem", () => {
     });
 
     it("falls back to categories.location when allLocations is present but NOT an array", () => {
-      const job = mapJob({ ...RAW_JOB, categories: { location: "Tokyo, JP", allLocations: "Tokyo, JP" } });
+      const job = mapJob({
+        ...RAW_JOB,
+        categories: { location: "Tokyo, JP", allLocations: "Tokyo, JP" },
+      });
       expect(job?.locations).toEqual(["Tokyo, JP"]);
     });
 
     it.each([
-      ["categories missing entirely", (() => {
-        const { categories: _c, ...rest } = RAW_JOB;
-        return rest;
-      })()],
+      [
+        "categories missing entirely",
+        (() => {
+          const { categories: _c, ...rest } = RAW_JOB;
+          return rest;
+        })(),
+      ],
       ["categories is not a record", { ...RAW_JOB, categories: "Remote" }],
       ["categories has neither field", { ...RAW_JOB, categories: { team: "Eng" } }],
       ["location is whitespace-only", { ...RAW_JOB, categories: { location: "   " } }],
@@ -300,7 +325,10 @@ describe("leverAdapter.mapItem", () => {
     });
 
     it("skips malformed and itemless lists[] entries", () => {
-      const job = mapJob({ ...RAW_JOB, lists: ["x", null, { text: "Perks", content: "" }, { text: "Perks" }] });
+      const job = mapJob({
+        ...RAW_JOB,
+        lists: ["x", null, { text: "Perks", content: "" }, { text: "Perks" }],
+      });
       expect(job?.descriptionText).toBe("We are hiring a backend engineer.");
     });
   });
@@ -310,22 +338,31 @@ describe("leverAdapter.mapItem", () => {
       ["non-record raw (string)", "not-an-object"],
       ["non-record raw (number)", 42],
       ["null raw", null],
-      ["id is missing", (() => {
-        const { id: _id, ...rest } = RAW_JOB;
-        return rest;
-      })()],
+      [
+        "id is missing",
+        (() => {
+          const { id: _id, ...rest } = RAW_JOB;
+          return rest;
+        })(),
+      ],
       ["id is an empty string", { ...RAW_JOB, id: "" }],
       ["id is whitespace-only", { ...RAW_JOB, id: "   " }],
       ["id is a non-string (number)", { ...RAW_JOB, id: 4567890 }],
-      ["text is missing", (() => {
-        const { text: _text, ...rest } = RAW_JOB;
-        return rest;
-      })()],
+      [
+        "text is missing",
+        (() => {
+          const { text: _text, ...rest } = RAW_JOB;
+          return rest;
+        })(),
+      ],
       ["text is a non-string", { ...RAW_JOB, text: 123 }],
-      ["both applyUrl and hostedUrl are missing", (() => {
-        const { applyUrl: _a, hostedUrl: _h, ...rest } = RAW_JOB;
-        return rest;
-      })()],
+      [
+        "both applyUrl and hostedUrl are missing",
+        (() => {
+          const { applyUrl: _a, hostedUrl: _h, ...rest } = RAW_JOB;
+          return rest;
+        })(),
+      ],
       ["both applyUrl and hostedUrl are empty", { ...RAW_JOB, applyUrl: "", hostedUrl: "" }],
     ])("returns null for %s", (_label, raw) => {
       expect(mapJob(raw)).toBeNull();
