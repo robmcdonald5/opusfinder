@@ -237,7 +237,8 @@ EXISTS`) removes the seven job-side enrichment columns added by 0013 (`yoe_min`/
   confidence + one-line reason, what failed the check (`unmatched`: places, with the country/region codes
   that did check, and areas off the list) and the prompt version (written by `@opusfinder/locations`;
   `confidence` NULL = no usable answer). Strings over `MAX_LOCATION_RAW_BYTES` (2,000) are never pairs. `user_preferences` gains `home_place_id` (FK → `places`, RESTRICT) and `radius_miles` (default
-  50); `locations` is no longer read and a later migration drops it. `repos/location-rule.ts` is the whole
+  50); the old free-text `locations` column it replaces is dropped by `0031` (applied AFTER the code that
+  no longer selects it deploys). `repos/location-rule.ts` is the whole
   location filter as SQL (retrieval's WHERE, and `locations:explain`'s verdicts): no home → location mode
   only; remote jobs pass if they name no country or the user's; on-site jobs pass with a city within the
   radius (haversine, miles) or the user's region and no city in it (a city the check dropped, named in the
