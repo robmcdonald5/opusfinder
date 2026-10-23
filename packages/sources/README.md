@@ -13,14 +13,26 @@ pagination, so it isn't zero-hydrate.)
 The abstraction was **extracted** from concrete Greenhouse + Lever + SmartRecruiters adapters
 (not designed up front). It has these parts:
 
-- **`runAdapter` (`src/adapters/run-adapter.ts`)** — the invariant plumbing, identical for
-  every source: slug normalization → the pagination loop (`jobsRequest` → fetch → `locate` →
-  `mapItem`) → the single resilient fetch (retry + exponential backoff + `Retry-After`, with a
-  non-JSON-body guard) → two-tier resilience (`locate` fails LOUD on a bad envelope; `mapItem`
-  fails SOFT, skipping one bad posting) → the optional bounded-concurrency hydrate pool →
-  per-board accounting. Returns `NormalizedJob[]` (no source `raw` on them — `jobs.raw` isn't stored).
+- **`fetchBoard` / `runAdapter` (`src/adapters/run-adapter.ts`)** — the invariant plumbing,
+  identical for every source: slug normalization → the pagination loop (`jobsRequest` → fetch →
+  stream the page's postings out of `itemsKey` → `mapItem`) → the single resilient fetch (retry +
+  exponential backoff + `Retry-After`, with a non-JSON-body guard) → two-tier resilience (a page
+  without its postings array fails LOUD; `mapItem` fails SOFT, skipping one bad posting) → the
+  optional bounded-concurrency hydrate pool → per-board accounting. `fetchBoard` hands the postings
+  to a sink 200 at a time (`SINK_PAGE_SIZE`; `runIngestion` upserts each page), so a board's size
+  costs time, not memory; `runAdapter` collects them into `NormalizedJob[]` for the single-board
+  CLI (no source `raw` on them — `jobs.raw` isn't stored).
+- **The streamed listing read (`src/adapters/listing-stream.ts`)** — cuts each posting out of a
+  listing page's JSON as the body arrives, so no page is ever parsed whole: the splitter finds where
+  each posting starts and ends, and JSON.parse validates each one and the rest of the page (the
+  totals `nextCursor` / `reportedTotal` / `classifyProbe` read), so a boundary bug fails loudly. Whole-
+  body parsing held 4–5× the body in heap; the 43.6 MB Anduril board took the Worker's 128 MB isolate
+  past its limit on every tick (2026-10-22). Streamed, the same board runs in a 16 MB heap. Discovery's
+  probe reads through it too (exported as `readListingPage`), stopping at the first posting. The only
+  body still read whole is a hydrate's detail fetch (one posting), capped at 2 MiB.
 - **`SourceAdapter` descriptors (`src/adapters/{greenhouse,lever,ashby,workable,smartrecruiters,recruitee,pinpoint,gem,trakstar}.ts`)**
-  — per-source data: `source`, `normalizeSlug`, `jobsRequest`, `locate`, `mapItem`, the Phase-7
+  — per-source data: `source`, `normalizeSlug`, `jobsRequest`, `itemsKey` (where a page keeps its
+  postings; `null` for a bare array) plus the optional `keepItem` filter, `mapItem`, the Phase-7
   discovery pair `matchUrl` (REQUIRED — the URL→raw-slug inverse of `jobsRequest`; must not throw;
   parses the board/API host only) and the optional `classifyProbe` (probe response → `ProbeOutcome`;
   overridden only on SmartRecruiters + Trakstar), plus the optional `nextCursor` (pagination) /
@@ -165,7 +177,7 @@ casing — seed one canonical casing per board). `isRemote` is a TRAP (true on H
 `remote` is derived from `workplaceType` (null ⇒ infer from location text). Multi-office via
 `location` + `secondaryLocations[]`. Description from `descriptionPlain`, plus the
 `compensation.compensationTierSummary` pay line (not when the company hides pay, or the body is
-blank). `isListed: false` postings (direct-link only) are dropped in `locate`.
+blank). `isListed: false` postings (direct-link only) are dropped by `keepItem`.
 
 **Workable** — `apply.workable.com/api/v1/widget/accounts/{slug}?details=true`. Unpaginated
 (returns the whole board in one response). Hydration is INLINE via `?details=true` (not an N+1;
@@ -205,7 +217,7 @@ date (only `deadline_at`, an application-CLOSE date) ⇒ `postedAt` null. Unknow
 real-but-empty ⇒ `200 {data:[]}`.
 
 **Gem** — `api.gem.com/job_board/v0/{slug}/job_posts/` (**trailing slash required**). BARE
-top-level array (like Lever) — `locate` throws if not an array. Slugs CASE-SENSITIVE (an
+top-level array (like Lever, `itemsKey: null`) — a page that isn't an array fails loud. Slugs CASE-SENSITIVE (an
 uppercased slug 404s). `id` is already a string (legacy numeric-strings + opaque tokens).
 `remote` from the `location_type` enum (remote/hybrid/in_office; no isRemote trap). Description
 prefers the genuine plain-text `content_plain` (collapse only), falling back to single-encoded

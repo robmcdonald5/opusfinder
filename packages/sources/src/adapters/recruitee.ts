@@ -33,12 +33,7 @@ export const recruiteeAdapter: SourceAdapter = {
 
   jobsRequest: (ctx) => ({ url: `https://${ctx.slug}.${RECRUITEE_HOST}/api/offers/` }),
 
-  locate: (body, ctx) => {
-    if (!isRecord(body) || !Array.isArray(body.offers)) {
-      throw new Error(`Recruitee returned an unexpected response shape for "${ctx.slug}"`);
-    }
-    return body.offers;
-  },
+  itemsKey: "offers",
 
   mapItem: (raw, ctx) => toNormalizedJob(raw, ctx),
 };

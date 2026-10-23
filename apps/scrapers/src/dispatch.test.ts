@@ -474,6 +474,84 @@ describe("runIngestionTick — cursor wrap math (wrap to 0 only at end of table,
   });
 });
 
+describe("runIngestionTick — the chunk claim (a killed tick can't pin the cursor)", () => {
+  type IngestOpts = { onChunk?: (lastId: number) => Promise<void> };
+  /** runIngestion as the tick sees it: claim the chunk ending at `chunkEnd`, then `work` (its boards). */
+  function ingestWith(chunkEnd: number, work: () => Promise<Counts>) {
+    mocks.runIngestion.mockImplementation(async (_db: unknown, opts: IngestOpts) => {
+      await opts.onChunk?.(chunkEnd);
+      return work();
+    });
+  }
+  const tick = (kv: ReturnType<typeof makeKv>) =>
+    scheduled(
+      { cron: INGEST_CRON },
+      { DATABASE_URL: "postgres://stub", INGEST_CURSOR: kv },
+      makeCtx(),
+    );
+  const written = (kv: ReturnType<typeof makeKv>) => kv.put.mock.calls.map(([, value]) => value);
+
+  it("moves the cursor past the whole chunk before its first board; a full chunk needs no second write", async () => {
+    const kv = makeKv("400");
+    let atFirstBoard: string[] = [];
+    ingestWith(665, async () => {
+      atFirstBoard = written(kv);
+      return { processed: DEFAULT_INGEST_LIMIT, companies: DEFAULT_INGEST_LIMIT, lastId: 665 };
+    });
+
+    await tick(kv);
+
+    expect(atFirstBoard).toEqual(["665"]);
+    expect(written(kv)).toEqual(["665"]);
+  });
+
+  it("a tick that dies mid-chunk leaves the cursor past that chunk, so the next tick moves on", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const kv = makeKv("400");
+    ingestWith(665, () => Promise.reject(new Error("killed mid-chunk")));
+
+    await expect(tick(kv)).rejects.toThrow("killed mid-chunk");
+
+    expect(written(kv)).toEqual(["665"]);
+  });
+
+  it.each([
+    ["a budget stop", { processed: 40, companies: DEFAULT_INGEST_LIMIT, lastId: 450 }, "450"],
+    ["the end of the table", { processed: 3, companies: 3, lastId: 665 }, "0"],
+  ])(
+    "%s writes the exact cursor, a full KV write-second after the claim",
+    async (_case, counts, next) => {
+      vi.useFakeTimers();
+      try {
+        const kv = makeKv("400");
+        ingestWith(665, async () => counts);
+
+        const done = tick(kv);
+        await vi.advanceTimersByTimeAsync(1_000);
+        expect(written(kv)).toEqual(["665"]); // KV refuses a second write to a key within a second
+        await vi.advanceTimersByTimeAsync(200);
+        await done;
+
+        expect(written(kv)).toEqual(["665", next]);
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  it("a failed claim is logged and the tick runs as it always did", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const kv = makeKv("400");
+    kv.put.mockRejectedValueOnce(new Error("KV PUT failed: 429 Too Many Requests"));
+    ingestWith(665, async () => ({ processed: 40, companies: DEFAULT_INGEST_LIMIT, lastId: 450 }));
+
+    await tick(kv);
+
+    expect(warn).toHaveBeenCalledWith("ingest cursor claim failed (Error)");
+    expect(written(kv)).toEqual(["665", "450"]); // the refused claim, then the exact cursor
+  });
+});
+
 // The seeded ingest gate (migrations 0002 and 0007) and the deployed vars it agrees with (wrangler.toml [vars]).
 const GATE_ON = {
   mode: "on",

@@ -3,6 +3,7 @@ import { describeDbError } from "@opusfinder/db/errors";
 import { DEFAULT_STALE_TTL_DAYS, runPrune } from "@opusfinder/db/repos";
 import { runDiscovery } from "@opusfinder/discovery";
 import { parseEnforceFlag } from "@opusfinder/shared";
+import { sleep } from "@opusfinder/shared/async";
 import { runIngestion, type IngestionCounts } from "@opusfinder/sources";
 
 import {
@@ -138,6 +139,8 @@ const PRUNE_MAX_ROWS = 20_000;
 // Floor for STALE_SWEEP_TTL_DAYS, the registry's stale_sweep.ttlDays min: a typo like "1" must not put an
 // enforcing stale sweep on a one-day close horizon.
 const MIN_STALE_TTL_DAYS = 7;
+// Workers KV takes at most one write a second to the same key (a faster one fails 429); a margin over it.
+const KV_KEY_WRITE_GAP_MS = 1_100;
 const DISCOVERY_LIMIT = 400;
 const DISCOVERY_REPROBE_LIMIT = 500;
 
@@ -370,11 +373,16 @@ async function prunePass(db: Db, flag: string | undefined): Promise<void> {
 }
 
 /**
- * One ingestion tick: read the chunk cursor from KV, process up to `limit` boards via `runIngestion`
- * (bounded per board by MAX_JOBS_PER_BOARD and per tick by MAX_RUN_MS so a heavy chunk can't be killed
- * before finishRun), then advance or wrap the cursor. Wrap to the start only when the whole chunk ran AND
- * under-filled (`processed >= companies && companies < limit` ⇒ end of table); otherwise advance past the
- * last processed id (continuing a budget-truncated chunk next tick).
+ * One ingestion tick: read the chunk cursor from KV, claim the chunk, process up to `limit` boards via
+ * `runIngestion` (bounded per board by MAX_JOBS_PER_BOARD and per tick by MAX_RUN_MS so a heavy chunk can't
+ * be killed before finishRun), then advance or wrap the cursor. Wrap to the start only when the whole chunk
+ * ran AND under-filled (`processed >= companies && companies < limit` ⇒ end of table); otherwise advance
+ * past the last processed id (continuing a budget-truncated chunk next tick).
+ *
+ * The claim moves the cursor past the whole chunk before its first board, so a tick killed mid-chunk
+ * (2026-10-22: out of memory on every tick for 10 h) costs the rest of that chunk one ~20 h sweep, instead
+ * of re-pinning the cursor on the same chunk until someone intervenes. A board that kills every tick it is
+ * in still kills one tick a sweep, each a swept run and a missed watchdog ping, but ingestion moves on.
  */
 async function runIngestionTick(
   db: Db,
@@ -388,10 +396,22 @@ async function runIngestionTick(
   const cursorNum = cursorRaw !== null ? Number(cursorRaw) : 0;
   const afterId = Number.isFinite(cursorNum) && cursorNum >= 0 ? Math.trunc(cursorNum) : 0;
 
+  let claimed: { id: number; at: number } | undefined;
   const counts = await runIngestion(db, {
     activeOnly: true,
     afterId,
     limit,
+    onChunk: async (lastId) => {
+      try {
+        await env.INGEST_CURSOR.put("afterId", String(lastId));
+        claimed = { id: lastId, at: Date.now() };
+      } catch (err) {
+        // Unclaimed, the tick runs as it always did: only a kill would leave the cursor where it was.
+        console.warn(
+          `ingest cursor claim failed (${err instanceof Error ? err.name : "non-Error throw"})`,
+        );
+      }
+    },
     maxRunMs: MAX_RUN_MS,
     adapter: {
       maxItems: MAX_JOBS_PER_BOARD,
@@ -411,6 +431,11 @@ async function runIngestionTick(
   // to the last processed id and continue it next tick — never wrap mid-chunk (that would skip the rest).
   const reachedEnd = counts.processed >= counts.companies && counts.companies < limit;
   const next = reachedEnd ? 0 : counts.lastId;
-  await env.INGEST_CURSOR.put("afterId", String(next));
+  // A whole chunk worked through leaves exactly what the claim stored. Otherwise write — after the rest of
+  // KV's one-write-a-second-per-key window, which a tiny end-of-table chunk can finish inside.
+  if (next !== claimed?.id) {
+    if (claimed) await sleep(KV_KEY_WRITE_GAP_MS - (Date.now() - claimed.at));
+    await env.INGEST_CURSOR.put("afterId", String(next));
+  }
   return counts;
 }

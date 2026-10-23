@@ -1,6 +1,8 @@
 import { backoff, backoffDelayMs, sleep } from "@opusfinder/shared/async";
 import {
   adapters,
+  BodyReadError,
+  readListingPage,
   type JobsRequest,
   type ProbeOutcome,
   type SourceAdapter,
@@ -21,20 +23,41 @@ const PROBE_FETCH_TIMEOUT_MS = 10_000;
 export interface ProbeFetchResult {
   /** HTTP status of the final attempt, or 0 when the network attempt was exhausted (retries spent). */
   status: number;
-  /** Parsed JSON body, or `undefined` for a non-JSON / unparsed body. NEVER throws. */
-  body: unknown;
+  /**
+   * A 2xx listing page, or `undefined` for a non-2xx, a non-JSON body, or a page without its postings
+   * array. NEVER throws.
+   */
+  page: ProbePage | undefined;
+}
+
+/** What a probe read of one 2xx listing page. */
+export interface ProbePage {
+  /** It lists at least one posting the adapter keeps. */
+  listsPosting: boolean;
+  /** The page's JSON with its postings array emptied, or `undefined` when the read stopped at the first
+   *  posting (`firstPostingOnly`). */
+  envelope: unknown;
+}
+
+/** How to read a probe's listing page: the adapter's postings array, and whether one posting settles it. */
+export interface ProbeListing extends Pick<SourceAdapter, "itemsKey" | "keepItem"> {
+  /** Stop at the first kept posting: the default classifier needs nothing more, and a probe never holds a
+   *  board's whole listing. False when the adapter's `classifyProbe` reads the page's totals. */
+  firstPostingOnly: boolean;
 }
 
 /**
- * Fetch one probe request, NON-throwing — the inverse of run-adapter's `fetchJsonResilient` (which
- * throws on `!ok`). For discovery a 404 / 400 / 200-empty IS the signal, so every response resolves
- * to `{ status, body }`. Retries only the genuinely-transient 429 / 5xx / network error (shared
- * `backoff` + `Retry-After`) — never one that would wait longer than `maxRetryWaitMs`; a definitive 4xx
- * returns immediately, and a non-JSON 2xx returns `{ status, body: undefined }` (the classifier reads the
- * status; `locate(undefined)` ⇒ indeterminate). Worker-forward: global `fetch` + `setTimeout` only.
+ * Fetch one probe request, NON-throwing — the inverse of run-adapter's resilient fetch (which throws on
+ * `!ok`). For discovery a 404 / 400 / 200-empty IS the signal, so every response resolves to
+ * `{ status, page }`. Retries only the genuinely-transient 429 / 5xx / network error (shared `backoff` +
+ * `Retry-After`) — never one that would wait longer than `maxRetryWaitMs`; a definitive 4xx returns
+ * immediately, and a 2xx that isn't a listing page returns `{ status, page: undefined }` (indeterminate to
+ * every classifier). The 2xx body is streamed like ingestion's, so a probe of a big board holds one chunk,
+ * not the board. Worker-forward: global `fetch` + `setTimeout` only.
  */
 export async function probeFetch(
   req: JobsRequest,
+  listing: ProbeListing,
   maxRetries = DEFAULT_MAX_RETRIES,
   maxRetryWaitMs = Infinity,
 ): Promise<ProbeFetchResult> {
@@ -51,7 +74,7 @@ export async function probeFetch(
         await backoff(attempt++);
         continue;
       }
-      return { status: 0, body: undefined };
+      return { status: 0, page: undefined };
     }
 
     if (res.status === 429 || res.status >= 500) {
@@ -63,54 +86,43 @@ export async function probeFetch(
       }
     }
 
-    // Only a 2xx body is meaningful to the classifiers (locate / classifyProbe read it); a final
-    // non-2xx is classified from the STATUS alone, so cancel its (possibly large HTML) body rather
-    // than buffering it — saves the full-page download on every absent (404/400) probe at scale.
+    // Only a 2xx body is meaningful to the classifiers; a final non-2xx is classified from the STATUS
+    // alone, so cancel its (possibly large HTML) body rather than buffering it — saves the full-page
+    // download on every absent (404/400) probe at scale.
     if (res.status < 200 || res.status >= 300) {
       await res.body?.cancel().catch(() => {});
-      return { status: res.status, body: undefined };
+      return { status: res.status, page: undefined };
     }
     // The timeout covers the body too: a stalled or reset stream fails like a network throw.
-    let text: string;
+    let listsPosting = false;
     try {
-      text = await res.text();
-    } catch {
+      const envelope = await readListingPage(res.body, listing, () => {
+        listsPosting = true;
+        return !listing.firstPostingOnly;
+      });
+      return { status: res.status, page: { listsPosting, envelope } };
+    } catch (err) {
+      if (!(err instanceof BodyReadError)) return { status: res.status, page: undefined };
       if (canRetry(attempt)) {
         await backoff(attempt++);
         continue;
       }
-      return { status: 0, body: undefined };
+      return { status: 0, page: undefined };
     }
-    let body: unknown;
-    try {
-      body = JSON.parse(text);
-    } catch {
-      body = undefined;
-    }
-    return { status: res.status, body };
   }
 }
 
 /**
  * Status-first default probe classifier, used when an adapter omits `classifyProbe` (7 of 9). A 404
- * is `absent` WITHOUT calling `locate`; a 2xx runs `locate` (non-empty ⇒ live, empty ⇒ live-empty, a
- * throw on a malformed envelope ⇒ indeterminate); anything else (status 0, 3xx, other 4xx) is
+ * is `absent`; a 2xx listing page that lists a posting is `live`, one listing none `live-empty`, and a 2xx
+ * that isn't a listing page `indeterminate`; anything else (status 0, 3xx, other 4xx) is
  * `indeterminate`, so it can never drive a deactivation.
  */
-export function defaultClassify(
-  adapter: SourceAdapter,
-  status: number,
-  body: unknown,
-  ctx: SourceContext,
-): ProbeOutcome {
+export function defaultClassify(status: number, page: ProbePage | undefined): ProbeOutcome {
   if (status === 404) return "absent";
   if (status >= 200 && status < 300) {
-    if (body === undefined) return "indeterminate"; // body-less 2xx (204 / non-JSON) — can't assert live
-    try {
-      return adapter.locate(body, ctx).length > 0 ? "live" : "live-empty";
-    } catch {
-      return "indeterminate";
-    }
+    if (page === undefined) return "indeterminate"; // not a listing page — can't assert live
+    return page.listsPosting ? "live" : "live-empty";
   }
   return "indeterminate";
 }
@@ -142,10 +154,9 @@ async function probeWith(
   maxRetryWaitMs?: number,
 ): Promise<ProbeResult> {
   const adapter = adapters[c.source];
-  const ctx = contextOf(c);
-  const { status, body } = await probeFetch(req, maxRetries, maxRetryWaitMs);
-  const outcome =
-    adapter.classifyProbe?.(status, body) ?? defaultClassify(adapter, status, body, ctx);
+  const listing = { ...adapter, firstPostingOnly: adapter.classifyProbe === undefined };
+  const { status, page } = await probeFetch(req, listing, maxRetries, maxRetryWaitMs);
+  const outcome = adapter.classifyProbe?.(status, page?.envelope) ?? defaultClassify(status, page);
   return { candidate: c, status, outcome };
 }
 

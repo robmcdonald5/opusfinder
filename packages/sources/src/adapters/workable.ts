@@ -49,13 +49,8 @@ export const workableAdapter: SourceAdapter = {
   jobsRequest: (ctx) => ({ url: `${WIDGET_API}/${ctx.slug}?details=true` }),
   probeRequest: (ctx) => ({ url: `${WIDGET_API}/${ctx.slug}` }),
 
-  locate: (body, ctx) => {
-    // body.name / body.description are the COMPANY blurb, not job data — only body.jobs[].
-    if (!isRecord(body) || !Array.isArray(body.jobs)) {
-      throw new Error(`Workable returned an unexpected response shape for "${ctx.slug}"`);
-    }
-    return body.jobs;
-  },
+  // body.name / body.description are the COMPANY blurb, not job data — only body.jobs[].
+  itemsKey: "jobs",
 
   mapItem: (raw, ctx) => toNormalizedJob(raw, ctx),
 };

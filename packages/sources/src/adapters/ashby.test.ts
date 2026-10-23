@@ -202,10 +202,10 @@ describe("ashbyAdapter.mapItem — compensation (?includeCompensation=true)", ()
   });
 });
 
-describe("ashbyAdapter.locate — unlisted postings", () => {
+describe("ashbyAdapter.keepItem — unlisted postings", () => {
   it("drops isListed:false (direct-link-only) postings, keeping listed and unflagged ones", () => {
     const jobs = [{ id: "a", isListed: true }, { id: "b", isListed: false }, { id: "c" }];
-    expect(ashbyAdapter.locate({ jobs, apiVersion: "1" }, CTX)).toEqual([jobs[0], jobs[2]]);
+    expect(jobs.filter((job) => ashbyAdapter.keepItem?.(job))).toEqual([jobs[0], jobs[2]]);
   });
 });
 

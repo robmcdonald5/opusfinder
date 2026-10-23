@@ -62,12 +62,7 @@ export const trakstarAdapter: SourceAdapter = {
     return { url: `${API}?client_name=${ctx.slug}&limit=${PAGE_LIMIT}&offset=${offset}` };
   },
 
-  locate: (body, ctx) => {
-    if (!isRecord(body) || !Array.isArray(body.objects)) {
-      throw new Error(`Trakstar returned an unexpected response shape for "${ctx.slug}"`);
-    }
-    return body.objects;
-  },
+  itemsKey: "objects",
 
   reportedTotal: (body) => metaTotal(body),
 

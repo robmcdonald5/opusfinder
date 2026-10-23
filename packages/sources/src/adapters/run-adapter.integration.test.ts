@@ -5,11 +5,18 @@ import { companySlug, jobId, type NormalizedJob, type SourceName } from "@opusfi
 import { server } from "@test/msw/server";
 import { rejectionOf } from "@test/rejection";
 
-import { RateLimitedError, fetchBoard, runAdapter } from "./run-adapter";
+import {
+  RateLimitedError,
+  SINK_PAGE_SIZE,
+  fetchBoard,
+  runAdapter,
+  type RunAdapterOptions,
+} from "./run-adapter";
 import type { SourceAdapter, SourceContext } from "./types";
 
 // The invariant ATS plumbing (run-adapter.ts) over MSW: the pagination loop, the resilient fetch
-// (retry/backoff/Retry-After + non-JSON guard), two-tier resilience (locate LOUD, mapItem SOFT),
+// (retry/backoff/Retry-After + non-JSON guard), two-tier resilience (a page without its postings
+// array LOUD, mapItem SOFT), the streamed listing handed to the sink a page at a time,
 // the maxItems cap, and the bounded-concurrency hydrate pool. runAdapter reaches the network via the
 // GLOBAL fetch, so MSW intercepts every request — the wire-shape checks (URL, method, the cursor
 // threaded into each page request) are exactly what the URL-only fetch-router in the Phase-2
@@ -62,13 +69,27 @@ function makeAdapter(over: Partial<SourceAdapter> = {}): SourceAdapter {
     normalizeSlug: (rawSlug) => companySlug(rawSlug),
     matchUrl: () => null,
     jobsRequest: () => ({ url: LIST }),
-    locate: (body) => (body as { jobs: unknown[] }).jobs,
+    itemsKey: "jobs",
     mapItem: (item, ctx) => mkJob(item as RawItem, ctx),
     ...over,
   };
 }
 
 const ids = (jobs: NormalizedJob[]): string[] => jobs.map((j) => j.externalId as string);
+
+/** fetchBoard with a sink that keeps what it is handed: the board's jobs in order, and the pages. */
+async function fetchAll(adapter: SourceAdapter, slug: string, opts?: RunAdapterOptions) {
+  const pages: NormalizedJob[][] = [];
+  const board = await fetchBoard(
+    adapter,
+    slug,
+    async (page) => {
+      pages.push(page);
+    },
+    opts,
+  );
+  return { ...board, jobs: pages.flat(), pages };
+}
 
 /** A 200 whose body breaks off after its first bytes, as a connection reset mid-body does. */
 const brokenBody = () =>
@@ -200,7 +221,7 @@ describe("runAdapter — invariant ATS plumbing over MSW", () => {
           count > 0 ? { kind: "offset", offset: (prev?.offset ?? 0) + count } : null,
       });
 
-      const { jobs, capped } = await fetchBoard(adapter, "acme", { maxItems: 3 });
+      const { jobs, capped } = await fetchAll(adapter, "acme", { maxItems: 3 });
 
       expect(ids(jobs)).toEqual(["1", "2", "3", "4", "5"]);
       expect(capped).toBe(true);
@@ -224,7 +245,7 @@ describe("runAdapter — invariant ATS plumbing over MSW", () => {
           count > 0 ? { kind: "offset", offset: (prev?.offset ?? 0) + count } : null,
       });
 
-      const { jobs, capped } = await fetchBoard(adapter, "acme", { maxItems: 3 });
+      const { jobs, capped } = await fetchAll(adapter, "acme", { maxItems: 3 });
 
       expect(ids(jobs)).toEqual(["1", "2", "3", "4"]);
       expect(capped).toBe(true);
@@ -246,10 +267,10 @@ describe("runAdapter — invariant ATS plumbing over MSW", () => {
       });
 
       // The last page brings it to exactly the cap.
-      const exact = await fetchBoard(paginated, "acme", { maxItems: 3 });
+      const exact = await fetchAll(paginated, "acme", { maxItems: 3 });
       expect([ids(exact.jobs), exact.capped]).toEqual([["1", "2", "3"], false]);
       // An unpaginated, non-hydrating board is never cut: its whole body is already fetched and mapped.
-      const unpaginated = await fetchBoard(makeAdapter(), "acme", { maxItems: 1 });
+      const unpaginated = await fetchAll(makeAdapter(), "acme", { maxItems: 1 });
       expect([ids(unpaginated.jobs), unpaginated.capped]).toEqual([["1", "2"], false]);
     });
 
@@ -267,7 +288,7 @@ describe("runAdapter — invariant ATS plumbing over MSW", () => {
         },
       });
 
-      const { jobs, capped } = await fetchBoard(adapter, "acme", { maxItems: 2 });
+      const { jobs, capped } = await fetchAll(adapter, "acme", { maxItems: 2 });
 
       expect(jobs).toHaveLength(2);
       expect(capped).toBe(true);
@@ -306,7 +327,7 @@ describe("runAdapter — invariant ATS plumbing over MSW", () => {
       // No total: only the repeat check stops it (bounded at offset 10 so a missing check fails, not hangs).
       const { adapter, offsetsSeen } = pagedAdapter((offset) => (offset < 10 ? [raw(1), raw(2)] : []));
 
-      const { partial } = await fetchBoard(adapter, "acme");
+      const { partial } = await fetchAll(adapter, "acme");
 
       expect(partial).toBe(true);
       expect(offsetsSeen).toEqual([null, "2"]);
@@ -319,7 +340,7 @@ describe("runAdapter — invariant ATS plumbing over MSW", () => {
         { mapItem: (item, ctx) => ((item as RawItem).title === "" ? null : mkJob(item as RawItem, ctx)) },
       );
 
-      const { jobs, partial } = await fetchBoard(adapter, "acme");
+      const { jobs, partial } = await fetchAll(adapter, "acme");
 
       expect(ids(jobs)).toEqual(["1", "2"]);
       expect(partial).toBe(false);
@@ -327,16 +348,16 @@ describe("runAdapter — invariant ATS plumbing over MSW", () => {
 
     it("an early empty page well short of the reported total is partial; a shortfall within the slack is not", async () => {
       const short = pagedAdapter(twoPages, 20); // 4 of 20 listed
-      expect((await fetchBoard(short.adapter, "acme")).partial).toBe(true);
+      expect((await fetchAll(short.adapter, "acme")).partial).toBe(true);
 
       const overcount = pagedAdapter(twoPages, 9); // 4 of 9: short by 5, the slack's floor
-      expect((await fetchBoard(overcount.adapter, "acme")).partial).toBe(false);
+      expect((await fetchAll(overcount.adapter, "acme")).partial).toBe(false);
     });
 
     it("a capped listing is not partial, however short of the total it stops", async () => {
       const { adapter } = pagedAdapter(twoPages, 100);
 
-      const { capped, partial } = await fetchBoard(adapter, "acme", { maxItems: 3 });
+      const { capped, partial } = await fetchAll(adapter, "acme", { maxItems: 3 });
 
       expect(capped).toBe(true);
       expect(partial).toBe(false);
@@ -512,26 +533,35 @@ describe("runAdapter — invariant ATS plumbing over MSW", () => {
       expect(err.message).toMatch(/^greenhouse "acme" body read error:/);
     });
 
-    it("fails a 2xx body over 64 MiB at once, never retried", async () => {
+    it("a hydrate's detail body over 2 MiB fails its posting at once, never retried", async () => {
+      vi.spyOn(console, "warn").mockImplementation(() => {});
       let calls = 0;
       const mib = new Uint8Array(1024 * 1024).fill(0x20); // 1 MiB of JSON whitespace
       server.use(
-        http.get(LIST, () => {
+        http.get(LIST, () => HttpResponse.json({ jobs: [raw(1)] })),
+        http.get(`${DETAIL}/:id`, () => {
           calls += 1;
           let sent = 0;
           const body = new ReadableStream<Uint8Array>({
             pull(controller) {
-              if (sent++ < 65) controller.enqueue(mib);
+              if (sent++ < 3) controller.enqueue(mib);
               else controller.close();
             },
           });
           return new HttpResponse(body, { status: 200 });
         }),
       );
+      const adapter = makeAdapter({
+        hydrate: async (job, _ctx, fetchJson) => {
+          await fetchJson({ url: `${DETAIL}/${job.externalId}` });
+          return {};
+        },
+      });
 
-      const err = await rejectionOf(runAdapter(makeAdapter(), "acme", { maxRetries: 3 }));
+      const { jobs, contentMissing } = await fetchAll(adapter, "acme", { maxRetries: 3 });
 
-      expect(err.message).toBe('greenhouse "acme" body over 67108864 bytes');
+      expect(jobs.map((j) => j.contentMissing)).toEqual([true]);
+      expect(contentMissing).toBe(1);
       expect(calls).toBe(1);
     });
 
@@ -802,16 +832,20 @@ describe("runAdapter — invariant ATS plumbing over MSW", () => {
     });
   });
 
-  describe("two-tier resilience — locate LOUD, mapItem SOFT", () => {
-    it("propagates a locate throw (a bad envelope fails the board loud)", async () => {
-      server.use(http.get(LIST, () => HttpResponse.json({ wrong: "shape" })));
-      const adapter = makeAdapter({
-        locate: () => {
-          throw new Error("bad envelope");
-        },
-      });
+  describe("two-tier resilience — a missing postings array LOUD, mapItem SOFT", () => {
+    it("a page without its postings array fails the board loud, never retried", async () => {
+      let calls = 0;
+      server.use(
+        http.get(LIST, () => {
+          calls += 1;
+          return HttpResponse.json({ wrong: "shape" });
+        }),
+      );
 
-      await expect(runAdapter(adapter, "acme")).rejects.toThrow(/bad envelope/);
+      const err = await rejectionOf(runAdapter(makeAdapter(), "acme", { maxRetries: 3 }));
+
+      expect(err.message).toMatch(/^greenhouse "acme" returned an unexpected response shape/);
+      expect(calls).toBe(1);
     });
 
     it("skips an item whose mapItem returns null and continues the board", async () => {
@@ -824,7 +858,7 @@ describe("runAdapter — invariant ATS plumbing over MSW", () => {
         },
       });
 
-      const { jobs, mapSkipped } = await fetchBoard(adapter, "acme");
+      const { jobs, mapSkipped } = await fetchAll(adapter, "acme");
 
       expect(ids(jobs)).toEqual(["1", "3"]); // the null-mapped middle item is skipped, order preserved
       expect(mapSkipped).toBe(1);
@@ -848,17 +882,159 @@ describe("runAdapter — invariant ATS plumbing over MSW", () => {
     });
   });
 
+  describe("streamed listing", () => {
+    afterEach(() => vi.unstubAllGlobals());
+
+    const items = (from: number, to: number): string =>
+      Array.from({ length: to - from + 1 }, (_, i) => JSON.stringify(raw(from + i))).join(",");
+
+    /**
+     * A stand-in fetch for the body-timing tests. MSW doesn't tie a mocked body to the request's signal
+     * the way a real fetch does (an abort errors the body mid-read), and a stream error discards chunks not
+     * yet read, so these serve the body one step per read: a chunk after `afterMs`, or a failure. Returns the
+     * call count.
+     */
+    function stubFetch(
+      steps: Array<{ chunk?: string; afterMs?: number; fail?: Error }>,
+    ): () => number {
+      let calls = 0;
+      vi.stubGlobal("fetch", async (_url: string, init?: RequestInit) => {
+        calls += 1;
+        const signal = init?.signal ?? undefined;
+        let next = 0;
+        const body = new ReadableStream<Uint8Array>({
+          async pull(controller) {
+            const step = steps[next++];
+            if (!step) return controller.close();
+            if (step.afterMs) {
+              await new Promise<void>((resolve, reject) => {
+                const timer = setTimeout(resolve, step.afterMs);
+                signal?.addEventListener("abort", () => {
+                  clearTimeout(timer);
+                  reject(signal.reason);
+                });
+              });
+            }
+            if (step.fail) return controller.error(step.fail);
+            controller.enqueue(new TextEncoder().encode(step.chunk ?? ""));
+          },
+        });
+        return new Response(body, { status: 200 });
+      });
+      return () => calls;
+    }
+
+    it("hands the board to the sink a page at a time, in listing order", async () => {
+      server.use(
+        http.get(LIST, () =>
+          HttpResponse.json({ jobs: Array.from({ length: 450 }, (_, i) => raw(i + 1)) }),
+        ),
+      );
+
+      const { pages, listedIds } = await fetchAll(makeAdapter(), "acme");
+
+      expect(pages.map((page) => page.length)).toEqual([SINK_PAGE_SIZE, SINK_PAGE_SIZE, 50]);
+      expect(ids(pages.flat())).toEqual(Array.from({ length: 450 }, (_, i) => String(i + 1)));
+      expect(listedIds).toHaveLength(450);
+    });
+
+    it("a body that breaks off after a page was written fails the board, unretried", async () => {
+      const calls = stubFetch([
+        { chunk: `{"jobs":[${items(1, 250)},` },
+        { fail: new TypeError("terminated") },
+      ]);
+      const written: number[] = [];
+      const sink = async (page: NormalizedJob[]): Promise<void> => {
+        written.push(page.length);
+      };
+
+      const err = await rejectionOf(fetchBoard(makeAdapter(), "acme", sink, { maxRetries: 3 }));
+
+      expect(err.message).toMatch(/^greenhouse "acme" body read error: terminated/);
+      expect(calls()).toBe(1);
+      expect(written).toEqual([SINK_PAGE_SIZE]); // the first page stays written
+    });
+
+    it("times out a server gone quiet, not a slow sink or a body still arriving", async () => {
+      // Arrives in 4 chunks 40 ms apart while each sink write takes 150 ms: far past a 100 ms timeout in
+      // all, none of it silence.
+      stubFetch([
+        { chunk: `{"jobs":[${items(1, 200)},`, afterMs: 40 },
+        { chunk: `${items(201, 400)},`, afterMs: 40 },
+        { chunk: items(401, 450), afterMs: 40 },
+        { chunk: "]}", afterMs: 40 },
+      ]);
+      const sink = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 150));
+      const board = await fetchBoard(makeAdapter(), "acme", sink, { fetchTimeoutMs: 100 });
+      expect(board.listedIds).toHaveLength(450);
+
+      // A 300 ms wait for the next chunk is silence.
+      stubFetch([{ chunk: '{"jobs":[' }, { chunk: `${items(1, 2)}]}`, afterMs: 300 }]);
+      const err = await rejectionOf(
+        runAdapter(makeAdapter(), "acme", { fetchTimeoutMs: 100, maxRetries: 0 }),
+      );
+      expect(err.message).toMatch(/^greenhouse "acme" body read error: .*timeout/);
+    });
+
+    it("a sink failure fails the board with its own error, never retried", async () => {
+      let calls = 0;
+      server.use(
+        http.get(LIST, () => {
+          calls += 1;
+          return HttpResponse.json({ jobs: [raw(1)] });
+        }),
+      );
+      const sink = (): Promise<void> => Promise.reject(new Error("db write failed"));
+
+      await expect(fetchBoard(makeAdapter(), "acme", sink, { maxRetries: 3 })).rejects.toThrow(
+        /^db write failed$/,
+      );
+      expect(calls).toBe(1);
+    });
+
+    it("keepItem drops a posting before it is mapped or counted; a page of only dropped ones is empty", async () => {
+      server.use(http.get(LIST, () => HttpResponse.json({ jobs: [raw(1), raw(2), raw(3)] })));
+      const adapter = makeAdapter({ keepItem: (item) => (item as RawItem).id !== 2 });
+
+      const kept = await fetchAll(adapter, "acme");
+      expect([ids(kept.jobs), kept.mapSkipped, kept.empty]).toEqual([["1", "3"], 0, false]);
+
+      server.use(http.get(LIST, () => HttpResponse.json({ jobs: [raw(2)] })));
+      expect((await fetchAll(adapter, "acme")).empty).toBe(true);
+    });
+
+    it("a hydrating board reaches the sink a page at a time too, failed details counted once", async () => {
+      vi.spyOn(console, "warn").mockImplementation(() => {});
+      server.use(
+        http.get(LIST, () =>
+          HttpResponse.json({ jobs: Array.from({ length: 250 }, (_, i) => raw(i + 1)) }),
+        ),
+      );
+      const adapter = makeAdapter({
+        hydrate: async (job) => {
+          if (job.externalId === "7") throw new Error("detail 404");
+          return { descriptionText: `hydrated ${job.externalId}` };
+        },
+      });
+
+      const { pages, listedIds, contentMissing } = await fetchAll(adapter, "acme");
+
+      expect(pages.map((page) => page.length)).toEqual([SINK_PAGE_SIZE, 50]);
+      expect([listedIds.length, contentMissing]).toEqual([250, 1]);
+    });
+  });
+
   describe("an empty board", () => {
     it("is `empty` unless its adapter's probe classifier calls an empty answer ambiguous; all-malformed isn't empty", async () => {
       vi.spyOn(console, "warn").mockImplementation(() => {});
       server.use(http.get(LIST, () => HttpResponse.json({ jobs: [] })));
-      expect((await fetchBoard(makeAdapter(), "acme")).empty).toBe(true);
+      expect((await fetchAll(makeAdapter(), "acme")).empty).toBe(true);
       const ambiguous = makeAdapter({ classifyProbe: () => "indeterminate" });
-      expect((await fetchBoard(ambiguous, "acme")).empty).toBe(false);
+      expect((await fetchAll(ambiguous, "acme")).empty).toBe(false);
 
       server.use(http.get(LIST, () => HttpResponse.json({ jobs: [raw(1)] })));
       const malformed = makeAdapter({ mapItem: () => null });
-      expect(await fetchBoard(malformed, "acme")).toMatchObject({
+      expect(await fetchAll(malformed, "acme")).toMatchObject({
         jobs: [],
         mapSkipped: 1,
         empty: false,
@@ -992,7 +1168,7 @@ describe("runAdapter — invariant ATS plumbing over MSW", () => {
         },
       });
 
-      const { jobs, rateLimited } = await fetchBoard(adapter, "acme", {
+      const { jobs, rateLimited } = await fetchAll(adapter, "acme", {
         hydrateConcurrency: 1,
         maxRetryWaitMs: 5000,
       });
@@ -1148,7 +1324,7 @@ describe("runAdapter — invariant ATS plumbing over MSW", () => {
         });
 
       it("fail-fast: stops the pool — the rest are contentMissing unfetched — and reports the rate limit", async () => {
-        const { jobs, rateLimited } = await fetchBoard(adapter(), "acme", {
+        const { jobs, rateLimited } = await fetchAll(adapter(), "acme", {
           hydrateConcurrency: 1,
           maxRetryWaitMs: 5000,
         });
@@ -1160,7 +1336,7 @@ describe("runAdapter — invariant ATS plumbing over MSW", () => {
       });
 
       it("option unset: each posting's detail is still tried, and no rate limit is reported", async () => {
-        const { jobs, rateLimited } = await fetchBoard(adapter(), "acme", {
+        const { jobs, rateLimited } = await fetchAll(adapter(), "acme", {
           hydrateConcurrency: 1,
           maxRetries: 0,
         });

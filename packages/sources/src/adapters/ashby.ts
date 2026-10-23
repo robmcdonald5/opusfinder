@@ -38,14 +38,11 @@ export const ashbyAdapter: SourceAdapter = {
     url: `${JOB_BOARD_API}/${ctx.slug}?includeCompensation=true`,
   }),
 
-  locate: (body, ctx) => {
-    if (!isRecord(body) || !Array.isArray(body.jobs)) {
-      throw new Error(`Ashby returned an unexpected response shape for "${ctx.slug}"`);
-    }
-    // `isListed: false` = the company keeps the posting off its board (direct link only). Dropped
-    // here rather than as a null `mapItem` so it isn't counted as a malformed posting every tick.
-    return body.jobs.filter((job) => !(isRecord(job) && job.isListed === false));
-  },
+  itemsKey: "jobs",
+
+  // `isListed: false` = the company keeps the posting off its board (direct link only). Dropped
+  // here rather than as a null `mapItem` so it isn't counted as a malformed posting every tick.
+  keepItem: (job) => !(isRecord(job) && job.isListed === false),
 
   mapItem: (raw, ctx) => toNormalizedJob(raw, ctx),
 };
