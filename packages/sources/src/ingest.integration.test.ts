@@ -1414,6 +1414,97 @@ describe("runIngestion — orchestration over real PGlite (fetch stubbed)", () =
     });
   });
 
+  describe("a board written a page at a time", () => {
+    const many = (from: number, to: number) =>
+      Array.from({ length: to - from + 1 }, (_, i) => ghJob(from + i));
+
+    it("writes a big board in sink pages, then stamps and sweeps it against the WHOLE listing", async () => {
+      const acme = await seedCompany({ slug: "acme" });
+      await seedJob(acme, { externalId: "999" }); // gone from the board
+      installFetch([boardRoute("acme", many(1, 450))]);
+
+      const counts = await runIngestion(db, { paceMs: 0, adapter: NO_RETRY });
+
+      expect(counts).toMatchObject({ ok: 1, jobs: 450, changed: 450, swept: 1 });
+      expect(vi.mocked(upsertJobs).mock.calls.map(([, , page]) => page.length)).toEqual([
+        200, 200, 50,
+      ]);
+      expect(await jobsFor(acme)).toHaveLength(451);
+      // A posting from the FIRST page is present, not absent: the sweep saw the whole listing.
+      expect((await jobByExt("1"))!.consecutiveAbsences).toBe(0);
+      expect((await jobByExt("999"))!.consecutiveAbsences).toBe(1);
+      expect((await companyById(acme)).lastIngestedAt).toBeInstanceOf(Date);
+    });
+
+    it("a body breaking off after its first page fails the board: that page stays written, nothing is stamped or swept", async () => {
+      const acme = await seedCompany({ slug: "acme" });
+      await seedJob(acme, { externalId: "999" });
+      const first = new TextEncoder().encode(
+        `{"jobs":[${many(1, 250)
+          .map((job) => JSON.stringify(job))
+          .join(",")},`,
+      );
+      let reads = 0;
+      installFetch([
+        {
+          match: boardMatch("acme"),
+          respond: () =>
+            new Response(
+              new ReadableStream<Uint8Array>(
+                {
+                  pull(controller) {
+                    if (reads++ === 0) controller.enqueue(first);
+                    else controller.error(new TypeError("terminated"));
+                  },
+                },
+                { highWaterMark: 0 },
+              ),
+            ),
+        },
+      ]);
+
+      const counts = await runIngestion(db, { paceMs: 0, adapter: { maxRetries: 3 } });
+
+      expect(counts).toMatchObject({ ok: 0, failed: 1, jobs: 0, swept: 0 });
+      expect((await allSourceRuns())[0]!.errorSample).toMatch(
+        /^greenhouse:acme greenhouse "acme" body read error/,
+      );
+      expect(await jobsFor(acme)).toHaveLength(201); // the first page of 200, plus the seeded one
+      expect((await jobByExt("999"))!.consecutiveAbsences).toBe(0); // not swept
+      expect((await companyById(acme)).lastIngestedAt).toBeNull(); // not certified
+    });
+
+    it("onChunk gets the chunk's last id before its first board, and isn't called for an empty chunk", async () => {
+      const first = await seedCompany({ slug: "first" });
+      const last = await seedCompany({ slug: "last" });
+      installFetch([
+        {
+          match: boardMatch("first"),
+          respond: () => (paced.events.push("fetch:first"), jsonResponse({ jobs: [] })),
+        },
+        {
+          match: boardMatch("last"),
+          respond: () => (paced.events.push("fetch:last"), jsonResponse({ jobs: [] })),
+        },
+      ]);
+      const onChunk = async (lastId: number): Promise<void> => {
+        paced.events.push(`claim:${lastId}`);
+      };
+
+      await runIngestion(db, { paceMs: 0, adapter: NO_RETRY, onChunk });
+      expect(paced.events.filter((e) => !e.startsWith("sleep:"))).toEqual([
+        `claim:${last}`,
+        "fetch:first",
+        "fetch:last",
+      ]);
+
+      paced.events.length = 0;
+      await runIngestion(db, { paceMs: 0, adapter: NO_RETRY, onChunk, afterId: last });
+      expect(paced.events).toEqual([]);
+      expect(first).toBeLessThan(last);
+    });
+  });
+
   describe("a failed stamp, sweep or listing", () => {
     it("a failed presence stamp leaves the board uncertified — counted, and the board still ok", async () => {
       const stampco = await seedCompany({ slug: "stampco", active: true, lastIngestedAt: null });

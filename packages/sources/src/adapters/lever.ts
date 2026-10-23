@@ -37,12 +37,7 @@ export const leverAdapter: SourceAdapter = {
 
   jobsRequest: (ctx) => ({ url: `${POSTINGS_API}/${ctx.slug}?mode=json` }),
 
-  locate: (body, ctx) => {
-    if (!Array.isArray(body)) {
-      throw new Error(`Lever returned an unexpected response shape for "${ctx.slug}"`);
-    }
-    return body;
-  },
+  itemsKey: null,
 
   mapItem: (raw, ctx) => toNormalizedJob(raw, ctx),
 };

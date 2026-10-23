@@ -12,8 +12,8 @@ const PUBLIC_HOST = "jobs.gem.com";
 
 /**
  * Gem job-board adapter. Gem white-labels a Greenhouse-style board but serves it as a BARE
- * top-level array (like Lever), so `locate` accepts an array and throws if it isn't one — there
- * is no `{ jobs }` envelope. Returns the whole board in one response (no pagination, `nextCursor`
+ * top-level array (like Lever), so `itemsKey` is `null` and a page that isn't an array fails loud —
+ * there is no `{ jobs }` envelope. Returns the whole board in one response (no pagination, `nextCursor`
  * omitted) with descriptions inline (no hydrate). See the inline comments for the per-field quirks
  * (case-sensitive host, required trailing slash, string `id`, `location_type` enum, `content_plain`).
  */
@@ -35,12 +35,7 @@ export const gemAdapter: SourceAdapter = {
   // The trailing slash on /job_posts/ is required by the endpoint.
   jobsRequest: (ctx) => ({ url: `${JOB_BOARD_API}/${ctx.slug}/job_posts/` }),
 
-  locate: (body, ctx) => {
-    if (!Array.isArray(body)) {
-      throw new Error(`Gem returned an unexpected response shape for "${ctx.slug}"`);
-    }
-    return body;
-  },
+  itemsKey: null,
 
   mapItem: (raw, ctx) => toNormalizedJob(raw, ctx),
 };

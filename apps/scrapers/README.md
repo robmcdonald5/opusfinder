@@ -38,7 +38,12 @@ and the library it calls owns its own `source_runs` row (`startRun`/`finishRun`)
 
 - **Ingestion is chunked** (Option-A chunked cron): each tick processes the next `INGEST_LIMIT` boards
   using an id-keyset cursor stored in the `INGEST_CURSOR` KV namespace; the corpus drains across ticks.
-  Boards run one at a time; politeness starts a board ≥ 500 ms after the previous board of its source
+  The tick **claims its chunk** before the first board, writing the chunk's last id to the cursor, so a
+  tick killed mid-chunk (out of memory, past the wall limit, a platform cancel) costs the rest of that
+  chunk one sweep instead of re-pinning the cursor on it every tick (the 2026-10-22 outage froze it at
+  401 for 10 h). The tick's own end writes the exact cursor, a full second after the claim (KV refuses a
+  second write to a key within one). Each board streams through `upsertJobs` 200 postings at a time, so a
+  board's size costs time, not memory. Boards run one at a time; politeness starts a board ≥ 500 ms after the previous board of its source
   (its adapter's `pacingKey`) finished, sleeping only the remainder, so alternating sources can't burst
   one host. A posting whose detail fetch failed is kept as stored, never overwritten (`hydrateSkipped`
   in `pnpm runs`). Inline embedding is **not wired**, and no flag turns it on: the embeddings package

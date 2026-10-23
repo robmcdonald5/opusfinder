@@ -5,9 +5,9 @@
 
 /**
  * A minimal `Response` stand-in shaped to exactly what `probeFetch` reads: `status`, a case-insensitive
- * `headers.get` that only knows `retry-after`, a `text()` body, and a cancellable `body` (probeFetch
- * calls `res.body?.cancel()` on a non-2xx / pre-retry response). One source of truth so a change to the
- * stubbed contract can't silently diverge between the two probe suites.
+ * `headers.get` that only knows `retry-after`, and a real streamed `body` (probeFetch streams a 2xx body
+ * through the listing reader, and calls `res.body?.cancel()` on a non-2xx / pre-retry response). One source
+ * of truth so a change to the stubbed contract can't silently diverge between the two probe suites.
  */
 export function fakeResponse(status: number, bodyText: string, retryAfter?: string): Response {
   return {
@@ -15,7 +15,6 @@ export function fakeResponse(status: number, bodyText: string, retryAfter?: stri
     headers: {
       get: (h: string) => (h.toLowerCase() === "retry-after" ? (retryAfter ?? null) : null),
     },
-    text: () => Promise.resolve(bodyText),
-    body: { cancel: () => Promise.resolve() },
+    body: new Response(bodyText).body,
   } as unknown as Response;
 }

@@ -43,12 +43,7 @@ export const greenhouseAdapter: SourceAdapter = {
   jobsRequest: (ctx) => ({ url: `${BOARDS_API}/${ctx.slug}/jobs?content=true` }),
   probeRequest: (ctx) => ({ url: `${BOARDS_API}/${ctx.slug}/jobs` }),
 
-  locate: (body, ctx) => {
-    if (!isRecord(body) || !Array.isArray(body.jobs)) {
-      throw new Error(`Greenhouse returned an unexpected response shape for "${ctx.slug}"`);
-    }
-    return body.jobs;
-  },
+  itemsKey: "jobs",
 
   mapItem: (raw, ctx) => toNormalizedJob(raw, ctx),
 };

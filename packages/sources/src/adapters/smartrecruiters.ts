@@ -33,8 +33,8 @@ const SECTION_ORDER = [
  * `BoschGroup`'s postings), but `normalizeSlug` preserves casing so it never mints a new row beside a
  * stored mixed-case slug; discovery folds case when matching instead (`CASE_INSENSITIVE_SLUG_SOURCES`).
  *
- * Pagination uses `body.totalFound`; `nextCursor` and `locate` both read the same envelope (one is
- * the array, the other the count) — an accepted seam. An unknown slug returns 200 + `totalFound:0`
+ * Pagination uses `body.totalFound`, read from the page beside the `content` array its postings stream
+ * out of. An unknown slug returns 200 + `totalFound:0`
  * (NOT 404), so slug existence cannot be asserted here.
  */
 export const smartRecruitersAdapter: SourceAdapter = {
@@ -68,12 +68,7 @@ export const smartRecruitersAdapter: SourceAdapter = {
     return { url: `${API}/${ctx.slug}/postings?limit=${PAGE_LIMIT}&offset=${offset}` };
   },
 
-  locate: (body, ctx) => {
-    if (!isRecord(body) || !Array.isArray(body.content)) {
-      throw new Error(`SmartRecruiters returned an unexpected response shape for "${ctx.slug}"`);
-    }
-    return body.content;
-  },
+  itemsKey: "content",
 
   reportedTotal: (body) => totalFound(body),
 

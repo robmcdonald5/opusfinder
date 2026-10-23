@@ -98,8 +98,10 @@ lane re-emits its slug, so a deactivated board no lane emits again stays inactiv
 - **EU Lever** (`jobs.eu.lever.co`) returns `null` from `matchUrl` — never a candidate; real EU support
   is deferred to Phase 8.
 - **Unknown-slug 404 signals** for Greenhouse/Lever/Ashby/Workable were inferred, not documented;
-  Greenhouse's `404` is now confirmed live. The status-first default + `locate`-in-try/catch contains
-  any surprise to `indeterminate` (no write) until a one-line `classifyProbe` override is added.
+  Greenhouse's `404` is now confirmed live. The status-first default, which calls a 2xx that isn't a
+  listing page `indeterminate` (no write), contains any surprise until a one-line `classifyProbe` override
+  is added. A probe streams its page like ingestion does and, without an override, stops at the first
+  posting, so probing a big board holds one chunk, not the board.
 - **HN encodes `/` as `&#x2F;`**, so the `hn` lane entity-decodes via the shared
   `cleanHtml(text, ["decode"])` (from `@opusfinder/sources`) before URL extraction; only covered-ATS
   URLs an adapter's `matchUrl` claims are kept.

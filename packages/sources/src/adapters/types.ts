@@ -4,7 +4,7 @@ import type { CompanySlug, NormalizedJob, SourceName } from "@opusfinder/shared"
  * A discovery probe's outcome. `live` + `live-empty` both PROVE the slug exists (an empty live
  * board is healthy — only `absent` counts as a failed probe for staleness). `absent` = the slug
  * is confirmed NOT to exist. `indeterminate` = existence can't be asserted (e.g. SmartRecruiters'
- * ambiguous `200 + totalFound:0`, OR a 2xx whose body fails `locate`, OR a network-exhausted
+ * ambiguous `200 + totalFound:0`, OR a 2xx that isn't a listing page, OR a network-exhausted
  * probe) → the caller skips the DB write and never deactivates on it.
  */
 export type ProbeOutcome = "live" | "live-empty" | "absent" | "indeterminate";
@@ -56,14 +56,15 @@ export interface SourceAdapter {
   matchUrl(url: URL): string | null;
 
   /**
-   * Interpret a probe response for THIS source — a sibling of `locate` (both read the same raw
-   * envelope) but TOTAL where `locate` is partial: it must read a 404/400/error body WITHOUT
+   * Interpret a probe response for THIS source. TOTAL: it must read a 404/400/error answer WITHOUT
    * throwing, because the prober does not throw on `!ok`. `status` is the HTTP status (0 ⇒
-   * network-exhausted); `body` is the parsed JSON, or `undefined` for a non-JSON/unparsed body.
-   * OMIT ⇒ discovery's default classifier (status-first: 404 ⇒ `absent` without calling `locate`;
-   * 2xx ⇒ `locate(body).length > 0 ? live : live-empty`, a `locate` throw ⇒ `indeterminate`;
-   * anything else ⇒ `indeterminate`). Override ONLY where the truth table truly differs (Trakstar
-   * `400` = absent; SmartRecruiters `200 + totalFound:0` = indeterminate).
+   * network-exhausted); `body` is a 2xx page's JSON with its postings array emptied (the totals and
+   * other fields beside it), or `undefined` when there is none: a non-2xx, a non-JSON body, or a page
+   * whose postings array isn't at {@link itemsKey}. OMIT ⇒ discovery's default classifier (status-first:
+   * 404 ⇒ `absent`; a 2xx page listing a posting ⇒ `live`, listing none ⇒ `live-empty`, one that isn't a
+   * listing ⇒ `indeterminate`; anything else ⇒ `indeterminate`), and the probe stops reading at the first
+   * posting. Override ONLY where the truth table truly differs (Trakstar `400` = absent; SmartRecruiters
+   * `200 + totalFound:0` = indeterminate).
    */
   classifyProbe?(status: number, body: unknown): ProbeOutcome;
 
@@ -72,13 +73,25 @@ export interface SourceAdapter {
 
   /**
    * The discovery probe's request: the same first page as `jobsRequest`, minus the params that only
-   * add posting content (descriptions), so `locate` and `classifyProbe` read the same envelope from a
-   * far smaller body. OMIT ⇒ the probe sends `jobsRequest(ctx, null)`.
+   * add posting content (descriptions), so the probe reads the same envelope from a far smaller body.
+   * OMIT ⇒ the probe sends `jobsRequest(ctx, null)`.
    */
   probeRequest?(ctx: SourceContext): JobsRequest;
 
-  /** Pull the untrusted jobs array out of one page's parsed body. Throws on a bad envelope. */
-  locate(body: unknown, ctx: SourceContext): unknown[];
+  /**
+   * Where one listing page keeps its postings: the array under this key of the root object, or the root
+   * array itself when `null` (Lever, Gem). runAdapter streams that array a posting at a time, so a board's
+   * postings never sit in memory together; the rest of the page is parsed on its own, array emptied, for
+   * `nextCursor` / `reportedTotal` / `classifyProbe`. A page without the array there fails LOUD: a bad
+   * envelope is a real regression, and an empty answer would read as an empty board.
+   */
+  readonly itemsKey: string | null;
+
+  /**
+   * Drop a listed item the board doesn't show (Ashby's `isListed: false`) before it is mapped or counted,
+   * so it isn't tallied as a malformed posting every run. MUST NOT throw. OMIT ⇒ every item is kept.
+   */
+  keepItem?(raw: unknown): boolean;
 
   /**
    * Map ONE raw item → NormalizedJob, or `null` to skip+count (never throw on bad data).

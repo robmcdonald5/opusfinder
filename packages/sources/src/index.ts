@@ -7,3 +7,6 @@ export type { IngestionOptions, IngestionCounts, IngestEmbedFn, IngestBoardResul
 // board URLs via cleanHtml(text, ["decode"]) rather than hand-rolling a weaker copy.
 export { cleanHtml } from "./adapters/text";
 export type { SourceAdapter, SourceContext, JobsRequest, ProbeOutcome } from "./adapters/types";
+// The streamed listing-page read ingestion uses, for discovery's probe: a probe of a big board then holds
+// one chunk, not the board.
+export { BodyReadError, readListingPage } from "./adapters/listing-stream";

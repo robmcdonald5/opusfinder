@@ -34,13 +34,8 @@ export const pinpointAdapter: SourceAdapter = {
 
   jobsRequest: (ctx) => ({ url: `https://${ctx.slug}.${POSTINGS_HOST}/postings.json` }),
 
-  locate: (body, ctx) => {
-    // body holds rich sibling sections; only body.data is the postings array.
-    if (!isRecord(body) || !Array.isArray(body.data)) {
-      throw new Error(`Pinpoint returned an unexpected response shape for "${ctx.slug}"`);
-    }
-    return body.data;
-  },
+  // body holds rich sibling sections; only body.data is the postings array.
+  itemsKey: "data",
 
   mapItem: (raw, ctx) => toNormalizedJob(raw, ctx),
 };

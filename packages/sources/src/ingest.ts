@@ -120,6 +120,14 @@ export interface IngestionOptions {
    */
   maxRunMs?: number;
   /**
+   * Called with the chunk's last company id once the chunk is listed, before its first board (not for an
+   * empty chunk). The Worker claims the chunk here: it moves the KV cursor past the whole chunk up front, so
+   * a tick killed mid-chunk (out of memory, wall time, a platform cancel) costs the rest of that chunk one
+   * sweep instead of re-pinning the cursor on it every tick. The tick's own end still sets the exact cursor.
+   * MUST NOT throw — a failed claim is the caller's to log, not a run failure.
+   */
+  onChunk?: (lastId: number) => Promise<void>;
+  /**
    * Optional per-board progress hook, fired ONCE per board with its final outcome (success, failure or a
    * rate-limit skip): at once, or — for a board a rate limit sent to the second pass — after that pass. The library stays quiet by default (only the run summary is logged); the CLI
    * supplies this to restore real-time per-board output, the Worker omits it. MUST NOT throw — a throwing
@@ -229,6 +237,8 @@ export async function runIngestion(db: Db, opts: IngestionOptions = {}): Promise
       limit: opts.limit,
     });
     counts.companies = list.length;
+    const chunkEnd = list.at(-1);
+    if (chunkEnd && opts.onChunk) await opts.onChunk(chunkEnd.id);
 
     // Each processed board's FINAL outcome: its own counts and its onBoard result. A second-pass retry
     // overwrites the entry; the run's counts and errorSample are tallied from these once, after both passes,
@@ -280,8 +290,18 @@ export async function runIngestion(db: Db, opts: IngestionOptions = {}): Promise
           const wait = Math.max(paceMs, paceMsOf(pacingKey)) - (clock() - key.lastFinish);
           if (wait > 0) await sleep(wait);
         }
-        const board = await fetchBoard(adapter, company.slug, opts.adapter);
-        const normalized = board.jobs;
+        // Each page goes to upsertJobs as it arrives, so a board's postings are never all in memory. A board
+        // failing partway keeps the pages already written: the upsert is idempotent, and the failed board gets
+        // no presence stamp or sweep below, exactly as if nothing had been fetched.
+        let changed = 0;
+        const board = await fetchBoard(
+          adapter,
+          company.slug,
+          async (page) => {
+            changed += (await upsertJobs(db, company.id, page)).changed;
+          },
+          opts.adapter,
+        );
         rateLimit = board.rateLimited; // a detail fetch's: the board still succeeds, but its key cools down below
         // A capped board (adapter.maxItems cut the fetch short) is a PARTIAL fetch that skips the
         // feed-absence sweep below (it would false-close the un-fetched tail). Count it so the sweep-exempt
@@ -296,16 +316,16 @@ export async function runIngestion(db: Db, opts: IngestionOptions = {}): Promise
         // wasted neon-http round-trip plus a dead tuple per board per tick).
         // upsertJobs never writes a failed hydrate's content (see its guard): a `contentMissing` posting's
         // stored row keeps its content (only its company_id follows this board) and a new one waits for a
-        // later run. Its counts are DISTINCT postings, tallied only once the write succeeded (a throw fails
-        // the board, counting none).
-        const upserted = await upsertJobs(db, company.id, normalized);
-        const { changed, total } = upserted;
+        // later run. The counts are DISTINCT postings over the whole board, tallied only once every page was
+        // written (a throw fails the board, counting none). `changed` sums the pages' writes, so a posting
+        // the board lists twice, a page apart and with different text, counts twice.
+        const total = board.listedIds.length - board.contentMissing;
         counts.jobs += total;
         counts.changed += changed;
-        counts.hydrateSkipped += upserted.contentMissing;
+        counts.hydrateSkipped += board.contentMissing;
         // The hydrate_skip_ratio health check's denominator: only boards whose adapter hydrates, so the
         // many non-hydrating postings can't dilute a failing detail endpoint.
-        if (adapter.hydrate) counts.hydrateListed += total + upserted.contentMissing;
+        if (adapter.hydrate) counts.hydrateListed += board.listedIds.length;
         counts.ok += 1;
 
         // Liveness stamp (EVERY board, capped or not — see markJobsPresent): refresh last_seen_at for
@@ -315,15 +335,15 @@ export async function runIngestion(db: Db, opts: IngestionOptions = {}): Promise
         // empty answer: the timer then closes the jobs it no longer lists. An ambiguous empty fetch
         // (SmartRecruiters 200+totalFound:0), or one whose every posting was malformed, does neither. The gate
         // is the LISTING, not `total` — a board whose every hydrate failed writes nothing but is live.
-        // `listedIds` is every de-duplicated external_id the board listed — what upsertJobs persisted PLUS the
-        // contentMissing postings it did not write: a posting whose detail fetch failed is still listed, so it
-        // must neither age toward the staleness timer nor count as absent in the sweep below. (Known
+        // `board.listedIds` is every de-duplicated external_id the board listed — what upsertJobs persisted PLUS
+        // the contentMissing postings it did not write: a posting whose detail fetch failed is still listed, so
+        // it must neither age toward the staleness timer nor count as absent in the sweep below. (Known
         // limitation, an accepted trade-off: a stored posting whose detail is 404/410/"not available" while
         // still listed stays active and digest-eligible — retrieved and reranked — until the ATS delists it;
         // and hydrate_skip_ratio can't tell those not-founds from 5xx, so steady list lag can hold the ratio
         // up. Known follow-up: a separate not-found counter. See smartrecruiters.ts hydratePosting.)
         // Isolated like the sweep/embed steps: a stamp fault leaves jobs persisted and self-heals next cycle.
-        const listedIds = [...new Set(normalized.map((j) => j.externalId))];
+        const listedIds = board.listedIds;
         const listed = listedIds.length > 0;
         try {
           if (listed) {
@@ -403,7 +423,7 @@ export async function runIngestion(db: Db, opts: IngestionOptions = {}): Promise
           ok: true,
           jobs: total,
           changed,
-          hydrateSkipped: upserted.contentMissing,
+          hydrateSkipped: board.contentMissing,
           embedded: boardEmbedded,
           embedTokens: boardTokens,
           error: embedWarning,

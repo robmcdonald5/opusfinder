@@ -3,12 +3,13 @@ import type { SourceName } from "@opusfinder/shared";
 import { describe, expect, it } from "vitest";
 
 import { adapters, SOURCE_NAMES } from "./index";
+import { ListingShapeError, readListingPage } from "./listing-stream";
 import type { SourceContext } from "./types";
 
 // Leaf pure-unit for each adapter's listing request and response envelope. The query params are
 // load-bearing (without `?content=true` / `?details=true` every description arrives blank, and the
-// blank-description guard hides it), and `locate` must THROW on a broken envelope: an empty array
-// would read as an empty board, which discovery's probe counts as proof the slug exists.
+// blank-description guard hides it), and reading a broken envelope must THROW: an empty array would
+// read as an empty board, which discovery's probe counts as proof the slug exists.
 const ctx: SourceContext = { slug: unsafeCompanySlug("acme"), rawSlug: "acme" };
 
 const LISTINGS = {
@@ -50,20 +51,29 @@ const LISTINGS = {
   },
 } satisfies Record<SourceName, { url: string; envelope: (jobs: unknown[]) => unknown }>;
 
+/** The postings `source`'s adapter streams out of `body`, served as JSON the way its API sends it. */
+async function postingsOf(source: SourceName, body: unknown): Promise<unknown[]> {
+  const postings: unknown[] = [];
+  await readListingPage(new Response(JSON.stringify(body)).body, adapters[source], (items) => {
+    postings.push(...items);
+  });
+  return postings;
+}
+
 describe("adapter listing request + envelope", () => {
   it.each(SOURCE_NAMES)("%s requests the exact first-page URL", (source) => {
     expect(adapters[source].jobsRequest(ctx, null).url).toBe(LISTINGS[source].url);
   });
 
-  it.each(SOURCE_NAMES)("%s locates the postings array in its envelope", (source) => {
+  it.each(SOURCE_NAMES)("%s finds the postings array in its envelope", async (source) => {
     const postings = [{ id: "1" }, { id: "2" }];
-    expect(adapters[source].locate(LISTINGS[source].envelope(postings), ctx)).toEqual(postings);
+    expect(await postingsOf(source, LISTINGS[source].envelope(postings))).toEqual(postings);
   });
 
-  it.each(SOURCE_NAMES)("%s throws on a broken envelope", (source) => {
+  it.each(SOURCE_NAMES)("%s throws on a broken envelope", async (source) => {
     const bareArray = Array.isArray(LISTINGS[source].envelope([]));
     for (const body of [null, "<html>maintenance</html>", 42, {}, bareArray ? { jobs: [] } : []]) {
-      expect(() => adapters[source].locate(body, ctx)).toThrow(/unexpected response shape/);
+      await expect(postingsOf(source, body)).rejects.toBeInstanceOf(ListingShapeError);
     }
   });
 
