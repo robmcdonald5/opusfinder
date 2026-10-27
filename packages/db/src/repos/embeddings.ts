@@ -221,9 +221,8 @@ export interface JobNeighbor {
 }
 
 /**
- * The `limit` jobs nearest to `queryVector` by cosine distance (`<=>`), via the HNSW
- * index, considering only rows that have an embedding. Digest retrieval does NOT use this shape:
- * it runs an exact scan (see retrieval.ts).
+ * The `limit` jobs nearest to `queryVector` by cosine distance (`<=>`), an exact scan over the rows
+ * that have an embedding. Unfiltered, so digest retrieval doesn't use it (see retrieval.ts).
  */
 export async function nearestJobs(
   db: Db,
@@ -232,10 +231,7 @@ export async function nearestJobs(
 ): Promise<JobNeighbor[]> {
   const literal = vectorLiteral(queryVector);
   // Bind the (large) query vector ONCE: compute distance in the projection, then ORDER BY
-  // the `distance` alias. Postgres substitutes the alias's underlying `embedding <=> $1`
-  // when building the sort pathkey, so the HNSW index path still matches — but it only WINS
-  // over a seqscan once the table is large, so confirm with EXPLAIN at scale (a tiny table
-  // seq-scans regardless). Cast via the shared VECTOR_CAST (single dimension const).
+  // the `distance` alias. Cast via the shared VECTOR_CAST (single dimension const).
   const result: unknown = await db.execute(sql`
     SELECT id, title, embedding <=> ${literal}${VECTOR_CAST} AS distance
     FROM ${jobs}

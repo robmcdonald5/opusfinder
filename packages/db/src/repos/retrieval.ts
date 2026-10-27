@@ -8,13 +8,12 @@
  * applied APP-SIDE, after an OVER-FETCH, before the trim, so they draw on the whole over-fetch buffer
  * instead of shrinking the returned set below `limit`.
  *
- * EXACT SCAN, ON PURPOSE: the distance is computed in an `OFFSET 0` subquery, which Postgres doesn't
- * flatten, so the outer sort is on a plain column jobs_embedding_hnsw_idx can't serve and the planner
- * never takes the index. On the index, pgvector returns only ~hnsw.ef_search (default 40) nearest rows
- * and the active + recency filter runs after it; `pnpm eval:hnsw` measured that filtered fetch at ~3 of
- * 150 rows, and no over-fetch can fill a set the index never returns. The exact scan computes distances
- * only for rows the filters (location rule included) keep. If ANN is ever needed, `db.batch([SET LOCAL
- * hnsw.iterative_scan…, query])` runs in one transaction on neon-http (PGlite has no batch).
+ * EXACT SCAN, ON PURPOSE: an approximate (HNSW) index returns only its ef_search nearest rows (default 40)
+ * and the active + recency filter runs after them. On the real corpus that filtered fetch came back with
+ * ~3 of the 150 rows asked for, and no over-fetch can fill a set the index never returns. So jobs.embedding
+ * carries no vector index, and the exact scan computes distances only for rows the filters (location rule
+ * included) keep. The distance is computed in an `OFFSET 0` subquery, which Postgres doesn't flatten, so
+ * the outer sort is on a plain column no vector index can serve, should one ever be added.
  */
 import { sql, type SQL } from "drizzle-orm";
 

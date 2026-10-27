@@ -10,7 +10,6 @@
   "scripts": {
     "eval": "tsx scripts/eval.ts",
     "eval:compare": "tsx scripts/compare.ts",
-    "eval:hnsw": "tsx scripts/hnsw-recall.ts",
     "extract-profile": "tsx scripts/extract-profile.ts",
     "build:pool": "tsx scripts/build-pool.ts",
     "draft-labels": "tsx scripts/draft-labels.ts",

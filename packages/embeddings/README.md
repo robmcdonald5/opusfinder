@@ -79,7 +79,7 @@ to reuse the `jobs.embedding vector(1024)` column — the eval harness's OpenAI 
 # Inngest embed-backlog-drain first, or both embed (and pay for) the same rows:
 pnpm embeddings:backfill            # or: pnpm --filter @opusfinder/embeddings backfill
 
-# Embed a query string and print the nearest jobs (cosine over the HNSW index):
+# Embed a query string and print the nearest jobs (an exact cosine scan):
 pnpm embeddings:search "senior backend engineer, Go, remote"
 ```
 

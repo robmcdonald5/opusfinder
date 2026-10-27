@@ -49,8 +49,8 @@ export interface PoolCandidate {
   ftsRank?: number;
 }
 
-/** data/pools/<id>.json. No timestamp (the eligible-count is the "when" proxy, mirroring the
- *  hnsw-recall report convention). */
+/** data/pools/<id>.json. No timestamp: the eligible-count is the "when" proxy, so a re-run over an
+ *  unchanged corpus diffs clean. */
 export interface PoolFile {
   profileId: string;
   arms: { voyageK: number; ftsK: number; randomK: number; recencyDays: number };

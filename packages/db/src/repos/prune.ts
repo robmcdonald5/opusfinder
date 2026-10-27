@@ -1,7 +1,7 @@
 /**
  * The TTL hard-delete prune (the reclaim half of the lifecycle: the soft-CLOSE writers mark jobs closed,
- * this physically DELETEs the long-closed, history-unreferenced ones so the table + its 1024-dim HNSW
- * index stop growing monotonically). Pure neon-http SQL (db.execute), Worker-safe by construction: the
+ * this physically DELETEs the long-closed, history-unreferenced ones so the table stops growing
+ * monotonically). Pure neon-http SQL (db.execute), Worker-safe by construction: the
  * scrapers Worker runs {@link runPrune} after its weekly discovery run, and the Node `prune-stale-jobs.ts`
  * script runs {@link pruneStaleJobs}.
  *
@@ -26,9 +26,8 @@
  *                                                    row has no display snapshot (job_title IS NULL): once
  *                                                    the job is gone that history row has nothing to render.
  *
- * Deleting a row is FREE (no Voyage call — only ADDING a job costs an embedding). The space and the ANN graph
- * come back through autovacuum; neon-http can't VACUUM, so a manual `VACUUM jobs;` (after a REINDEX
- * CONCURRENTLY of the HNSW index, for a big delete) is an optional speed-up, not a requirement.
+ * Deleting a row is FREE (no Voyage call — only ADDING a job costs an embedding). The space comes back through
+ * autovacuum; neon-http can't VACUUM, so a manual `VACUUM jobs;` is an optional speed-up, not a requirement.
  */
 import { sql } from "drizzle-orm";
 
@@ -145,7 +144,7 @@ export async function pruneStaleJobs(db: Db, opts: { apply?: boolean } = {}): Pr
   console.log(`done — deleted ${deleted} row(s). DB size now: ${sizeAfter}`);
   console.log(
     "Postgres reuses the freed space (autovacuum), so the size above won't drop by itself. After a big delete, " +
-      "`REINDEX INDEX CONCURRENTLY jobs_embedding_hnsw_idx; VACUUM jobs;` in the Neon SQL editor speeds that up.",
+      "`VACUUM jobs;` in the Neon SQL editor speeds that up.",
   );
   return { closedTotal, closedOld, prunable, applied: true, deleted };
 }

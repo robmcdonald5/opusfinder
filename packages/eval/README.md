@@ -20,7 +20,6 @@ pnpm eval -- --ranker embedding --embedder openai   # vector retrieval (OpenAI)
 pnpm eval -- --ranker llm-rerank                 # shared LLM rerank core (deterministic stub)
 pnpm eval -- --dataset data/fixture.jsonl       # synthetic smoke test (no DB/network)
 pnpm eval:compare                               # Voyage vs OpenAI, side-by-side retrieval@k
-pnpm eval:hnsw                                  # HNSW-vs-exact recall on real Neon (read-only)
 pnpm eval:locations                             # location normalizer vs the golden set (live model)
 
 pnpm exec vitest run packages/eval/src              # self-tests: metrics/cosine/dataset/report (Vitest)
@@ -38,18 +37,6 @@ unchanged run is a byte-identical file — the diff is signal, not noise.
 Binary relevance (`expectedGoodIds`): precision@k, recall@k, NDCG@k at k ∈ {3, 5, 10}, averaged
 across examples. Recall/NDCG are undefined (and dropped from the mean) for an example with no
 relevant ids. The math is pinned by `src/metrics.test.ts` (+ `cosine`/`dataset`/`report` tests).
-
-## HNSW recall (plan §8)
-
-`pnpm eval:hnsw` measures how much of the EXACT cosine top-k the pgvector HNSW index returns on
-the real Neon corpus — a read-only MEASUREMENT (not a pass/fail), written to
-`reports/hnsw-recall.dataset.json`. Each leg is planner-forced over the tx-capable neon-serverless driver
-and EXPLAIN-verified (the ANN leg must use the index, the exact leg must not), so it can never
-silently score exact-vs-exact. Recall is tie-aware on distance (`src/ann.ts`), because
-same-signature cross-posts carry identical embeddings. Digest retrieval runs an exact scan on
-purpose (see repos/retrieval.ts): on the index, at the default `ef_search=40`, the
-production-filtered shape under-fills catastrophically (single-digit rows of the 150 fetched).
-This quantifies what turning ANN on would cost. Needs `DATABASE_URL` + `VOYAGE_API_KEY`.
 
 ## Location golden set
 
@@ -86,9 +73,8 @@ Two example shapes coexist:
   frozen verbatim in `data/legacy-examples.jsonl` and passed through `build:dataset` untouched.
 - **Pooled (the scale shape)** — at the ~100k-job corpus a full board is unlabelable, so each
   example's `candidateJobs` is the union of three nomination arms (`scripts/build-pool.ts`):
-  a Voyage arm (retrieval.ts's filters over a Voyage query embedding, run as an exact scan rather
-  than through `retrieveCandidatesForProfile`, so the pool can't inherit the HNSW under-fill), a
-  Postgres full-text arm (target roles + skills), and a seeded random arm — multi-arm so the
+  a Voyage arm (retrieval.ts's filters and exact scan over a Voyage query embedding, with the geo
+  and exclusion prefs left neutral so the pool nominates broadly), a Postgres full-text arm (target roles + skills), and a seeded random arm — multi-arm so the
   labels aren't circular in the production ranker's favor. **Labels are honest only WITHIN each
   example's pool**: unlabeled ≠ irrelevant, so never compute full-corpus labeled recall from
   pool-scoped labels.

@@ -12,20 +12,19 @@
  * never showed the labeler). The arms:
  *   - voyage: the digest read path's SEMANTIC (active + 14d recency, cosine-nearest, signature
  *     collapse — retrieval.ts's predicates + post-processing) over a query-side embedding of
- *     composeProfileText, run as a PLANNER-FORCED EXACT scan (the hnsw-recall exact-leg
- *     pattern: tx-capable driver + SET LOCAL + EXPLAIN-verified) so the pool nominates at full
+ *     composeProfileText, run as an EXACT scan like retrieval's, so the pool nominates at full
  *     retrieval recall. Geo/exclusion prefs deliberately neutral: the pool nominates broadly; the
  *     eval ranker doesn't filter either.
  *   - fts: Postgres full-text search over title+description with the profile's target roles and
  *     skills OR-ed — surfaces keyword-obvious jobs the embedding may rank low.
  *   - random: a seeded (profile-id-keyed, mulberry32) sample of the same filtered corpus — an
  *     unbiased floor so labels aren't confined to what any retriever thinks is good.
- * All arms share the same base predicates (embedded + active + 14d recency — the
- * "prod-filtered" shape hnsw-recall measures), so the pool is a coherent "what prod could
- * surface today" set. The pool is signature-collapsed ACROSS arms: a cross-posted role carries
- * identical text (identical embedding), so pooling two copies would force duplicate labels and
- * seed exact-distance tie noise — one member represents the group, the same rule production
- * applies at display time (collapseBySignature).
+ * All arms share the same base predicates (embedded + active + 14d recency — retrieval's
+ * filter), so the pool is a coherent "what prod could surface today" set. The pool is
+ * signature-collapsed ACROSS arms: a cross-posted role carries identical text (identical
+ * embedding), so pooling two copies would force duplicate labels and seed exact-distance tie
+ * noise — one member represents the group, the same rule production applies at display time
+ * (collapseBySignature).
  *
  * A labeled profile's pool is only rebuilt with --force: its labels (and every negative they
  * imply) mean something only against the pool they were drafted from, and build:dataset catches a
@@ -46,7 +45,6 @@ import { embed } from "@opusfinder/embeddings";
 import { composeProfileText, isRecord } from "@opusfinder/shared";
 import { runScript } from "@opusfinder/shared/script";
 
-import { planUsesIndex } from "../src/ann";
 import { getFlag } from "../src/cli";
 import { hashString, mulberry32 } from "../src/rng";
 import { relativeToPkg } from "../src/runner";
@@ -71,13 +69,12 @@ const RECENCY_DAYS = 14;
 const ARM_OVERFETCH = 3;
 /** Voyage-arm fetch depth before the signature collapse trims to VOYAGE_K distinct roles. */
 const VOYAGE_FETCH = VOYAGE_K * 4;
-const HNSW_INDEX = "jobs_embedding_hnsw_idx";
 /** Every arm requires an embedding, so a stalled embed drain empties the window long before a
- *  narrow corpus would: a caught-up window held ~11.5k (activeEmbedded14d in hnsw-recall's report). */
+ *  narrow corpus would: a caught-up window held ~11.5k active embedded jobs. */
 const MIN_ELIGIBLE = 1000;
 
-/** Local mirror of repos/sql.ts's vectorLiteral/VECTOR_CAST (the hnsw-recall precedent — a few
- *  duplicated lines beat widening the production API for a tooling script). */
+/** Local mirror of repos/sql.ts's vectorLiteral/VECTOR_CAST — a few duplicated lines beat widening
+ *  the production API for a tooling script. */
 function vectorLiteral(vec: number[]): string {
   if (vec.length !== EMBEDDING_DIMENSIONS) {
     throw new Error(`query vector has ${vec.length} dims; expected ${EMBEDDING_DIMENSIONS}.`);
@@ -86,12 +83,11 @@ function vectorLiteral(vec: number[]): string {
 }
 const VECTOR_CAST = sql.raw(`::vector(${EMBEDDING_DIMENSIONS})`);
 
-/** The shared base predicates — must mirror retrieval.ts's SQL conditions (hnsw-recall pins the
- *  same shape as its "prod-filtered-14d" variant). */
+/** The shared base predicates — must mirror retrieval.ts's SQL conditions. */
 const BASE_WHERE = sql`embedding IS NOT NULL AND lifecycle_state = 'active' AND COALESCE(posted_at, created_at) >= now() - ${RECENCY_DAYS} * interval '1 day'`;
 
-/** Local mirror of repos/sql.ts's resultRows (not on the repos public surface; the hnsw-recall
- *  precedent — a few duplicated lines beat widening the production API for a tooling script). */
+/** Local mirror of repos/sql.ts's resultRows (not on the repos public surface) — a few duplicated
+ *  lines beat widening the production API for a tooling script. */
 function resultRows(result: unknown): unknown[] {
   if (Array.isArray(result)) return result;
   if (isRecord(result) && Array.isArray(result.rows)) return result.rows;
@@ -165,44 +161,27 @@ class Pool {
   }
 }
 
-/** The EXPLAIN (FORMAT JSON) payload: one row, one "QUERY PLAN" column — pre-parsed by the
- *  driver or a string depending on the wire path; accept both (hnsw-recall's helper). */
-function explainPlan(result: unknown): unknown {
-  const row = resultRows(result)[0];
-  if (!isRecord(row)) throw new Error("EXPLAIN returned no row.");
-  const plan = row["QUERY PLAN"];
-  return typeof plan === "string" ? JSON.parse(plan) : plan;
-}
-
-/** The exact cosine-nearest fetch for the voyage arm: a read-only, planner-forced (no index
- *  scans), EXPLAIN-verified transaction — it must never silently inherit the HNSW under-fill it
- *  exists to avoid. */
+/** The exact cosine-nearest fetch for the voyage arm. Same `OFFSET 0` shape as retrieval.ts, so it
+ *  stays exact even if a vector index is ever added. */
 async function exactNearest(
   db: AuthDb,
   literal: string,
 ): Promise<(ArmRow & { distance: number })[]> {
-  return db.transaction(async (tx) => {
-    await tx.execute(sql`SET LOCAL transaction_read_only = on`);
-    await tx.execute(sql`SET LOCAL enable_indexscan = off`);
-    await tx.execute(sql`SET LOCAL enable_indexonlyscan = off`);
-    await tx.execute(sql`SET LOCAL enable_bitmapscan = off`);
-    const query = sql`
+  const result = await db.execute(sql`
+    SELECT * FROM (
       SELECT id, title, description_text, locations, remote, content_signature,
              embedding <=> ${literal}${VECTOR_CAST} AS distance
       FROM ${jobs}
       WHERE ${BASE_WHERE}
-      ORDER BY distance
-      LIMIT ${VOYAGE_FETCH}
-    `;
-    const plan = explainPlan(await tx.execute(sql`EXPLAIN (FORMAT JSON) ${query}`));
-    if (planUsesIndex(plan, HNSW_INDEX)) {
-      throw new Error(`voyage arm used ${HNSW_INDEX} despite enable_indexscan=off — not exact.`);
-    }
-    return resultRows(await tx.execute(query)).map((row) => ({
-      ...armRow(row),
-      distance: Number((row as Record<string, unknown>).distance),
-    }));
-  });
+      OFFSET 0
+    ) candidates
+    ORDER BY distance
+    LIMIT ${VOYAGE_FETCH}
+  `);
+  return resultRows(result).map((row) => ({
+    ...armRow(row),
+    distance: Number((row as Record<string, unknown>).distance),
+  }));
 }
 
 async function buildPoolFor(db: AuthDb, profile: EvalProfile): Promise<PoolFile> {

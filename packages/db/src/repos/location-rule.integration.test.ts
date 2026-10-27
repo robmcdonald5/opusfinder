@@ -425,14 +425,14 @@ describe("location rule in retrieval (integration: real PGlite)", () => {
     );
   });
 
-  it("stays an exact scan with the rule active when the planner is pushed toward the HNSW index", async () => {
+  it("stays an exact scan with the rule active when the planner is pushed toward an HNSW index", async () => {
     const ids = await seed(
       Array.from({ length: 40 }, (_, i) => {
         const angle = (i * Math.PI) / 80;
         return {
           key: `j${i}`,
-          // The 30 nearest are in Dallas, so a plan on the index (~ef_search rows, then the filter) finds none
-          // of the 10 local ones.
+          // The 30 nearest are in Dallas, so a plan on the test's index (~ef_search rows, then the filter)
+          // finds none of the 10 local ones.
           locations: [i < 30 ? "Dallas, TX" : "Westerville, OH"],
           embedding: blend(Math.cos(angle), Math.sin(angle)),
         };
@@ -442,6 +442,8 @@ describe("location rule in retrieval (integration: real PGlite)", () => {
         { raw: "Westerville, OH", placeIds: [P.WESTERVILLE_OH] },
       ],
     );
+    // No vector index ships, so build one for the planner to be pushed toward.
+    await db.execute(sql`CREATE INDEX test_hnsw_idx ON jobs USING hnsw (embedding vector_cosine_ops)`);
     await db.execute(sql`SET enable_seqscan = off`);
     await db.execute(sql`SET hnsw.ef_search = 1`);
     try {
@@ -456,6 +458,7 @@ describe("location rule in retrieval (integration: real PGlite)", () => {
     } finally {
       await db.execute(sql`RESET enable_seqscan`);
       await db.execute(sql`RESET hnsw.ef_search`);
+      await db.execute(sql`DROP INDEX test_hnsw_idx`);
     }
   });
 

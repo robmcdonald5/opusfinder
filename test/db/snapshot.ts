@@ -113,7 +113,7 @@ function pruneCache(keep: string): void {
 /**
  * Return a ready PGlite client carrying the full migrated schema. Fast path: load the globalSetup-built
  * snapshot (~5.5× faster than replaying the migrations, byte-identical result — same tables, pgvector
- * extension, both HNSW indexes, `<=>` behavior, drizzle journal). Fallback: migrate a fresh instance when no
+ * extension, indexes, `<=>` behavior, drizzle journal). Fallback: migrate a fresh instance when no
  * snapshot exists — a direct `vitest run <file>` still triggers the integration globalSetup, so this only
  * fires for a non-vitest import (e.g. a one-off script) where correctness, not speed, is the point.
  */
