@@ -119,7 +119,7 @@ keeps 14 days.
 1. Run the backup workflow, so the newest dump matches production.
 2. Neon Console → Branches → New branch, from the production branch with current data. Copy its
    connection string (direct, not pooled).
-3. With the PostgreSQL 18 client tools on PATH (`nix shell nixpkgs#postgresql_18`):
+3. With the PostgreSQL 18 client tools on PATH (`nix-shell -p postgresql_18`):
 
    ```sh
    set -a; . ~/.config/opusfinder/db.env; . ~/.config/opusfinder/backup-r2.env; set +a
