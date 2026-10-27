@@ -85,9 +85,9 @@ export function psql(connectionString: string, args: string[]): string {
   return pgTool("psql", [...base, ...args], connectionString).trim();
 }
 
-/** Throws unless `tool` (pg_dump or pg_restore) is the same major version as the server. */
+/** Throws unless `tool` (pg_dump, pg_restore or psql) is the same major version as the server. */
 export function requireMatchingMajor(
-  tool: "pg_dump" | "pg_restore",
+  tool: "pg_dump" | "pg_restore" | "psql",
   connectionString: string,
 ): void {
   const toolMajor = toolMajorVersion(pgTool(tool, ["--version"]));
@@ -136,9 +136,10 @@ export async function runBackup(
   });
 }
 
-/** Each backed-up table's row count; `readOnly` runs it in a read-only session. */
+/** Each backed-up table's row count; `readOnly` reads them in a read-only transaction. A transaction, not a
+ *  session setting, so it can't outlive the read on a pooled connection. */
 function rowCounts(url: string, readOnly = false): Record<string, number> {
-  const first = readOnly ? ["--command=SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY"] : [];
+  const first = readOnly ? ["--single-transaction", "--command=SET TRANSACTION READ ONLY"] : [];
   return JSON.parse(psql(url, [...first, `--command=${rowCountsSql()}`])) as Record<string, number>;
 }
 
@@ -169,7 +170,9 @@ export async function restoreBackup(opts: {
       "RESTORE_DATABASE_URL reaches the same database as DATABASE_URL (production): use a branch's connection string",
     );
   }
+  // psql runs pg_restore's script, which uses meta-commands only psql of the same release knows.
   requireMatchingMajor("pg_restore", restoreUrl);
+  requireMatchingMajor("psql", restoreUrl);
   for (const table of RESTORE_NEEDS) {
     const name = getTableName(table);
     if (psql(restoreUrl, [`--command=SELECT count(*) FROM public."${name}"`]) === "0") {

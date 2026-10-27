@@ -3,7 +3,7 @@ import { getTableName } from "drizzle-orm";
 import { runScript } from "@opusfinder/shared/script";
 import { createS3StorageClient } from "@opusfinder/storage";
 
-import { BACKUP_TABLES } from "../src/backup";
+import { BACKUP_TABLES, utcDay } from "../src/backup";
 import { getDatabaseUrl, getRestoreDatabaseUrl } from "../src/env";
 import { getBackupR2Config, restoreBackup } from "./lib/backup";
 
@@ -23,7 +23,7 @@ function parseDate(args = process.argv.slice(2)): Date | undefined {
   if (rest.length > 1 || (rest.length === 1 && !date)) {
     throw new Error("the only option is --date=YYYY-MM-DD");
   }
-  return date ? new Date(`${date}T00:00:00Z`) : undefined;
+  return date ? utcDay(date) : undefined;
 }
 
 await runScript("backup restore", async () => {

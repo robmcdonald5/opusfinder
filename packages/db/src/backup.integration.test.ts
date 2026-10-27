@@ -11,7 +11,7 @@ import { truncate } from "@test/db/truncate";
 import { BACKUP_TABLES, backupRunSql, newestBackupSql, rowCountsSql, truncateSql } from "./backup";
 import { evaluateHealth, gatherHealthSignals } from "./health";
 import { USER_BACKUP } from "./roles";
-import { sourceRuns } from "./schema";
+import { session, sourceRuns, user } from "./schema";
 
 // What the user_backup role can do on real Postgres semantics, and the backup record the health check reads.
 // The table-level confinement shared by every limited role is roles.integration.test.ts; the dump and restore
@@ -111,10 +111,25 @@ describe("user_backup role (integration: real PGlite semantics)", () => {
     expect(new Date(rows[0]!.to_json)).toEqual(new Date("2026-10-26T04:05:00Z"));
   });
 
-  it("empties the backed-up tables for a restore (the restore database's owner runs it)", async () => {
+  it("empties the backed-up tables and session for a restore (the restore database's owner runs it)", async () => {
+    const [row] = await db
+      .insert(user)
+      .values({ name: "A", email: "a@example.test" })
+      .returning({ id: user.id });
+    await db.insert(session).values({ expiresAt: new Date(), token: "t", userId: row!.id });
     await pg.exec(truncateSql());
     const counts = await pg.query<{ json_build_object: Record<string, number> }>(rowCountsSql());
     expect(Object.values(counts.rows[0]!.json_build_object)).toEqual(BACKUP_TABLES.map(() => 0));
+    expect(await db.select().from(session)).toEqual([]);
+  });
+
+  it("fails instead of emptying a table it doesn't name that points into the dump", async () => {
+    await pg.exec(`CREATE TABLE stray (user_id uuid REFERENCES "user"(id))`);
+    try {
+      await expect(pg.exec(truncateSql())).rejects.toThrow(/cannot truncate a table referenced/);
+    } finally {
+      await pg.exec("DROP TABLE stray");
+    }
   });
 });
 

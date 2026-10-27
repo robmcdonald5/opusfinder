@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 
+import { BACKUP_PIPELINE } from "./backup";
 import type { Db } from "./client";
 import { needsEmbeddingSql } from "./repos/embeddings";
 import { resultRows } from "./repos/sql";
@@ -306,7 +307,7 @@ export async function gatherHealthSignals(
     // (j) newest recorded user-table backup age (index source_runs_pipeline_started_idx).
     db.execute(sql`
         SELECT extract(epoch FROM (now() - max(finished_at))) / 3600.0 AS age_h
-        FROM source_runs WHERE pipeline = 'backup' AND status = 'ok'
+        FROM source_runs WHERE pipeline = ${BACKUP_PIPELINE} AND status = 'ok'
       `),
   ]);
 
