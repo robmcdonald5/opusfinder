@@ -44,9 +44,9 @@ async function fakeEmbed(texts: string[]) {
 
 // Phase 0 pilot — the load-bearing PGlite integration spec. It proves R1 (the neon-http `Db` cast works
 // over the PGlite driver for BOTH the typed query builder and raw `db.execute` → resultRows) and R2 (the
-// real migration set, including the two `USING hnsw (... vector_cosine_ops)` indexes, applies under
-// PGlite's pgvector) by round-tripping through the actual repo functions and asserting `<=>` ordering.
-describe("pgvector retrieval over PGlite (pilot: R1 driver compat + R2 HNSW migration DDL)", () => {
+// real migration set, pgvector DDL included, applies under PGlite's pgvector) by round-tripping through
+// the actual repo functions and asserting `<=>` ordering.
+describe("pgvector retrieval over PGlite (pilot: R1 driver compat + R2 pgvector migration DDL)", () => {
   let db: Db;
   let close: (() => Promise<void>) | undefined;
 

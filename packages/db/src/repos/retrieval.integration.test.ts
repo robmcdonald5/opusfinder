@@ -566,9 +566,10 @@ describe("retrieveCandidatesForProfile — SQL filter + cosine rank + post-filte
   });
 
   // B20
-  it("stays an exact scan when the planner is pushed toward the HNSW index — a filtered fetch still fills", async () => {
-    // 40 jobs fanned out from oneHot(0); the 30 NEAREST are closed. A plan on jobs_embedding_hnsw_idx returns
-    // only ~ef_search nearest rows and filters `active` after them, so it would return ~0 of the 10 active.
+  it("stays an exact scan when the planner is pushed toward an HNSW index — a filtered fetch still fills", async () => {
+    // No vector index ships, so the test builds one. 40 jobs fanned out from oneHot(0); the 30 NEAREST are
+    // closed. A plan on the index returns only ~ef_search nearest rows and filters `active` after them, so it
+    // would return ~0 of the 10 active.
     const seeded = await seedBoard(
       Array.from({ length: 40 }, (_, i) => {
         const angle = (i * Math.PI) / 80;
@@ -583,6 +584,7 @@ describe("retrieveCandidatesForProfile — SQL filter + cosine rank + post-filte
       .update(jobs)
       .set({ lifecycleState: "closed", closedAt: sql`now()` })
       .where(inArray(jobs.id, seeded.slice(0, 30)));
+    await db.execute(sql`CREATE INDEX test_hnsw_idx ON jobs USING hnsw (embedding vector_cosine_ops)`);
     await db.execute(sql`SET enable_seqscan = off`);
     await db.execute(sql`SET hnsw.ef_search = 1`);
     try {
@@ -591,6 +593,7 @@ describe("retrieveCandidatesForProfile — SQL filter + cosine rank + post-filte
     } finally {
       await db.execute(sql`RESET enable_seqscan`);
       await db.execute(sql`RESET hnsw.ef_search`);
+      await db.execute(sql`DROP INDEX test_hnsw_idx`);
     }
   });
 });

@@ -225,6 +225,13 @@
       "when": 1792546832413,
       "tag": "0031_drop_preferences_locations",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1793065017334,
+      "tag": "0032_drop_hnsw_indexes",
+      "breakpoints": true
     }
   ]
 }

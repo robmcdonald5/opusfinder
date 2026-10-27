@@ -147,6 +147,7 @@ export const jobs = pgTable(
     // Voyage vectors. NULL until embedded, and reset to NULL when content changes
     // (see upsertJobs) so the backfill re-embeds it. A failed hydrate is NOT a content
     // change: a contentMissing posting's content is never written, so its vector survives.
+    // No vector index, on purpose: digest retrieval is an exact scan (see repos/retrieval.ts).
     embedding: vector("embedding", { dimensions: EMBEDDING_DIMENSIONS }),
     lifecycleState: text("lifecycle_state").$type<LifecycleState>().notNull().default("active"),
     // Consecutive trusted-fetch absences for this job — the streak hysteresis behind lifecycle closing
@@ -202,17 +203,12 @@ export const jobs = pgTable(
     index("jobs_company_id_idx").on(t.companyId),
     // Plain btree over the de-dup signature. Widen to a composite (content_signature, lifecycle_state,
     // id) ONLY if an EXPLAIN warrants it. drizzle-kit emits this bare; the migration hand-adds
-    // IF NOT EXISTS (neon-http isn't transactional) — same discipline as the HNSW/FK guards below.
+    // IF NOT EXISTS (neon-http isn't transactional) — same discipline as the FK guard below.
     index("jobs_content_signature_idx").on(t.contentSignature),
-    // HNSW approximate-NN index over the Voyage embeddings. vector_cosine_ops because retrieval uses
-    // the `<=>` cosine operator. drizzle-kit emits a bare `CREATE INDEX`; the migration is hand-edited
-    // to add IF NOT EXISTS (neon-http migrations aren't transactional — same discipline as the FK below).
-    index("jobs_embedding_hnsw_idx").using("hnsw", t.embedding.op("vector_cosine_ops")),
     // Partial btree over ONLY the un-embedded rows. Backs the recurring `embedding IS NULL` scans,
     // turning a full seq-scan into an index scan. Shrinks as rows embed (closed ones wait for the prune),
     // so it stays small (same partial-index discipline as companies_active_last_probed_idx /
-    // user_preferences_eligible_idx). The HNSW index above only covers NON-NULL vectors for the `<=>`
-    // cosine path and cannot serve `IS NULL`. drizzle-kit emits this bare; the migration hand-adds
+    // user_preferences_eligible_idx). drizzle-kit emits this bare; the migration hand-adds
     // IF NOT EXISTS (neon-http isn't transactional) — same discipline as the guarded indexes above.
     index("jobs_unembedded_idx")
       .on(t.id)
@@ -312,8 +308,8 @@ export const userCvFiles = pgTable(
 /**
  * The current semantic profile — ONE row per user (the `user_id` unique index is the upsert target;
  * latest CV wins). `structured` is the embeddable `{ summary, skills, targetRoles }`; `embedding` is
- * its Voyage vector — the QUERY side of retrieval, HNSW-cosine-indexed (mirrors `jobs.embedding` on
- * the document side, same EMBEDDING_DIMENSIONS). `source_cv_file_id` points at the upload backing it.
+ * its Voyage vector — the QUERY side of retrieval (mirrors `jobs.embedding` on the document side, same
+ * EMBEDDING_DIMENSIONS). `source_cv_file_id` points at the upload backing it.
  */
 export const userProfiles = pgTable(
   "user_profiles",
@@ -333,10 +329,6 @@ export const userProfiles = pgTable(
   (t) => [
     // One profile per user — the onConflict target for upsertUserProfile.
     uniqueIndex("user_profiles_user_id_uq").on(t.userId),
-    // HNSW approximate-NN over the profile vectors (cosine `<=>`), mirroring jobs_embedding_hnsw_idx
-    // (same neon-http IF NOT EXISTS gotcha). No query searches profiles by vector yet; it is kept for the
-    // undecided design that scores new jobs against users.
-    index("user_profiles_embedding_hnsw_idx").using("hnsw", t.embedding.op("vector_cosine_ops")),
     // FK to the backing upload, explicit stable name. Same DO/EXCEPTION idempotency guard as jobs' FK above.
     foreignKey({
       columns: [t.sourceCvFileId],

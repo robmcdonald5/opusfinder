@@ -8,7 +8,7 @@ import { embed } from "../src/index";
 /**
  * Embed a query string and print the nearest jobs by cosine distance — the retrieval
  * smoke test. The query is embedded as `"query"` (the asymmetric counterpart
- * to jobs' `"document"`), then matched via the HNSW index.
+ * to jobs' `"document"`), then matched by an exact cosine scan.
  */
 async function main(): Promise<void> {
   const query = process.argv.slice(2).join(" ").trim();

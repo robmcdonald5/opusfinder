@@ -8,7 +8,7 @@ import type { Ranker } from "../types";
 /**
  * Vector-retrieval ranker: embed the profile as a "query" and each candidate as a "document",
  * then order candidates by cosine similarity (descending). This is the SAME computation the
- * digest pipeline runs against the pgvector HNSW index — done IN MEMORY here over the
+ * digest pipeline runs in its exact pgvector scan — done IN MEMORY here over the
  * small labeled pool, so the Voyage-vs-OpenAI comparison is just two `embeddingRanker`s built
  * from different `Embedder`s, and the production `jobs.embedding` column is never touched.
  *

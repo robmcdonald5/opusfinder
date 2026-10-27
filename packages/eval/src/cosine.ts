@@ -1,6 +1,6 @@
 /**
  * Cosine similarity between two equal-length vectors. The embedding ranker ranks a
- * candidate pool in memory with this — no DB / HNSW needed, because a labeled example's pool
+ * candidate pool in memory with this — no DB query needed, because a labeled example's pool
  * is tiny (tens of jobs) and the comparison must score BOTH providers' vectors without ever
  * touching the single production `jobs.embedding` column. Returns a value in [-1, 1]; larger
  * = more similar. Throws on a length mismatch (a provider / dimension bug) instead of silently

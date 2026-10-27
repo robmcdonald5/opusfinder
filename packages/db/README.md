@@ -77,11 +77,11 @@ Run from the repo root via the workspace filter so the cwd is `packages/db`:
   `companies_source_lower_slug_uq`, migration 0025) and `jobs` (unique `(source, external_id)`, FK → `companies`,
   `company_id` index, text `lifecycle_state`). `jobs.embedding` is a nullable
   `vector(1024)` — width = the exported `EMBEDDING_DIMENSIONS` constant (the single source of truth, kept
-  in sync with `@opusfinder/embeddings`' `EMBED_DIMENSIONS`); populated in Phase 4 and
-  HNSW-indexed for cosine retrieval (`jobs_embedding_hnsw_idx`, `vector_cosine_ops`). pgvector is enabled
+  in sync with `@opusfinder/embeddings`' `EMBED_DIMENSIONS`); populated in Phase 4. It has no vector
+  index on purpose: retrieval is an exact cosine scan (`src/repos/retrieval.ts`), so the HNSW index 0002
+  added was dropped in `drizzle/0032_drop_hnsw_indexes.sql`. pgvector is enabled
   via the SQL migration (`drizzle/0000_enable_pgvector.sql`), not declared in
-  Drizzle; the tables land in `drizzle/0001_petite_namor.sql` and the HNSW index in
-  `drizzle/0002_flashy_joshua_kane.sql`. **Phase 7** added the `source_runs` run-audit table
+  Drizzle; the tables land in `drizzle/0001_petite_namor.sql`. **Phase 7** added the `source_runs` run-audit table
   (`pipeline` / `source` / `status` / `started_at` / `finished_at` / `counts` jsonb / `error_sample`;
   index `source_runs_pipeline_started_idx`) and four staleness columns on `companies` — `active`,
   `last_probed_at`, `last_live_at`, `consecutive_probe_failures` — plus the partial reprobe index
@@ -90,7 +90,7 @@ Run from the repo root via the workspace filter so the cwd is `packages/db`:
   reason as `lifecycle_state`. The Phase-7 schema lands in `drizzle/0003_lame_black_tom.sql`, with
   every `CREATE TABLE` / `ADD COLUMN` / `CREATE INDEX` hand-guarded `IF NOT EXISTS`.
 - **Schema (Phase 9 + 9.5).** Phase 9 added `user_cv_files` (append-only CV uploads + R2 keys) and
-  `user_profiles` (one semantic profile per user — structured JSON + a `vector(1024)` HNSW-indexed
+  `user_profiles` (one semantic profile per user — structured JSON + a `vector(1024)`
   embedding) in `drizzle/0004_curvy_shard.sql`. **Phase 9.5** added the Better Auth-owned identity
   tables `user` / `session` / `account` / `verification` (uuid ids via the `generateId: "uuid"` config)
   and the typed `user_preferences` table (filter + digest/delivery/unsubscribe settings; 1:1 FK →
@@ -255,8 +255,8 @@ EXISTS`) removes the seven job-side enrichment columns added by 0013 (`yoe_min`/
   apply it with `drizzle-orm/neon-serverless/migrator`, which wraps the run in one transaction (no script
   wires it today).
 - **Embeddings repo (Phase 4).** `src/repos/embeddings.ts` adds `backfillJobEmbeddings()`
-  (idempotent embed → write loop over NULL-embedding rows), `nearestJobs()` (cosine
-  `<=>` over the HNSW index), `jobsNeedingEmbedding()`, `writeJobEmbeddings()`, and
+  (idempotent embed → write loop over NULL-embedding rows), `nearestJobs()` (an exact
+  cosine `<=>` scan), `jobsNeedingEmbedding()`, `writeJobEmbeddings()`, and
   `jobEmbeddingText()` (title + description — the Phase-5 eval tunable). The embedder is
   **injected** (an `EmbedFn` parameter), so `db` keeps zero dependency on
   `@opusfinder/embeddings`; the dependency points the other way. Every `::vector(N)` cast
@@ -270,8 +270,3 @@ EXISTS`) removes the seven job-side enrichment columns added by 0013 (`yoe_min`/
   the change test, so a multi-location board that emits the same offices in a different order
   across runs would otherwise report a spurious change every ingest. (`runAdapter` already
   canonicalizes in memory; the sort here is the defense for any direct `upsertJobs` caller.)
-- **0002 HNSW migration is hand-guarded.** drizzle-kit emits a bare `CREATE INDEX`;
-  `0002_flashy_joshua_kane.sql` is hand-edited to `CREATE INDEX IF NOT EXISTS` because
-  neon-http migrations aren't transactional (same discipline as the FK in 0001).
-  `CREATE INDEX CONCURRENTLY` is deferred — the table is small and CONCURRENTLY can't run
-  inside one neon-http call.
