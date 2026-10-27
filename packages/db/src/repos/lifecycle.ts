@@ -17,7 +17,7 @@
 import { sql, type SQL } from "drizzle-orm";
 
 import type { Db } from "../client";
-import { companies, jobs } from "../schema";
+import { companies, jobs, sourceRuns } from "../schema";
 import { intArrayLiteral, NUL, resultRows } from "./sql";
 
 /**
@@ -248,8 +248,9 @@ export function closeJobsByIds(
  * its board's last_ingested_at by up to this much. sweepStaleJobs' board-health guard adds it as a margin.
  * A day, not an hour: boards are re-fetched every ~12-16 h, so an hour skipped nothing and every visit
  * rewrote every listed row (~120k HOT updates a day for ~1-3k real changes). A day halves that, and a
- * stale close lands 20-21 days after a job was last listed instead of 21. Keep it well under the minimum
- * stale TTL (7 days, MIN_STALE_TTL_DAYS in apps/scrapers): at or above it the guard spares every board.
+ * stale close lands 20-22 days after a job was last listed (the sweep runs daily, see staleSweptToday)
+ * instead of 21. Keep it well under the minimum stale TTL (7 days, MIN_STALE_TTL_DAYS in apps/scrapers):
+ * at or above it the guard spares every board.
  */
 const PRESENT_STAMP_WINDOW = sql`interval '1 day'`;
 
@@ -416,4 +417,21 @@ export function staleJobsWhere(ttlDays: number): SQL {
   return sql`jobs.lifecycle_state = 'active'
       AND COALESCE(jobs.last_seen_at, jobs.created_at) < ${cutoff}
       AND c.last_ingested_at >= ${cutoff} + ${PRESENT_STAMP_WINDOW}`;
+}
+
+/**
+ * Whether an ingestion run that started this UTC day completed its {@link sweepStaleJobs} pass, read from the
+ * run records: runIngestion tallies `staleSwept: 1` into source_runs.counts when the sweep returns, and runs
+ * it only while this is false. So the sweep runs on the day's first tick, and a failed one (no tally) is
+ * retried on the next. Against a 21-day TTL, sweeping every tick (12 a day) bought nothing.
+ */
+export async function staleSweptToday(db: Db): Promise<boolean> {
+  const result: unknown = await db.execute(sql`
+    SELECT 1 FROM ${sourceRuns}
+    WHERE pipeline = 'ingestion'
+      AND started_at >= date_trunc('day', now(), 'UTC')
+      AND coalesce((counts->>'staleSwept')::numeric, 0) > 0
+    LIMIT 1
+  `);
+  return resultRows(result).length > 0;
 }
