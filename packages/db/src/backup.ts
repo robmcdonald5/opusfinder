@@ -7,6 +7,7 @@ import {
   digestRuns,
   digests,
   places,
+  session,
   user,
   userCvFiles,
   userPreferences,
@@ -54,12 +55,26 @@ export const NOT_BACKED_UP: Readonly<Record<string, string>> = {
  *  restore: `user_preferences.home_place_id` points at `places`. */
 export const RESTORE_NEEDS: readonly PgTable[] = [places];
 
+/** Tables the dump doesn't hold that have a foreign key to a backed-up table: a restore empties them along with
+ *  the backed-up tables. Signed-in sessions end; users sign in again. */
+export const RESTORE_EMPTIES: readonly PgTable[] = [session];
+
 /** The `source_runs.pipeline` of a backup's record. */
 export const BACKUP_PIPELINE: RunPipeline = "backup";
 
 /** The R2 key of the dump taken at `at`: one per UTC day, so a second run that day replaces the first. */
 export function backupObjectKey(at: Date): string {
   return `user-tables/${at.toISOString().slice(0, 10)}.dump`;
+}
+
+/** A `YYYY-MM-DD` as the start of that UTC day. Throws on an impossible day, which Date would roll over into
+ *  another one (02-30 → 03-02) and so pick another day's dump. */
+export function utcDay(date: string): Date {
+  const day = new Date(`${date}T00:00:00Z`);
+  if (Number.isNaN(day.getTime()) || day.toISOString().slice(0, 10) !== date) {
+    throw new Error(`${date} is not a real date`);
+  }
+  return day;
 }
 
 /** pg_dump's arguments: a custom-format archive of exactly {@link BACKUP_TABLES}, schema and data. A table
@@ -163,10 +178,11 @@ export function restoreList(toc: string): string {
   return [...order.map((name) => data.get(name)!), ...sequences].join("\n") + "\n";
 }
 
-/** The TRUNCATE that empties the backed-up tables before a restore loads them. CASCADE also empties the
- *  tables that point at them (`session`), which a restore doesn't bring back. */
+/** The TRUNCATE that empties the backed-up tables, and {@link RESTORE_EMPTIES}, before a restore loads them.
+ *  No CASCADE: any other table pointing at them makes it fail, instead of being emptied unannounced. */
 export function truncateSql(): string {
-  return `TRUNCATE ${BACKUP_TABLES.map((t) => `public."${getTableName(t)}"`).join(", ")} CASCADE;`;
+  const tables = [...BACKUP_TABLES, ...RESTORE_EMPTIES].map((t) => `public."${getTableName(t)}"`);
+  return `TRUNCATE ${tables.join(", ")};`;
 }
 
 /** One JSON object of each backed-up table's row count. */

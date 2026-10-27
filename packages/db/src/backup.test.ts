@@ -11,10 +11,13 @@ import {
   libpqEnv,
   NOT_BACKED_UP,
   pgDumpArgs,
+  RESTORE_EMPTIES,
   RESTORE_NEEDS,
   restoreList,
   serverMajorVersion,
   toolMajorVersion,
+  truncateSql,
+  utcDay,
 } from "./backup";
 import * as schema from "./schema";
 
@@ -61,6 +64,22 @@ describe("the backup's table list", () => {
     expect([...outside]).toEqual(names(RESTORE_NEEDS));
   });
 
+  it("names every table outside the dump that points into it, so a restore empties exactly those", () => {
+    const pointing = ALL_TABLES.filter(
+      (t) =>
+        !BACKED_UP.includes(getTableName(t)) &&
+        getTableConfig(t).foreignKeys.some((fk) =>
+          BACKED_UP.includes(getTableName(fk.reference().foreignTable)),
+        ),
+    );
+    // A new one fails here: back it up, or list it in RESTORE_EMPTIES (its rows go with every restore).
+    expect(names(pointing)).toEqual(names(RESTORE_EMPTIES));
+    expect(truncateSql()).toBe(
+      'TRUNCATE public."user", public."account", public."user_cv_files", public."user_profiles", ' +
+        'public."user_preferences", public."digest_runs", public."digests", public."digest_items", public."session";',
+    );
+  });
+
   it("dumps exactly those tables, quoted, failing on a missing one", () => {
     expect(pgDumpArgs("/tmp/b.dump")).toEqual([
       "--format=custom",
@@ -79,11 +98,17 @@ describe("the backup's table list", () => {
   });
 });
 
-describe("backupObjectKey", () => {
+describe("backupObjectKey / utcDay", () => {
   it("names the dump by its UTC date", () => {
     expect(backupObjectKey(new Date("2026-10-27T23:30:00-05:00"))).toBe(
       "user-tables/2026-10-28.dump",
     );
+  });
+
+  it("reads a --date as its UTC day and refuses one Date would roll into another", () => {
+    expect(backupObjectKey(utcDay("2026-02-28"))).toBe("user-tables/2026-02-28.dump");
+    expect(() => utcDay("2026-02-30")).toThrow("2026-02-30 is not a real date");
+    expect(() => utcDay("2026-13-01")).toThrow(/not a real date/);
   });
 });
 

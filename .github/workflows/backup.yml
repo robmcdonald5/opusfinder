@@ -48,6 +48,7 @@ jobs:
       # the PostgreSQL project's signed apt repository (postgresql.org/download/linux/ubuntu).
       - name: Install the PostgreSQL client tools
         run: |
+          sudo apt-get update
           sudo apt-get install -y --no-install-recommends postgresql-common
           sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
           sudo apt-get install -y --no-install-recommends "postgresql-client-$PG_MAJOR"

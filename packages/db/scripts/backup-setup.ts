@@ -1,6 +1,6 @@
 import { runScript } from "@opusfinder/shared/script";
 
-import { directUrl } from "../src/backup";
+import { directUrl, libpqEnv } from "../src/backup";
 import { getDatabaseUrl } from "../src/env";
 import { buildRoleSetupSql, buildRoleUrl, generateRolePassword, USER_BACKUP } from "../src/roles";
 import { BACKUP_R2_ENV, getBackupR2Env } from "./lib/backup";
@@ -39,9 +39,12 @@ await runScript("backup setup", async () => {
     return;
   }
 
-  // Both read first, so a missing value fails before anything changes.
+  // All checked first, so a missing value fails before anything changes.
   const r2 = getBackupR2Env();
   const ownerUrl = getDatabaseUrl();
+  const backupUrl = directUrl(buildRoleUrl(ownerUrl, USER_BACKUP, password));
+  // The nightly run hands this URL to the libpq tools, which take only the parameters libpqEnv knows.
+  libpqEnv(backupUrl);
 
   const repo = currentRepo();
   ensureEnvironment(repo, ENVIRONMENT);
@@ -56,12 +59,7 @@ await runScript("backup setup", async () => {
   );
 
   try {
-    setEnvironmentSecret(
-      repo,
-      ENVIRONMENT,
-      SECRET,
-      directUrl(buildRoleUrl(ownerUrl, USER_BACKUP, password)),
-    );
+    setEnvironmentSecret(repo, ENVIRONMENT, SECRET, backupUrl);
   } catch (err) {
     // The role's password is already changed, so the stored secret is now stale until this succeeds.
     throw new Error(`password changed but secret ${SECRET} not updated: re-run setup`, {
