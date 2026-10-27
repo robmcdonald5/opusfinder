@@ -56,7 +56,7 @@ and the library it calls owns its own `source_runs` row (`startRun`/`finishRun`)
 - **The weekly job prune** runs after discovery, in the same invocation: `runPrune` counts the jobs closed
   for 30+ days that no digest showed and, with `PRUNE = "enforce"`, deletes up to 20,000 of them through
   the `prune_closed_jobs` SQL function. It writes its own `prune` row to `source_runs`; a failure is logged
-  there and never fails discovery. It ships count-only (`PRUNE` unset).
+  there and never fails discovery. `wrangler.toml` ships `PRUNE = "enforce"`; `"shadow"` only counts.
 
 > **Health & liveness (Phase F6).** On each successful ingestion tick the Worker fires a content-free
 > heartbeat to an external watchdog (`env.HEALTH_PING_URL`, an optional `wrangler secret`); the watchdog

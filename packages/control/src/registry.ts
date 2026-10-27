@@ -423,7 +423,7 @@ export const policies = {
     // The weekly delete of jobs closed for 30+ days that no digest showed (the scrapers Worker's PRUNE var).
     label: "Delete old closed jobs",
     modes: ["shadow", "enforce"],
-    initial: "shadow",
+    initial: "enforce",
     readBy: ["discover"],
   },
   // The 8 health checks. Ids are `health.<HealthCheckId>` (packages/db/src/health.ts); a sync test in

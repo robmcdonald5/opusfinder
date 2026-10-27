@@ -91,7 +91,7 @@ describe("registry: modes", () => {
       cv_ingest: "on",
       close: "enforce",
       stale_sweep: "enforce",
-      prune: "shadow",
+      prune: "enforce",
       "health.ingestion_staleness": "shadow",
       "health.board_fail_ratio": "shadow",
       "health.hydrate_skip_ratio": "shadow",
