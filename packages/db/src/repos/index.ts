@@ -108,6 +108,7 @@ export {
   markJobsPresent,
   markCompanyIngested,
   sweepStaleJobs,
+  staleSweptToday,
   ABSENCE_CLOSE_THRESHOLD,
   DEFAULT_STALE_TTL_DAYS,
 } from "./lifecycle";
