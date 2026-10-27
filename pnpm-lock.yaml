@@ -180,6 +180,9 @@ importers:
       '@opusfinder/shared':
         specifier: workspace:*
         version: link:../shared
+      '@opusfinder/storage':
+        specifier: workspace:*
+        version: link:../storage
       dotenv:
         specifier: ^17
         version: 17.4.2

@@ -5,12 +5,13 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { setUpRole } from "@test/db/role";
 import { createTestDb } from "@test/db/pglite";
 
-import { DATA_FIXER, SCRAPERS_WORKER, type LimitedRole } from "./roles";
+import { DATA_FIXER, SCRAPERS_WORKER, USER_BACKUP, type LimitedRole } from "./roles";
 
 // Each limited role's setup SQL under REAL Postgres semantics: it confines the role to exactly its grants,
 // converges on re-run, and aborts rather than leave a table privilege it didn't grant. What each role can
-// actually RUN is its user's suite: fixes.integration.test.ts (data_fixer) and
-// packages/discovery/src/worker-role.integration.test.ts (scrapers_worker).
+// actually RUN is its user's suite: fixes.integration.test.ts (data_fixer),
+// packages/discovery/src/worker-role.integration.test.ts (scrapers_worker) and backup.integration.test.ts
+// (user_backup). No role is ever granted `session`, so the cases below use it as the table a role must not reach.
 
 const PRIVILEGES = [
   "SELECT",
@@ -23,7 +24,7 @@ const PRIVILEGES = [
   "MAINTAIN",
 ];
 
-describe.each([DATA_FIXER, SCRAPERS_WORKER])(
+describe.each([DATA_FIXER, SCRAPERS_WORKER, USER_BACKUP])(
   "$name role setup (integration: real PGlite semantics)",
   (role: LimitedRole) => {
     let pg: PGlite;
@@ -117,10 +118,9 @@ describe.each([DATA_FIXER, SCRAPERS_WORKER])(
     it("re-running the setup rotates the password and converges on the same grants", async () => {
       await setUpRole(pg, role, "q".repeat(32));
       await pg.exec(`SET ROLE ${role.name}`);
-      await expect(pg.query("SELECT count(*) FROM jobs")).resolves.toBeDefined();
-      await expect(pg.query("SELECT count(*) FROM user_profiles")).rejects.toThrow(
-        /permission denied/,
-      );
+      const readable = getTableName(role.grants[0]!.tables[0]!);
+      await expect(pg.query(`SELECT count(*) FROM "${readable}"`)).resolves.toBeDefined();
+      await expect(pg.query("SELECT count(*) FROM session")).rejects.toThrow(/permission denied/);
     });
 
     // A setting already defined in the session reads back as '' once reverted; that must not clear the password.
@@ -130,27 +130,27 @@ describe.each([DATA_FIXER, SCRAPERS_WORKER])(
       );
     });
 
-    it.each(["SELECT", "SELECT (email)", "MAINTAIN"])(
+    it.each(["SELECT", "SELECT (token)", "MAINTAIN"])(
       "setup aborts, changing nothing, when the role holds a privilege another role granted (%s)",
       async (grant) => {
         // The owner's REVOKE ALL removes only the owner's own grants; this one has another grantor.
         await pg.exec(`
           CREATE ROLE other_admin;
-          GRANT ${grant} ON "user" TO other_admin WITH GRANT OPTION;
+          GRANT ${grant} ON session TO other_admin WITH GRANT OPTION;
           SET ROLE other_admin;
-          GRANT ${grant} ON "user" TO ${role.name};
+          GRANT ${grant} ON session TO ${role.name};
           RESET ROLE;
         `);
         try {
           await expect(setUpRole(pg, role, "q".repeat(32))).rejects.toThrow(
-            new RegExp(`${role.name} holds privileges beyond its allowlist \\(on: user;`),
+            new RegExp(`${role.name} holds privileges beyond its allowlist \\(on: session;`),
           );
         } finally {
           await pg.exec(`
             SET ROLE other_admin;
-            REVOKE ${grant} ON "user" FROM ${role.name};
+            REVOKE ${grant} ON session FROM ${role.name};
             RESET ROLE;
-            REVOKE ${grant} ON "user" FROM other_admin;
+            REVOKE ${grant} ON session FROM other_admin;
             DROP ROLE other_admin;
           `);
         }

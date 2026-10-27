@@ -60,6 +60,8 @@ Run from the repo root via the workspace filter so the cwd is `packages/db`:
 | `pnpm --filter @opusfinder/db runs`                   | Print the most recent `source_runs` rows (pipeline health)                            |
 | `pnpm --filter @opusfinder/db run places:load`        | Download GeoNames (cities500, US, admin1, countries); upsert `places`, never deletes  |
 | `pnpm exec vitest run packages/db/src/health.test.ts` | Health-checker suite — pure `evaluateHealth` over canned signals (no creds; Phase F6) |
+| `pnpm --filter @opusfinder/db run backup:setup`       | Owner: the backup role, the `backup` Environment and its secrets (see Backups)        |
+| `pnpm --filter @opusfinder/db run backup:restore`     | Owner: restore a backup into a branch and compare row counts (see Backups)            |
 | `pnpm --filter @opusfinder/db typecheck`              | `tsc --noEmit`                                                                        |
 
 `migrate` and `ping` are also exposed at the root as `pnpm db:migrate` / `pnpm db:ping`.
@@ -69,6 +71,73 @@ Run from the repo root via the workspace filter so the cwd is `packages/db`:
 > always invoke them via `pnpm --filter @opusfinder/db <script>` (or `cd packages/db`
 > first), never by pathing into the script directly. (Env loading is no longer
 > cwd-relative — `getDatabaseUrl()` loads via `@opusfinder/shared/env`; see Environment above.)
+
+## Backups
+
+Every night `.github/workflows/backup.yml` dumps the user tables (`pg_dump -Fc`, listed in `src/backup.ts`:
+`user`, `account`, `user_cv_files`, `user_profiles`, `user_preferences`, `digest_runs`, `digests`,
+`digest_items`) to the private R2 bucket as `user-tables/<UTC date>.dump`, as the read-only `user_backup` role,
+and records each finished backup in `source_runs` (pipeline `backup`). The `backup_staleness` health check
+fires when the newest one is older than 26 h. Sign-in tokens (`session`, `verification`) and everything the
+pipeline can fetch or rebuild are not backed up; CV files live in R2 and aren't part of it either. The bucket
+keeps 14 days.
+
+**One-time setup (owner).**
+
+1. Create the bucket with a 14-day lifecycle rule, from `apps/scrapers` (or in the dashboard: R2 → Create
+   bucket, then Settings → Object lifecycle rules). Leave public access off.
+
+   ```sh
+   pnpm exec wrangler r2 bucket create opusfinder-backups
+   pnpm exec wrangler r2 bucket lifecycle add opusfinder-backups expire-dumps user-tables/ --expire-days 14
+   ```
+
+2. Dashboard → R2 → Manage API tokens → Create API token: **Object Read & Write**, applied to
+   `opusfinder-backups` only. Save its keys outside the repo in `~/.config/opusfinder/backup-r2.env`
+   (`chmod 600`), single-quoted:
+
+   ```sh
+   BACKUP_R2_ACCOUNT_ID='<account id>'
+   BACKUP_R2_BUCKET='opusfinder-backups'
+   BACKUP_R2_ACCESS_KEY_ID='<access key id>'
+   BACKUP_R2_SECRET_ACCESS_KEY='<secret access key>'
+   ```
+
+3. Create the role, the `backup` Environment (main only) and its five secrets:
+
+   ```sh
+   set -a; . ~/.config/opusfinder/db.env; . ~/.config/opusfinder/backup-r2.env; set +a
+   pnpm --filter @opusfinder/db run backup:setup
+   ```
+
+   Run it again to rotate the password, and after a migration adds a table to `BACKUP_TABLES`.
+
+4. Actions → backup → Run workflow (on `main`). `pnpm runs` then shows a `backup [ok]` row.
+
+**Restore drill.** Run it after setup, and again after a change to the backup.
+
+1. Run the backup workflow, so the newest dump matches production.
+2. Neon Console → Branches → New branch, from the production branch with current data. Copy its
+   connection string (direct, not pooled).
+3. With the PostgreSQL 18 client tools on PATH (`nix shell nixpkgs#postgresql_18`):
+
+   ```sh
+   set -a; . ~/.config/opusfinder/db.env; . ~/.config/opusfinder/backup-r2.env; set +a
+   read -rs 'RESTORE_DATABASE_URL?Branch connection string: '; export RESTORE_DATABASE_URL
+   pnpm --filter @opusfinder/db run backup:restore
+   ```
+
+   It refuses production's database. In one transaction it empties the branch's user tables (and `session`)
+   and loads the newest dump, then prints each table's row count next to production's: expect
+   "Row counts match production." A failed restore changes nothing.
+
+4. Delete the branch.
+
+**A real restore** starts the same way, onto a new branch, with `-- --date=YYYY-MM-DD` to pick an older dump;
+production's counts then differ by whatever was lost, so it exits 1. Moving that data into production
+(switching to the branch, or copying rows back) is a separate step this script doesn't do: it never writes to
+production. The restore database must already have the schema and `places` (`pnpm db:migrate`,
+`places:load`); the restore checks for `places`.
 
 ## Caveats
 
