@@ -31,6 +31,7 @@
     "runs": "tsx scripts/show-runs.ts",
     "shadow-closes": "tsx scripts/show-shadow-closes.ts",
     "delivery": "tsx scripts/show-digest-delivery.ts",
+    "digest-costs": "tsx scripts/show-digest-costs.ts",
     "fixes:apply": "tsx scripts/apply-fixes.ts",
     "fixes:check": "tsx scripts/check-fixes.ts",
     "data-fixer:setup": "tsx scripts/data-fixer-setup.ts",
