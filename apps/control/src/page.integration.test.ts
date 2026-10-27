@@ -150,7 +150,7 @@ describe("overview", () => {
       /href="\/runs\?stage=ingest&amp;outcome=error&amp;from=\d{4}-\d{2}-\d{2}">Ingest job boards: 1 failed run<\/a>/,
     );
     expect(html).toContain('<span class="bad">1 failed</span>');
-    expect(html).toContain("8 checks: 8 logs only");
+    expect(html).toContain("9 checks: 9 logs only");
   });
 
   it("shows spend against the target as a meter, and says all clear when nothing needs the owner", async () => {

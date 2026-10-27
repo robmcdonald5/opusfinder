@@ -3,14 +3,15 @@ import { randomBytes } from "node:crypto";
 import { getTableColumns, getTableName, is } from "drizzle-orm";
 import { PgSerial, type PgTable } from "drizzle-orm/pg-core";
 
+import { BACKUP_TABLES } from "./backup";
 import { PRUNE_FUNCTION } from "./repos/prune";
 import { companies, dataFixes, jobs, sourceRuns } from "./schema";
 
 type TablePrivilege = "SELECT" | "INSERT" | "UPDATE" | "DELETE";
 
 /**
- * A limited Postgres login. It can use the tables in `grants` and nothing else: no user / auth / session / CV /
- * profile / preference / digest / health table, no DDL, no role memberships. Its setup script creates it with
+ * A limited Postgres login. It can use the tables in `grants` and nothing else: no DDL, no role memberships.
+ * Only the backup role reads user tables, and none may write them. Its setup script creates it with
  * plain SQL because a role made in the Neon Console, CLI or API joins `neon_superuser`
  * (https://neon.com/docs/manage/roles), which would grant pg_write_all_data and CREATEROLE.
  */
@@ -26,6 +27,9 @@ export interface LimitedRole {
   /** SECURITY DEFINER functions it may EXECUTE, by signature (`public.name(argtypes)`). Each must exist when
    *  setup runs, and the audit refuses any other definer function the role could call. */
   readonly functions?: readonly string[];
+  /** Also SELECT on the serial sequences of the tables it may SELECT, which pg_dump reads to dump each
+   *  sequence's position. SELECT reads a sequence; only USAGE or UPDATE can advance it. */
+  readonly readsSequences?: true;
 }
 
 /** The data-fixes GitHub Action's only credential (`data-fixer:setup`): the ingestion-side tables, plus
@@ -47,6 +51,17 @@ export const SCRAPERS_WORKER: LimitedRole = {
   name: "scrapers_worker",
   grants: [{ tables: [companies, jobs, sourceRuns], privileges: ["SELECT", "INSERT", "UPDATE"] }],
   functions: [PRUNE_FUNCTION],
+};
+
+/** The nightly backup's only credential (`backup:setup`, the `backup` GitHub Environment): reads the
+ *  backed-up tables and their sequences, and records each finished backup in `source_runs`. */
+export const USER_BACKUP: LimitedRole = {
+  name: "user_backup",
+  grants: [
+    { tables: BACKUP_TABLES, privileges: ["SELECT"] },
+    { tables: [sourceRuns], privileges: ["INSERT"] },
+  ],
+  readsSequences: true,
 };
 
 /** A fresh 256-bit password, base64url (so it needs no escaping in a URL). Neon requires ≥ 60 bits. */
@@ -94,9 +109,14 @@ export function buildRoleSetupSql(role: LimitedRole): string {
     tables: g.tables.map((t) => getTableName(t)),
     privileges: g.privileges as readonly string[],
     sequences: g.privileges.includes("INSERT") ? g.tables.flatMap(serialSequences) : [],
+    readSequences:
+      role.readsSequences && g.privileges.includes("SELECT")
+        ? g.tables.flatMap(serialSequences)
+        : [],
   }));
   const literals = (names: readonly string[]) => names.map((n) => `'${n}'`).join(", ");
   const sequences = groups.flatMap((g) => g.sequences);
+  const readSequences = groups.flatMap((g) => g.readSequences);
   const functions = role.functions ?? [];
   const functionArray = `ARRAY[${literals(functions)}]::text[]`;
   // Per granted table, the privileges it must NOT hold; ELSE (every other table) is all of them.
@@ -147,6 +167,7 @@ REVOKE ALL ON ALL FUNCTIONS IN SCHEMA public FROM ${name};
 GRANT USAGE ON SCHEMA public TO ${name};
 ${groups.map((g) => `GRANT ${g.privileges.join(", ")} ON ${g.tables.map((t) => `public.${t}`).join(", ")} TO ${name};`).join("\n")}
 ${sequences.length > 0 ? `GRANT USAGE ON SEQUENCE ${sequences.join(", ")} TO ${name};` : ""}
+${readSequences.length > 0 ? `GRANT SELECT ON SEQUENCE ${readSequences.join(", ")} TO ${name};` : ""}
 ${functions.map((f) => `GRANT EXECUTE ON FUNCTION ${f} TO ${name};`).join("\n")}
 DO $$
 DECLARE

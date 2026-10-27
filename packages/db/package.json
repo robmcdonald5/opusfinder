@@ -13,6 +13,7 @@
     "./errors": "./src/errors.ts",
     "./fixes": "./src/fixes.ts",
     "./roles": "./src/roles.ts",
+    "./backup": "./src/backup.ts",
     "./geonames": "./src/geonames.ts",
     "./zip": "./src/zip.ts",
     "./geonames-files": "./src/geonames-files.ts"
@@ -36,11 +37,15 @@
     "fixes:check": "tsx scripts/check-fixes.ts",
     "data-fixer:setup": "tsx scripts/data-fixer-setup.ts",
     "worker-role:setup": "tsx scripts/worker-role-setup.ts",
+    "backup:setup": "tsx scripts/backup-setup.ts",
+    "backup:run": "tsx scripts/backup-run.ts",
+    "backup:restore": "tsx scripts/backup-restore.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@neondatabase/serverless": "^1",
     "@opusfinder/shared": "workspace:*",
+    "@opusfinder/storage": "workspace:*",
     "dotenv": "^17",
     "drizzle-orm": "^0.45.2"
   },

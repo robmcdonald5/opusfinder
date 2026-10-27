@@ -1,0 +1,70 @@
+# Nightly backup of the user tables (packages/db/src/backup.ts lists them) to a private R2 bucket, as the
+# read-only `user_backup` Postgres role. Neon's own restore window is hours long, and user data is the one thing
+# opusfinder can't fetch again. The runner (packages/db/scripts/backup-run.ts) dumps the tables with pg_dump -Fc,
+# uploads the dump as user-tables/<UTC date>.dump, then records it in source_runs, where the backup_staleness
+# health check reads it. The bucket's lifecycle rule deletes dumps after 14 days.
+#
+# NEVER `pull_request`: the secrets must not reach code that hasn't been merged. It runs on a nightly schedule
+# plus manual `workflow_dispatch` (after setup, and before a restore drill). The `backup` Environment holds the
+# secrets and allows deployments from `main` only, so a dispatch from any other branch is refused before a
+# secret is read.
+#
+# ── OWNER PROVISIONING: see packages/db/README.md "Backups" ──
+#   the bucket, its scoped token and lifecycle rule, then
+#   pnpm --filter @opusfinder/db run backup:setup
+# which creates the Environment (main-only rule), the user_backup role (plain SQL, NOT the Neon Console:
+# Console roles join neon_superuser) and the Environment's secrets. Third-party actions are pinned to full
+# commit SHAs and nothing is restored from the Actions cache (same as data-fixes.yml): a compromised action or
+# a planted package store in a secrets job could read the keys.
+name: backup
+
+on:
+  schedule:
+    # The control registry's `backup` stage copies this cron (packages/control/src/registry.ts).
+    - cron: "5 4 * * *" # 04:05 UTC, during the 04:00 ingest tick, while Neon is awake
+  workflow_dispatch:
+
+# Least privilege: only checkout needs the repo, and nothing here writes to it.
+permissions:
+  contents: read
+
+# One backup at a time; a dispatch during the nightly run queues behind it.
+concurrency:
+  group: backup
+  cancel-in-progress: false
+
+jobs:
+  backup:
+    if: github.ref == 'refs/heads/main' # the Environment rule enforces this too; skip early and quietly
+    runs-on: ubuntu-latest
+    environment: backup # the role's URL and the bucket's token live here (branch rule = main), NOT in repo secrets
+    timeout-minutes: 15
+    env:
+      PG_MAJOR: "18" # Neon's Postgres major version; the runner refuses a pg_dump that doesn't match the server
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # pg_dump must be the server's major version, and the runner image's client is older: install it from
+      # the PostgreSQL project's signed apt repository (postgresql.org/download/linux/ubuntu).
+      - name: Install the PostgreSQL client tools
+        run: |
+          sudo apt-get install -y --no-install-recommends postgresql-common
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+          sudo apt-get install -y --no-install-recommends "postgresql-client-$PG_MAJOR"
+          echo "/usr/lib/postgresql/$PG_MAJOR/bin" >> "$GITHUB_PATH"
+
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24 # engines.node >=24
+      - run: pnpm install --frozen-lockfile
+
+      # The secrets are scoped to this one step: install scripts and other steps never see them.
+      - name: Back up the user tables
+        run: pnpm --filter @opusfinder/db run backup:run
+        env:
+          BACKUP_DATABASE_URL: ${{ secrets.BACKUP_DATABASE_URL }}
+          BACKUP_R2_ACCOUNT_ID: ${{ secrets.BACKUP_R2_ACCOUNT_ID }}
+          BACKUP_R2_BUCKET: ${{ secrets.BACKUP_R2_BUCKET }}
+          BACKUP_R2_ACCESS_KEY_ID: ${{ secrets.BACKUP_R2_ACCESS_KEY_ID }}
+          BACKUP_R2_SECRET_ACCESS_KEY: ${{ secrets.BACKUP_R2_SECRET_ACCESS_KEY }}

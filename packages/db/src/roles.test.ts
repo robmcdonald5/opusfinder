@@ -7,6 +7,7 @@ import {
   generateRolePassword,
   redact,
   SCRAPERS_WORKER,
+  USER_BACKUP,
 } from "./roles";
 import { PRUNE_FUNCTION } from "./repos/prune";
 
@@ -15,7 +16,7 @@ import { PRUNE_FUNCTION } from "./repos/prune";
 
 const PASSWORD = "A".repeat(20) + "b-c_d".repeat(4); // 40 base64url chars
 
-// Pinned: widening either role is a deliberate, reviewed change.
+// Pinned: widening any role is a deliberate, reviewed change.
 describe("buildRoleSetupSql", () => {
   it("data_fixer: creates or rotates the role, then resets its grants to the allowlist", () => {
     const sql = buildRoleSetupSql(DATA_FIXER);
@@ -40,6 +41,19 @@ describe("buildRoleSetupSql", () => {
       "GRANT SELECT, INSERT, UPDATE ON public.companies, public.jobs, public.source_runs TO scrapers_worker;",
       "GRANT USAGE ON SEQUENCE public.companies_id_seq, public.jobs_id_seq, public.source_runs_id_seq TO scrapers_worker;",
       `GRANT EXECUTE ON FUNCTION ${PRUNE_FUNCTION} TO scrapers_worker;`,
+    ]);
+  });
+
+  it("user_backup: reads the backed-up tables and their sequences, records a backup, nothing else", () => {
+    const sql = buildRoleSetupSql(USER_BACKUP);
+    expect(sql).toContain("CREATE ROLE user_backup WITH LOGIN PASSWORD %L");
+    expect(sql).toContain("REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM user_backup;");
+    expect(sql.match(/^GRANT .*$/gm)).toEqual([
+      "GRANT USAGE ON SCHEMA public TO user_backup;",
+      "GRANT SELECT ON public.user, public.account, public.user_cv_files, public.user_profiles, public.user_preferences, public.digest_runs, public.digests, public.digest_items TO user_backup;",
+      "GRANT INSERT ON public.source_runs TO user_backup;",
+      "GRANT USAGE ON SEQUENCE public.source_runs_id_seq TO user_backup;",
+      "GRANT SELECT ON SEQUENCE public.user_cv_files_id_seq, public.user_profiles_id_seq, public.user_preferences_id_seq, public.digest_runs_id_seq, public.digests_id_seq, public.digest_items_id_seq TO user_backup;",
     ]);
   });
 });

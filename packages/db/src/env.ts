@@ -39,3 +39,26 @@ export const getDataFixDatabaseUrl = requireEnv({
     "DATA_FIX_DATABASE_URL is not set. It lives in the data-fixes GitHub Environment; see packages/db/fixes/README.md.",
   validate: validatePostgresUrl("DATA_FIX_DATABASE_URL"),
 });
+
+/**
+ * Read + validate BACKUP_DATABASE_URL: the read-only `user_backup` role's direct connection string, which only
+ * the `backup` GitHub Environment holds (set by `backup:setup`). The nightly backup reads this and never falls
+ * back to DATABASE_URL.
+ */
+export const getBackupDatabaseUrl = requireEnv({
+  name: "BACKUP_DATABASE_URL",
+  notSetMessage:
+    'BACKUP_DATABASE_URL is not set. It lives in the backup GitHub Environment; see packages/db/README.md "Backups".',
+  validate: validatePostgresUrl("BACKUP_DATABASE_URL"),
+});
+
+/**
+ * Read + validate RESTORE_DATABASE_URL: the database `backup:restore` empties and loads a dump into (a Neon
+ * branch for the drill). Never production: the restore refuses a URL that reaches DATABASE_URL's database.
+ */
+export const getRestoreDatabaseUrl = requireEnv({
+  name: "RESTORE_DATABASE_URL",
+  notSetMessage:
+    'RESTORE_DATABASE_URL is not set. Export the connection string of the Neon branch to restore into; see packages/db/README.md "Backups".',
+  validate: validatePostgresUrl("RESTORE_DATABASE_URL"),
+});
