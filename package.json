@@ -31,6 +31,7 @@
     "db:prune": "pnpm --filter @opusfinder/db run prune-stale",
     "db:prune-oplog": "pnpm --filter @opusfinder/db run prune-oplog",
     "db:ping": "pnpm --filter @opusfinder/db ping",
+    "db:digest-costs": "pnpm --filter @opusfinder/db digest-costs",
     "runs": "pnpm --filter @opusfinder/db runs",
     "health": "pnpm --filter @opusfinder/inngest health",
     "ingest": "pnpm --filter @opusfinder/sources ingest",
