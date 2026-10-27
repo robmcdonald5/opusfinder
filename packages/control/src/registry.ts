@@ -485,7 +485,8 @@ export type PolicyId = keyof typeof policies;
 
 /** B3: vendor ceilings, shown in the view. Probed where a read-only credential exists, else by hand. */
 export const ceilings = {
-  neonMaxCu: { label: "Neon max compute (CU)", value: 8, where: "Neon console", probe: "manual" },
+  // Owner decision 2026-10-26: 2 CU, not 8, so a runaway compute costs at most ~$5/day, not ~$20.
+  neonMaxCu: { label: "Neon max compute (CU)", value: 2, where: "Neon console", probe: "manual" },
   voyageAutoRecharge: {
     label: "Voyage auto-recharge",
     value: "unknown",
