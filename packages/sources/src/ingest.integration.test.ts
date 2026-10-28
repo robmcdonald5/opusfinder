@@ -547,6 +547,49 @@ describe("runIngestion — orchestration over real PGlite (fetch stubbed)", () =
     });
   });
 
+  describe("postings unchanged since the last visit (not sent, still present)", () => {
+    it("sends only new or changed postings, and stamps, revives and sweeps the board as before", async () => {
+      const acme = await seedCompany({ slug: "acme", active: true });
+      installFetch([boardRoute("acme", [ghJob(1), ghJob(2), ghJob(3), ghJob(4)])]);
+      expect(await runIngestion(db, { paceMs: 0, adapter: NO_RETRY })).toMatchObject({
+        changed: 4,
+        unchanged: 0,
+      });
+
+      // Between visits: 1 was last stamped two days ago, with an absence on its streak; 4 was closed; 3 leaves
+      // the feed; 2 is retitled; 5 is new.
+      await db
+        .update(jobs)
+        .set({ lastSeenAt: daysAgo(2), consecutiveAbsences: 1 })
+        .where(eq(jobs.externalId, jobId("1")));
+      await db
+        .update(jobs)
+        .set({ lifecycleState: "closed", closedAt: daysAgo(1) })
+        .where(eq(jobs.externalId, jobId("4")));
+      const retitled = { ...ghJob(2), title: "Job 2, retitled" };
+      installFetch([boardRoute("acme", [ghJob(1), retitled, ghJob(4), ghJob(5)])]);
+
+      const counts = await runIngestion(db, {
+        paceMs: 0,
+        adapter: NO_RETRY,
+        enforceLifecycle: true,
+      });
+
+      // 1 is not sent. 2 and 5 are written. 4 is sent (closed rows have no known hash) and writes nothing.
+      expect(counts).toMatchObject({ jobs: 4, changed: 2, unchanged: 1, revived: 2, swept: 1 });
+      const one = await jobByExt("1");
+      expect(one!.consecutiveAbsences).toBe(0);
+      expect(one!.lastSeenAt.getTime()).toBeGreaterThan(Date.now() - 60_000);
+      expect(await jobByExt("4")).toMatchObject({ lifecycleState: "active", closedAt: null });
+      expect(await jobByExt("3")).toMatchObject({
+        lifecycleState: "active",
+        consecutiveAbsences: 1,
+      });
+      expect((await jobByExt("2"))!.title).toBe("Job 2, retitled");
+      expect(await jobsFor(acme)).toHaveLength(5);
+    });
+  });
+
   describe("listed postings mapItem rejects (malformed)", () => {
     it.each([
       ["a few: the board is still swept (one that stays malformed closes)", 1, 1, 0],

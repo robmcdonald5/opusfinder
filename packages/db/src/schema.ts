@@ -195,6 +195,10 @@ export const jobs = pgTable(
     // not wrong. DISTINCT from `embedding`/jobEmbeddingText: that folds these same two fields into a
     // SEMANTIC vector; this folds them into an EXACT-MATCH key — never merge the two.
     contentSignature: text("content_signature"),
+    // SHA-256 hex of the fields upsertJobs' setWhere compares, as the last fetch delivered them (repos/jobs.ts
+    // CHANGE_FIELDS). Ingest reads a board's hashes first and doesn't send a posting whose hash matches.
+    // NULL = unknown (a row not written since the column landed): it is sent, and the write fills it.
+    fetchHash: text("fetch_hash"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },

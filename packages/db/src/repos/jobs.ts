@@ -7,7 +7,18 @@
  * hydrate's placeholder content (its stored row only follows the board listing it), then only advances
  * `updated_at` when a job actually changed, so re-ingesting an unchanged board is a no-op.
  */
-import { and, type AnyColumn, eq, gt, inArray, ne, or, sql, type SQL } from "drizzle-orm";
+import {
+  and,
+  type AnyColumn,
+  eq,
+  gt,
+  inArray,
+  isNotNull,
+  ne,
+  or,
+  sql,
+  type SQL,
+} from "drizzle-orm";
 
 import type { CompanySlug, JobId, NormalizedJob, SourceName } from "@opusfinder/shared";
 
@@ -139,12 +150,59 @@ function pgTimestamp(date: Date | null): Date | null {
   return year >= 1 && year <= 9999 ? date : null;
 }
 
+/**
+ * The fields a re-fetch can change. upsertJobs' setWhere tests exactly these and `fetch_hash` hashes exactly
+ * these, so a posting left unsent for a matching hash is one the upsert would not have written. A field added
+ * here joins both; one compared but not hashed would let a real change be skipped.
+ */
+const CHANGE_FIELDS = [
+  "companyId",
+  "title",
+  "descriptionText",
+  "locations",
+  "remote",
+  "applyUrl",
+] as const;
+
+/** SHA-256 hex of a row's {@link CHANGE_FIELDS}, as written (sanitized). WebCrypto: the same in the Worker and Node. */
+async function fetchHashOf(
+  row: Pick<typeof jobs.$inferInsert, (typeof CHANGE_FIELDS)[number]>,
+): Promise<string> {
+  const bytes = new TextEncoder().encode(JSON.stringify(CHANGE_FIELDS.map((field) => row[field])));
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
+  return Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+/**
+ * The stored `fetch_hash` of each ACTIVE job on a board, by external_id: runIngestion reads it before the
+ * board's fetch and hands it to {@link upsertJobs} as `known`. A closed or never-hashed row is left out, so
+ * it is sent (a reappearing closed posting that is unchanged then writes nothing, by setWhere).
+ */
+export async function knownFetchHashes(db: Db, companyId: number): Promise<Map<string, string>> {
+  const rows = await db
+    .select({ externalId: jobs.externalId, fetchHash: jobs.fetchHash })
+    .from(jobs)
+    .where(
+      and(
+        eq(jobs.companyId, companyId),
+        eq(jobs.lifecycleState, "active"),
+        isNotNull(jobs.fetchHash),
+      ),
+    );
+  return new Map(
+    rows.flatMap((row) => (row.fetchHash === null ? [] : [[row.externalId, row.fetchHash]])),
+  );
+}
+
 /** What {@link upsertJobs} did with a board's postings (all counts are DISTINCT postings). */
 export interface UpsertJobsResult {
-  /** Rows inserted or updated (an unchanged re-ingest is skipped by `setWhere` and not counted). */
+  /** Rows inserted or updated, a fetch_hash fill included (an unchanged re-ingest is skipped by `setWhere`
+   *  and not counted). */
   changed: number;
-  /** Postings WRITTEN with their content (`unchanged = total - changed`). */
+  /** Postings with content: sent and WRITTEN, or not sent because `known` already held them. */
   total: number;
+  /** Postings with content NOT sent: their `known` fetch hash matched (counted in `total`, never in `changed`). */
+  unchanged: number;
   /** `contentMissing` postings: content NOT written (a stored row only has its company_id refreshed). */
   contentMissing: number;
 }
@@ -173,6 +231,7 @@ export async function upsertJobs(
   db: Db,
   companyId: number,
   list: NormalizedJob[],
+  opts: { known?: ReadonlyMap<string, string> } = {},
 ): Promise<UpsertJobsResult> {
   // Collapse duplicate (source, external_id) BEFORE the batch: a single
   // INSERT ... ON CONFLICT cannot affect the same conflict key twice (Postgres
@@ -194,9 +253,11 @@ export async function upsertJobs(
   const missing = distinct.filter((job) => job.contentMissing);
   if (missing.length > 0) await moveToListingBoard(db, companyId, missing);
   // Guard the empty case: `INSERT ... VALUES` with no rows is invalid SQL.
-  if (writable.length === 0) return { changed: 0, total: 0, contentMissing: missing.length };
+  if (writable.length === 0) {
+    return { changed: 0, total: 0, unchanged: 0, contentMissing: missing.length };
+  }
 
-  const values = writable.map((job) => {
+  const rows = writable.map((job) => {
     const title = pgText(job.title, MAX_SHORT_TEXT_CHARS);
     const descriptionText = pgText(job.descriptionText, MAX_DESCRIPTION_CHARS);
     return {
@@ -229,6 +290,15 @@ export async function upsertJobs(
       contentSignature: signatureSql(sql`${title}`, sql`${descriptionText}`),
     };
   });
+  // Hash each posting as it will be written, and send only those whose hash isn't the stored one (`known`).
+  const hashes = await Promise.all(rows.map(fetchHashOf));
+  const values = rows
+    .map((row, i) => ({ ...row, fetchHash: hashes[i]! }))
+    .filter((row) => opts.known?.get(row.externalId) !== row.fetchHash);
+  const unchanged = rows.length - values.length;
+  if (values.length === 0) {
+    return { changed: 0, total: writable.length, unchanged, contentMissing: missing.length };
+  }
 
   // EMPTY-DESCRIPTION GUARD (any source): a blank (empty/whitespace) incoming description never replaces a
   // NON-blank stored one — the stored text is kept, so content_signature and the embedding don't move for
@@ -259,13 +329,25 @@ export async function upsertJobs(
           ELSE ${col}
         END`;
 
+  // The setWhere content test, one clause per CHANGE_FIELDS entry: the stored value against the incoming one
+  // (the description through its guard). Reused by updated_at, so a fetch_hash-only write doesn't advance it.
+  const contentChanged = sql.join(
+    CHANGE_FIELDS.map((field) =>
+      field === "descriptionText"
+        ? sql`${jobs.descriptionText} IS DISTINCT FROM (${description})`
+        : sql`${jobs[field]} IS DISTINCT FROM excluded.${sql.identifier(jobs[field].name)}`,
+    ),
+    sql` OR `,
+  );
+
   // The ON CONFLICT config is batch-agnostic (every clause references excluded.* / jobs.*, never the
   // batch rows), so build it ONCE and reuse it for each batch below.
   const conflictUpdate = {
     target: [jobs.source, jobs.externalId],
     // Write every comparable field + company_id, refresh the write-only `posted_at`, conditionally reset
-    // the derived embedding, and advance updated_at. INVARIANT: every column tested in `setWhere` below
-    // must also appear here — a field compared but not written would make every re-ingest look "changed".
+    // the derived embedding, store the fetch hash, and advance updated_at on a content change. INVARIANT:
+    // every column tested in `setWhere` below must also appear here — a field compared but not written would
+    // make every re-ingest look "changed".
     set: {
       companyId: sql`excluded.company_id`,
       title: sql`excluded.title`,
@@ -280,7 +362,8 @@ export async function upsertJobs(
       // content_signature: rewritten unconditionally from excluded title+desc via the ONE signatureSql
       // definition (the setWhere note below explains why it is written but NOT also tested).
       contentSignature: signatureSql(sql`excluded.title`, sql`(${description})`),
-      updatedAt: sql`now()`,
+      fetchHash: sql`excluded.fetch_hash`,
+      updatedAt: sql`CASE WHEN ${contentChanged} THEN now() ELSE ${jobs.updatedAt} END`,
     },
     // Advance the row only when a real change differs. Fields written above but deliberately EXCLUDED
     // from this test:
@@ -296,14 +379,10 @@ export async function upsertJobs(
     //    SEPARATE writer (repos/lifecycle.ts sweepLifecycle) precisely because reviving a reappearing job to
     //    'active' must NOT be gated by this content test — an unchanged-but-reappearing job would otherwise
     //    stay 'closed'. Keep lifecycle_state out of this set block.
-    setWhere: sql`
-        ${jobs.companyId} IS DISTINCT FROM excluded.company_id OR
-        ${jobs.title} IS DISTINCT FROM excluded.title OR
-        ${jobs.descriptionText} IS DISTINCT FROM (${description}) OR
-        ${jobs.locations} IS DISTINCT FROM excluded.locations OR
-        ${jobs.remote} IS DISTINCT FROM excluded.remote OR
-        ${jobs.applyUrl} IS DISTINCT FROM excluded.apply_url
-      `,
+    // `fetch_hash` IS tested, beside the content: a row stored before the column has none, and an unchanged
+    // row would otherwise never get one, so it would be sent on every visit. That fill is a write (counted
+    // in `changed`) that leaves updated_at alone.
+    setWhere: sql`${contentChanged} OR ${jobs.fetchHash} IS DISTINCT FROM excluded.fetch_hash`,
   };
 
   // Run the upsert in payload-bounded batches (see UPSERT_BATCH_SIZE). The whole-board dedupe ABOVE
@@ -321,7 +400,7 @@ export async function upsertJobs(
     changed += updated.length;
   }
 
-  return { changed, total: writable.length, contentMissing: missing.length };
+  return { changed, total: writable.length, unchanged, contentMissing: missing.length };
 }
 
 /**
