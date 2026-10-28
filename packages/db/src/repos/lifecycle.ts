@@ -56,6 +56,19 @@ export interface SweepOptions {
 }
 
 /**
+ * A board's listed external_ids as a CTE body: one row per DISTINCT id, which the presence writers join to
+ * or hash-probe. Either costs about board + list; testing each row against an array (`= ANY(ids)`) cost
+ * board × list, which a Workday-size board (tens of thousands of postings) turns into hundreds of millions of
+ * comparisons. DISTINCT keeps a posting the feed repeats from counting twice. The ids ride as ONE jsonb param
+ * (driver-escaped, no array-literal escaping); NUL is stripped defensively (jsonb rejects a NUL byte; a
+ * successfully-persisted external_id is already NUL-free, so this never fires).
+ */
+function presentSet(externalIds: string[]): SQL {
+  const json = JSON.stringify(externalIds.map((id) => id.replaceAll(NUL, "")));
+  return sql`SELECT DISTINCT value AS external_id FROM jsonb_array_elements_text(${json}::jsonb) AS value`;
+}
+
+/**
  * Soft-close jobs that have disappeared from a company's board (streak hysteresis) and revive any that
  * reappeared — in ONE race-safe UPDATE, scoped to ONE company (NEVER a run-level seen-set, the cron
  * processes only a chunk of boards per tick). `presentExternalIds` is the de-duplicated external_id list
@@ -66,8 +79,8 @@ export interface SweepOptions {
  * Lives OUTSIDE upsertJobs because a reappearing closed job must revive even when its content is
  * byte-unchanged, which upsertJobs's content-gated setWhere cannot do.
  *
- * HARD no-op on an empty present set: `<> ALL('{}')` is TRUE for every row and would close the whole
- * board — belt-and-suspenders behind the caller's non-empty-fetch gate.
+ * HARD no-op on an empty present set: every job would read absent and the whole board would close —
+ * belt-and-suspenders behind the caller's non-empty-fetch gate.
  */
 export async function sweepLifecycle(
   db: Db,
@@ -80,11 +93,6 @@ export async function sweepLifecycle(
 
   const threshold = Math.trunc(opts.threshold ?? ABSENCE_CLOSE_THRESHOLD);
   const enforce = opts.enforce ?? false;
-
-  // The present set rides as ONE jsonb param (driver-escaped — no fragile array-literal escaping), unnested
-  // to a text[] in a CTE so it binds once and every branch references it. NUL is stripped defensively
-  // (jsonb rejects a NUL byte; a successfully-persisted external_id is already NUL-free, so this never fires).
-  const presentJson = JSON.stringify(presentExternalIds.map((id) => id.replaceAll(NUL, "")));
 
   // ENFORCE writes 'closed' at the threshold. SHADOW (count-only) OMITS the close branch entirely, so a
   // crossing row stays active and is only TALLIED as wouldClose — the structural suppression behind the
@@ -106,40 +114,40 @@ export async function sweepLifecycle(
     ? sql`WHEN jobs.consecutive_absences + 1 >= ${threshold} THEN now() `
     : sql``;
 
+  // `listed` is an uncorrelated IN over the present set, which Postgres runs as a hashed subplan: one pass
+  // over the board, a hash probe per row, and no join to plan. (A LEFT JOIN of the board to the set, joined
+  // back by id, isn't safe: the set is always estimated at 100 rows and the self-join at about 1, so at 20k
+  // ids the planner nests a rescan of the set inside every row — 220M comparisons, minutes.)
+  const listed = sql`jobs.external_id IN (SELECT external_id FROM present)`;
   // A row this UPDATE revives also gets a fresh last_seen_at (markJobsPresent normally stamps it, but
   // runIngestion still sweeps when that stamp fails), else the same tick's sweepStaleJobs re-closes it.
   const result: unknown = await db.execute(sql`
-    WITH present_set AS (
-      SELECT array_agg(value) AS ids
-      FROM jsonb_array_elements_text(${presentJson}::jsonb) AS value
-    ),
+    WITH present AS (${presentSet(presentExternalIds)}),
     swept AS (
       UPDATE ${jobs} SET
         consecutive_absences = CASE
-          WHEN jobs.external_id = ANY(present_set.ids) THEN 0
+          WHEN ${listed} THEN 0
           ELSE LEAST(jobs.consecutive_absences + 1, ${threshold})
         END,
         lifecycle_state = CASE
-          WHEN jobs.external_id = ANY(present_set.ids) THEN 'active'
+          WHEN ${listed} THEN 'active'
           ${closeBranch}ELSE jobs.lifecycle_state
         END,
         closed_at = CASE
-          WHEN jobs.external_id = ANY(present_set.ids) THEN NULL
+          WHEN ${listed} THEN NULL
           ${closedAtBranch}ELSE jobs.closed_at
         END,
         last_seen_at = CASE
-          WHEN jobs.external_id = ANY(present_set.ids) THEN now()
+          WHEN ${listed} THEN now()
           ELSE jobs.last_seen_at
         END,
         updated_at = now()
-      FROM present_set
       WHERE jobs.company_id = ${companyId} AND (
-        (jobs.external_id = ANY(present_set.ids)
-          AND (jobs.lifecycle_state <> 'active' OR jobs.consecutive_absences <> 0))
-        OR (jobs.external_id <> ALL(present_set.ids) AND jobs.lifecycle_state = 'active')
+        (${listed} AND (jobs.lifecycle_state <> 'active' OR jobs.consecutive_absences <> 0))
+        OR (NOT ${listed} AND jobs.lifecycle_state = 'active')
       )
       RETURNING
-        (jobs.external_id = ANY(present_set.ids)) AS present,
+        ${listed} AS present,
         jobs.lifecycle_state AS new_state,
         jobs.consecutive_absences AS new_streak
     )
@@ -275,8 +283,8 @@ const PRESENT_STAMP_WINDOW = sql`interval '1 day'`;
  * `revived` = closed→active revivals plus streak resets, sweepLifecycle's meaning; runIngestion sums the two
  * (the sweep's share is what this missed when it failed).
  *
- * The present set rides as ONE jsonb param, unnested to text[] (no array-literal escaping; NUL stripped,
- * jsonb rejects it). Empty set ⇒ skip the round-trip (no `<> ALL` trap here).
+ * The present set is {@link presentSet}. Empty set ⇒ skip the round-trip (nothing to stamp; unlike the
+ * sweep, no trap).
  */
 export async function markJobsPresent(
   db: Db,
@@ -284,19 +292,14 @@ export async function markJobsPresent(
   presentExternalIds: string[],
 ): Promise<{ revived: number }> {
   if (presentExternalIds.length === 0) return { revived: 0 };
-  const presentJson = JSON.stringify(presentExternalIds.map((id) => id.replaceAll(NUL, "")));
   // revived_set snapshots the to-be-revived rows BEFORE upd runs — all CTEs see the statement-start
   // snapshot, so the count is the pre-update population regardless of CTE exec order.
   const result: unknown = await db.execute(sql`
-    WITH present_set AS (
-      SELECT array_agg(value) AS ids
-      FROM jsonb_array_elements_text(${presentJson}::jsonb) AS value
-    ),
+    WITH present AS (${presentSet(presentExternalIds)}),
     revived_set AS (
       SELECT jobs.id
-      FROM ${jobs}, present_set
+      FROM ${jobs} JOIN present ON present.external_id = jobs.external_id
       WHERE jobs.company_id = ${companyId}
-        AND jobs.external_id = ANY(present_set.ids)
         AND (jobs.lifecycle_state <> 'active' OR jobs.consecutive_absences <> 0)
     ),
     upd AS (
@@ -305,9 +308,9 @@ export async function markJobsPresent(
         lifecycle_state = 'active',
         closed_at = NULL,
         consecutive_absences = 0
-      FROM present_set
+      FROM present
       WHERE jobs.company_id = ${companyId}
-        AND jobs.external_id = ANY(present_set.ids)
+        AND jobs.external_id = present.external_id
         AND (
           jobs.last_seen_at < now() - ${PRESENT_STAMP_WINDOW}
           OR jobs.lifecycle_state <> 'active'

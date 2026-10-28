@@ -15,6 +15,7 @@ import {
   sweepLifecycle,
   sweepStaleJobs,
 } from "./lifecycle";
+import { resultRows } from "./sql";
 
 // The lifecycle writers' row semantics on real Postgres (lifecycle.test.ts covers the emitted SQL shape only).
 
@@ -146,6 +147,65 @@ describe("lifecycle writers (integration: real PGlite Postgres)", () => {
 
       expect(await jobRow("p")).toMatchObject({ lifecycleState: "active", consecutiveAbsences: 1 });
     });
+  });
+
+  describe("a large board", () => {
+    // 21k stored jobs, 20k of them listed, plus 50 listed postings not stored (a deferred new one) and 100
+    // repeats. Matching against the listed set must stay linear in the board's size: an array test per row
+    // (`= ANY(ids)`) is rows × ids, about 420M comparisons here.
+    const LISTED = 20_000;
+    const STORED = 21_000;
+    const BOUND_MS = 3_000;
+    const listed = [
+      ...Array.from({ length: LISTED }, (_, i) => `j${i + 1}`),
+      ...Array.from({ length: 50 }, (_, i) => `new${i + 1}`),
+      ...Array.from({ length: 100 }, (_, i) => `j${i + 1}`),
+    ];
+
+    async function seedLargeBoard(): Promise<number> {
+      const companyId = await upsertCompany(db, companySlug("acme"), "greenhouse");
+      await db.execute(sql`
+        INSERT INTO ${jobs} (external_id, company_id, source, title, remote, apply_url, last_seen_at)
+        SELECT 'j' || g, ${companyId}, 'greenhouse', 'Engineer', false, 'https://example.test/' || g,
+               now() - interval '2 days'
+        FROM generate_series(1, ${STORED}) AS g
+      `);
+      // The first 500 (the repeats among them) were closed: listing them again revives each once.
+      await db.execute(sql`
+        UPDATE ${jobs} SET lifecycle_state = 'closed', closed_at = now(), consecutive_absences = 3
+        WHERE external_id IN (SELECT 'j' || g FROM generate_series(1, 500) AS g)
+      `);
+      return companyId;
+    }
+
+    it("stamps, revives and sweeps 20k listed ids in bounded time, counting each job once", async () => {
+      const companyId = await seedLargeBoard();
+
+      let start = performance.now();
+      expect(await markJobsPresent(db, companyId, listed)).toEqual({ revived: 500 });
+      const presentMs = performance.now() - start;
+
+      start = performance.now();
+      expect(await sweepLifecycle(db, companyId, listed, { enforce: true })).toEqual({
+        revived: 0,
+        swept: STORED - LISTED,
+        closed: 0,
+        wouldClose: 0,
+      });
+      const sweepMs = performance.now() - start;
+
+      const states = await db.execute(sql`
+        SELECT count(*) FILTER (WHERE lifecycle_state = 'active' AND consecutive_absences = 0
+                                  AND closed_at IS NULL AND last_seen_at > now() - interval '1 minute')::int AS seen,
+               count(*) FILTER (WHERE consecutive_absences = 1 AND last_seen_at < now() - interval '1 day')::int AS absent
+        FROM ${jobs}
+      `);
+      expect(resultRows(states)[0]).toEqual({ seen: LISTED, absent: STORED - LISTED });
+      // Measured locally: the per-row array test took 4-6 s and 9-12 s; the join and the hashed IN take
+      // about 0.5 s and 0.1 s. The bound leaves room for a slow CI runner and still fails the quadratic form.
+      expect(presentMs).toBeLessThan(BOUND_MS);
+      expect(sweepMs).toBeLessThan(BOUND_MS);
+    }, 120_000);
   });
 
   describe("markJobsPresent", () => {
