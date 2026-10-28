@@ -419,8 +419,9 @@ async function runIngestionTick(
       boardTimeLimitMs: BOARD_TIME_LIMIT_MS,
     },
     enforceLifecycle: parseEnforceFlag(env.LIFECYCLE_CLOSE_ENFORCE),
-    // Tier-1 universal staleness sweep — runs EVERY tick (driven by the deployed feature, not gated on the
-    // switch) so the would-close population is observed in shadow; `enforce` rides its OWN STALE_SWEEP flag,
+    // Tier-1 universal staleness sweep — runs on each UTC day's first tick (runIngestion reads the day's run
+    // records; driven by the deployed feature, not gated on the switch) so the would-close population is
+    // observed in shadow; `enforce` rides its OWN STALE_SWEEP flag,
     // independent of LIFECYCLE_CLOSE_ENFORCE, so it stays count-only until the owner flips it after reading the counts.
     staleSweep: { ttlDays, enforce: parseEnforceFlag(env.STALE_SWEEP) },
   });

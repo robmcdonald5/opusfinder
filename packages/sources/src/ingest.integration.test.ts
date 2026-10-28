@@ -685,6 +685,45 @@ describe("runIngestion — orchestration over real PGlite (fetch stubbed)", () =
       expect(counts).toMatchObject({ staleWouldClose: 0, staleClosed: 0 });
       expect((await jobByExt(timerJobExt))!.lifecycleState).toBe("active");
     });
+
+    describe("once per UTC day, read from the run records", () => {
+      const tick = () =>
+        runIngestion(db, { paceMs: 0, adapter: NO_RETRY, staleSweep: { enforce: true } });
+
+      it("sweeps on the day's first tick (yesterday's sweep doesn't count) and not on a later one", async () => {
+        const { timerJobExt } = await seedStaleFixture();
+        installFetch(staleRoutes());
+        await db.insert(sourceRuns).values({
+          pipeline: "ingestion",
+          status: "ok",
+          startedAt: daysAgo(1),
+          finishedAt: daysAgo(1),
+          counts: { staleSwept: 1 },
+        });
+
+        expect(await tick()).toMatchObject({ staleSwept: 1, staleClosed: 1, staleSweepFailed: 0 });
+        expect((await jobByExt(timerJobExt))!.lifecycleState).toBe("closed");
+
+        // Another stale job: the same day's next tick leaves it for tomorrow.
+        const later = await seedCompany({ slug: "lt", active: false, lastIngestedAt: daysAgo(1) });
+        await seedJob(later, { externalId: "t2", lastSeenAt: daysAgo(30) });
+        expect(await tick()).toMatchObject({ staleSwept: 0, staleClosed: 0, staleSweepFailed: 0 });
+        expect(sweepStaleJobs).toHaveBeenCalledOnce();
+        expect((await jobByExt("t2"))!.lifecycleState).toBe("active");
+      });
+
+      it("a failed sweep marks no run, so the next tick retries it", async () => {
+        const { timerJobExt } = await seedStaleFixture();
+        installFetch(staleRoutes());
+        vi.mocked(sweepStaleJobs).mockRejectedValueOnce(new Error("stale down"));
+
+        expect(await tick()).toMatchObject({ staleSwept: 0, staleSweepFailed: 1 });
+        expect((await jobByExt(timerJobExt))!.lifecycleState).toBe("active");
+
+        expect(await tick()).toMatchObject({ staleSwept: 1, staleClosed: 1, staleSweepFailed: 0 });
+        expect((await jobByExt(timerJobExt))!.lifecycleState).toBe("closed");
+      });
+    });
   });
 
   describe("a posting whose detail fetch failed (contentMissing) keeps its stored content", () => {

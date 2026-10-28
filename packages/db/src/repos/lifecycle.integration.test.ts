@@ -2,7 +2,7 @@ import { eq, sql, type SQL } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import type { Db } from "@opusfinder/db";
-import { companies, jobs } from "@opusfinder/db/schema";
+import { companies, jobs, sourceRuns } from "@opusfinder/db/schema";
 import { companySlug, jobId, type NormalizedJob } from "@opusfinder/shared";
 
 import { createTestDb } from "@test/db/pglite";
@@ -12,6 +12,7 @@ import { upsertCompany, upsertJobs } from "./jobs";
 import {
   ABSENCE_CLOSE_THRESHOLD,
   markJobsPresent,
+  staleSweptToday,
   sweepLifecycle,
   sweepStaleJobs,
 } from "./lifecycle";
@@ -40,7 +41,7 @@ describe("lifecycle writers (integration: real PGlite Postgres)", () => {
     ({ db, close } = await createTestDb());
   });
   beforeEach(async () => {
-    await truncate(db, companies, jobs);
+    await truncate(db, companies, jobs, sourceRuns);
   });
   afterAll(async () => {
     await close?.();
@@ -201,5 +202,19 @@ describe("lifecycle writers (integration: real PGlite Postgres)", () => {
 
       expect(await sweepStaleJobs(db)).toEqual({ closed: 0, wouldClose: 1 });
     });
+  });
+
+  it("staleSweptToday counts only an ingestion run that started this UTC day and tallied staleSwept", async () => {
+    const dayStart = sql`date_trunc('day', now(), 'UTC')`;
+    const run = (pipeline: "ingestion" | "ingestion-cli", startedAt: SQL, staleSwept: number) =>
+      db.insert(sourceRuns).values({ pipeline, status: "ok", startedAt, counts: { staleSwept } });
+
+    await run("ingestion", sql`${dayStart} - interval '1 second'`, 1); // yesterday's last second
+    await run("ingestion-cli", dayStart, 1);
+    await run("ingestion", dayStart, 0); // a later tick that skipped the sweep, or whose sweep failed
+    expect(await staleSweptToday(db)).toBe(false);
+
+    await run("ingestion", dayStart, 1);
+    expect(await staleSweptToday(db)).toBe(true);
   });
 });
