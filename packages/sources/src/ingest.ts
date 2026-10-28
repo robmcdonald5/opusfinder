@@ -13,6 +13,7 @@ import { describeDbError } from "@opusfinder/db/errors";
 import {
   backfillJobEmbeddings,
   finishRun,
+  knownFetchHashes,
   listCompanies,
   markCompanyIngested,
   markJobsPresent,
@@ -171,6 +172,7 @@ export interface IngestionCounts {
   rateLimitSkipped: number; // boards left unfetched: their pacing key was cooling down from a rate limit (NOT in failed)
   jobs: number; // distinct postings persisted
   changed: number; // inserted-or-updated postings
+  unchanged: number; // listed postings not sent to the upsert: their stored fetch_hash matched (in jobs, not changed)
   hydrateSkipped: number; // listed postings whose detail fetch failed: content kept (only company_id refreshed) / new one deferred; still present
   hydrateListed: number; // postings listed by HYDRATING boards (written + hydrateSkipped) — the health ratio's denominator
   mapSkipped: number; // listed postings mapItem rejected (malformed): not written, not present; many skip their board's sweep
@@ -292,13 +294,19 @@ export async function runIngestion(db: Db, opts: IngestionOptions = {}): Promise
         }
         // Each page goes to upsertJobs as it arrives, so a board's postings are never all in memory. A board
         // failing partway keeps the pages already written: the upsert is idempotent, and the failed board gets
-        // no presence stamp or sweep below, exactly as if nothing had been fetched.
+        // no presence stamp or sweep below, exactly as if nothing had been fetched. `known` (the board's stored
+        // fetch hashes, read once up front) lets upsertJobs leave out the postings that haven't changed; they are
+        // still in board.listedIds, so presence and the sweep below see every listed posting.
+        const known = await knownFetchHashes(db, company.id);
         let changed = 0;
+        let unchanged = 0;
         const board = await fetchBoard(
           adapter,
           company.slug,
           async (page) => {
-            changed += (await upsertJobs(db, company.id, page)).changed;
+            const written = await upsertJobs(db, company.id, page, { known });
+            changed += written.changed;
+            unchanged += written.unchanged;
           },
           opts.adapter,
         );
@@ -322,6 +330,7 @@ export async function runIngestion(db: Db, opts: IngestionOptions = {}): Promise
         const total = board.listedIds.length - board.contentMissing;
         counts.jobs += total;
         counts.changed += changed;
+        counts.unchanged += unchanged;
         counts.hydrateSkipped += board.contentMissing;
         // The hydrate_skip_ratio health check's denominator: only boards whose adapter hydrates, so the
         // many non-hydrating postings can't dilute a failing detail endpoint.
@@ -543,6 +552,7 @@ function emptyCounts(): IngestionCounts {
     rateLimitSkipped: 0,
     jobs: 0,
     changed: 0,
+    unchanged: 0,
     hydrateSkipped: 0,
     hydrateListed: 0,
     mapSkipped: 0,
@@ -575,7 +585,7 @@ function logSummary(counts: IngestionCounts, embedEnabled: boolean): void {
       (counts.processed < counts.companies
         ? `; budget stop: processed ${counts.processed}/${counts.companies}`
         : "") +
-      `; ${counts.jobs} job(s), ${counts.changed} changed` +
+      `; ${counts.jobs} job(s), ${counts.changed} changed, ${counts.unchanged} unchanged (not sent)` +
       (embedEnabled
         ? `; embedded ${counts.embedded} (${counts.embedTokens} tok)` +
           (counts.embedFailed > 0 ? `, ${counts.embedFailed} embed-failed` : "")
