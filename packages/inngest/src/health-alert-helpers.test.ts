@@ -1,6 +1,6 @@
 /**
  * Unit suite for the pure health-alert render helpers (src/health-alert-helpers.ts). Locks the per-check-id
- * formatMetric switch (8 arms + the null-metric short-circuit + the defensive default), the thresholdSuffix
+ * formatMetric switch (9 arms + the null-metric short-circuit + the defensive default), the thresholdSuffix
  * two-branch, and the checkDetail composition + its shape-only / no-leak invariant (email line === stored
  * health_alerts.detail; no NaN / undefined / '[threshold null]').
  */
@@ -24,6 +24,7 @@ describe("formatMetric", () => {
     ["digest_health", 3, "3 failed run(s)"],
     ["bounce_suppression", 5, "5 affected user(s)"],
     ["discovery_lane_errors", 2, "2 lane error(s)"],
+    ["backup_staleness", 30.2, "30.2h since last backup"],
   ])("renders %s shape-only", (id, metric, expected) => {
     expect(formatMetric(check({ id: id as HealthCheckId, metric }))).toBe(expected);
   });

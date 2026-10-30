@@ -28,6 +28,7 @@ export type Runtime =
   | "cf:opusfinder-scrapers" // Cloudflare Worker; reads gates via a service binding (RPC)
   | "inngest:opusfinder" // Inngest functions served from apps/web on Vercel
   | "gh:live-integration.yml" // GitHub Actions workflow
+  | "gh:backup.yml" // GitHub Actions workflow
   | "cli"; // run by hand (pnpm …)
 
 /**
@@ -189,10 +190,10 @@ export const globalSwitch: GlobalDef = {
 //     wrangler.toml's vars) the close / stale_sweep / prune initial modes and stale_sweep.ttlDays's default;
 //   - packages/inngest: each Inngest stage's platformId and the cron its served function registers;
 //   - packages/db (for the health.* policies below): the check ids, threshold defaults and env var names.
-// NOT pinned, so keep them in step by hand: live_integration's cron (.github/workflows/
-// live-integration.yml), the discover knobs' min/max, every `expect` period (change it with its cron),
-// embed.pagesPerRun, digest.topK and alerts.cooldownH. (embed.tokensPerRun and digest.maxRecipientsPerRun
-// have no runtime counterpart yet.)
+// NOT pinned, so keep them in step by hand: live_integration's and backup's crons (.github/workflows/
+// live-integration.yml and backup.yml), the discover knobs' min/max, every `expect` period (change it with
+// its cron), embed.pagesPerRun, digest.topK and alerts.cooldownH. (embed.tokensPerRun and
+// digest.maxRecipientsPerRun have no runtime counterpart yet.)
 export const stages = {
   ingest: {
     label: "Ingest job boards",
@@ -363,6 +364,17 @@ export const stages = {
     units: ["gh.minutes", "voyage.tokens", "neon.awake_s"],
     expect: { everyMin: 24 * 60, graceMin: 180 }, // GitHub schedules can be delayed or dropped
   },
+  backup: {
+    // pg_dump of the user tables to R2 (packages/db/src/backup.ts), as the read-only user_backup role.
+    label: "Nightly user-table backup",
+    runtime: "gh:backup.yml",
+    trigger: { cron: "5 4 * * *" },
+    modes: ["off", "on"],
+    initial: "off",
+    gate: "unwired",
+    units: ["gh.minutes", "neon.awake_s", "r2.bytes"],
+    expect: { everyMin: 24 * 60, graceMin: 120 }, // health.backup_staleness's 26 h default
+  },
   cv_ingest: {
     label: "CV ingestion",
     runtime: "cli",
@@ -426,7 +438,7 @@ export const policies = {
     initial: "enforce",
     readBy: ["discover"],
   },
-  // The 8 health checks. Ids are `health.<HealthCheckId>` (packages/db/src/health.ts); a sync test in
+  // The 9 health checks. Ids are `health.<HealthCheckId>` (packages/db/src/health.ts); a sync test in
   // @opusfinder/db pins the two lists, each threshold default and its env var together. A later slice
   // moves HealthCheckId HERE and has db/health import it — never the reverse (the H1 landmine: db/health
   // reads `process`).
@@ -480,6 +492,16 @@ export const policies = {
   }),
   "health.digest_health": healthCheck("Digest errors", "digest"),
   "health.bounce_suppression": healthCheck("Email bounces", "digest"),
+  "health.backup_staleness": healthCheck("Backup staleness", "backup", {
+    label: "Max backup age",
+    default: 26, // the nightly period plus 2 h for a late GitHub schedule: one missed night fires
+    min: 25,
+    max: 168,
+    riskier: "up",
+    int: true,
+    unit: "h",
+    legacyEnv: "HEALTH_BACKUP_MAX_AGE_H",
+  }),
 } as const satisfies Record<string, PolicyDef>;
 export type PolicyId = keyof typeof policies;
 
