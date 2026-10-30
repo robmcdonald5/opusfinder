@@ -58,7 +58,7 @@ const change = (as: "owner" | "agent", target: string, value: string, extra: Jso
     json: { target, value, reason: `test ${target} → ${value}`, ...extra },
   });
 
-describe("seed (migration 0002, then 0007) = today's reality = the registry defaults", () => {
+describe("seed (migration 0002, then 0007–0009) = today's reality = the registry defaults", () => {
   it("stores every mode row at its registry `initial`, each with a seed change_log row", async () => {
     const { results } = await h.db
       .prepare("SELECT key, value FROM state ORDER BY key")
@@ -84,6 +84,13 @@ describe("seed (migration 0002, then 0007) = today's reality = the registry defa
         to_value: "enforce",
         target: "stale_sweep",
       },
+      {
+        actor_role: "seed",
+        channel: "migration",
+        from_value: "shadow",
+        to_value: "enforce",
+        target: "prune",
+      },
     ]);
     for (const row of log.results)
       expect(row).toMatchObject({ actor_role: "seed", channel: "migration" });
@@ -106,6 +113,7 @@ describe("seed (migration 0002, then 0007) = today's reality = the registry defa
     expect(policies).toMatchObject({
       close: "enforce",
       stale_sweep: "enforce",
+      prune: "enforce",
       "health.digest_health": "shadow",
     });
     expect(s.openProposals).toEqual([]);

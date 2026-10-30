@@ -569,6 +569,7 @@ const DEPLOYED_VARS = {
   LIFECYCLE_CLOSE_ENFORCE: "enforce",
   STALE_SWEEP: "enforce",
   STALE_SWEEP_TTL_DAYS: "21",
+  PRUNE: "enforce",
 };
 
 /** A fake CONTROL binding (the control Worker's ControlRpc): `gate` answers as given, `recordRun` succeeds. */
@@ -744,7 +745,7 @@ describe("control plane, in shadow — the gate is logged, never obeyed", () => 
     const discover = makeControl(async () => ({
       ...GATE_ON,
       knobs: { limit: 300, reprobeLimit: 500 },
-      policies: { close: { mode: "enforce", knobs: {} }, prune: { mode: "shadow", knobs: {} } },
+      policies: { close: { mode: "enforce", knobs: {} }, prune: { mode: "enforce", knobs: {} } },
     }));
     await scheduled(
       { cron: DISCOVERY_CRON },

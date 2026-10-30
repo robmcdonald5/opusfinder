@@ -85,8 +85,8 @@ interface Env {
   /** Staleness-close TTL in days (the {@link sweepStaleJobs} horizon). Default 21 (see DEFAULT_STALE_TTL_DAYS)
    *  — must exceed the worst-case full-sweep latency or a still-live, not-recently-fetched job false-closes. */
   STALE_SWEEP_TTL_DAYS?: string;
-  /** The weekly job prune after discovery — see {@link prunePass}. Unset / "shadow" = count-only (the shipped
-   *  default); "enforce" deletes up to PRUNE_MAX_ROWS jobs closed for 30+ days that no digest showed. */
+  /** The weekly job prune after discovery — see {@link prunePass}. Unset / "shadow" = count-only;
+   *  "enforce" (what wrangler.toml ships) deletes up to PRUNE_MAX_ROWS jobs closed for 30+ days that no digest showed. */
   PRUNE?: string;
   /** The control plane: a service binding to the `opusfinder-control` Worker's `ControlRpc` entrypoint
    *  (wrangler.toml [[services]]). Read in SHADOW — see ./control.ts. OPTIONAL: unbound (e.g. `wrangler dev`

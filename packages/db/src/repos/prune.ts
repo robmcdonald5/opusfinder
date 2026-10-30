@@ -159,8 +159,8 @@ export interface PruneRunCounts {
 }
 
 /**
- * The scrapers Worker's weekly prune, recorded as a `prune` source_runs row. `apply: false` (the shipped
- * default, PRUNE unset) only counts; `apply: true` deletes at most `maxRows`, so a backlog drains over several
+ * The scrapers Worker's weekly prune, recorded as a `prune` source_runs row. `apply: false` (PRUNE unset
+ * or "shadow") only counts; `apply: true` deletes at most `maxRows`, so a backlog drains over several
  * weeks instead of in one long delete. A failure finishes the row as `error` and re-throws, for the caller to
  * log without failing the run it follows.
  */
