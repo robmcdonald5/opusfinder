@@ -17,6 +17,7 @@ import {
   markCompanyIngested,
   markJobsPresent,
   markProbeResult,
+  staleSweptToday,
   startRun,
   sweepLifecycle,
   sweepStaleJobs,
@@ -141,7 +142,8 @@ export interface IngestionOptions {
    */
   enforceLifecycle?: boolean;
   /**
-   * Universal staleness sweep (opt-in, Worker-driven). When set, AFTER the per-board loop the run
+   * Universal staleness sweep (opt-in, Worker-driven). When set, AFTER the per-board loop — and only in a
+   * UTC day's first run whose sweep completes (see {@link staleSweptToday}) — the run
    * closes any active job not re-confirmed (last_seen_at, stamped by markJobsPresent) within `ttlDays`
    * — GATED by the board-health guard, so only jobs of boards SUCCESSFULLY ingested within the same
    * window close (a board down for >TTL has its live jobs spared). This is the completeness-INDEPENDENT
@@ -192,6 +194,7 @@ export interface IngestionCounts {
   staleClosed: number; // jobs closed by the staleness timer this run (STALE_SWEEP enforce only; always 0 in shadow)
   staleWouldClose: number; // active jobs past the TTL the timer WOULD close (shadow standing population; 0 in enforce)
   staleSweepFailed: number; // 1 if the post-loop stale sweep threw (jobs untouched; self-heals next tick), else 0
+  staleSwept: number; // 1 if this run's stale sweep completed (the day's first tick; see staleSweptToday), else 0
   lastId: number; // max company id seen — the next tick's `afterId` cursor (0 if none)
 }
 
@@ -501,17 +504,22 @@ export async function runIngestion(db: Db, opts: IngestionOptions = {}): Promise
     // Universal staleness sweep (opt-in — Worker only; the CLI omits staleSweep). AFTER the board loop
     // so THIS tick's fetches have refreshed last_seen_at first. GLOBAL (all companies in one statement),
     // so a permanently-capped mega-board's aged-out tail and any vanished posting close on ONE clock,
-    // independent of feed completeness. ISOLATED like the per-board sweep/embed steps: a failure tallies
-    // staleSweepFailed and is swallowed (jobs untouched; self-heals next tick) so it never errors the run.
+    // independent of feed completeness. Once per UTC day: the day's first tick sweeps and tallies
+    // staleSwept, which later ticks read back from source_runs (staleSweptToday) and skip. ISOLATED like the
+    // per-board sweep/embed steps: a failure (of the check or the sweep) tallies staleSweepFailed and is
+    // swallowed (jobs untouched; no staleSwept, so the next tick retries) so it never errors the run.
     // Ships shadow-first via its own STALE_SWEEP switch (enforce here is INDEPENDENT of enforceLifecycle).
     if (opts.staleSweep) {
       try {
-        const staleResult = await sweepStaleJobs(db, {
-          ttlDays: opts.staleSweep.ttlDays,
-          enforce: opts.staleSweep.enforce,
-        });
-        counts.staleClosed += staleResult.closed;
-        counts.staleWouldClose += staleResult.wouldClose;
+        if (!(await staleSweptToday(db))) {
+          const staleResult = await sweepStaleJobs(db, {
+            ttlDays: opts.staleSweep.ttlDays,
+            enforce: opts.staleSweep.enforce,
+          });
+          counts.staleClosed += staleResult.closed;
+          counts.staleWouldClose += staleResult.wouldClose;
+          counts.staleSwept = 1;
+        }
       } catch (err) {
         counts.staleSweepFailed += 1;
         console.warn(`sweepStaleJobs failed: ${describeDbError(err)}`.slice(0, 200));
@@ -561,6 +569,7 @@ function emptyCounts(): IngestionCounts {
     staleClosed: 0,
     staleWouldClose: 0,
     staleSweepFailed: 0,
+    staleSwept: 0,
     lastId: 0,
   };
 }
