@@ -644,7 +644,8 @@ describe("the Cost page", () => {
         answer: bill({ currency: "", total: "19.99", reference: "X-1" }),
       }),
     );
-    const page = await (await h.request("/cost", { as: "owner" })).text();
+    // The month the counted statement is filed under, not this month: the default page moves with the date.
+    const page = await (await h.request("/cost?month=2026-10", { as: "owner" })).text();
     expect(page).toContain('value="Q3 back-fill"');
     const read = (await rows()).filter((r) => r.source === "email");
     expect(read.map((r) => r.currency)).toEqual(["EUR", null]);
