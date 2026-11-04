@@ -232,9 +232,10 @@ export const jobs = pgTable(
 export type RunStatus = "running" | "ok" | "error";
 
 /** Which pipeline a run belongs to: `discovery`, `ingestion` (the cron), `ingestion-cli` (a manual
- * `pnpm ingest` / `ingest:all` run — kept apart so health reads only the cron's runs), or `prune` (the
- * Worker's weekly job prune, after discovery). */
-export type RunPipeline = "discovery" | "ingestion" | "ingestion-cli" | "prune";
+ * `pnpm ingest` / `ingest:all` run — kept apart so health reads only the cron's runs), `prune` (the
+ * Worker's weekly job prune, after discovery), or `backup` (the nightly user-table backup, recorded once
+ * finished: see backup.ts). */
+export type RunPipeline = "discovery" | "ingestion" | "ingestion-cli" | "prune" | "backup";
 
 /** Open metric bag for a run, keyed by count name. Discovery and ingestion tally different
  * things (candidates/probed/inserted vs boards/changed/…), so it stays a free-form jsonb map

@@ -43,6 +43,7 @@ const HEALTHY: HealthSignals = {
   embeddingBacklog: 0,
   digestErrors: 0,
   suppressed: 0,
+  backupAgeH: 3,
   cost: { digestsConsidered: 3, rerankCacheReadTokens: 900, rerankCacheCreationTokens: 100 },
 };
 
@@ -63,6 +64,7 @@ const BREACHES: Array<{ id: HealthCheckId; signalOverride: Partial<HealthSignals
   { id: "digest_health", signalOverride: { digestErrors: 2 } },
   { id: "bounce_suppression", signalOverride: { suppressed: 1 } },
   { id: "discovery_lane_errors", signalOverride: { discoveryLaneErrors: 2 } },
+  { id: "backup_staleness", signalOverride: { backupAgeH: 30 } },
 ];
 Object.freeze(BREACHES);
 
@@ -74,16 +76,16 @@ function checkOf(report: HealthReport, id: HealthCheckId): HealthCheck {
 }
 
 describe("evaluateHealth — healthy baseline", () => {
-  it("all-green signals yield exactly 8 checks, none firing, not unhealthy", () => {
+  it("all-green signals yield exactly 9 checks, none firing, not unhealthy", () => {
     const r = evaluateHealth(HEALTHY);
-    expect(r.checks).toHaveLength(8);
+    expect(r.checks).toHaveLength(9);
     expect(r.checks.every((c) => c.state === "ok")).toBe(true);
     expect(r.checks.filter((c) => c.state === "firing")).toHaveLength(0);
     expect(r.unhealthy).toBe(false);
   });
 });
 
-describe("evaluateHealth — 7-check breach matrix (each breach trips exactly its own check)", () => {
+describe("evaluateHealth — per-check breach matrix (each breach trips exactly its own check)", () => {
   it.each(BREACHES)(
     "$id fires only itself; shadow ≠ unhealthy, enforce = unhealthy, off = skipped",
     ({ id, signalOverride }) => {
@@ -109,10 +111,16 @@ describe("evaluateHealth — 7-check breach matrix (each breach trips exactly it
 });
 
 describe("evaluateHealth — null ages (pipeline never ran) fire the age checks", () => {
-  it("a null ingestion age and a null discovery age both fire", () => {
-    const r = evaluateHealth({ ...HEALTHY, ingestionAgeH: null, discoveryAgeD: null });
+  it("a null ingestion, discovery and backup age all fire", () => {
+    const r = evaluateHealth({
+      ...HEALTHY,
+      ingestionAgeH: null,
+      discoveryAgeD: null,
+      backupAgeH: null,
+    });
     expect(checkOf(r, "ingestion_staleness").state).toBe("firing");
     expect(checkOf(r, "discovery_window").state).toBe("firing");
+    expect(checkOf(r, "backup_staleness").state).toBe("firing");
   });
 });
 
@@ -132,6 +140,27 @@ describe("evaluateHealth — ingestion_staleness default fits the 2-hourly cron"
 
   it("is 5 h by default", () => {
     expect(DEFAULT_HEALTH_THRESHOLDS.ingestMaxAgeH).toBe(5);
+  });
+});
+
+describe("evaluateHealth — backup_staleness default fits the nightly schedule", () => {
+  // Age = hours since the newest recorded backup finished. A nightly run keeps it under ~24 h, plus however
+  // late GitHub starts the schedule; a missed night pushes it past 48 h.
+  it.each<[number, "ok" | "firing"]>([
+    [24.5, "ok"], // a normal night, a little late
+    [26, "ok"], // the bound itself
+    [26.5, "firing"], // the night's run never recorded a backup
+  ])("default threshold: age %sh → %s", (backupAgeH, state) => {
+    const check = checkOf(evaluateHealth({ ...HEALTHY, backupAgeH }), "backup_staleness");
+    expect(check.state).toBe(state);
+    expect(check.threshold).toBe(26);
+  });
+
+  it("is SHADOW by default and HEALTH_BACKUP_MAX_AGE_H overrides the bound", () => {
+    const stale = { ...HEALTHY, backupAgeH: 30 };
+    expect(evaluateHealth(stale).unhealthy).toBe(false);
+    const looser = healthOptionsFromEnv({ HEALTH_BACKUP_MAX_AGE_H: "48" });
+    expect(checkOf(evaluateHealth(stale, looser), "backup_staleness").state).toBe("ok");
   });
 });
 

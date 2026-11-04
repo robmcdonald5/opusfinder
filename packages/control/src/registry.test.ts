@@ -88,6 +88,7 @@ describe("registry: modes", () => {
       alerts: "off",
       digest: "off",
       live_integration: "off",
+      backup: "off",
       cv_ingest: "on",
       close: "enforce",
       stale_sweep: "enforce",
@@ -100,6 +101,7 @@ describe("registry: modes", () => {
       "health.embedding_backlog": "shadow",
       "health.digest_health": "shadow",
       "health.bounce_suppression": "shadow",
+      "health.backup_staleness": "shadow",
     });
   });
 });
@@ -134,6 +136,7 @@ describe("registry: knobs", () => {
       "health.hydrate_skip_ratio.threshold": "up", // looser: same
       "health.discovery_window.threshold": "up", // looser: same
       "health.embedding_backlog.threshold": "up", // looser: same
+      "health.backup_staleness.threshold": "up", // looser: same
     });
   });
 });
@@ -151,6 +154,7 @@ describe("registry: agent rules", () => {
       "health.embedding_backlog",
       "health.digest_health",
       "health.bounce_suppression",
+      "health.backup_staleness",
     ]);
     // Every other entry an agent may stop on its own: each single spending stage, close, stale_sweep, prune.
     for (const id of STAGE_IDS.filter((s) => s !== "alerts")) {

@@ -30,6 +30,8 @@ export function formatMetric(check: HealthCheck): string {
       return `${check.metric} affected user(s)`;
     case "discovery_lane_errors":
       return `${check.metric} lane error(s)`;
+    case "backup_staleness":
+      return `${check.metric.toFixed(1)}h since last backup`;
     default:
       return String(check.metric);
   }

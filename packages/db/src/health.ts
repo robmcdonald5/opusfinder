@@ -1,12 +1,13 @@
 import { sql } from "drizzle-orm";
 
+import { BACKUP_PIPELINE } from "./backup";
 import type { Db } from "./client";
 import { needsEmbeddingSql } from "./repos/embeddings";
 import { resultRows } from "./repos/sql";
 
 /**
  * Pipeline health checker — "kill silent failure". Health data is recorded across five tables but
- * read by nobody on a schedule; this module is the watcher. It computes eight liveness checks + a
+ * read by nobody on a schedule; this module is the watcher. It computes nine liveness checks + a
  * cost rollup from EXISTING columns (pure Neon reads, no migration) and returns a shape-only
  * {@link HealthReport} the `pnpm health` CLI prints/alerts on AND a future dev panel renders.
  *
@@ -23,7 +24,7 @@ import { resultRows } from "./repos/sql";
  * No secrets / no PII: every metric is a count / age / ratio; nothing here reads job or user text.
  */
 
-/** The eight checks (stable ids — the panel + env modes key off these). */
+/** The nine checks (stable ids — the panel + env modes key off these). */
 export type HealthCheckId =
   | "ingestion_staleness" // last successful ingestion age
   | "board_fail_ratio" // within-run coverage loss: (failed + rateLimitSkipped)/processed — the status='ok' trap
@@ -32,7 +33,8 @@ export type HealthCheckId =
   | "embedding_backlog" // active jobs still owed a vector (the embed drain's remaining work)
   | "digest_health" // errored or dead (still-`running`) runs + failed sends in the recent window
   | "bounce_suppression" // users suppressed (hard bounce / complaint) in the recent window
-  | "discovery_lane_errors"; // lane_<name>_error tallies on the latest discovery run
+  | "discovery_lane_errors" // lane_<name>_error tallies on the latest discovery run
+  | "backup_staleness"; // newest recorded user-table backup age
 
 /** Per-check posture: `off` = don't compute; `shadow` = compute + log but never page (never sets
  *  `unhealthy`); `enforce` = a firing check sets `unhealthy`. */
@@ -67,6 +69,9 @@ export interface HealthThresholds {
   digestWindowN: number;
   /** Cost rollup window: how many most-recent `digests` rows to sum rerank-cache tokens over. */
   costRollupN: number;
+  /** (j) hours since the newest recorded user-table backup finished. Default 26 = the nightly period plus
+   *  2 h for a late GitHub schedule: one missed night fires. */
+  backupMaxAgeH: number;
 }
 
 export const DEFAULT_HEALTH_THRESHOLDS: HealthThresholds = {
@@ -77,6 +82,7 @@ export const DEFAULT_HEALTH_THRESHOLDS: HealthThresholds = {
   backlogMax: 2000,
   digestWindowN: 10,
   costRollupN: 20,
+  backupMaxAgeH: 26,
 };
 
 export interface HealthOptions {
@@ -152,6 +158,9 @@ export interface HealthSignals {
   /** (f) users suppressed in the last {@link RECENT_DAYS} days. A hard bounce and a spam complaint both stamp
    *  `digest_suppressed_at`, so each user counts once. */
   suppressed: number;
+  /** (j) hours since the newest `status='ok'` backup run (pipeline `backup`) finished; `null` if none was
+   *  ever recorded. The backup writes its row only once its dump is uploaded. */
+  backupAgeH: number | null;
   /** raw cost rollup inputs (summed over recent `digests`). */
   cost: {
     digestsConsidered: number;
@@ -182,6 +191,7 @@ const CHECK_LABELS: Record<HealthCheckId, string> = {
   digest_health: "Digest errors",
   bounce_suppression: "Email bounces",
   discovery_lane_errors: "Discovery lane errors",
+  backup_staleness: "Backup staleness",
 };
 
 /** board_fail_ratio fires only once at least this many boards went un-ingested (failed + rate-limit-skipped):
@@ -230,6 +240,7 @@ export async function gatherHealthSignals(
     bounceResult,
     costResult,
     discoveryLaneResult,
+    backupAgeResult,
   ] = await Promise.all([
     // (a) last successful ingestion age (index source_runs_pipeline_started_idx).
     db.execute(sql`
@@ -293,6 +304,11 @@ export async function gatherHealthSignals(
         SELECT counts FROM source_runs
         WHERE pipeline = 'discovery' AND source IS NULL ORDER BY started_at DESC LIMIT 1
       `),
+    // (j) newest recorded user-table backup age (index source_runs_pipeline_started_idx).
+    db.execute(sql`
+        SELECT extract(epoch FROM (now() - max(finished_at))) / 3600.0 AS age_h
+        FROM source_runs WHERE pipeline = ${BACKUP_PIPELINE} AND status = 'ok'
+      `),
   ]);
 
   const ingestAge = resultRows(ingestAgeResult)[0] as { age_h: unknown } | undefined;
@@ -308,6 +324,7 @@ export async function gatherHealthSignals(
       }
     | undefined;
   const discoveryAge = resultRows(discoveryAgeResult)[0] as { age_d: unknown } | undefined;
+  const backupAge = resultRows(backupAgeResult)[0] as { age_h: unknown } | undefined;
   const backlogs = resultRows(backlogResult)[0] as { embedding_backlog: unknown } | undefined;
   const digestErr = resultRows(digestErrorResult)[0] as { errors: unknown } | undefined;
   const bounce = resultRows(bounceResult)[0] as { suppressed: unknown } | undefined;
@@ -342,6 +359,7 @@ export async function gatherHealthSignals(
     embeddingBacklog: num(backlogs?.embedding_backlog),
     digestErrors: num(digestErr?.errors),
     suppressed: num(bounce?.suppressed),
+    backupAgeH: backupAge?.age_h == null ? null : num(backupAge.age_h),
     cost: { digestsConsidered: costRows.length, rerankCacheReadTokens, rerankCacheCreationTokens },
   };
 }
@@ -426,6 +444,13 @@ export function evaluateHealth(signals: HealthSignals, opts?: HealthOptions): He
       null,
       signals.discoveryLaneErrors > 0,
     ),
+    // (j) null age (no backup recorded yet) → firing, as (a).
+    make(
+      "backup_staleness",
+      signals.backupAgeH,
+      thresholds.backupMaxAgeH,
+      signals.backupAgeH === null || signals.backupAgeH > thresholds.backupMaxAgeH,
+    ),
   ];
 
   const { rerankCacheReadTokens, rerankCacheCreationTokens } = signals.cost;
@@ -456,7 +481,8 @@ export async function checkHealth(db: Db, opts?: HealthOptions): Promise<HealthR
 /**
  * Build {@link HealthOptions} from `HEALTH_*` env (kept OUT of the pure core on purpose). Thresholds:
  * `HEALTH_INGEST_MAX_AGE_H` / `HEALTH_FAIL_RATIO` / `HEALTH_HYDRATE_SKIP_RATIO` /
- * `HEALTH_DISCOVERY_MAX_AGE_D` / `HEALTH_BACKLOG_MAX` / `HEALTH_DIGEST_WINDOW_N` / `HEALTH_COST_ROLLUP_N`.
+ * `HEALTH_DISCOVERY_MAX_AGE_D` / `HEALTH_BACKLOG_MAX` / `HEALTH_DIGEST_WINDOW_N` / `HEALTH_COST_ROLLUP_N` /
+ * `HEALTH_BACKUP_MAX_AGE_H`.
  * Modes (default `shadow`): `HEALTH_ENFORCE` and `HEALTH_OFF` are comma-separated check-id lists.
  */
 export function healthOptionsFromEnv(
@@ -479,6 +505,7 @@ export function healthOptionsFromEnv(
     backlogMax: parseEnvNumber("HEALTH_BACKLOG_MAX"),
     digestWindowN: parseEnvNumber("HEALTH_DIGEST_WINDOW_N"),
     costRollupN: parseEnvNumber("HEALTH_COST_ROLLUP_N"),
+    backupMaxAgeH: parseEnvNumber("HEALTH_BACKUP_MAX_AGE_H"),
   };
   // Drop undefined keys so they don't overwrite the defaults in the {...defaults, ...thresholds} merge.
   for (const k of Object.keys(thresholds) as (keyof HealthThresholds)[]) {
