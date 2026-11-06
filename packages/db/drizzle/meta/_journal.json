@@ -232,6 +232,13 @@
       "when": 1793065017334,
       "tag": "0032_drop_hnsw_indexes",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1793218093109,
+      "tag": "0033_jobs_fetch_hash",
+      "breakpoints": true
     }
   ]
 }
