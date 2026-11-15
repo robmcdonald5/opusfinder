@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { scrubProfilePii } from "./index";
+import { profileExtractVersion, scrubProfilePii, type CvFacts } from "./index";
 
 // Defense-in-depth PII scrub contract. The profile is persisted + vectorized, so scrubProfilePii is
 // the last guard that machine-detectable PII (emails + phone runs of >=10 digits) never reaches the
@@ -56,5 +56,59 @@ describe("scrubProfilePii", () => {
     // The whitespace-only entry trims to "" and is filtered out; a bare email would survive as
     // "[redacted]" (non-empty), so only truly-empty entries drop.
     expect(scrubbed.skills).toEqual(["Go"]);
+  });
+
+  it("scrubs the facts' text and carries the rest, version included, through unchanged", () => {
+    const facts: CvFacts = {
+      credentials: [
+        {
+          name: "Registered Nurse (RN), licence 8489110042",
+          issuer: "ask rn@board.example",
+          status: "active",
+          expires: "2027-03",
+        },
+      ],
+      education: [{ level: "bachelor", field: "Nursing", completed: true }],
+      yearsExperience: { total: 14, byRoleFamily: [{ roleFamily: "charge nursing", years: 7 }] },
+      languages: [{ language: "Spanish", proficiency: null }],
+      workAuthorization: "Authorized to work in the US, call 682-333-9323",
+    };
+    const scrubbed = scrubProfilePii({
+      summary: "Nurse.",
+      skills: [],
+      targetRoles: [],
+      facts,
+      extractVersion: 2,
+    });
+    expect(scrubbed).toEqual({
+      summary: "Nurse.",
+      skills: [],
+      targetRoles: [],
+      facts: {
+        ...facts,
+        credentials: [
+          {
+            name: "Registered Nurse (RN), licence [redacted]",
+            issuer: "ask [redacted]",
+            status: "active",
+            expires: "2027-03",
+          },
+        ],
+        workAuthorization: "Authorized to work in the US, call [redacted]",
+      },
+      extractVersion: 2,
+    });
+  });
+
+  it("adds neither facts nor a version to a profile that has none", () => {
+    const scrubbed = scrubProfilePii({ summary: "Engineer.", skills: [], targetRoles: [] });
+    expect(Object.keys(scrubbed)).toEqual(["summary", "skills", "targetRoles"]);
+  });
+});
+
+describe("profileExtractVersion", () => {
+  it("reads a profile stored before the tag existed as version 1", () => {
+    expect(profileExtractVersion({})).toBe(1);
+    expect(profileExtractVersion({ extractVersion: 2 })).toBe(2);
   });
 });

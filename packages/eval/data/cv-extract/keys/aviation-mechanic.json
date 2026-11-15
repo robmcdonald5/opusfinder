@@ -1,0 +1,50 @@
+{
+  "id": "aviation-mechanic",
+  "group": "healthcare-licensed",
+  "source": {
+    "dataset": "opensporks/resumes",
+    "path": "data/data/AVIATION/82738323.pdf"
+  },
+  "expected": {
+    "summary": [["aircraft", "aviation"]],
+    "skills": [
+      ["troubleshooting"],
+      ["hydraulic", "hydraulics", "hydraulic systems"],
+      ["inspection", "inspections", "post flight inspections", "aircraft inspection"]
+    ],
+    "targetRoles": ["mechanic", "technician", "a p"],
+    "credentials": [
+      {
+        "match": ["airframe and powerplant", "airframe powerplant", "a p"]
+      },
+      {
+        "match": ["yellow belt"]
+      }
+    ],
+    "education": [
+      {
+        "level": ["high_school"]
+      },
+      {
+        "level": ["certificate", "other"],
+        "field": ["powertrain", "h 1"]
+      },
+      {
+        "level": ["certificate", "other"],
+        "optional": true
+      }
+    ],
+    "years": [
+      {
+        "years": 5,
+        "slot": "either"
+      }
+    ],
+    "languages": [],
+    "workAuthorization": null
+  },
+  "judgementCalls": [
+    "The A&P licence listed under Education (Bakers School of Aeronautics, 2016) is allowed as an education entry but not required.",
+    "'Five years of experience in key aircraft systems' is accepted as the total or as a role-family figure."
+  ]
+}

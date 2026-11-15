@@ -1,0 +1,87 @@
+{
+  "id": "victim-advocate",
+  "group": "other-non-tech",
+  "source": {
+    "dataset": "opensporks/resumes",
+    "path": "data/data/ADVOCATE/13967854.pdf"
+  },
+  "expected": {
+    "summary": [["advocate", "advocacy", "social work", "social worker"]],
+    "skills": [
+      ["case management"],
+      ["crisis intervention"],
+      ["interpretation", "translation", "interpreting", "interpreter"]
+    ],
+    "targetRoles": [
+      "advocate",
+      "hr generalist",
+      "human resources",
+      "case manager",
+      "social worker",
+      "interpreter"
+    ],
+    "credentials": [
+      {
+        "match": ["cpr"],
+        "issuer": ["ywca"],
+        "expires": "any"
+      },
+      {
+        "match": [
+          "training",
+          "u visa",
+          "daca",
+          "trauma informed",
+          "human trafficking",
+          "advocacy",
+          "criminal injuries",
+          "bridges out of poverty",
+          "safety plan",
+          "community schools",
+          "vawa",
+          "immigration",
+          "immigrant",
+          "sexual assault",
+          "harassment",
+          "safety audit",
+          "experts",
+          "expert",
+          "compensation"
+        ],
+        "status": "any",
+        "expires": "any",
+        "optional": true
+      }
+    ],
+    "education": [
+      {
+        "level": ["bachelor"]
+      },
+      {
+        "level": ["associate", "other", "certificate"],
+        "completed": "any",
+        "optional": true
+      }
+    ],
+    "years": [
+      {
+        "years": 5,
+        "slot": "either"
+      }
+    ],
+    "languages": [
+      {
+        "match": ["spanish"]
+      },
+      {
+        "match": ["english"]
+      }
+    ],
+    "workAuthorization": null
+  },
+  "judgementCalls": [
+    "The CV lists some twenty trainings under 'Certifications'. Only CPR (YWCA) is required; the trainings are allowed but not required.",
+    "DACA and U-Visa are training topics here, not the candidate's status: work authorisation must stay null.",
+    "The stated goal 'role as HR Generalist' is accepted as the first target role, as is the advocate track."
+  ]
+}

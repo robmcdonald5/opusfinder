@@ -1,0 +1,38 @@
+{
+  "id": "carpenter",
+  "group": "hourly-shift",
+  "source": {
+    "dataset": "opensporks/resumes",
+    "path": "data/data/CONSTRUCTION/20565849.pdf"
+  },
+  "expected": {
+    "summary": [["carpenter", "carpentry"]],
+    "skills": [
+      ["blueprint", "blueprints", "blueprint reading"],
+      ["concrete", "concrete forming", "formwork", "forming systems"],
+      ["welding", "forklift", "equipment operation", "heavy equipment", "scaffolding"]
+    ],
+    "targetRoles": ["carpenter", "foreman"],
+    "credentials": [
+      {
+        "match": ["rigger"]
+      },
+      {
+        "match": ["signal person", "signalperson"],
+        "optional": true
+      }
+    ],
+    "education": [
+      {
+        "level": ["high_school"]
+      },
+      {
+        "level": ["associate"]
+      }
+    ],
+    "years": [],
+    "languages": [],
+    "workAuthorization": null
+  },
+  "judgementCalls": ["'Certified rigger and signal person' may come out as one entry or two."]
+}

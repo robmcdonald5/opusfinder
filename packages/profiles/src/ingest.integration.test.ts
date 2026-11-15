@@ -54,6 +54,15 @@ const FULL_PROFILE: StructuredProfile = {
   summary: "Senior backend engineer building high-throughput payment systems.",
   skills: ["Go", "PostgreSQL", "Kubernetes"],
   targetRoles: ["Senior Backend Engineer"],
+  // Stored with the profile but absent from FULL_PROFILE_EMBED_TEXT below: facts are never embedded.
+  facts: {
+    credentials: [{ name: "CKA", issuer: "CNCF", status: null, expires: "2027-03" }],
+    education: [{ level: "bachelor", field: "Computer Science", completed: true }],
+    yearsExperience: { total: 9, byRoleFamily: [] },
+    languages: [{ language: "German", proficiency: "fluent" }],
+    workAuthorization: "Authorized to work in the US",
+  },
+  extractVersion: 2,
 };
 // Hardcoded (NOT computed via composeProfileText) so a composition regression cannot rewrite the
 // expectation along with the behavior.

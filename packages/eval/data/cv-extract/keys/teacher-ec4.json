@@ -1,0 +1,40 @@
+{
+  "id": "teacher-ec4",
+  "group": "healthcare-licensed",
+  "source": {
+    "dataset": "opensporks/resumes",
+    "path": "data/data/TEACHER/28013287.pdf"
+  },
+  "expected": {
+    "summary": [["teacher", "teaching", "educator"]],
+    "skills": [
+      ["lesson planning", "lesson plans", "lesson plan"],
+      ["classroom", "early childhood", "kindergarten", "preschool"]
+    ],
+    "targetRoles": ["teacher"],
+    "credentials": [
+      {
+        "match": ["teacher", "teaching", "educator"]
+      },
+      {
+        "match": ["insurance"]
+      },
+      {
+        "match": ["orange belt", "mma"],
+        "optional": true
+      }
+    ],
+    "education": [
+      {
+        "level": ["bachelor"]
+      }
+    ],
+    "years": [],
+    "languages": [],
+    "workAuthorization": ["authorized to work in the us", "authorized to work in the united states"]
+  },
+  "judgementCalls": [
+    "The Texas insurance licence is required as a credential.",
+    "The MMA orange belt is allowed but not required."
+  ]
+}

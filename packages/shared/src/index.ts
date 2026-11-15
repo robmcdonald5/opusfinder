@@ -270,11 +270,11 @@ export function parseEnforceFlag(value: string | undefined): boolean {
 }
 
 /**
- * The semantic CV profile — the embeddable, PII-free representation stored in
- * `user_profiles.structured`. Deliberately the `{ summary, skills, targetRoles }` subset that feeds
- * the match vector: NO contact info / addresses (they add no job-alignment signal and dilute the
- * vector). `preferences` is intentionally NOT here: it comes from the onboarding form, not the CV,
- * and feeds the deterministic filter, not the embedding.
+ * The semantic CV profile — the PII-free representation stored in `user_profiles.structured`.
+ * `{ summary, skills, targetRoles }` is the subset that feeds the match vector: NO contact info /
+ * addresses (they add no job-alignment signal and dilute the vector). `preferences` is intentionally
+ * NOT here: it comes from the onboarding form, not the CV, and feeds the deterministic filter, not
+ * the embedding.
  */
 export interface StructuredProfile {
   /** Free-text career summary — the bulk of the embedded "query" text. */
@@ -283,6 +283,64 @@ export interface StructuredProfile {
   skills: string[];
   /** Roles the person is targeting (e.g. "Senior Backend Engineer"). */
   targetRoles: string[];
+  /** What the CV states beyond the embedded subset. Stored, never embedded ({@link composeProfileText}
+   *  does not read it). Absent on profiles extracted before version 2. */
+  facts?: CvFacts;
+  /** The extraction version that produced this profile; read it with {@link profileExtractVersion}. */
+  extractVersion?: number;
+}
+
+/** The extraction version of a stored profile. Profiles written before the tag existed are version 1. */
+export function profileExtractVersion(profile: Pick<StructuredProfile, "extractVersion">): number {
+  return profile.extractVersion ?? 1;
+}
+
+/** Education levels a CV entry is mapped to. `certificate` covers vocational, trade and other
+ *  non-degree programmes; `doctorate` covers professional doctorates (MD, JD, PharmD) too. */
+export const EDUCATION_LEVELS = [
+  "high_school",
+  "certificate",
+  "associate",
+  "bachelor",
+  "master",
+  "doctorate",
+  "other",
+] as const;
+export type EducationLevel = (typeof EDUCATION_LEVELS)[number];
+
+/** What a CV says about a licence or certification's standing, when it says anything. */
+export const CREDENTIAL_STATUSES = ["active", "inactive", "in_progress"] as const;
+export type CredentialStatus = (typeof CREDENTIAL_STATUSES)[number];
+
+/**
+ * Facts a CV states that matter for eligibility rather than similarity: licences, education, years,
+ * languages, work authorisation. Every value is something the CV says; nothing here is inferred, and
+ * a CV that is silent on a field leaves it empty or null.
+ */
+export interface CvFacts {
+  /** Licences, registrations and certifications. Never the licence number. */
+  credentials: {
+    name: string;
+    issuer: string | null;
+    status: CredentialStatus | null;
+    /** Expiry as the CV gives it, e.g. "2027-03" or "2027". */
+    expires: string | null;
+  }[];
+  education: {
+    level: EducationLevel;
+    field: string | null;
+    /** False when the CV says the programme is in progress or was not finished. */
+    completed: boolean;
+  }[];
+  /** Years of experience the CV states in words or figures, not ones worked out from its dates. */
+  yearsExperience: {
+    total: number | null;
+    byRoleFamily: { roleFamily: string; years: number }[];
+  };
+  /** Human languages. */
+  languages: { language: string; proficiency: string | null }[];
+  /** The CV's own statement of its holder's right to work, e.g. "Authorized to work in the US". */
+  workAuthorization: string | null;
 }
 
 /**
@@ -393,9 +451,40 @@ function scrubText(text: string): string {
  * names are not regex-detectable and remain a prompt-only concern.
  */
 export function scrubProfilePii(profile: StructuredProfile): StructuredProfile {
+  const { facts, extractVersion } = profile;
   return {
     summary: scrubText(profile.summary),
     skills: profile.skills.map(scrubText).filter((s) => s.length > 0),
     targetRoles: profile.targetRoles.map(scrubText).filter((s) => s.length > 0),
+    ...(facts && { facts: scrubFacts(facts) }),
+    ...(extractVersion !== undefined && { extractVersion }),
+  };
+}
+
+const scrubNullable = (text: string | null): string | null =>
+  text === null ? null : scrubText(text);
+
+// A licence number is a phone-like digit run often enough that the same scrub covers it.
+function scrubFacts(facts: CvFacts): CvFacts {
+  return {
+    credentials: facts.credentials.map((c) => ({
+      ...c,
+      name: scrubText(c.name),
+      issuer: scrubNullable(c.issuer),
+      expires: scrubNullable(c.expires),
+    })),
+    education: facts.education.map((e) => ({ ...e, field: scrubNullable(e.field) })),
+    yearsExperience: {
+      total: facts.yearsExperience.total,
+      byRoleFamily: facts.yearsExperience.byRoleFamily.map((r) => ({
+        ...r,
+        roleFamily: scrubText(r.roleFamily),
+      })),
+    },
+    languages: facts.languages.map((l) => ({
+      language: scrubText(l.language),
+      proficiency: scrubNullable(l.proficiency),
+    })),
+    workAuthorization: scrubNullable(facts.workAuthorization),
   };
 }

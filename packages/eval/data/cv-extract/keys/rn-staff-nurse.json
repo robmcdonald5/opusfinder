@@ -1,0 +1,56 @@
+{
+  "id": "rn-staff-nurse",
+  "group": "healthcare-licensed",
+  "source": {
+    "dataset": "opensporks/resumes",
+    "path": "data/data/AGRICULTURE/10953078.pdf"
+  },
+  "expected": {
+    "summary": [["nurse", "nursing", "rn"]],
+    "skills": [["wound care"], ["telemetry"], ["iv"]],
+    "targetRoles": ["nurse", "rn"],
+    "credentials": [
+      {
+        "match": ["registered nurse", "rn"]
+      },
+      {
+        "match": ["oncology"]
+      },
+      {
+        "match": ["geriatric resource nurse", "grn"],
+        "expires": "2008"
+      },
+      {
+        "match": ["moab", "management of aggressive behavior"],
+        "optional": true
+      }
+    ],
+    "education": [
+      {
+        "level": ["bachelor"],
+        "field": ["nursing"]
+      },
+      {
+        "level": ["associate"],
+        "field": ["nursing"]
+      },
+      {
+        "level": ["associate"],
+        "field": ["general studies"]
+      },
+      {
+        "level": ["certificate", "other"],
+        "field": ["medical"]
+      }
+    ],
+    "years": [],
+    "languages": [],
+    "workAuthorization": null
+  },
+  "judgementCalls": [
+    "RN counts as stated because the job titles use it as a designation; the CV has no licence line.",
+    "GRN certification '2003-2008' is keyed as expires 2008 with no status.",
+    "The in-house MOAB instructor certificate is allowed but not required.",
+    "The 1982 medical admin assistant programme is keyed as a certificate (or 'other')."
+  ]
+}

@@ -1,0 +1,48 @@
+{
+  "id": "delivery-driver",
+  "group": "hourly-shift",
+  "source": {
+    "dataset": "opensporks/resumes",
+    "path": "data/data/CONSTRUCTION/22894544.pdf"
+  },
+  "expected": {
+    "summary": [["delivery", "driver", "customer service"]],
+    "skills": [
+      ["delivery", "dispatch", "dispatching", "route", "loading", "loading and unloading"],
+      ["billing", "patient billing", "front desk", "scheduling"]
+    ],
+    "targetRoles": [
+      "driver",
+      "delivery",
+      "dispatcher",
+      "warehouse",
+      "customer service",
+      "front desk",
+      "medical office",
+      "receptionist"
+    ],
+    "credentials": [],
+    "education": [
+      {
+        "level": ["high_school"]
+      },
+      {
+        "level": ["associate"],
+        "field": ["general studies"]
+      }
+    ],
+    "years": [
+      {
+        "years": 4,
+        "slot": "either"
+      }
+    ],
+    "languages": [],
+    "workAuthorization": null,
+    "forbidden": ["multiracial", "black student union", "bsu"]
+  },
+  "judgementCalls": [
+    "'4 years of total customer service and physical labor' is accepted as the total or as a role-family figure.",
+    "The work history is mixed (delivery, medical front desk, construction), so several first roles are accepted."
+  ]
+}

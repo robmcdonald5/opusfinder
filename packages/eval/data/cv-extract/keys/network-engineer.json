@@ -1,0 +1,65 @@
+{
+  "id": "network-engineer",
+  "group": "tech",
+  "source": {
+    "dataset": "opensporks/resumes",
+    "path": "data/data/BPO/63158213.pdf"
+  },
+  "expected": {
+    "summary": [["network"]],
+    "skills": [
+      ["bgp"],
+      ["ospf"],
+      ["cisco asa", "asa", "firewall", "firewalls", "palo alto"],
+      ["mpls"]
+    ],
+    "targetRoles": ["network engineer", "network"],
+    "credentials": [
+      {
+        "match": ["cct"]
+      },
+      {
+        "match": ["ccnp"]
+      },
+      {
+        "match": ["ccna"]
+      },
+      {
+        "match": ["mcse"]
+      },
+      {
+        "match": ["security"]
+      },
+      {
+        "match": ["network"]
+      },
+      {
+        "match": ["comptia a", "a"]
+      }
+    ],
+    "education": [
+      {
+        "level": ["master"],
+        "field": ["it", "information technology"]
+      },
+      {
+        "level": ["certificate", "other", "master"],
+        "field": ["management"]
+      },
+      {
+        "level": ["associate"]
+      }
+    ],
+    "years": [],
+    "languages": [],
+    "workAuthorization": [
+      "authorized to work in the us",
+      "authorized to work in the united states"
+    ],
+    "forbidden": ["hyderabad", "1982", "married", "male", "birth"]
+  },
+  "judgementCalls": [
+    "'Bilingual' is stated without naming the languages, so languages stays empty.",
+    "PGDMS (a postgraduate diploma) is accepted as certificate, other or master."
+  ]
+}

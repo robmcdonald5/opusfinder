@@ -1,0 +1,67 @@
+{
+  "id": "grain-inspector",
+  "group": "other-non-tech",
+  "source": {
+    "dataset": "opensporks/resumes",
+    "path": "data/data/AGRICULTURE/16849128.pdf"
+  },
+  "expected": {
+    "summary": [["inspector", "inspection", "process operator", "electrician"]],
+    "skills": [
+      ["grain", "sampling", "sample preparation", "grading", "inspection"],
+      ["electrical", "conduit", "calibration", "equipment calibration", "troubleshooting"]
+    ],
+    "targetRoles": [
+      "inspector",
+      "process operator",
+      "process technician",
+      "operator",
+      "electrician"
+    ],
+    "credentials": [
+      {
+        "match": ["osha"]
+      },
+      {
+        "match": ["twic"],
+        "status": "active"
+      },
+      {
+        "match": ["cpr", "first aid"]
+      },
+      {
+        "match": [
+          "huet",
+          "water survival",
+          "security passport",
+          "fall",
+          "hse",
+          "safety course",
+          "aed",
+          "electrician"
+        ],
+        "status": "any",
+        "expires": "any",
+        "optional": true
+      }
+    ],
+    "education": [
+      {
+        "level": ["associate"],
+        "field": ["process technology"]
+      }
+    ],
+    "years": [
+      {
+        "years": 5,
+        "slot": "either"
+      }
+    ],
+    "languages": [],
+    "workAuthorization": null
+  },
+  "judgementCalls": [
+    "OSHA card, TWIC ('current' → active) and first aid / CPR are required; the other safety cards and courses are allowed but not required.",
+    "'B Class Electrician' is a job title here; an electrician credential is allowed but not required."
+  ]
+}

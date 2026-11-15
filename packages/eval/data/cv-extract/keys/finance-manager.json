@@ -1,0 +1,69 @@
+{
+  "id": "finance-manager",
+  "group": "other-non-tech",
+  "source": {
+    "dataset": "opensporks/resumes",
+    "path": "data/data/FINANCE/28522529.pdf"
+  },
+  "expected": {
+    "summary": [["finance", "banking"]],
+    "skills": [
+      ["budgeting", "forecasting", "budgeting and forecasting"],
+      ["treasury", "treasury management", "funds management", "cash management"],
+      ["trade finance", "credit", "credit administration", "risk management"]
+    ],
+    "targetRoles": [
+      "finance",
+      "financial",
+      "banking",
+      "treasury",
+      "accounting",
+      "accounts",
+      "controller"
+    ],
+    "credentials": [
+      {
+        "match": [
+          "driving license",
+          "driving licence",
+          "driver s license",
+          "driver license",
+          "drivers license",
+          "driver s licence"
+        ]
+      },
+      {
+        "match": ["owners association"]
+      },
+      {
+        "match": ["risk management", "derivatives"],
+        "status": "any",
+        "expires": "any",
+        "optional": true
+      }
+    ],
+    "education": [
+      {
+        "level": ["master"],
+        "field": ["bank management", "banking"]
+      },
+      {
+        "level": ["bachelor"]
+      }
+    ],
+    "years": [
+      {
+        "years": 6,
+        "slot": "family",
+        "optional": true
+      }
+    ],
+    "languages": [],
+    "workAuthorization": ["green card"]
+  },
+  "judgementCalls": [
+    "The Michigan driving licence is required as a credential.",
+    "The two bank-training courses are allowed but not required; the DREI owners-association certification is required.",
+    "'Dealer and Funds Manager of the Bank for 6 years' is allowed as a role-family figure but not required."
+  ]
+}

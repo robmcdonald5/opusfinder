@@ -1,0 +1,49 @@
+{
+  "id": "lvn-field-nurse",
+  "group": "healthcare-licensed",
+  "source": {
+    "dataset": "opensporks/resumes",
+    "path": "data/data/HEALTHCARE/25834360.pdf"
+  },
+  "expected": {
+    "summary": [["vocational nurse", "lvn", "nurse"]],
+    "skills": [
+      ["medication administration"],
+      ["wound care", "wound cleaning"],
+      ["iv", "intravenous"]
+    ],
+    "targetRoles": ["vocational nurse", "lvn", "lpn", "practical nurse", "nurse"],
+    "credentials": [
+      {
+        "match": ["vocational nurse", "lvn"]
+      }
+    ],
+    "education": [
+      {
+        "level": ["bachelor"],
+        "field": ["business administration"]
+      },
+      {
+        "level": ["associate"]
+      },
+      {
+        "level": ["certificate", "other"],
+        "field": ["vocational nurs", "vocational nurse", "vocational nursing", "nursing"],
+        "optional": true
+      }
+    ],
+    "years": [
+      {
+        "years": 25,
+        "slot": "total"
+      }
+    ],
+    "languages": [],
+    "workAuthorization": null,
+    "forbidden": ["vn133323", "133323"]
+  },
+  "judgementCalls": [
+    "'California-licensed' is not read as a stated 'active' status, so status is null.",
+    "The 'Licensed Vocational Nurse, San Francisco Community College' line is allowed as an education entry but not required."
+  ]
+}

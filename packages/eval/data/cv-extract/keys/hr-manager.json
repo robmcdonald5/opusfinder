@@ -1,0 +1,60 @@
+{
+  "id": "hr-manager",
+  "group": "other-non-tech",
+  "source": {
+    "dataset": "opensporks/resumes",
+    "path": "data/data/HR/25724495.pdf"
+  },
+  "expected": {
+    "summary": [["hr", "human resources"]],
+    "skills": [
+      ["recruitment", "recruiting", "talent acquisition"],
+      ["performance management"],
+      ["employee relations"]
+    ],
+    "targetRoles": [
+      "hr",
+      "human resources",
+      "recruiter",
+      "recruitment",
+      "recruiting",
+      "talent acquisition",
+      "employee relations",
+      "people"
+    ],
+    "credentials": [],
+    "education": [
+      {
+        "level": ["master"],
+        "field": ["human resource", "human resources", "hr"]
+      },
+      {
+        "level": ["bachelor"],
+        "field": ["electrical engineering"]
+      },
+      {
+        "level": ["certificate", "other"],
+        "field": ["music"],
+        "optional": true
+      }
+    ],
+    "years": [
+      {
+        "years": 5.6,
+        "slot": "either"
+      },
+      {
+        "years": 2,
+        "slot": "either",
+        "optional": true
+      }
+    ],
+    "languages": [],
+    "workAuthorization": ["work permit", "sponsorship"],
+    "forbidden": ["indian"]
+  },
+  "judgementCalls": [
+    "'5 years 7 months' is keyed as 5.6; 5.5 to 6 passes.",
+    "The '2 years of full time' fragment (the MBA) is allowed but not required."
+  ]
+}

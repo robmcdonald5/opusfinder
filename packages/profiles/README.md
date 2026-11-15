@@ -2,7 +2,8 @@
 
 The CV → semantic-profile pipeline (Phase 9). A PDF becomes a `user_profiles` row — structured
 `{ summary, skills, targetRoles }` JSON plus a Voyage query embedding — with the original PDF and the
-cached transcript living in R2.
+cached transcript living in R2. The JSON also holds the CV's stated `facts` (licences, education,
+years, languages, work authorisation) and the `extractVersion` that produced it; neither is embedded.
 
 ## Pipeline
 
@@ -25,6 +26,8 @@ re-throws — the cached text stands, only the profile write failed.
   prompt/schema change, and for an embedding-model swap: the stored profile vector never refreshes on
   its own, so run `pnpm profiles:restructure <email>` for every user before the next digest (see
   `packages/db/scripts/reset-embeddings.ts`).
+  A profile's `extractVersion` says which extraction wrote it (absent = 1), so a row older than
+  `CV_EXTRACT_VERSION` (`@opusfinder/llm`) is one to re-structure.
 
 ## Seams (and why)
 

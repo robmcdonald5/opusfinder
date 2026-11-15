@@ -1,0 +1,80 @@
+{
+  "id": "it-specialist",
+  "group": "tech",
+  "source": {
+    "dataset": "opensporks/resumes",
+    "path": "data/data/INFORMATION-TECHNOLOGY/13477922.pdf"
+  },
+  "expected": {
+    "summary": [["information technology", "it", "network", "technical support"]],
+    "skills": [
+      ["active directory"],
+      ["dhcp"],
+      ["troubleshooting", "hardware troubleshooting", "network troubleshooting"]
+    ],
+    "targetRoles": [
+      "it",
+      "information technology",
+      "network",
+      "systems administrator",
+      "desktop support",
+      "technical support",
+      "support"
+    ],
+    "credentials": [
+      {
+        "match": ["network"]
+      },
+      {
+        "match": ["security"]
+      },
+      {
+        "match": ["comptia a", "a"]
+      },
+      {
+        "match": ["mcse", "microsoft certified"]
+      },
+      {
+        "match": ["ccna", "cisco certified network associate"]
+      },
+      {
+        "match": ["ethical hacker", "ceh"],
+        "status": "any",
+        "expires": "any",
+        "optional": true
+      }
+    ],
+    "education": [
+      {
+        "level": ["master"]
+      },
+      {
+        "level": ["bachelor"],
+        "field": ["biology"]
+      },
+      {
+        "level": ["associate"]
+      },
+      {
+        "level": [
+          "high_school",
+          "certificate",
+          "associate",
+          "bachelor",
+          "master",
+          "doctorate",
+          "other"
+        ],
+        "completed": "any",
+        "optional": true
+      }
+    ],
+    "years": [],
+    "languages": [],
+    "workAuthorization": null
+  },
+  "judgementCalls": [
+    "The Certified Ethical Hacker item is a class, so it is allowed but not required.",
+    "The education section is jumbled; a master's, a biology bachelor's and one associate degree are required, the rest (second associate, courses) is allowed."
+  ]
+}

@@ -1,0 +1,75 @@
+{
+  "id": "rn-supervisor",
+  "group": "healthcare-licensed",
+  "source": {
+    "dataset": "opensporks/resumes",
+    "path": "data/data/FITNESS/24219583.pdf"
+  },
+  "expected": {
+    "summary": [["nurse", "nursing"]],
+    "skills": [
+      ["wound care"],
+      ["iv", "intravenous"],
+      ["ventilation", "ventilator", "tracheostomy", "tracheotomy"]
+    ],
+    "targetRoles": ["nurse", "nursing", "rn"],
+    "credentials": [
+      {
+        "match": ["registered nurse", "rn"],
+        "expires": "2016-12"
+      },
+      {
+        "match": ["bls", "basic life support"],
+        "expires": "2017-07"
+      },
+      {
+        "match": ["acls", "advanced cardiac life support"],
+        "expires": "2016-09"
+      },
+      {
+        "match": ["fire and life safety", "fire life safety"],
+        "expires": "2020-01"
+      },
+      {
+        "match": ["critical care"]
+      },
+      {
+        "match": ["dysrhythmia"]
+      },
+      {
+        "match": ["iv therapy"]
+      },
+      {
+        "match": ["mechanical ventilation"]
+      },
+      {
+        "match": ["cna", "certified nursing assistant"],
+        "status": "any",
+        "expires": "any",
+        "optional": true
+      }
+    ],
+    "education": [
+      {
+        "level": ["bachelor"],
+        "field": ["nursing"]
+      },
+      {
+        "level": ["associate"],
+        "field": ["nursing"]
+      },
+      {
+        "level": ["high_school"]
+      }
+    ],
+    "years": [],
+    "languages": [],
+    "workAuthorization": null,
+    "forbidden": ["848911", "methodist", "church"]
+  },
+  "judgementCalls": [
+    "The four 'X Certified' items in the Licenses line (critical care, dysrhythmia, IV therapy, mechanical ventilation) are required as credentials.",
+    "'CNA' appears only in the keyword skills list, so it is allowed but not required.",
+    "The dementia and stroke training courses are not credentials."
+  ]
+}

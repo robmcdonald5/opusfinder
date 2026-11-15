@@ -1,0 +1,35 @@
+{
+  "id": "pharmacy-technician",
+  "group": "healthcare-licensed",
+  "source": {
+    "dataset": "opensporks/resumes",
+    "path": "data/data/ADVOCATE/17254634.pdf"
+  },
+  "expected": {
+    "summary": [["pharmacy"]],
+    "skills": [["compounding"], ["pyxis"], ["inventory"]],
+    "targetRoles": ["pharmacy technician"],
+    "credentials": [
+      {
+        "match": ["pharmacy technician", "cpht"]
+      },
+      {
+        "match": ["pharmacy technician", "cpht"],
+        "optional": true
+      }
+    ],
+    "education": [
+      {
+        "level": ["associate"],
+        "field": ["pharmacy"]
+      }
+    ],
+    "years": [],
+    "languages": [],
+    "workAuthorization": null
+  },
+  "judgementCalls": [
+    "'Certified and Licensed Pharmacy Technician by the State of Illinois' may come out as one entry or two (certified, licensed).",
+    "'HIPAA trained' is not a credential."
+  ]
+}

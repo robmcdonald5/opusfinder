@@ -1,0 +1,76 @@
+{
+  "id": "systems-eng-manager",
+  "group": "tech",
+  "source": {
+    "dataset": "opensporks/resumes",
+    "path": "data/data/ENGINEERING/61579998.pdf"
+  },
+  "expected": {
+    "summary": [
+      [
+        "systems engineering",
+        "systems engineer",
+        "technical manager",
+        "engineering manager",
+        "technical program"
+      ]
+    ],
+    "skills": [
+      ["systems engineering", "requirements engineering", "system architecture", "doors"],
+      ["solidworks", "creo", "ansys", "autocad"],
+      [
+        "agile",
+        "jira",
+        "ms project",
+        "program management",
+        "project management",
+        "technical program management"
+      ]
+    ],
+    "targetRoles": [
+      "systems engineering manager",
+      "engineering manager",
+      "program manager",
+      "technical program manager",
+      "systems engineer",
+      "technical manager"
+    ],
+    "credentials": [
+      {
+        "match": ["secret"],
+        "status": "active"
+      },
+      {
+        "match": ["six sigma"],
+        "status": "any",
+        "optional": true
+      }
+    ],
+    "education": [
+      {
+        "level": ["bachelor"],
+        "field": ["mechanical engineering"]
+      },
+      {
+        "level": ["certificate", "other"],
+        "field": ["enterprise system architecture", "system architecture", "enterprise"],
+        "completed": "any"
+      }
+    ],
+    "years": [],
+    "languages": [
+      {
+        "match": ["arabic"]
+      },
+      {
+        "match": ["english"]
+      }
+    ],
+    "workAuthorization": ["citizen"]
+  },
+  "judgementCalls": [
+    "'Active Secret Security Clearance' is a credential with status active.",
+    "LEAN/Six Sigma appears only as a skill, so it is allowed but not required as a credential.",
+    "'(US Citizen)' next to the languages is the work-authorisation statement."
+  ]
+}

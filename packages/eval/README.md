@@ -112,6 +112,35 @@ not overwrite existing labels without `--force`.
 Scale the set toward the spec's ~50 examples via public CV datasets (Kaggle/HuggingFace) + more ATS
 boards as adapters land.
 
+## CV extraction check
+
+`cv-extract` scores the production CV extraction (transcribe → structure → scrub, the calls
+`ingestCv` makes) against a hand-checked key, field by field. Run it before changing the CV prompts or
+schema, and bump `CV_EXTRACT_VERSION` (`@opusfinder/llm`) with the change. It is not a CI gate: the
+model is live.
+
+- `data/cv-extract/keys/<id>.json` — one key per test CV: where the CV comes from, its field group
+  (`healthcare-licensed`, `hourly-shift`, `other-non-tech`, `tech`), what a correct extraction holds,
+  and the entries where another reading is defensible (`judgementCalls`). The format and its matching
+  rules are documented in `src/cv-extract-key.ts`. The CVs are CC0 dataset PDFs (the same Kaggle
+  "Resume Dataset" as the pooled profiles); the keys name them, `cv-extract fetch` downloads them to
+  the gitignored `data/cvs/cv-extract/`, and their transcripts are cached there too.
+- `data/cv-extract/v<N>/<id>.json` — the profile extraction version N produced for each CV. `v1` is
+  the pre-`facts` prompt, kept as the baseline.
+- `reports/cv-extract.json` — every kept version scored against the key: overall, per group, per
+  field, and each wrong field with the reason.
+
+```
+pnpm --filter @opusfinder/eval run cv-extract fetch     # download the CVs (public, no key)
+pnpm --filter @opusfinder/eval run cv-extract run       # extract with the current prompt (OpenRouter)
+pnpm --filter @opusfinder/eval run cv-extract score     # score every version, write the report
+pnpm --filter @opusfinder/eval run cv-extract review    # the key as a review sheet (data/reviews/)
+```
+
+A field is right only when everything the key requires is there and nothing it does not allow is, so
+one extra or missing licence fails the whole `credentials` field for that CV. A version-1 profile has
+no `facts` and is scored as stating none.
+
 ## Status (Phase 5)
 
 - Harness, metrics, random baseline, embedding ranker, `pnpm eval` + reports: **done**.

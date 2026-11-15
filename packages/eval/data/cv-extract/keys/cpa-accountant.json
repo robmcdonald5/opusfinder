@@ -1,0 +1,47 @@
+{
+  "id": "cpa-accountant",
+  "group": "other-non-tech",
+  "source": {
+    "dataset": "opensporks/resumes",
+    "path": "data/data/ACCOUNTANT/15592167.pdf"
+  },
+  "expected": {
+    "summary": [["accountant", "accounting"]],
+    "skills": [["financial reporting"], ["royalty reporting", "royalty"], ["ifrs"]],
+    "targetRoles": ["accountant", "accounting"],
+    "credentials": [
+      {
+        "match": ["cpa", "certified practising accountant", "certified public accountant"]
+      }
+    ],
+    "education": [
+      {
+        "level": ["master"],
+        "field": ["accounting"]
+      },
+      {
+        "level": ["bachelor"],
+        "field": ["accounting"]
+      }
+    ],
+    "years": [
+      {
+        "years": 5,
+        "slot": "either"
+      }
+    ],
+    "languages": [
+      {
+        "match": ["chinese", "mandarin"]
+      },
+      {
+        "match": ["english"]
+      }
+    ],
+    "workAuthorization": null
+  },
+  "judgementCalls": [
+    "'CPA Licensed' plus the CPA Australia affiliation is one credential; the issuer is not checked.",
+    "'5+ years in financial reporting and management accounting' is accepted as the total or as a role-family figure."
+  ]
+}
