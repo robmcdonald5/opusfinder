@@ -7,9 +7,8 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { buildLocationRequest } from "./model";
-import { parseAnswer } from "./resolve";
-import { createLocationModel } from "./transport";
+// The node entry, not the modules: it loads packages/llm/.env, where the key the gate checks lives.
+import { buildLocationRequest, createLocationModel, parseAnswer } from "./node";
 
 const GATED = process.env.LOCATIONS_LIVE_TEST !== "1" || !process.env.OPENROUTER_API_KEY;
 

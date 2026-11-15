@@ -105,22 +105,22 @@ describe("buildMessagesBody", () => {
 });
 
 describe("toSyncBody", () => {
-  it("adds the model slug and the routing preferences", () => {
+  it("adds the model slug and the routing preferences", async () => {
     const o = opts();
-    const body = toSyncBody(o, buildMessagesBody("generate", o, SYNC));
+    const body = await toSyncBody(o, buildMessagesBody("generate", o, SYNC));
     expect(body.model).toBe("anthropic/claude-haiku-5.5");
     expect(body.provider).toEqual({ require_parameters: true, data_collection: "deny" });
     expect(body).not.toHaveProperty("session_id");
   });
 
-  it("derives one stable session_id per (model, cached system prompt)", () => {
-    const sessionOf = (o: CallOptions) =>
-      toSyncBody(o, buildMessagesBody("generate", o, SYNC)).session_id;
-    const a = sessionOf(opts({ system: "rubric A", cacheSystem: true }));
+  it("derives one stable session_id per (model, cached system prompt)", async () => {
+    const sessionOf = async (o: CallOptions) =>
+      (await toSyncBody(o, buildMessagesBody("generate", o, SYNC))).session_id;
+    const a = await sessionOf(opts({ system: "rubric A", cacheSystem: true }));
     expect(a).toMatch(/^cache-[0-9a-f]{40}$/);
     // Another chunk under the same prefix keeps the session; another prefix or tier gets its own.
     expect(
-      sessionOf(
+      await sessionOf(
         opts({
           system: "rubric A",
           cacheSystem: true,
@@ -128,9 +128,34 @@ describe("toSyncBody", () => {
         }),
       ),
     ).toBe(a);
-    expect(sessionOf(opts({ system: "rubric B", cacheSystem: true }))).not.toBe(a);
-    expect(sessionOf(opts({ model: "sonnet", system: "rubric A", cacheSystem: true }))).not.toBe(a);
-    expect(sessionOf(opts({ system: "rubric A" }))).toBeUndefined();
+    expect(await sessionOf(opts({ system: "rubric B", cacheSystem: true }))).not.toBe(a);
+    expect(
+      await sessionOf(opts({ model: "sonnet", system: "rubric A", cacheSystem: true })),
+    ).not.toBe(a);
+    expect(await sessionOf(opts({ system: "rubric A" }))).toBeUndefined();
+  });
+
+  it("keeps the session_id a cached prefix had before the hash moved to Web Crypto", async () => {
+    // Providers' caches are keyed to it: a different id would route the same prefix to a cold cache.
+    const o = opts({ system: "rubric", cacheSystem: true });
+    expect((await toSyncBody(o, buildMessagesBody("generate", o, SYNC))).session_id).toBe(
+      "cache-7dfd9377896b30b5e90109de35e9abeaa4d83d56",
+    );
+  });
+
+  it("encodes a PDF part as the base64 Buffer produced, past one String.fromCharCode slice", () => {
+    const data = Uint8Array.from({ length: 100_001 }, (_, i) => (i * 31) % 256);
+    const o = opts({ messages: [{ role: "user", content: [{ type: "pdf", data }] }] });
+    expect(buildMessagesBody("generate", o, SYNC).messages[0]!.content).toEqual([
+      {
+        type: "document",
+        source: {
+          type: "base64",
+          media_type: "application/pdf",
+          data: Buffer.from(data).toString("base64"),
+        },
+      },
+    ]);
   });
 });
 

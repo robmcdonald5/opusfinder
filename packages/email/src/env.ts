@@ -1,9 +1,7 @@
-import { loadPackageEnv, requireEnv } from "@opusfinder/shared/env";
+import { requireEnv } from "@opusfinder/shared/require-env";
 
-// Load packages/email/.env relative to THIS module (see loadPackageEnv), so cross-package callers
-// (the Inngest serve process, the trigger CLI) pick up the Resend config from their own directories
-// too. Node/server-only — this package is deny-listed from the scrapers Worker (guard:worker).
-loadPackageEnv(import.meta.url);
+// The ambient-environment fallbacks for a call that passes no EmailConfig. Nothing is read at import,
+// and no file is loaded here: packages/email/.env is loaded by the Node entry (./node).
 
 /**
  * Read + validate RESEND_API_KEY — the SEND key. Least-privilege split: this one may be a Resend

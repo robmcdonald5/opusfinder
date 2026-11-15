@@ -4,7 +4,9 @@ Cross-package types and validators, plus a few small cross-cutting runtime helpe
 Exports the raw `src/index.ts` barrel (types + validators, dependency-free), a
 `@opusfinder/shared/script` subpath for the CLI runner and a `@opusfinder/shared/errors` subpath for
 log-safe error text (both dependency-free), a
-`@opusfinder/shared/env` subpath for env loading (depends on `dotenv`), a
+`@opusfinder/shared/env` subpath for env loading (depends on `dotenv`, Node-only) with the
+dependency-free `@opusfinder/shared/require-env` getters beside it, a `@opusfinder/shared/hash`
+subpath for SHA-256 on Web Crypto, a
 `@opusfinder/shared/async` subpath for the shared retry/backoff (dependency-free, Worker-forward),
 and a `@opusfinder/shared/userid` subpath for deterministic user-id minting (depends on
 `node:crypto`, Node-only — deliberately kept off the barrel so `src/index.ts` stays free of `node:`
@@ -133,10 +135,15 @@ used to copy:
   the calling `src/` module (not the cwd), so cross-package callers find it however
   they're invoked. (A file at the package root, e.g. `drizzle.config.ts`, must not use
   it — it would resolve one directory too high.)
-- `requireEnv({ name, notSetMessage, validate?, prefix? })` returns a getter that trims, throws
+- `requireEnv({ name, notSetMessage, validate?, prefix? })` (also exported from
+  `@opusfinder/shared/require-env`, which has no Node imports and so can sit in a package a Worker
+  bundles) returns a getter that trims, throws
   the friendly `notSetMessage` message if absent, runs an optional hard `validate` (e.g. a URL
   scheme check), and emits an optional soft `prefix` warning. Errors and warnings echo
   only non-sensitive shape (presence, length, scheme/prefix) — never the value.
+
+A package a Worker may import keeps the two apart: its getters (`src/env.ts`) come from
+`@opusfinder/shared/require-env`, and only its Node entry (`src/node.ts`) calls `loadPackageEnv`.
 
 ```ts
 import { loadPackageEnv, requireEnv } from "@opusfinder/shared/env";

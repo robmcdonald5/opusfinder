@@ -8,6 +8,8 @@
     "./script": "./src/script.ts",
     "./errors": "./src/errors.ts",
     "./env": "./src/env.ts",
+    "./require-env": "./src/require-env.ts",
+    "./hash": "./src/hash.ts",
     "./async": "./src/async.ts",
     "./userid": "./src/userid.ts"
   },

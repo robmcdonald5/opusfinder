@@ -10,7 +10,7 @@ import { z } from "zod";
 
 import { runScript } from "@opusfinder/shared/script";
 
-import { batchGenerate, parseObject } from "../src/index.ts";
+import { batchGenerate, parseObject } from "../src/node.ts";
 
 async function main(): Promise<void> {
   const system = "You are a concise assistant. Answer in a single short sentence. ".repeat(100);

@@ -1,12 +1,12 @@
-import { embed as voyageEmbed } from "@opusfinder/embeddings";
-import { structureCv, transcribeCv } from "@opusfinder/llm";
+import { embed as voyageEmbed } from "@opusfinder/embeddings/node";
+import { structureCv, transcribeCv } from "@opusfinder/llm/node";
 
 import type { ProfileEmbedFn, StructureFn, TranscribeFn } from "../src/index";
 
 /**
  * The real (Node-only) wiring of the pipeline seams, shared by the two CLI scripts so they agree on how
  * transcribe / structure / embed are built. This is the layer that pulls @opusfinder/llm +
- * @opusfinder/embeddings (and thus their env modules) — keeping it in scripts/ is what lets
+ * @opusfinder/embeddings through their Node entries (which load their .env files) — keeping it in scripts/ is what lets
  * packages/profiles/src stay Worker-portable. The LLM calls live in @opusfinder/llm so the eval
  * extractor runs the same ones.
  */

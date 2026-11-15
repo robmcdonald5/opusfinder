@@ -1,4 +1,4 @@
-import { embed } from "@opusfinder/embeddings";
+import { embed } from "@opusfinder/embeddings/node";
 
 import type { Embedder } from "./types";
 

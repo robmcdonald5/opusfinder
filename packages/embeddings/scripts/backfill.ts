@@ -3,7 +3,7 @@ import { getDatabaseUrl } from "@opusfinder/db/env";
 import { backfillJobEmbeddings } from "@opusfinder/db/repos";
 import { runScript } from "@opusfinder/shared/script";
 
-import { embed, formatEmbedCost } from "../src/index";
+import { embed, formatEmbedCost } from "../src/node";
 
 /**
  * Embed every job whose `embedding` is still NULL (the backlog + any reset by a content

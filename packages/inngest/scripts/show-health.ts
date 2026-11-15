@@ -4,7 +4,7 @@ import { createDb } from "@opusfinder/db";
 // NOT load any .env. Keep this import even if the DB URL is ever plumbed in another way.
 import { getDatabaseUrl } from "@opusfinder/db/env";
 import { checkHealth, healthOptionsFromEnv } from "@opusfinder/db/health";
-import { sendHealthAlert } from "@opusfinder/email";
+import { sendHealthAlert } from "@opusfinder/email/node";
 import { runScript } from "@opusfinder/shared/script";
 
 import { alertOnHealth, getHealthAlertCooldownH } from "../src/health-alert.ts";

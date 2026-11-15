@@ -5,6 +5,7 @@ import type { StructuredProfile } from "@opusfinder/shared";
 import { pdfPart } from "../file-part";
 import { generate } from "../generate";
 import { generateObject } from "../generate-object";
+import type { LlmConfig } from "../openrouter";
 
 /**
  * The two CV-ingestion calls and their prompts, exported so the eval harness runs the SAME calls
@@ -82,8 +83,9 @@ type Equal<A, B> = [A] extends [B] ? ([B] extends [A] ? true : never) : never;
 const _cvProfileMatchesStructuredProfile: Equal<CvProfile, StructuredProfile> = true;
 
 /** Layer 1: Haiku vision over the PDF → clean transcript text. */
-export async function transcribeCv(pdf: Uint8Array): Promise<string> {
+export async function transcribeCv(pdf: Uint8Array, config: LlmConfig = {}): Promise<string> {
   const { text, stopReason } = await generate({
+    ...config,
     model: "haiku",
     system: CV_TRANSCRIBE_SYSTEM,
     effort: "low",
@@ -111,8 +113,9 @@ export async function transcribeCv(pdf: Uint8Array): Promise<string> {
 }
 
 /** Layer 2: Haiku structured extraction over the transcript → a RAW profile (callers scrub PII). */
-export async function structureCv(text: string): Promise<CvProfile> {
+export async function structureCv(text: string, config: LlmConfig = {}): Promise<CvProfile> {
   const { object } = await generateObject({
+    ...config,
     model: "haiku",
     schema: CvProfileSchema,
     system: CV_STRUCTURE_SYSTEM,

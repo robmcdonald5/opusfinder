@@ -17,7 +17,7 @@ export interface EmbedParams {
    * (no prompt prepended).
    */
   inputType?: VoyageInputType;
-  /** Explicit Voyage API key, overriding the env key (see `embedRequest`); never logged. */
+  /** The Voyage API key. Omitted = `VOYAGE_API_KEY` from the environment (see `embedRequest`); never logged. */
   apiKey?: string;
 }
 

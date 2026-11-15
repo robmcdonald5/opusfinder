@@ -2,7 +2,7 @@ import { afterEach } from "vitest";
 
 /**
  * Network lock for the `unit` project (registered via setupFiles). Unit suites have no MSW, and any that
- * imports a package env module has that package's real `.env` loaded (loadPackageEnv), so a suite that
+ * imports a package's env loader (`@opusfinder/db/env`, a `<package>/node` entry) has that package's real `.env` loaded (loadPackageEnv), so a suite that
  * forgets to stub would send a real, credentialed vendor call. `fetch` and `WebSocket` are replaced by
  * plain assignment, NOT vi.stubGlobal: a suite's own vi.stubGlobal still wins, and its
  * vi.unstubAllGlobals() restores this lock rather than the real network. As in the integration setup, a

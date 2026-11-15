@@ -30,8 +30,8 @@ re-throws — the cached text stands, only the profile write failed.
 
 `ingestCv` takes `transcribe` / `structure` / `embed` / `storage` as INJECTED parameters rather than
 importing the concrete libraries. That keeps `src/` **Worker-portable**: it never pulls
-`@opusfinder/llm` (whose env module loads `node:`/dotenv), `@opusfinder/embeddings`, or the
-`@opusfinder/storage` S3 client (which pulls `@aws-sdk`) into its import graph. The Node `scripts/`
+`@opusfinder/llm`, `@opusfinder/embeddings`, or the `@opusfinder/storage` S3 client (which pulls
+`@aws-sdk`) into its import graph, and the caller decides where their keys come from. The Node `scripts/`
 wire the real impls; a Phase-12 Worker route would wire Worker-compatible ones.
 
 The `structure` seam returns **raw** extraction; the pipeline itself runs `scrubProfilePii`

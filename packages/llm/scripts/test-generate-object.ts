@@ -8,7 +8,7 @@ import { randomUUID } from "node:crypto";
 import { runScript } from "@opusfinder/shared/script";
 import { z } from "zod";
 
-import { generateObject } from "../src/generate-object";
+import { generateObject } from "../src/node";
 import { CV_STRUCTURE_SYSTEM, CvProfileSchema } from "../src/prompts/cv-extract";
 
 function assert(cond: boolean, msg: string): void {

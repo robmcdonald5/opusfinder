@@ -1,7 +1,7 @@
 import { createDb } from "@opusfinder/db";
 import { getDatabaseUrl } from "@opusfinder/db/env";
 import { upsertCompany } from "@opusfinder/db/repos";
-import { embed } from "@opusfinder/embeddings";
+import { embed } from "@opusfinder/embeddings/node";
 import { runScript } from "@opusfinder/shared/script";
 
 import { SOURCE_NAMES, adapters, fetchJobs, isSourceName } from "../src/adapters";

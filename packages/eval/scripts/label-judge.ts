@@ -22,7 +22,7 @@
  */
 import { z } from "zod";
 
-import { generateObject, type ModelAlias } from "@opusfinder/llm";
+import { generateObject, type ModelAlias } from "@opusfinder/llm/node";
 import { composeProfileText } from "@opusfinder/shared";
 
 import type { EvalProfile } from "../src/types";

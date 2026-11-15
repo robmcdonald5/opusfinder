@@ -1,9 +1,11 @@
 // Standing guard for the Worker-isolation invariant: server-only subsystems must NEVER enter a Cloudflare
 // Worker bundle. Phase 9.5: Better Auth (+ the neon-serverless auth client) crashes at import under
-// `nodejs_compat` (#6665). Phase 10: the Inngest digest pipeline is Node-hosted and drags in
-// @anthropic-ai/sdk + the llm/db env loaders — it must stay out of the scraper Worker (and the two concerns
-// stay separate). Phase 11: email (@opusfinder/email + the resend SDK) is a trusted server-runtime concern,
-// same posture. Control plane slice 1: the control Worker (apps/control) and the pure registry package it
+// `nodejs_compat` (#6665). Phase 10: the Inngest digest pipeline is Node-hosted — it must stay out of every
+// Worker. Phase 11: email (@opusfinder/email + the resend SDK) reaches users, so it stays out of the
+// scrapers Worker, which keeps no access to user data. The shared packages a Worker MAY import
+// (@opusfinder/llm, embeddings, locations, and email for a Worker that sends mail) take their keys as
+// parameters and read nothing at import; their Node entries (`<package>/node`, which load a .env file) and
+// every env loader stay forbidden everywhere. Control plane slice 1: the control Worker (apps/control) and the pure registry package it
 // is built on (packages/control) — the control plane must never be able to wake Neon (C4) and the registry
 // will also be imported by the scrapers Worker, so both are held to an ALLOW-list, not just a deny-list.
 //
@@ -20,6 +22,10 @@
 //      BUILD FAILURE (the clean graph bundles, so any failure is a real signal). The scrapers Worker is
 //      checked against a deny-list of paths; the control Worker against an ALLOW-list (its own src + the
 //      pure registry, nothing from node_modules at all).
+// Plus the WORKER-SAFE PACKAGES check: test/worker/shared-packages.ts imports all four shared packages the
+// way a Worker would; it must bundle for the edge runtime (so no node:* builtin anywhere in their graphs)
+// with none of the everywhere-forbidden modules reachable. packages/locations runs that same bundle in
+// workerd (worker-runtime.integration.test.ts), which catches what a bundle can't: a Node global.
 // Plus the PURE-PACKAGE check for packages/control (the registry every Worker will share): no declared
 // dependencies, no `process` / Buffer / require / __dirname / node:* / workspace import in its non-test
 // source (comments stripped), and a standalone browser-platform bundle whose inputs are only its own src.
@@ -36,8 +42,6 @@ const FORBIDDEN_IMPORTS = [
   "@opusfinder/auth",
   "@opusfinder/profiles",
   "@opusfinder/inngest",
-  "@opusfinder/llm",
-  "@opusfinder/locations",
   "@opusfinder/rerank",
   "@opusfinder/email",
   "@anthropic-ai/sdk",
@@ -45,19 +49,19 @@ const FORBIDDEN_IMPORTS = [
   "inngest",
   "neon-serverless",
   "auth-client",
-  // Env modules that read .env from disk at import (loadPackageEnv): they throw at module load in workerd.
-  "@opusfinder/embeddings",
+  // Modules that read .env from disk at import (loadPackageEnv): they throw at module load in workerd.
   "@opusfinder/db/env",
+  "@opusfinder/shared/env",
+  "@opusfinder/llm/node",
+  "@opusfinder/embeddings/node",
+  "@opusfinder/locations/node",
 ];
 const FORBIDDEN_DEPS = [
   "@opusfinder/auth",
   "@opusfinder/profiles",
   "@opusfinder/inngest",
-  "@opusfinder/llm",
-  "@opusfinder/locations",
   "@opusfinder/rerank",
   "@opusfinder/email",
-  "@opusfinder/embeddings",
   "@anthropic-ai/sdk",
   "resend",
   "better-auth",
@@ -66,26 +70,35 @@ const FORBIDDEN_DEPS = [
   // edge. Forbidden as a direct dep (a transitive pull is also caught by the browser-platform build).
   "dotenv",
 ];
-// Path fragments that must NOT appear among the bundle's resolved inputs. First-party server-only
-// packages by their source dir, plus the Node/server-only third-party SDKs by their node_modules path
-// (forward-slash; esbuild normalizes metafile keys to posix on every OS).
-const FORBIDDEN_BUNDLE_PATHS = [
+// Path fragments that must NOT appear among ANY Worker bundle's resolved inputs (forward-slash; esbuild
+// normalizes metafile keys to posix on every OS): auth, the Inngest pipeline, the env loaders and Node
+// entries, and the Anthropic SDK's client (it merges ANTHROPIC_* environment variables into requests;
+// @opusfinder/llm uses only the SDK's zod helper).
+const FORBIDDEN_EVERYWHERE_PATHS = [
   "packages/auth/",
-  "packages/profiles/",
   "packages/inngest/",
-  "packages/llm/",
-  "packages/locations/",
-  "packages/rerank/",
-  "packages/email/",
   "packages/db/src/auth-client",
+  "packages/db/src/env.ts",
+  "packages/shared/src/env.ts",
+  "/src/node.ts",
   "/drizzle-orm/neon-serverless/",
-  "/@anthropic-ai/",
+  "/@anthropic-ai/sdk/client.",
+  "/@anthropic-ai/sdk/index.",
+  "/@anthropic-ai/sdk/resources",
   "/@ai-sdk/",
   "/node_modules/ai/",
-  "/resend/",
   "/better-auth/",
   "/inngest/",
   "/dotenv/",
+];
+// The scrapers Worker on top of that: no email (it keeps no access to user data), and none of the
+// Node-side pipelines.
+const FORBIDDEN_BUNDLE_PATHS = [
+  ...FORBIDDEN_EVERYWHERE_PATHS,
+  "packages/profiles/",
+  "packages/rerank/",
+  "packages/email/",
+  "/resend/",
 ];
 
 const WORKERS = [
@@ -118,6 +131,19 @@ const WORKERS = [
     external: ["cloudflare:workers"],
   },
 ];
+
+const WORKER_SAFE_PACKAGES = {
+  name: "worker-safe packages",
+  entry: "test/worker/shared-packages.ts",
+  forbiddenBundlePaths: FORBIDDEN_EVERYWHERE_PATHS,
+  // The entry must keep reaching all four, or the check passes while proving nothing.
+  requiredInputs: [
+    "packages/llm/src/index.ts",
+    "packages/embeddings/src/index.ts",
+    "packages/locations/src/index.ts",
+    "packages/email/src/index.ts",
+  ],
+};
 
 const PURE_PACKAGE = {
   name: "packages/control",
@@ -226,6 +252,27 @@ for (const worker of WORKERS) {
   );
 }
 
+// The shared packages a Worker may import, bundled together.
+{
+  const p = WORKER_SAFE_PACKAGES;
+  let inputs = [];
+  try {
+    inputs = await bundleInputs(p.entry);
+    checkInputs(p.name, inputs, p);
+    for (const required of p.requiredInputs) {
+      if (!inputs.includes(required)) {
+        console.error(
+          `MISSING from the ${p.name} bundle graph: ${required} — ${p.entry} must import it`,
+        );
+        failures++;
+      }
+    }
+  } catch (err) {
+    bundleFailure(p.name, err);
+  }
+  summaries.push(`${p.name}: ${inputs.length} bundle inputs`);
+}
+
 // The pure registry package.
 {
   const p = PURE_PACKAGE;
@@ -270,13 +317,13 @@ for (const worker of WORKERS) {
 
 if (failures > 0) {
   console.error(
-    `\nWorker-isolation guard FAILED: ${failures} violation(s). Auth (Better Auth, #6665), the Inngest digest pipeline, and email (resend) must stay out of the Workers; the control Worker may bundle only its src + packages/control, which must stay pure.`,
+    `\nWorker-isolation guard FAILED: ${failures} violation(s). Auth (Better Auth, #6665), the Inngest digest pipeline and every .env loader must stay out of the Workers, and email (resend) out of the scrapers Worker; the control Worker may bundle only its src + packages/control, which must stay pure.`,
   );
   process.exitCode = 1;
 } else {
   console.log(
     `Worker-isolation guard OK — ${summaries.join("; ")} (browser/workerd conditions). No auth / neon-serverless / ` +
-      `inngest / email / anthropic leakage reachable from either Worker entry; the control Worker bundles only its ` +
-      `own src + the pure registry.`,
+      `inngest / email / env-loader leakage reachable from either Worker entry; the control Worker bundles only its ` +
+      `own src + the pure registry; the shared packages bundle for the edge runtime.`,
   );
 }

@@ -16,6 +16,7 @@ import {
   type BatchRequest,
   type BatchResult,
   type CallOptions,
+  type LlmConfig,
 } from "@opusfinder/llm";
 import { sleep } from "@opusfinder/shared/async";
 
@@ -33,11 +34,14 @@ const MAX_FAILED_POLLS = 10;
  *  reported after the provider accepted the request) is about the provider, not the pair. */
 const REJECTED_STATUSES: ReadonlySet<number> = new Set([400, 403, 413, 422]);
 
-export function createLocationModel(): LocationModel {
+/** `config` carries the caller's OpenRouter key (a Worker's binding); omitted, the key comes from the
+ *  environment. */
+export function createLocationModel(config: LlmConfig = {}): LocationModel {
   return {
     async generate(request) {
       try {
         const { object } = await generateObject({
+          ...config,
           ...callOptions(request),
           schema: request.schema,
           signal: AbortSignal.timeout(GENERATE_DEADLINE_MS),
@@ -52,19 +56,20 @@ export function createLocationModel(): LocationModel {
         requests.map(
           (r): BatchRequest => ({ ...callOptions(r), customId: r.id, schema: r.schema }),
         ),
+        config,
       );
     },
     async collectBatch(batchId) {
       for (let failedPolls = 0; ; ) {
         await sleep(BATCH_POLL_MS);
         try {
-          if ((await pollBatch(batchId)).status === "ended") break;
+          if ((await pollBatch(batchId, config)).status === "ended") break;
           failedPolls = 0;
         } catch (err) {
           if (++failedPolls >= MAX_FAILED_POLLS) throw err;
         }
       }
-      const { results } = await collectBatchResults(batchId);
+      const { results } = await collectBatchResults(batchId, config);
       return new Map([...results.values()].map(toAnswer));
     },
   };

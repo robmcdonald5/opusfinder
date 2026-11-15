@@ -2,8 +2,8 @@ import { randomUUID } from "node:crypto";
 
 import { runScript } from "@opusfinder/shared/script";
 
-import { generate } from "../src/index";
-import type { GenerateResult } from "../src/index";
+import { generate } from "../src/node";
+import type { GenerateResult } from "../src/node";
 
 // A prompt prefix is cached only once it clears a per-model minimum (512 tokens on the
 // current Haiku). Below that the cache marker is silently ignored and there is no cache
