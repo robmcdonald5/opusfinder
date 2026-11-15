@@ -1,0 +1,525 @@
+{
+  "cvs": 27,
+  "groups": {
+    "healthcare-licensed": 9,
+    "hourly-shift": 8,
+    "other-non-tech": 6,
+    "tech": 4
+  },
+  "versions": {
+    "v1": {
+      "cvs": 27,
+      "overall": {
+        "correct": 151,
+        "total": 223
+      },
+      "sharedFields": {
+        "correct": 88,
+        "total": 88
+      },
+      "factFields": {
+        "correct": 63,
+        "total": 135
+      },
+      "byGroup": {
+        "healthcare-licensed": {
+          "correct": 50,
+          "total": 74
+        },
+        "hourly-shift": {
+          "correct": 50,
+          "total": 66
+        },
+        "other-non-tech": {
+          "correct": 30,
+          "total": 50
+        },
+        "tech": {
+          "correct": 21,
+          "total": 33
+        }
+      },
+      "byField": {
+        "summary": {
+          "correct": 27,
+          "total": 27
+        },
+        "skills": {
+          "correct": 27,
+          "total": 27
+        },
+        "targetRoles": {
+          "correct": 27,
+          "total": 27
+        },
+        "credentials": {
+          "correct": 5,
+          "total": 27
+        },
+        "education": {
+          "correct": 0,
+          "total": 27
+        },
+        "yearsExperience": {
+          "correct": 14,
+          "total": 27
+        },
+        "languages": {
+          "correct": 24,
+          "total": 27
+        },
+        "workAuthorization": {
+          "correct": 20,
+          "total": 27
+        },
+        "protected": {
+          "correct": 7,
+          "total": 7
+        }
+      },
+      "credentialsMentioned": {
+        "correct": 40,
+        "total": 49
+      },
+      "wrong": {
+        "aviation-mechanic": {
+          "credentials": [
+            "missing: airframe and powerplant",
+            "missing: yellow belt"
+          ],
+          "education": [
+            "missing: high_school",
+            "missing: certificate|other powertrain"
+          ],
+          "yearsExperience": [
+            "missing: 5 (either)"
+          ]
+        },
+        "carpenter": {
+          "credentials": [
+            "missing: rigger"
+          ],
+          "education": [
+            "missing: high_school",
+            "missing: associate"
+          ]
+        },
+        "cashier": {
+          "education": [
+            "missing: high_school",
+            "missing: associate guidance"
+          ]
+        },
+        "city-carrier": {
+          "education": [
+            "missing: bachelor psychology",
+            "missing: high_school"
+          ]
+        },
+        "cna-skilled-care": {
+          "credentials": [
+            "missing: cna, pennsylvania",
+            "missing: cna, south carolina"
+          ],
+          "education": [
+            "missing: associate visual communications",
+            "missing: high_school",
+            "missing: certificate|other|associate computer"
+          ],
+          "yearsExperience": [
+            "missing: 11 (either)"
+          ]
+        },
+        "cpa-accountant": {
+          "credentials": [
+            "missing: cpa"
+          ],
+          "education": [
+            "missing: master accounting",
+            "missing: bachelor accounting"
+          ],
+          "yearsExperience": [
+            "missing: 5 (either)"
+          ],
+          "languages": [
+            "missing: chinese",
+            "missing: english"
+          ]
+        },
+        "delivery-driver": {
+          "education": [
+            "missing: high_school",
+            "missing: associate general studies"
+          ],
+          "yearsExperience": [
+            "missing: 4 (either)"
+          ]
+        },
+        "dental-hygienist": {
+          "credentials": [
+            "missing: dental hygienist"
+          ],
+          "education": [
+            "missing: master health sciences",
+            "missing: bachelor dental hygiene",
+            "missing: associate dental hygiene",
+            "missing: certificate dental assisting"
+          ],
+          "yearsExperience": [
+            "missing: 16 (either)"
+          ]
+        },
+        "etl-developer": {
+          "credentials": [
+            "missing: datastage",
+            "missing: oracle"
+          ],
+          "education": [
+            "missing: bachelor"
+          ],
+          "yearsExperience": [
+            "missing: 6 (either)"
+          ]
+        },
+        "finance-manager": {
+          "credentials": [
+            "missing: driving license",
+            "missing: owners association"
+          ],
+          "education": [
+            "missing: master bank management",
+            "missing: bachelor"
+          ],
+          "workAuthorization": [
+            "missing: green card"
+          ]
+        },
+        "food-server": {
+          "credentials": [
+            "missing: servsafe"
+          ],
+          "education": [
+            "missing: high_school"
+          ]
+        },
+        "grain-inspector": {
+          "credentials": [
+            "missing: osha",
+            "missing: twic",
+            "missing: cpr"
+          ],
+          "education": [
+            "missing: associate process technology"
+          ],
+          "yearsExperience": [
+            "missing: 5 (either)"
+          ]
+        },
+        "hr-manager": {
+          "education": [
+            "missing: master human resource",
+            "missing: bachelor electrical engineering"
+          ],
+          "yearsExperience": [
+            "missing: 5.6 (either)"
+          ],
+          "workAuthorization": [
+            "missing: work permit"
+          ]
+        },
+        "it-specialist": {
+          "credentials": [
+            "missing: network",
+            "missing: security",
+            "missing: comptia a",
+            "missing: mcse",
+            "missing: ccna"
+          ],
+          "education": [
+            "missing: master",
+            "missing: bachelor biology",
+            "missing: associate"
+          ]
+        },
+        "line-cook": {
+          "credentials": [
+            "missing: cpr"
+          ],
+          "education": [
+            "missing: high_school"
+          ],
+          "workAuthorization": [
+            "missing: authorized to work in the us"
+          ]
+        },
+        "lvn-field-nurse": {
+          "credentials": [
+            "missing: vocational nurse"
+          ],
+          "education": [
+            "missing: bachelor business administration",
+            "missing: associate"
+          ],
+          "yearsExperience": [
+            "missing: 25 (total)"
+          ]
+        },
+        "network-engineer": {
+          "credentials": [
+            "missing: cct",
+            "missing: ccnp",
+            "missing: ccna",
+            "missing: mcse",
+            "missing: security",
+            "missing: network",
+            "missing: comptia a"
+          ],
+          "education": [
+            "missing: master it",
+            "missing: certificate|other|master management",
+            "missing: associate"
+          ],
+          "workAuthorization": [
+            "missing: authorized to work in the us"
+          ]
+        },
+        "occupational-therapist": {
+          "credentials": [
+            "missing: cpa"
+          ],
+          "education": [
+            "missing: bachelor occupational therapy",
+            "missing: master healthcare management",
+            "missing: certificate|other accounting"
+          ],
+          "yearsExperience": [
+            "missing: 10 (either)"
+          ]
+        },
+        "pharmacy-technician": {
+          "credentials": [
+            "missing: pharmacy technician"
+          ],
+          "education": [
+            "missing: associate pharmacy"
+          ]
+        },
+        "rn-staff-nurse": {
+          "credentials": [
+            "missing: registered nurse",
+            "missing: oncology",
+            "missing: geriatric resource nurse"
+          ],
+          "education": [
+            "missing: bachelor nursing",
+            "missing: associate nursing",
+            "missing: associate general studies",
+            "missing: certificate|other medical"
+          ]
+        },
+        "rn-supervisor": {
+          "credentials": [
+            "missing: registered nurse",
+            "missing: bls",
+            "missing: acls",
+            "missing: fire and life safety",
+            "missing: critical care",
+            "missing: dysrhythmia",
+            "missing: iv therapy",
+            "missing: mechanical ventilation"
+          ],
+          "education": [
+            "missing: bachelor nursing",
+            "missing: associate nursing",
+            "missing: high_school"
+          ]
+        },
+        "sales-associate-retail": {
+          "credentials": [
+            "missing: cpr",
+            "missing: servsafe"
+          ],
+          "education": [
+            "missing: high_school"
+          ],
+          "workAuthorization": [
+            "missing: authorized to work in the us"
+          ]
+        },
+        "spanish-teacher": {
+          "credentials": [
+            "missing: spanish"
+          ],
+          "education": [
+            "missing: master",
+            "missing: bachelor"
+          ],
+          "yearsExperience": [
+            "missing: 10 (either)"
+          ]
+        },
+        "systems-eng-manager": {
+          "credentials": [
+            "missing: secret"
+          ],
+          "education": [
+            "missing: bachelor mechanical engineering",
+            "missing: certificate|other enterprise system architecture"
+          ],
+          "languages": [
+            "missing: arabic",
+            "missing: english"
+          ],
+          "workAuthorization": [
+            "missing: citizen"
+          ]
+        },
+        "teacher-ec4": {
+          "credentials": [
+            "missing: teacher",
+            "missing: insurance"
+          ],
+          "education": [
+            "missing: bachelor"
+          ],
+          "workAuthorization": [
+            "missing: authorized to work in the us"
+          ]
+        },
+        "victim-advocate": {
+          "credentials": [
+            "missing: cpr"
+          ],
+          "education": [
+            "missing: bachelor"
+          ],
+          "yearsExperience": [
+            "missing: 5 (either)"
+          ],
+          "languages": [
+            "missing: spanish",
+            "missing: english"
+          ]
+        },
+        "warehouse-selector": {
+          "education": [
+            "missing: high_school",
+            "missing: other|associate|certificate"
+          ],
+          "yearsExperience": [
+            "missing: 8 (either)"
+          ]
+        }
+      }
+    },
+    "v2": {
+      "cvs": 27,
+      "overall": {
+        "correct": 216,
+        "total": 223
+      },
+      "sharedFields": {
+        "correct": 88,
+        "total": 88
+      },
+      "factFields": {
+        "correct": 128,
+        "total": 135
+      },
+      "byGroup": {
+        "healthcare-licensed": {
+          "correct": 72,
+          "total": 74
+        },
+        "hourly-shift": {
+          "correct": 65,
+          "total": 66
+        },
+        "other-non-tech": {
+          "correct": 47,
+          "total": 50
+        },
+        "tech": {
+          "correct": 32,
+          "total": 33
+        }
+      },
+      "byField": {
+        "summary": {
+          "correct": 27,
+          "total": 27
+        },
+        "skills": {
+          "correct": 27,
+          "total": 27
+        },
+        "targetRoles": {
+          "correct": 27,
+          "total": 27
+        },
+        "credentials": {
+          "correct": 24,
+          "total": 27
+        },
+        "education": {
+          "correct": 25,
+          "total": 27
+        },
+        "yearsExperience": {
+          "correct": 26,
+          "total": 27
+        },
+        "languages": {
+          "correct": 27,
+          "total": 27
+        },
+        "workAuthorization": {
+          "correct": 26,
+          "total": 27
+        },
+        "protected": {
+          "correct": 7,
+          "total": 7
+        }
+      },
+      "credentialsMentioned": {
+        "correct": 34,
+        "total": 49
+      },
+      "wrong": {
+        "finance-manager": {
+          "credentials": [
+            "missing: driving license"
+          ],
+          "education": [
+            "missing: master bank management",
+            "unexpected: other Bank Management"
+          ],
+          "workAuthorization": [
+            "missing: green card"
+          ]
+        },
+        "it-specialist": {
+          "credentials": [
+            "MCSE (Microsoft Certified Systems Engineer): expires 2003 ≠ null"
+          ]
+        },
+        "rn-staff-nurse": {
+          "credentials": [
+            "Geriatric Resource Nurse (GRN) certification: status inactive ≠ null"
+          ]
+        },
+        "teacher-ec4": {
+          "education": [
+            "unexpected: certificate Cooperative Teacher program, A Child's Learning Place"
+          ]
+        },
+        "warehouse-selector": {
+          "yearsExperience": [
+            "unexpected: 8 (personal training)"
+          ]
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,64 @@
+{
+  "summary": "Sous chef and line cook with roughly a decade of food service experience across high-volume, fast-paced kitchens, catering and front-of-house work. Has worked the saute, fryer, salad and flattop stations, prepared soups, sauces, salads and catered hors d'oeuvres, and built menu items for guests with allergies and dietary restrictions such as gluten-free and vegan. Experienced in instructing cooks on preparation, garnishing and plating, and in executing menus to consistent quality during peak volume. Also brings warehouse receiving, picking and inventory control experience, including a large-scale physical inventory with minimal variance, and a customer service background in retail and dining.",
+  "skills": [
+    "Line cooking",
+    "Sauté",
+    "Fryer operation",
+    "Flattop cooking",
+    "Salad preparation",
+    "Soup and sauce preparation",
+    "Catering food preparation",
+    "Hors d'oeuvres preparation",
+    "Menu development",
+    "Dietary restriction accommodation",
+    "Plate presentation",
+    "Basic knife skills",
+    "Sandwich preparation",
+    "Food safety and sanitation",
+    "Kitchen equipment operation",
+    "Cook training",
+    "Expediting",
+    "Table service",
+    "Order taking",
+    "Cash handling",
+    "POS operation",
+    "Order picking",
+    "Receiving",
+    "Shipping",
+    "Inventory management",
+    "Cycle counting",
+    "Stock rotation",
+    "Customer service",
+    "Cardiopulmonary resuscitation (CPR)",
+    "Microsoft Office"
+  ],
+  "targetRoles": [
+    "Sous Chef",
+    "Line Cook",
+    "Cook"
+  ],
+  "facts": {
+    "credentials": [
+      {
+        "name": "CPR/AED",
+        "issuer": "American Red Cross",
+        "status": null,
+        "expires": null
+      }
+    ],
+    "education": [
+      {
+        "level": "high_school",
+        "field": null,
+        "completed": true
+      }
+    ],
+    "yearsExperience": {
+      "total": null,
+      "byRoleFamily": []
+    },
+    "languages": [],
+    "workAuthorization": "Authorized to work in the US for any employer"
+  },
+  "extractVersion": 2
+}

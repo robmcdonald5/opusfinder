@@ -130,7 +130,8 @@ model is live.
   whose checksum differs, so every checkout works from the same bytes. Transcripts are cached there
   too and are not committed either; a fresh checkout re-transcribes on its first `run`.
 - `data/cv-extract/v<N>/<id>.json` — the profile extraction version N produced for each CV. `v1` is
-  the pre-`facts` prompt, kept as the baseline.
+  the baseline: the structuring prompt as it was before `facts` existed, run once over the same
+  transcripts. It cannot be regenerated from the current code and does not need to be.
 - `reports/cv-extract.json` — every kept version scored against the key: overall, per group, per
   field, and each wrong field with the reason.
 

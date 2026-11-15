@@ -24,13 +24,18 @@ export const CV_TRANSCRIBE_SYSTEM = `You transcribe the career-relevant content 
 Rules:
 - Output ONLY the transcribed text — no preamble, commentary, or markdown code fences.
 - Preserve the meaningful content and its logical reading order: section headings, role titles,
-  employers, dates, bullet points, skills, education, projects. For a multi-column layout, follow the
-  human reading order within each column rather than reading straight across the columns.
+  employers, dates, bullet points, skills, education, projects, licences and certifications,
+  languages. For a multi-column layout, follow the human reading order within each column rather
+  than reading straight across the columns.
+- Keep what the CV says about licences, certifications, languages and the right to work (work
+  authorisation, citizenship or visa status, sponsorship) wherever it sits: a sidebar, the header, or
+  a "Personal information" / "Additional information" block.
 - Transcribe what is actually written. Do NOT invent, summarize, paraphrase, or embellish. If a region
   is unreadable, omit it rather than guessing.
 - OMIT page furniture and non-career noise: page numbers, repeated headers/footers, decorative rules,
-  "references available on request", and contact details (email, phone, street address, personal
-  links) — none of it carries job-matching signal.
+  "references available on request", contact details (email, phone, street address, personal
+  links), and personal details such as date or place of birth, marital status and gender — none of
+  it carries job-matching signal.
 - Keep skills / technology lists verbatim. Normalize whitespace; separate sections with a blank line.`;
 
 /**
@@ -60,21 +65,22 @@ facts — only what the CV says. Each field stays empty or null when the CV is s
 facts.credentials — licences, registrations, certifications, cards and clearances that qualify someone to do a kind of work: a nursing or teaching licence, CNA, CPA, bar admission, CDL or a driver's licence, FAA A&P, a journeyman card, ServSafe, a food handler card, CPR / BLS / ACLS, OSHA 10 or 30, a forklift certification, TWIC, a security clearance, PMP, vendor certifications (CCNA, CompTIA A+). One entry per credential.
   - name: the credential in its usual form, with the level, class, state or specialty the CV gives ("Registered Nurse (RN)", "Licensed Vocational Nurse (LVN), California", "CDL Class A", "Secret security clearance"). NEVER the licence or registration number.
   - issuer: the body that granted it, if the CV names one ("American Red Cross", "State of Illinois"); otherwise null.
-  - status: "active" if the CV says it is active, current or in good standing; "inactive" if it says expired, lapsed, inactive or previous; "in_progress" if it says the candidate is pursuing it, is an exam candidate or expects it; otherwise null. Do not work the status out from dates.
+  - status: "active" only if the CV calls that credential active, current or in good standing; "inactive" only if it calls it expired, lapsed, inactive or previous; "in_progress" only if it says the candidate is pursuing it, is an exam candidate or expects it. Otherwise null, which is the usual case: holding a credential ("licensed", "certified", "permanent certification") or giving its expiry date does not state a status.
   - expires: the expiry the CV gives, as "YYYY-MM" or "YYYY"; for a stated validity period, its end. Otherwise null. The date a credential was earned is not an expiry.
-  - A credential the CV uses as a designation counts as stated: "RN Staff Nurse", "Jane Doe, CPA", "Certified Pharmacy Technician".
+  - A credential the CV uses as a designation counts as stated, even with no licence line: a job title "RN Staff Nurse" or "CNA in Skilled Healthcare" states the RN or CNA; so do "Jane Doe, CPA" and "Certified Pharmacy Technician".
+  - Record every licence the CV says the candidate holds, including ones outside their main occupation (a driving licence, an insurance licence held by a teacher).
   - NOT credentials: degrees and diplomas (they go in education), courses, trainings, workshops and conferences attended, awards, memberships, and a bare claim of being "trained in" something.
 
 facts.education — one entry per programme the CV lists, including high school when it is listed.
-  - level: "high_school" (diploma or GED); "certificate" (vocational, trade, technical or other non-degree programme, including an apprenticeship or academy); "associate"; "bachelor"; "master"; "doctorate" (PhD and professional doctorates such as MD, JD, PharmD, DNP); "other" when the CV does not make the level clear.
+  - level: "high_school" (diploma or GED); "certificate" (vocational, trade, technical or other non-degree programme, including an apprenticeship or academy); "associate" (AA, AS, AAS, ADN); "bachelor" (BA, BS, B.Sc, BSN, B.Tech, B.Com); "master" (MA, MS, M.Sc, MBA, MSN); "doctorate" (PhD and professional doctorates such as MD, JD, PharmD, DNP); "other" when the CV does not make the level clear.
   - field: the subject as the CV gives it ("Nursing", "Process Technology"); null if none is given.
   - completed: false if the CV says it is in progress, expected, or attended without finishing; otherwise true.
 
-facts.yearsExperience — only lengths of experience the CV states in words or figures ("25+ years of experience" → 25, "eleven years" → 11, "5 years 7 months" → 5.6). Do not add up or subtract employment dates.
+facts.yearsExperience — only lengths of experience the CV states in words or figures ("25+ years of experience" → 25, "eleven years" → 11, "5 years 7 months" → 5.6). Never add up or subtract employment dates: a CV that only lists dated jobs states no length, so total is null and byRoleFamily is empty. Each stated figure goes in one place, total or byRoleFamily, never both.
   - total: the stated length of the candidate's working experience overall or in their main occupation; null if the CV gives no such figure.
   - byRoleFamily: stated lengths scoped to one function, specialty or setting, when that scope is narrower than the whole career ("8 years in nursing and 3 in management" → two entries; "6 years of ETL experience" → one). roleFamily is a short label in the CV's words. Empty if none are stated.
 
-facts.languages — human languages the CV lists, each with the proficiency it gives ("native", "fluent", "conversational", "bilingual") or null. Do not add the language the CV is written in unless the CV lists it. Programming languages are skills, not languages.
+facts.languages — human languages the CV lists, each with the proficiency it gives ("native", "fluent", "conversational", "bilingual") or null. Do not add the language the CV is written in unless the CV lists it, and add nothing for a bare "bilingual" that names no language. Programming languages are skills, not languages.
 
 facts.workAuthorization — the CV's own statement about the right to work or sponsorship, kept close to its wording ("Authorized to work in the US for any employer", "US citizen", "Green card holder", "Work permit, no visa sponsorship required"); null if the CV makes none. A place of birth, a nationality, a country of study or past work, a name or a language is NOT such a statement — never derive one.
 

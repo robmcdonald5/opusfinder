@@ -18,7 +18,7 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { CV_EXTRACT_VERSION, structureCv, transcribeCv } from "@opusfinder/llm";
+import { CV_EXTRACT_VERSION, structureCv, transcribeCv } from "@opusfinder/llm/node";
 import { getOpenRouterApiKey } from "@opusfinder/llm/env";
 import { MIN_TRANSCRIPT_CHARS, scrubProfilePii, type StructuredProfile } from "@opusfinder/shared";
 import { runScript } from "@opusfinder/shared/script";

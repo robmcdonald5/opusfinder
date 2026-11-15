@@ -52,7 +52,7 @@ const any = z.literal("any");
 const KeyCredential = z.strictObject({
   /** The credential's name must contain one of these. */
   match: aliases,
-  /** ...and one of these, to tell apart two credentials of one kind (a state, a class). */
+  /** ...and its name or issuer one of these, to tell apart two credentials of one kind (a state, a class). */
   also: aliases.optional(),
   /** Unchecked unless given: `null` means the CV names no issuer. */
   issuer: aliases.nullable().optional(),
@@ -265,7 +265,8 @@ function credentialProblems(
     items,
     entries,
     (item, entry) =>
-      matchesAny(item.name, entry.match) && (!entry.also || matchesAny(item.name, entry.also)),
+      matchesAny(item.name, entry.match) &&
+      (!entry.also || matchesAny(`${item.name} ${item.issuer ?? ""}`, entry.also)),
     {
       item: (item) => item.name,
       entry: (entry) => [entry.match[0], entry.also?.[0]].filter(Boolean).join(", "),

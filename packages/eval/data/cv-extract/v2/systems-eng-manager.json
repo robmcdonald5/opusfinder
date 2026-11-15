@@ -1,0 +1,96 @@
+{
+  "summary": "Systems engineering manager with a background spanning hardware, software and subcontracts management, serving as a bridge between technical teams and financial processes. Has served as technical program manager for complex simulation and game-based training software programmes exceeding $55M, with functional management of up to 70+ systems, software, test engineers, technical artists and game developers. Experienced in lead systems engineering for proposals, system architecture and requirements, pricing and estimating, and managing multiple subcontractors on budget, scope and schedule. Prior mechanical and simulator design background includes opto-mechanical design, thermal management, and precision mounting with stress, vibration and shock analysis. Holds an active Secret security clearance.",
+  "skills": [
+    "Technical program management",
+    "Systems engineering",
+    "Requirements engineering",
+    "System architecture",
+    "Hardware-software integration",
+    "Subcontract management",
+    "Budget and schedule management",
+    "Proposal pricing and estimating",
+    "Agile software development",
+    "Jira",
+    "MS Project",
+    "ePDM",
+    "Data analysis",
+    "DOORS",
+    "Rational RequisitePro",
+    "ClearQuest",
+    "Visio",
+    "LEAN Six Sigma",
+    "Safety engineering",
+    "Creo",
+    "SolidWorks",
+    "ANSYS",
+    "DFMA",
+    "DFA/DFM",
+    "AutoCAD",
+    "Zemax",
+    "Unigraphics",
+    "I-deas",
+    "Intralink",
+    "Windchill",
+    "Engineering drawings",
+    "GD&T",
+    "Tolerance analysis",
+    "Bill of materials",
+    "ASME standards",
+    "C++",
+    "Java",
+    "MathCAD",
+    "MATLAB",
+    "Simulink",
+    "Microsoft Visual Studio",
+    "Simulation system design",
+    "Opto-mechanical design",
+    "Thermal management design",
+    "Stress and strain analysis",
+    "Vibration and shock analysis",
+    "FARO arm metrology",
+    "Game-based training development"
+  ],
+  "targetRoles": [
+    "Systems Engineering Manager",
+    "Technical Program Manager",
+    "Lead Systems Engineer"
+  ],
+  "facts": {
+    "credentials": [
+      {
+        "name": "Secret security clearance",
+        "issuer": null,
+        "status": "active",
+        "expires": null
+      }
+    ],
+    "education": [
+      {
+        "level": "bachelor",
+        "field": "Mechanical Engineering",
+        "completed": true
+      },
+      {
+        "level": "other",
+        "field": "Enterprise System Architecture",
+        "completed": true
+      }
+    ],
+    "yearsExperience": {
+      "total": null,
+      "byRoleFamily": []
+    },
+    "languages": [
+      {
+        "language": "Arabic",
+        "proficiency": "bilingual"
+      },
+      {
+        "language": "English",
+        "proficiency": "bilingual"
+      }
+    ],
+    "workAuthorization": "US Citizen"
+  },
+  "extractVersion": 2
+}

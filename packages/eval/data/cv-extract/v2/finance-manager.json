@@ -1,0 +1,92 @@
+{
+  "summary": "Finance manager with a career spanning retail and corporate banking, treasury and fund management, and community association finance. Brings over a decade of banking operations experience including credit appraisal, cash and liquidity management, trade finance and foreign exchange, and KYC/AML compliance, followed by senior finance leadership roles covering budgeting and forecasting, MIS reporting, audit, ERP implementation and statutory compliance. Has managed a bank investment portfolio of substantial size and led finance functions for multiple organizations and owners associations, with responsibility for escrow and trust accounts, board reporting and purchasing.",
+  "skills": [
+    "Banking operations",
+    "Cash management",
+    "Treasury management",
+    "Credit administration",
+    "Credit appraisal",
+    "Trade finance",
+    "Letter of credit",
+    "Foreign exchange",
+    "Risk management",
+    "Asset liability management",
+    "KYC",
+    "AML compliance",
+    "Client servicing",
+    "Team management",
+    "Funds management",
+    "Liquidity management",
+    "Budgeting",
+    "Forecasting",
+    "Cash flow analysis",
+    "Internal controls",
+    "Internal audit",
+    "MIS reporting",
+    "Financial analysis",
+    "Variance analysis",
+    "Accounts receivable",
+    "Accounts payable",
+    "Financial statement finalization",
+    "Tally",
+    "ERP systems",
+    "INFOS ERP",
+    "Fixed income securities",
+    "Equity investment",
+    "Mutual funds",
+    "Bonds",
+    "Derivatives",
+    "Investment portfolio management",
+    "Escrow account management",
+    "Trust account management",
+    "Facility management",
+    "Purchasing",
+    "Payroll administration",
+    "Wage Protection System (WPS)",
+    "Board reporting",
+    "Microsoft Excel",
+    "Microsoft Word",
+    "Microsoft PowerPoint",
+    "Microsoft Outlook",
+    "Retail banking",
+    "Loan monitoring",
+    "Mortgage lending",
+    "Insurance product sales"
+  ],
+  "targetRoles": [
+    "Finance Manager",
+    "Treasury Manager",
+    "Banking Operations Manager",
+    "Credit Manager",
+    "Accounting Manager"
+  ],
+  "facts": {
+    "credentials": [
+      {
+        "name": "Certification in Owners Association Management",
+        "issuer": "DREI",
+        "status": null,
+        "expires": null
+      }
+    ],
+    "education": [
+      {
+        "level": "other",
+        "field": "Bank Management",
+        "completed": true
+      },
+      {
+        "level": "bachelor",
+        "field": null,
+        "completed": true
+      }
+    ],
+    "yearsExperience": {
+      "total": null,
+      "byRoleFamily": []
+    },
+    "languages": [],
+    "workAuthorization": null
+  },
+  "extractVersion": 2
+}

@@ -1,0 +1,73 @@
+{
+  "summary": "Retail sales associate with experience in merchandising, cash handling, inventory control and restaurant front-of-house service in fast-paced stores and dining rooms. Skilled in POS operation, upselling, visual displays and customer relationship building, with fashion-trend knowledge. Has trained new staff and been promoted within a restaurant, and works across sales floor, phones and shipment processing.",
+  "skills": [
+    "Merchandising",
+    "Stocking",
+    "Retail sales",
+    "Credit card transactions",
+    "Cash handling",
+    "Point of sale (POS) operation",
+    "Cash register operation",
+    "Inventory control",
+    "Inventory management",
+    "Shipment processing",
+    "Visual merchandising",
+    "Upselling",
+    "Customer service",
+    "Product knowledge",
+    "Sales promotion",
+    "Order taking",
+    "Food promotion",
+    "Table service",
+    "Hosting",
+    "Telephone customer service",
+    "Documentation",
+    "Microsoft Excel",
+    "Basic computer data entry",
+    "Cash handling",
+    "Trade show and event support",
+    "Staff training",
+    "Lawn care",
+    "Filing",
+    "Appointment scheduling",
+    "Cleaning and organization",
+    "ServSafe",
+    "CPR and AED"
+  ],
+  "targetRoles": [
+    "Sales Associate",
+    "Retail Sales Associate",
+    "Server",
+    "Host"
+  ],
+  "facts": {
+    "credentials": [
+      {
+        "name": "CPR & AED certification",
+        "issuer": null,
+        "status": null,
+        "expires": null
+      },
+      {
+        "name": "ServSafe certification",
+        "issuer": null,
+        "status": null,
+        "expires": null
+      }
+    ],
+    "education": [
+      {
+        "level": "high_school",
+        "field": null,
+        "completed": true
+      }
+    ],
+    "yearsExperience": {
+      "total": null,
+      "byRoleFamily": []
+    },
+    "languages": [],
+    "workAuthorization": "Authorized to work in the US for any employer."
+  },
+  "extractVersion": 2
+}

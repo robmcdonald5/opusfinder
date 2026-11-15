@@ -17,7 +17,8 @@
     "credentials": [
       {
         "match": ["spanish"],
-        "expires": "any"
+        "expires": "any",
+        "status": "any"
       },
       {
         "match": [
@@ -76,6 +77,7 @@
   "judgementCalls": [
     "The teaching certifications overlap (professional and permanent, Spanish and inclusive education). One Spanish certification is required; the rest are allowed.",
     "The education section is jumbled; a master's and a bachelor's are required, anything else is allowed.",
-    "No languages section exists. Spanish as a language is allowed but not required."
+    "No languages section exists. Spanish as a language is allowed but not required.",
+    "'Permanent Certification' may be read as an active status; status is not checked."
   ]
 }

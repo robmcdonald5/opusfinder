@@ -1,0 +1,73 @@
+{
+  "summary": "Teacher with roughly a decade of classroom experience spanning early childhood through elementary grades, including kindergarten and lead preschool roles that build math, literacy and social skills. Also has accounts receivable and customer service experience handling collections, client relations and daily and monthly collection goals. Plans lessons, tracks grades, reports and coaches PE in a teaching role spanning all subjects, with strengths in positive classroom management, modeling and parent communication. Holds a bachelor's degree in education and Texas teaching certification for EC through 4th grade.",
+  "skills": [
+    "Lesson planning",
+    "Classroom management",
+    "Early childhood education",
+    "Kindergarten instruction",
+    "Math instruction",
+    "Reading instruction",
+    "Writing instruction",
+    "Social studies instruction",
+    "Science instruction",
+    "Curriculum development",
+    "Student assessment",
+    "Grade reporting",
+    "Physical education coaching",
+    "Accounts receivable",
+    "Collections",
+    "Customer service",
+    "Client relationship management",
+    "Data entry",
+    "Microsoft Word",
+    "Microsoft Excel",
+    "Microsoft PowerPoint",
+    "Microsoft Works",
+    "Internet research",
+    "Smart board",
+    "Problem solving",
+    "Parent communication"
+  ],
+  "targetRoles": [
+    "Elementary School Teacher",
+    "Kindergarten Teacher",
+    "Early Childhood Teacher",
+    "Preschool Lead Teacher",
+    "Accounts Receivable Clerk"
+  ],
+  "facts": {
+    "credentials": [
+      {
+        "name": "Certified Teacher EC-4th",
+        "issuer": null,
+        "status": null,
+        "expires": null
+      },
+      {
+        "name": "Texas Insurance License",
+        "issuer": "State of Texas",
+        "status": null,
+        "expires": null
+      }
+    ],
+    "education": [
+      {
+        "level": "bachelor",
+        "field": "Education",
+        "completed": true
+      },
+      {
+        "level": "certificate",
+        "field": "Cooperative Teacher program, A Child's Learning Place",
+        "completed": true
+      }
+    ],
+    "yearsExperience": {
+      "total": null,
+      "byRoleFamily": []
+    },
+    "languages": [],
+    "workAuthorization": "Authorized to work in the US for any employer"
+  },
+  "extractVersion": 2
+}

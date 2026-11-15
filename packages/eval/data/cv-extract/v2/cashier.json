@@ -1,0 +1,56 @@
+{
+  "summary": "Cashier with roughly a decade of front-end retail and grocery experience across apparel, grocery and general merchandise settings. Handles cash, card and return transactions, cash-drawer counts and customer issue resolution in high-volume environments. Also brings apparel sales and styling experience, merchandising and display work, and produce and dairy department management. Currently in a role with growing responsibility for service and sales performance.",
+  "skills": [
+    "Cash handling",
+    "Cash register operation",
+    "POS operation",
+    "Return processing",
+    "Customer service",
+    "Conflict resolution",
+    "Sales",
+    "Upselling",
+    "Merchandising",
+    "Visual merchandising",
+    "Display design",
+    "Inventory control",
+    "Stock rotation",
+    "Receiving merchandise",
+    "Price checks",
+    "Food safety",
+    "Sanitation practices",
+    "Special order processing",
+    "Product knowledge",
+    "Fashion styling",
+    "Opening and closing procedures",
+    "Order bagging",
+    "Multi-tasking"
+  ],
+  "targetRoles": [
+    "Cashier",
+    "Senior Cashier",
+    "Retail Sales Associate",
+    "Customer Service Representative"
+  ],
+  "facts": {
+    "credentials": [],
+    "education": [
+      {
+        "level": "high_school",
+        "field": null,
+        "completed": true
+      },
+      {
+        "level": "associate",
+        "field": "Guidance",
+        "completed": true
+      }
+    ],
+    "yearsExperience": {
+      "total": null,
+      "byRoleFamily": []
+    },
+    "languages": [],
+    "workAuthorization": null
+  },
+  "extractVersion": 2
+}

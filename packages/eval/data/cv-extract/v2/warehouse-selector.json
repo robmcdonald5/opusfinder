@@ -1,0 +1,68 @@
+{
+  "summary": "Night warehouse selector with over eight years of combined experience spanning personal training and warehouse operations. Brings a background in one-on-one coaching, strength and nutrition programming, and fitness assessment in upscale studios and gyms. Warehouse work covers order selection, palletizing, pallet jack operation, and inventory control in multi-temperature facilities, with prior retail assistant management and welding experience. Strong customer-facing communication and safety-focused operation.",
+  "skills": [
+    "order picking",
+    "pallet jack operation",
+    "pallet building",
+    "shrink wrapping",
+    "inventory control",
+    "inventory management",
+    "material handling",
+    "RF/voice-directed picking",
+    "Voxware Voice Logistics",
+    "cold storage operation",
+    "personal training",
+    "strength training",
+    "weight training",
+    "nutrition planning",
+    "fitness assessment",
+    "exercise program design",
+    "client coaching",
+    "customer relations",
+    "staff leadership",
+    "POS operation",
+    "visual merchandising",
+    "retail store operations",
+    "loss prevention",
+    "shift management",
+    "MIG welding",
+    "semi-automatic welding",
+    "grinding",
+    "fabrication assembly",
+    "equipment pre-use inspection",
+    "forklift operation"
+  ],
+  "targetRoles": [
+    "Warehouse Selector",
+    "Order Picker",
+    "Personal Trainer",
+    "Assistant Store Manager"
+  ],
+  "facts": {
+    "credentials": [],
+    "education": [
+      {
+        "level": "high_school",
+        "field": null,
+        "completed": true
+      },
+      {
+        "level": "other",
+        "field": null,
+        "completed": false
+      }
+    ],
+    "yearsExperience": {
+      "total": 8,
+      "byRoleFamily": [
+        {
+          "roleFamily": "personal training",
+          "years": 8
+        }
+      ]
+    },
+    "languages": [],
+    "workAuthorization": null
+  },
+  "extractVersion": 2
+}

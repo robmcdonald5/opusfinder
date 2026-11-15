@@ -1,0 +1,73 @@
+{
+  "summary": "Financial accountant with CPA designation and over five years of experience in financial reporting and management accounting. Prepares group financial statements under IFRS-based accounting policies and manages high-volume royalty and licensing reporting for multiple international brands, verifying sales reports against contract terms and withholding tax obligations. Experienced in foreign currency management, bank reconciliation, general ledger maintenance, and accounts payable and receivable, with advanced Excel modeling and ERP proficiency. Works effectively in multicultural, cross-border teams and is bilingual in English and Mandarin Chinese.",
+  "skills": [
+    "Financial reporting",
+    "Financial statement preparation",
+    "IFRS",
+    "Management accounting",
+    "Royalty reporting",
+    "Licensing contract compliance",
+    "Withholding tax",
+    "Foreign currency management",
+    "FX options and swaps",
+    "Bank reconciliation",
+    "General ledger",
+    "Accounts payable",
+    "Accounts receivable",
+    "Payroll administration",
+    "Invoice processing",
+    "P&L analysis",
+    "Budget variance analysis",
+    "Excel modeling",
+    "Microsoft Excel",
+    "ERP systems",
+    "SAP",
+    "MYOB",
+    "Concur",
+    "Cash handling",
+    "Customer service"
+  ],
+  "targetRoles": [
+    "Financial Accountant",
+    "Management Accountant",
+    "Staff Accountant"
+  ],
+  "facts": {
+    "credentials": [
+      {
+        "name": "CPA",
+        "issuer": null,
+        "status": null,
+        "expires": null
+      }
+    ],
+    "education": [
+      {
+        "level": "master",
+        "field": "Accounting",
+        "completed": true
+      },
+      {
+        "level": "bachelor",
+        "field": "Accounting & Finance",
+        "completed": true
+      }
+    ],
+    "yearsExperience": {
+      "total": 5,
+      "byRoleFamily": []
+    },
+    "languages": [
+      {
+        "language": "English",
+        "proficiency": "bilingual"
+      },
+      {
+        "language": "Chinese Mandarin",
+        "proficiency": "bilingual"
+      }
+    ],
+    "workAuthorization": null
+  },
+  "extractVersion": 2
+}

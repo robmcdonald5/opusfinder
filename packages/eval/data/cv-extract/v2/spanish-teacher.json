@@ -1,0 +1,80 @@
+{
+  "summary": "Spanish teacher with ten years of secondary classroom instruction across levels 1 through 3, including Spanish competency and state proficiency exam administration. Designs age-appropriate lesson plans and integrates interactive whiteboard technology, with classes of up to 23 students. Holds permanent secondary Spanish and inclusive education certification and has supported students with IEPs toward graduation. Also brings prior experience directing youth recreation programs for 60 children, supervising staff, and coordinating field trips and student activities.",
+  "skills": [
+    "Spanish language instruction",
+    "Lesson plan design",
+    "Classroom management",
+    "Interactive whiteboard instruction",
+    "SMART Notebook",
+    "Microsoft Office",
+    "Assessment administration",
+    "Student Learning Objective assessment",
+    "IEP support",
+    "Field trip coordination",
+    "Youth program supervision",
+    "Staff supervision and training",
+    "Parent communication",
+    "Photo editing",
+    "Slideshow creation"
+  ],
+  "targetRoles": [
+    "Spanish Teacher",
+    "Secondary Spanish Teacher",
+    "Inclusive Education Teacher"
+  ],
+  "facts": {
+    "credentials": [
+      {
+        "name": "Permanent Certification, Secondary Spanish and Inclusive Education",
+        "issuer": null,
+        "status": null,
+        "expires": null
+      },
+      {
+        "name": "Professional Certification, Secondary level Spanish",
+        "issuer": null,
+        "status": null,
+        "expires": null
+      }
+    ],
+    "education": [
+      {
+        "level": "other",
+        "field": "BOCES Novice Teaching Academy",
+        "completed": false
+      },
+      {
+        "level": "other",
+        "field": "Spanish study, University of Madrid, Complutense",
+        "completed": true
+      },
+      {
+        "level": "master",
+        "field": "Master of Science",
+        "completed": true
+      },
+      {
+        "level": "bachelor",
+        "field": "Spanish and secondary certification Spanish",
+        "completed": true
+      },
+      {
+        "level": "bachelor",
+        "field": "Sociology and Spanish",
+        "completed": true
+      },
+      {
+        "level": "high_school",
+        "field": null,
+        "completed": true
+      }
+    ],
+    "yearsExperience": {
+      "total": 10,
+      "byRoleFamily": []
+    },
+    "languages": [],
+    "workAuthorization": null
+  },
+  "extractVersion": 2
+}

@@ -49,6 +49,12 @@
         "status": "any",
         "expires": "any",
         "optional": true
+      },
+      {
+        "match": ["therapeutic modalities"],
+        "status": "any",
+        "expires": "any",
+        "optional": true
       }
     ],
     "education": [
@@ -72,6 +78,7 @@
   "judgementCalls": [
     "The four 'X Certified' items in the Licenses line (critical care, dysrhythmia, IV therapy, mechanical ventilation) are required as credentials.",
     "'CNA' appears only in the keyword skills list, so it is allowed but not required.",
-    "The dementia and stroke training courses are not credentials."
+    "The dementia and stroke training courses are not credentials.",
+    "'Dysrhythmia Interpretation and Therapeutic Modalities Certified' may come out as one entry or two."
   ]
 }

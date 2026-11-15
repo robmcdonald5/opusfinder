@@ -1,0 +1,68 @@
+{
+  "summary": "Certified Nursing Assistant with about eleven years of experience in skilled nursing and assisted living care, including home health aide work. Provides resident care and daily living assistance, takes vitals for a 25-patient floor per shift, and documents intake and output and patient status in electronic charting. Skilled in safe patient transfers and positioning using gait belts, sliding boards and mechanical lifts, with experience caring for patients with COPD, asthma, cardiac and acute conditions. Has trained new employees and participated in a unit quality assurance program.",
+  "skills": [
+    "Activities of daily living assistance",
+    "Vital signs monitoring",
+    "Intake and output documentation",
+    "CareTracker documentation",
+    "Patient positioning",
+    "Gait belt transfers",
+    "Sliding board transfers",
+    "Mechanical lift operation",
+    "Body mechanics",
+    "Patient teaching",
+    "Patient privacy and confidentiality",
+    "Quality assurance programs",
+    "Specimen and exam room escort",
+    "Home health aide care",
+    "Meal and nutrition assistance",
+    "Staff training",
+    "Web design",
+    "Computer systems"
+  ],
+  "targetRoles": [
+    "Certified Nursing Assistant",
+    "Home Health Aide",
+    "Patient Care Technician"
+  ],
+  "facts": {
+    "credentials": [
+      {
+        "name": "Certified Nursing Assistant (CNA), Pennsylvania",
+        "issuer": null,
+        "status": null,
+        "expires": null
+      },
+      {
+        "name": "Certified Nursing Assistant (CNA), South Carolina",
+        "issuer": null,
+        "status": "inactive",
+        "expires": null
+      }
+    ],
+    "education": [
+      {
+        "level": "associate",
+        "field": "Visual Communications",
+        "completed": true
+      },
+      {
+        "level": "certificate",
+        "field": "Computer Technology",
+        "completed": true
+      },
+      {
+        "level": "high_school",
+        "field": "General",
+        "completed": true
+      }
+    ],
+    "yearsExperience": {
+      "total": 11,
+      "byRoleFamily": []
+    },
+    "languages": [],
+    "workAuthorization": null
+  },
+  "extractVersion": 2
+}

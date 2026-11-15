@@ -1,0 +1,150 @@
+{
+  "summary": "Senior network engineer with roughly 15 years of experience designing, implementing and optimizing wired and wireless enterprise networks, with a background that began in customer-facing network support. Works across routing, switching, WAN, VoIP call manager administration, network security and firewalls in Cisco-centric environments with some Juniper and Brocade exposure. Has managed networks serving over 5,000 users and led projects end to end from initiation through closure. Holds CCNP, CCNA and data center certifications and has built out redundant routing, MPLS WAN and AAA infrastructure.",
+  "skills": [
+    "Cisco IOS",
+    "Cisco routers",
+    "Cisco switches",
+    "Nexus",
+    "Layer 3 switching",
+    "OSPF",
+    "EIGRP",
+    "BGP",
+    "MPLS",
+    "RIP",
+    "Policy-based routing",
+    "Route redistribution",
+    "Static routing",
+    "VLAN",
+    "VTP",
+    "Spanning Tree Protocol",
+    "Inter-VLAN routing",
+    "EtherChannel",
+    "HSRP",
+    "VRRP",
+    "GLBP",
+    "Load balancing",
+    "F5 BIG-IP",
+    "Cisco WAAS",
+    "Frame Relay",
+    "ISDN",
+    "PPP",
+    "T1/E1 circuits",
+    "NAT",
+    "SNMP",
+    "Syslog",
+    "NTP",
+    "DHCP",
+    "DNS",
+    "CDP",
+    "TFTP",
+    "IP telephony",
+    "Cisco Unified Communications Manager",
+    "Cisco Unity Connection",
+    "FXO/FXS",
+    "TACACS+",
+    "RADIUS",
+    "Cisco ACS",
+    "802.1X",
+    "MAC authentication bypass",
+    "Cisco ASA",
+    "Palo Alto firewalls",
+    "IPsec VPN",
+    "SSL VPN",
+    "DMVPN",
+    "Site-to-site VPN",
+    "Remote access VPN",
+    "IPS/IDS",
+    "Access control lists",
+    "DMZ design",
+    "Cisco NAC",
+    "Juniper EX series",
+    "Juniper SRX",
+    "Brocade",
+    "Wireless site survey",
+    "Cisco Prime Network Control System",
+    "Cisco Mobility Services Engine",
+    "System Center Operations Manager",
+    "System Center Service Manager",
+    "Active Directory",
+    "Network troubleshooting",
+    "Network hardening",
+    "Change management",
+    "Project management",
+    "Network monitoring"
+  ],
+  "targetRoles": [
+    "Senior Network Engineer",
+    "Network Engineer",
+    "Network Architect"
+  ],
+  "facts": {
+    "credentials": [
+      {
+        "name": "Cisco Certified Network Professional (CCNP)",
+        "issuer": null,
+        "status": null,
+        "expires": null
+      },
+      {
+        "name": "Cisco Certified Network Associate (CCNA)",
+        "issuer": null,
+        "status": null,
+        "expires": null
+      },
+      {
+        "name": "Cisco Certified Design Associate Data Center (CCT Data Center)",
+        "issuer": null,
+        "status": null,
+        "expires": null
+      },
+      {
+        "name": "Microsoft Certified Systems Engineer (MCSE)",
+        "issuer": null,
+        "status": null,
+        "expires": null
+      },
+      {
+        "name": "CompTIA Security+",
+        "issuer": null,
+        "status": null,
+        "expires": null
+      },
+      {
+        "name": "CompTIA Network+",
+        "issuer": null,
+        "status": null,
+        "expires": null
+      },
+      {
+        "name": "CompTIA A+",
+        "issuer": null,
+        "status": null,
+        "expires": null
+      }
+    ],
+    "education": [
+      {
+        "level": "master",
+        "field": "Business Administration (IT)",
+        "completed": true
+      },
+      {
+        "level": "certificate",
+        "field": "Post Graduate Diploma in Management Studies",
+        "completed": true
+      },
+      {
+        "level": "associate",
+        "field": "Science",
+        "completed": true
+      }
+    ],
+    "yearsExperience": {
+      "total": null,
+      "byRoleFamily": []
+    },
+    "languages": [],
+    "workAuthorization": "Authorized to work in the US for any employer"
+  },
+  "extractVersion": 2
+}

@@ -1,0 +1,70 @@
+{
+  "summary": "Aviation maintenance technician with five years of hands-on experience in line and heavy maintenance of aircraft, including troubleshooting electrical, hydraulic, engine, and airframe systems. Holds FAA Airframe and Powerplant certification and has military aviation technical training and leadership background. Skilled in scheduled and unscheduled maintenance, post-flight inspections, component replacement, and regulatory maintenance record keeping. Experienced supervising maintenance crews and coordinating supply chain and FAA-regulated maintenance documentation.",
+  "skills": [
+    "Airframe and powerplant maintenance",
+    "Aircraft troubleshooting",
+    "Line maintenance",
+    "Heavy maintenance",
+    "Post-flight inspection",
+    "Aircraft electrical systems",
+    "Hydraulic systems",
+    "Engine maintenance",
+    "Airframe repair",
+    "Vibration analysis",
+    "Fuel systems",
+    "Flight controls",
+    "Mechanical and pneumatic tools",
+    "Maintenance records management",
+    "FAA regulatory publications",
+    "Supply chain management",
+    "Crew supervision",
+    "Lean Six Sigma",
+    "Component replacement",
+    "Quality assurance"
+  ],
+  "targetRoles": [
+    "Aviation Mechanic",
+    "Airframe and Powerplant Technician",
+    "Aircraft Maintenance Technician"
+  ],
+  "facts": {
+    "credentials": [
+      {
+        "name": "FAA Airframe and Powerplant (A&P) Mechanic",
+        "issuer": null,
+        "status": null,
+        "expires": null
+      },
+      {
+        "name": "Lean Six Sigma Yellow Belt",
+        "issuer": null,
+        "status": null,
+        "expires": null
+      }
+    ],
+    "education": [
+      {
+        "level": "high_school",
+        "field": null,
+        "completed": true
+      },
+      {
+        "level": "certificate",
+        "field": "Powertrain (H-1)",
+        "completed": true
+      },
+      {
+        "level": "certificate",
+        "field": "Aeronautics (A&P)",
+        "completed": true
+      }
+    ],
+    "yearsExperience": {
+      "total": 5,
+      "byRoleFamily": []
+    },
+    "languages": [],
+    "workAuthorization": null
+  },
+  "extractVersion": 2
+}

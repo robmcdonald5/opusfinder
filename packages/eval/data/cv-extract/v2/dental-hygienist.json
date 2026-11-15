@@ -1,0 +1,70 @@
+{
+  "summary": "Dental hygienist with sixteen years of clinical experience in preventive and periodontal care across patients of all ages, including medically compromised patients. Provides patient counseling on oral hygiene, periodontal status, and preventive treatments such as fluoride and sealants, and educates both patients and dental staff. Skilled in soft tissue management, oral cancer screening, digital radiography, and practice software, with prior experience as a dental assistant supporting surgery, sterilization, and front-office operations.",
+  "skills": [
+    "dental hygiene",
+    "periodontal assessment",
+    "periodontal treatment",
+    "soft tissue management",
+    "oral cancer screening",
+    "nutritional counseling",
+    "smoking cessation counseling",
+    "preventive care",
+    "fluoride application",
+    "dental sealants",
+    "digital radiography",
+    "radiograph exposure and development",
+    "dental charting",
+    "bleaching tray fabrication",
+    "occlusal guard fabrication",
+    "local antibiotic administration",
+    "instrument sterilization",
+    "surgical assistance",
+    "Dentrix",
+    "patient education",
+    "appointment scheduling"
+  ],
+  "targetRoles": [
+    "Dental Hygienist",
+    "Senior Dental Hygienist",
+    "Dental Hygiene Educator"
+  ],
+  "facts": {
+    "credentials": [
+      {
+        "name": "Registered Dental Hygienist",
+        "issuer": "State of Florida",
+        "status": null,
+        "expires": null
+      }
+    ],
+    "education": [
+      {
+        "level": "master",
+        "field": "Health Sciences",
+        "completed": true
+      },
+      {
+        "level": "bachelor",
+        "field": "Dental Hygiene",
+        "completed": true
+      },
+      {
+        "level": "associate",
+        "field": "Dental Hygiene",
+        "completed": true
+      },
+      {
+        "level": "certificate",
+        "field": "Dental Assisting",
+        "completed": true
+      }
+    ],
+    "yearsExperience": {
+      "total": 16,
+      "byRoleFamily": []
+    },
+    "languages": [],
+    "workAuthorization": null
+  },
+  "extractVersion": 2
+}
