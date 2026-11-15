@@ -2,9 +2,9 @@ import type { StructuredProfile } from "@opusfinder/shared";
 
 /**
  * The pipeline's injected seams. Keeping these as parameters (rather than importing the concrete
- * libraries) is what keeps `packages/profiles/src` Worker-portable: it never pulls @opusfinder/llm
- * (whose env module loads `node:`/dotenv), @opusfinder/embeddings, or the @opusfinder/storage S3
- * client (which pulls @aws-sdk) into its graph. The Node script (scripts/) wires the real impls.
+ * libraries) is what keeps `packages/profiles/src` Worker-portable: it never pulls @opusfinder/llm,
+ * @opusfinder/embeddings, or the @opusfinder/storage S3 client (which pulls @aws-sdk) into its graph, and
+ * the caller decides where their keys come from. The Node script (scripts/) wires the real impls.
  */
 
 /** Layer 1: transcribe a PDF's bytes to clean text. The impl pulls @opusfinder/llm (vision call). */

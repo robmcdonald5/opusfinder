@@ -3,7 +3,7 @@ import { getDatabaseUrl } from "@opusfinder/db/env";
 import { nearestJobs } from "@opusfinder/db/repos";
 import { runScript } from "@opusfinder/shared/script";
 
-import { embed } from "../src/index";
+import { embed } from "../src/node";
 
 /**
  * Embed a query string and print the nearest jobs by cosine distance — the retrieval

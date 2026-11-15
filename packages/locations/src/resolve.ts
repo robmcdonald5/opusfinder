@@ -10,8 +10,6 @@
  * no-answer, which `locations:report` lists and only the backfill asks again. A transient failure stores
  * nothing, so the next run asks again.
  */
-import { createHash } from "node:crypto";
-
 import type { Db } from "@opusfinder/db";
 import {
   listCompanyStrings,
@@ -21,6 +19,7 @@ import {
   type LocationPairKey,
   type LocationStringRow,
 } from "@opusfinder/db/repos";
+import { sha256Hex } from "@opusfinder/shared/hash";
 
 import { checkAnswers, loadGazetteer, type Gazetteer } from "./check";
 import {
@@ -174,7 +173,8 @@ export async function collectLocationBatch(
   batchId: string,
 ): Promise<{ counts: ResolveCounts; outcomes: PairOutcome[]; skipped: number }> {
   const pairs = await listPendingPairs(db, { scope: "stale", promptVersion: PROMPT_VERSION });
-  const byId = new Map(pairs.map((p) => [requestId(p), p]));
+  const ids = await Promise.all(pairs.map(requestId));
+  const byId = new Map(pairs.map((p, i) => [ids[i]!, p]));
   const answers = await model.collectBatch(batchId);
   const outcomes = await storeBatchAnswers(db, await loadGazetteer(db), answers, byId, []);
   const skipped = [...answers.keys()].filter((id) => !byId.has(id)).length;
@@ -219,8 +219,8 @@ async function storeBatchAnswers(
 
 /** A request id that names its pair and prompt version, so a batch's results map back to their pairs in a
  *  later process: `v<version>-<company id>-<hash of the text>` (the Batch API's id pattern, ≤ 64 chars). */
-export function requestId(pair: LocationPairKey): string {
-  const hash = createHash("sha256").update(pair.raw).digest("hex").slice(0, 32);
+export async function requestId(pair: LocationPairKey): Promise<string> {
+  const hash = (await sha256Hex(pair.raw)).slice(0, 32);
   return `v${PROMPT_VERSION.replace(/[^a-zA-Z0-9]/g, "_")}-${pair.companyId}-${hash}`;
 }
 
@@ -228,8 +228,9 @@ export function requestId(pair: LocationPairKey): string {
 async function buildRequests(db: Db, pairs: LocationPair[]): Promise<LocationRequest[]> {
   const companyIds = [...new Set(pairs.map((p) => p.companyId))];
   const strings = await listCompanyStrings(db, companyIds, SIBLING_CONTEXT + 1);
-  return pairs.map((pair) =>
-    buildLocationRequest(requestId(pair), {
+  const ids = await Promise.all(pairs.map(requestId));
+  return pairs.map((pair, i) =>
+    buildLocationRequest(ids[i]!, {
       raw: pair.raw,
       company: {
         slug: pair.companySlug,

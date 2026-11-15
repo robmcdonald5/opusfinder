@@ -1,6 +1,6 @@
-import { createHash } from "node:crypto";
-
 import type Anthropic from "@anthropic-ai/sdk";
+
+import { sha256Hex } from "@opusfinder/shared/hash";
 
 import { modelId, type Effort, type ModelAlias, type Thinking } from "./provider";
 
@@ -155,11 +155,11 @@ export function buildMessagesBody(
  * that prefix on one provider — OpenRouter's default stickiness keys on the first user message, which
  * differs per rerank chunk, so the chunks would otherwise scatter across providers' separate caches.
  */
-export function toSyncBody(opts: CallOptions, body: MessagesBody): SyncMessagesBody {
+export async function toSyncBody(opts: CallOptions, body: MessagesBody): Promise<SyncMessagesBody> {
   const model = modelId(opts.model);
   const sessionId =
     opts.cacheSystem && opts.system
-      ? `cache-${createHash("sha256").update(`${model}\n${opts.system}`).digest("hex").slice(0, 40)}`
+      ? `cache-${(await sha256Hex(`${model}\n${opts.system}`)).slice(0, 40)}`
       : undefined;
   return {
     model,
@@ -202,10 +202,22 @@ function toContent(
       source: {
         type: "base64",
         media_type: "application/pdf",
-        data: Buffer.from(part.data).toString("base64"),
+        data: toBase64(part.data),
       },
     };
   });
+}
+
+// `btoa` over a binary string, built in slices: one String.fromCharCode call takes a limited number of
+// arguments, and a CV PDF is megabytes. (No Buffer: this also runs in a Worker.)
+const BASE64_SLICE = 0x8000;
+
+function toBase64(bytes: Uint8Array): string {
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += BASE64_SLICE) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + BASE64_SLICE));
+  }
+  return btoa(binary);
 }
 
 /** The fields this package reads off a Messages response, plus OpenRouter's `usage.cost`. */

@@ -64,10 +64,10 @@ export interface VoyageEmbedResponse {
  * items and the per-request token budget) — chunking is embed()'s job, not this layer's.
  * Returns vectors aligned to input order plus usage for cost accounting.
  *
- * `apiKey` overrides the env key (tests, or a caller holding its own key); omit it (or pass an
- * empty string) to use `getVoyageApiKey()`. An empty key is treated as absent — not sent as
- * `Bearer ` — so a blank secret surfaces the env path's friendly error instead of a silent 401.
- * The key is never logged. Not a Worker seam: this module imports ./env, which loads dotenv.
+ * `apiKey` is the caller's own key (a Worker passes its `VOYAGE_API_KEY` binding); omit it (or pass an
+ * empty string) to use `getVoyageApiKey()`, the environment's. An empty key is treated as absent — not
+ * sent as `Bearer ` — so a blank secret surfaces the env path's friendly error instead of a silent 401.
+ * The key is never logged.
  */
 export async function embedRequest(
   input: string[],

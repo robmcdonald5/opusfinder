@@ -3,7 +3,7 @@ import { getDatabaseUrl } from "@opusfinder/db/env";
 import type { LocationPairKey } from "@opusfinder/db/repos";
 import { runScript } from "@opusfinder/shared/script";
 
-import { createLocationModel, loadGazetteer, syncLocationStrings } from "../src/index";
+import { createLocationModel, loadGazetteer, syncLocationStrings } from "../src/node";
 
 /**
  * The digest's daily location step, by hand: resolve every active (company, raw) pair that has no row

@@ -1,6 +1,6 @@
 import { createDb } from "@opusfinder/db";
 import { getDatabaseUrl } from "@opusfinder/db/env";
-import { embed } from "@opusfinder/embeddings";
+import { embed } from "@opusfinder/embeddings/node";
 import type { SourceName } from "@opusfinder/shared";
 import { runScript } from "@opusfinder/shared/script";
 

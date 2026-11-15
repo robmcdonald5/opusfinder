@@ -13,7 +13,7 @@ import {
   PROMPT_VERSION,
   type PairOutcome,
   type ResolveCounts,
-} from "../src/index";
+} from "../src/node";
 
 /**
  * Resolve every active (company, raw) pair that has no row, a row from another prompt version, or a row

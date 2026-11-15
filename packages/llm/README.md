@@ -19,10 +19,19 @@ This package needs an OpenRouter API key. Either:
 
 - or export `OPENROUTER_API_KEY` in your shell (a pre-set env var wins over the file).
 
-The key is read + validated by `getOpenRouterApiKey()` (`@opusfinder/llm/env`) on each request. It
-loads `packages/llm/.env` resolved relative to the module (never the caller's cwd), so the key lives
-in ONE place no matter which package's script imports it. Errors echo only the key's shape
-(presence/length), never the key itself.
+There are two entries:
+
+- **`@opusfinder/llm/node`** — for scripts and the Node-hosted pipelines. It loads `packages/llm/.env`
+  resolved relative to the module (never the caller's cwd), so the key lives in ONE place no matter
+  which package's script imports it, then re-exports everything below.
+- **`@opusfinder/llm`** — reads nothing at import and no file, so a Cloudflare Worker can bundle it
+  (`pnpm guard:worker` checks that, and a test runs it in workerd). A Worker passes its key on each
+  call: `apiKey` in `generate` / `generateObject`'s params, and `{ apiKey }` as the last argument of
+  the batch functions and `transcribeCv` / `structureCv`.
+
+A call with no `apiKey` reads `OPENROUTER_API_KEY` from the environment, validated by
+`getOpenRouterApiKey()` on each request. Errors echo only the key's shape (presence/length), never the
+key itself.
 
 ## API
 

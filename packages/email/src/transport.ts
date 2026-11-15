@@ -14,20 +14,37 @@ import { renderDigestEmail } from "./render";
  * delivery-poll read goes through RESEND_API_KEY_FULL (`GET /emails/:id` 401s on a restricted key).
  */
 
-// Lazy + memoized — same discipline as packages/llm's provider: importing the barrel must not
-// require a key (the render preview + type-only consumers stay credential-free); each key is read on
-// its first real use.
-let sendClient: Resend | undefined;
-function getSendClient(): Resend {
-  sendClient ??= new Resend(getResendApiKey());
-  return sendClient;
+/**
+ * Where a call's Resend credentials and addresses come from. A Worker passes its bindings; a Node caller
+ * omits the config (or any field of it) and the value is read from the environment at call time.
+ */
+export interface EmailConfig {
+  /** The SEND key. Omitted = `RESEND_API_KEY`. */
+  apiKey?: string;
+  /** The full-access READ key for the delivery poll. Omitted = `RESEND_API_KEY_FULL`. */
+  apiKeyFull?: string;
+  /** The verified sender. Omitted = `EMAIL_FROM`. */
+  from?: string;
+  /** The operator address health alerts go to. Omitted = `ALERT_TO`. */
+  alertTo?: string;
 }
 
-let readClient: Resend | undefined;
-function getReadClient(): Resend {
-  readClient ??= new Resend(getResendApiKeyFull());
-  return readClient;
+// Lazy + memoized per key: importing the barrel must not require a key (the render preview + type-only
+// consumers stay credential-free); each key is read on its first real use.
+const clients = new Map<string, Resend>();
+function clientFor(key: string): Resend {
+  let client = clients.get(key);
+  if (!client) {
+    client = new Resend(key);
+    clients.set(key, client);
+  }
+  return client;
 }
+
+const getSendClient = (config: EmailConfig): Resend =>
+  clientFor(config.apiKey || getResendApiKey());
+const getReadClient = (config: EmailConfig): Resend =>
+  clientFor(config.apiKeyFull || getResendApiKeyFull());
 
 /**
  * The ONE idempotency-key definition: `digest/<digestId>`. Resend keeps keys 24h; a step-retry replay
@@ -42,11 +59,14 @@ export type SendDigestResult = { emailId: string };
  * time a payload reaches here the recipient is already approved. API errors become thrown Errors so
  * the Inngest step owns retries; a 409 `concurrent_idempotent_requests` is safe to retry.
  */
-export async function sendDigestEmail(payload: DigestEmailPayload): Promise<SendDigestResult> {
+export async function sendDigestEmail(
+  payload: DigestEmailPayload,
+  config: EmailConfig = {},
+): Promise<SendDigestResult> {
   const rendered = renderDigestEmail(payload);
-  const { data, error } = await getSendClient().emails.send(
+  const { data, error } = await getSendClient(config).emails.send(
     {
-      from: getEmailFrom(),
+      from: config.from || getEmailFrom(),
       to: payload.recipient.email,
       subject: rendered.subject,
       html: rendered.html,
@@ -72,8 +92,11 @@ export async function sendDigestEmail(payload: DigestEmailPayload): Promise<Send
  * `delivery_delayed`, `bounced`, `complained`, `failed`). The event→status POLICY lives in
  * @opusfinder/inngest; this is a pure passthrough.
  */
-export async function getEmailLastEvent(emailId: string): Promise<string> {
-  const { data, error } = await getReadClient().emails.get(emailId);
+export async function getEmailLastEvent(
+  emailId: string,
+  config: EmailConfig = {},
+): Promise<string> {
+  const { data, error } = await getReadClient(config).emails.get(emailId);
   if (error) {
     throw new Error(
       `resend get failed: ${error.name} (status ${String(error.statusCode ?? "network")})`,
@@ -89,10 +112,14 @@ export async function getEmailLastEvent(emailId: string): Promise<string> {
  * not replay-idempotent — each run's verdict is its own event. Errors echo SHAPE only (name +
  * statusCode), never error.message.
  */
-export async function sendHealthAlert(subject: string, text: string): Promise<{ emailId: string }> {
-  const { data, error } = await getSendClient().emails.send({
-    from: getEmailFrom(),
-    to: getAlertTo(),
+export async function sendHealthAlert(
+  subject: string,
+  text: string,
+  config: EmailConfig = {},
+): Promise<{ emailId: string }> {
+  const { data, error } = await getSendClient(config).emails.send({
+    from: config.from || getEmailFrom(),
+    to: config.alertTo || getAlertTo(),
     subject,
     text,
   });

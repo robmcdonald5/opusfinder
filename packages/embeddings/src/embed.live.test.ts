@@ -10,17 +10,15 @@
  * `fetch`, so a real Voyage POST would hard-fail under the integration project's onUnhandledRequest:"error".
  *
  * NEVER runs in CI's secret-free lane: gated on an EXPLICIT opt-in flag (VOYAGE_LIVE_TEST=1) ON TOP of the
- * key. Cost is ~$0 (a few hundred tokens against the 200M free-token allotment, §9 Q6). Importing `./embed`
- * transitively pulls `./provider` → `./env`, whose loadPackageEnv populates VOYAGE_API_KEY from
- * packages/embeddings/.env before this gate evaluates; the getters are lazy so the file loads — and skips —
- * without a key.
+ * key. Cost is ~$0 (a few hundred tokens against the 200M free-token allotment, §9 Q6). Importing `./node`
+ * loads packages/embeddings/.env (loadPackageEnv), which populates VOYAGE_API_KEY before this gate
+ * evaluates; the getters are lazy so the file loads — and skips — without a key.
  *
  *   VOYAGE_LIVE_TEST=1 pnpm test:live
  */
 import { describe, expect, it } from "vitest";
 
-import { embed } from "./embed";
-import { EMBED_DIMENSIONS, EMBED_MODEL } from "./provider";
+import { embed, EMBED_DIMENSIONS, EMBED_MODEL } from "./node";
 
 const LIVE = process.env.VOYAGE_LIVE_TEST === "1" && !!process.env.VOYAGE_API_KEY;
 

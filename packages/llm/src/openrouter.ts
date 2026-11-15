@@ -22,6 +22,13 @@ const TRANSIENT_ERROR_TYPES: ReadonlySet<string> = new Set([
   "server",
 ]);
 
+/** Where a call's credentials come from. A Worker passes its `OPENROUTER_API_KEY` binding; a Node caller
+ *  omits it and the key is read from the environment at call time. The key is never logged. */
+export interface LlmConfig {
+  /** OpenRouter API key. Omitted or empty = `OPENROUTER_API_KEY` from the environment. */
+  apiKey?: string;
+}
+
 /** A failed OpenRouter call: the HTTP status (200 for an error that arrived after the status was sent),
  *  OpenRouter's error type and its message (capped), never a request or response body. */
 export class OpenRouterError extends Error {
@@ -47,9 +54,9 @@ export async function openRouterRequest<T>(
   method: "GET" | "POST",
   path: string,
   body?: unknown,
-  opts: { maxRetries?: number; signal?: AbortSignal } = {},
+  opts: LlmConfig & { maxRetries?: number; signal?: AbortSignal } = {},
 ): Promise<T> {
-  const apiKey = getOpenRouterApiKey();
+  const apiKey = opts.apiKey || getOpenRouterApiKey();
   const maxRetries = opts.maxRetries ?? DEFAULT_MAX_RETRIES;
   for (let attempt = 0; ; attempt++) {
     opts.signal?.throwIfAborted();

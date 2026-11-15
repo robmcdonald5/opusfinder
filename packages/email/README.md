@@ -4,8 +4,9 @@ The Phase-11 **digest email**: a pure, deterministic render (escaped HTML + a pl
 thin **Resend** transport (idempotency-keyed send, delivery-state read; the send PERMIT is enforced
 UPSTREAM — the DB-native `user_preferences.digest_approved_at` gate, not here). The digest pipeline
 (`@opusfinder/inngest`) calls it through the `DigestDeps.email` seam after `persist`; nothing else sends
-mail. **Node/server runtime only** — deny-listed from the scrapers Worker (`pnpm guard:worker`), like
-`better-auth` and `inngest` before it. **Phase F6** adds one non-digest send — `sendHealthAlert` (operator
+mail. **Trusted server runtimes only** — deny-listed from the scrapers Worker (`pnpm guard:worker`), which
+keeps no access to user data; the package itself bundles for a Worker (a mail-sending one passes an
+`EmailConfig` as each function's last argument). **Phase F6** adds one non-digest send — `sendHealthAlert` (operator
 health alerts to a dedicated `ALERT_TO` — the owner as operator, not a product user).
 
 ## Why render is split from transport
@@ -45,7 +46,11 @@ discipline): importing the barrel never requires a key.
   address — a **DEDICATED operator address** (the owner as operator) so the alert can never be the silently-broken thing F6 exists to
   kill. **No idempotency key** (each run's verdict is its own event), shape-only errors (name + status).
 
-## Env (`./env` subpath — `packages/email/.env`, gitignored)
+## Env (`packages/email/.env`, gitignored)
+
+`@opusfinder/email/node` loads the file and re-exports the package; Node callers import that. The bare
+`@opusfinder/email` loads no file. Each value below is the fallback for a call that passes no
+`EmailConfig` field (`apiKey`, `apiKeyFull`, `from`, `alertTo`).
 
 | Var                   | Required              | Notes                                                                                                                                             |
 | --------------------- | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |

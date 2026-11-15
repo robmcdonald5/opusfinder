@@ -28,7 +28,7 @@ import {
   type LocationAnswer,
   type LocationModel,
   type LocationRequest,
-} from "@opusfinder/locations";
+} from "@opusfinder/locations/node";
 import { runScript } from "@opusfinder/shared/script";
 
 import { getFlag } from "../src/cli";

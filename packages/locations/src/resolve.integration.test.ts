@@ -405,10 +405,22 @@ describe("resolving location strings (integration: real PGlite, stub model)", ()
     expect(rows.get("Atlantis")!.confidence).toBe("low");
   });
 
-  it("names each request by its pair and prompt version, within the Batch API's id pattern", () => {
-    const id = requestId({ companyId: 123456, raw: "Columbus, OH ".repeat(100) });
+  it("names each request by its pair and prompt version, within the Batch API's id pattern", async () => {
+    const id = await requestId({ companyId: 123456, raw: "Columbus, OH ".repeat(100) });
     expect(id).toMatch(/^[a-zA-Z0-9_-]{1,64}$/);
     expect(id.startsWith(`v${PROMPT_VERSION}-123456-`)).toBe(true);
-    expect(requestId({ companyId: 1, raw: "a" })).not.toBe(requestId({ companyId: 1, raw: "b" }));
+    expect(await requestId({ companyId: 1, raw: "a" })).not.toBe(
+      await requestId({ companyId: 1, raw: "b" }),
+    );
+  });
+
+  it("keeps the ids of batches submitted before the hash moved to Web Crypto", async () => {
+    // A batch's results are matched to their pairs by this id in a later process (collectLocationBatch).
+    expect(await requestId({ companyId: 7, raw: "Columbus, OH" })).toBe(
+      `v${PROMPT_VERSION}-7-217ee5381a68c1156f31622b21385ee6`,
+    );
+    expect(await requestId({ companyId: 7, raw: "Zürich, Schweiz — 東京 🗼" })).toBe(
+      `v${PROMPT_VERSION}-7-b7d825b9ce2e46c0583c9688a98cb91c`,
+    );
   });
 });

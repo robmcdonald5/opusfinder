@@ -29,11 +29,16 @@ This package needs a Voyage API key. Either:
 Get a key from the [Voyage AI dashboard](https://dashboard.voyageai.com); billing is
 usage-based (list price and the account's free allotment are pinned next to the model id in
 `src/provider.ts`). This account has a payment method on file, so it runs at standard limits
-(2000 RPM / 3M TPM), not the no-card throttle. The key is read + validated by
-`getVoyageApiKey()` (`@opusfinder/embeddings/env`), which loads `packages/embeddings/.env`
-relative to the module (never the caller's cwd), so the key lives in ONE place no matter
-which package's script imports it. Errors echo only the key's shape (presence/length),
-never the key itself.
+(2000 RPM / 3M TPM), not the no-card throttle. There are two entries:
+
+- **`@opusfinder/embeddings/node`** — for scripts and the Node-hosted pipelines. It loads
+  `packages/embeddings/.env` relative to the module (never the caller's cwd), so the key lives
+  in ONE place no matter which package's script imports it, then re-exports the API below.
+- **`@opusfinder/embeddings`** — reads nothing at import and no file, so a Cloudflare Worker
+  can bundle it (`pnpm guard:worker`). A Worker passes its key: `embed(texts, { apiKey })`.
+
+A call with no `apiKey` reads `VOYAGE_API_KEY` from the environment, validated by
+`getVoyageApiKey()`. Errors echo only the key's shape (presence/length), never the key itself.
 
 ## API
 

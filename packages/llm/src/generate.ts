@@ -8,9 +8,9 @@ import {
   type StopReason,
   type Usage,
 } from "./messages";
-import { openRouterRequest } from "./openrouter";
+import { openRouterRequest, type LlmConfig } from "./openrouter";
 
-export type GenerateParams = CallOptions;
+export interface GenerateParams extends CallOptions, LlmConfig {}
 
 export interface GenerateResult {
   /** Generated completion text (thinking blocks excluded). */
@@ -41,7 +41,8 @@ export async function generate(params: GenerateParams): Promise<GenerateResult> 
   const res = await openRouterRequest<MessagesResponse>(
     "POST",
     "/messages",
-    toSyncBody(params, body),
+    await toSyncBody(params, body),
+    { apiKey: params.apiKey },
   );
   return readMessage(res);
 }

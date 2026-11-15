@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 
-import { structureCv, transcribeCv } from "@opusfinder/llm";
+import { structureCv, transcribeCv } from "@opusfinder/llm/node";
 import { composeProfileText, MIN_TRANSCRIPT_CHARS, profileWarnings, scrubProfilePii } from "@opusfinder/shared";
 import { runScript } from "@opusfinder/shared/script";
 

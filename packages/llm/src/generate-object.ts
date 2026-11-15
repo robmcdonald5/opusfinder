@@ -12,9 +12,9 @@ import {
   type StopReason,
   type Usage,
 } from "./messages";
-import { openRouterRequest } from "./openrouter";
+import { openRouterRequest, type LlmConfig } from "./openrouter";
 
-export interface GenerateObjectParams<T> extends CallOptions {
+export interface GenerateObjectParams<T> extends CallOptions, LlmConfig {
   /** Zod schema for the object to extract; the reply is decoded against it and validated with it. */
   schema: z.ZodType<T>;
   /** A deadline over the whole call, retries included: when it aborts, the call throws its reason. */
@@ -69,7 +69,7 @@ export async function generateObject<T>(
     cacheTtl: "5m",
     format: { type: format.type, schema: format.schema },
   });
-  const request = toSyncBody(params, body);
+  const request = await toSyncBody(params, body);
   const totals: Spent = {
     usage: { inputTokens: 0, outputTokens: 0, costUsd: 0 },
     cache: { creationInputTokens: 0, readInputTokens: 0 },
@@ -79,6 +79,7 @@ export async function generateObject<T>(
     const reply = readMessage(
       await openRouterRequest<MessagesResponse>("POST", "/messages", request, {
         signal: params.signal,
+        apiKey: params.apiKey,
       }),
     );
     addUsage(totals, reply);

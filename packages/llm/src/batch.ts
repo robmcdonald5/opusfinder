@@ -12,7 +12,7 @@ import {
   type MessagesResponse,
   type StopReason,
 } from "./messages";
-import { openRouterRequest } from "./openrouter";
+import { openRouterRequest, type LlmConfig } from "./openrouter";
 import { modelId } from "./provider";
 
 /**
@@ -26,8 +26,7 @@ import { modelId } from "./provider";
  *   - {@link batchGenerate} — a blocking submit→poll→collect convenience composing the primitives, for
  *     a non-durable caller (only the `test:batch` live smoke uses it).
  *
- * NODE-only by design — the digest is Node-hosted and `guard:worker` keeps this package out of the scraper
- * Worker. The Batch API rejects some sync-only settings at validation, which fails the WHOLE batch after
+ * Every primitive takes an optional {@link LlmConfig} (the API key) as its last argument. The Batch API rejects some sync-only settings at validation, which fails the WHOLE batch after
  * the submit returned: Sonnet's thinking-off spelling and inline file bytes are refused here, at submit.
  */
 
@@ -147,7 +146,10 @@ function toBody(req: BatchRequest): MessagesBody {
  * model tiers, or a setting the Batch API would reject. Does NOT wait — pair with {@link pollBatch} +
  * {@link collectBatchResults} (durable callers) or use {@link batchGenerate} (blocking).
  */
-export async function submitBatch(requests: BatchRequest[]): Promise<string> {
+export async function submitBatch(
+  requests: BatchRequest[],
+  config: LlmConfig = {},
+): Promise<string> {
   const first = requests[0];
   if (!first) throw new Error("submitBatch: received no requests.");
   assertRequests(requests);
@@ -165,7 +167,7 @@ export async function submitBatch(requests: BatchRequest[]): Promise<string> {
       provider: { only: ["anthropic"] },
       requests: bodies,
     },
-    { maxRetries: 0 },
+    { maxRetries: 0, apiKey: config.apiKey },
   );
   return batch.id;
 }
@@ -186,8 +188,8 @@ export class BatchEndedError extends Error {
 /** Poll a batch's state and request counts. `status === "ended"` means it reached a terminal state and
  *  {@link collectBatchResults} can be read. Idempotent. A batch polled within seconds of its submit can
  *  404 (`OpenRouterError`), so wait before the first poll (the digest sleeps 30s). */
-export async function pollBatch(batchId: string): Promise<BatchPoll> {
-  const batch = await getBatch(batchId);
+export async function pollBatch(batchId: string, config: LlmConfig = {}): Promise<BatchPoll> {
+  const batch = await getBatch(batchId, config);
   return {
     status: TERMINAL.has(batch.status) ? "ended" : "in_progress",
     state: batch.status,
@@ -202,8 +204,11 @@ export async function pollBatch(batchId: string): Promise<BatchPoll> {
 /** Read a completed batch's inline results into a `customId → BatchResult` map. Throws
  *  {@link BatchEndedError} when the batch failed, expired or was cancelled as a whole (OpenRouter then
  *  returns no results), naming the state and its reason. */
-export async function collectBatchResults(batchId: string): Promise<BatchCollection> {
-  const batch = await getBatch(batchId);
+export async function collectBatchResults(
+  batchId: string,
+  config: LlmConfig = {},
+): Promise<BatchCollection> {
+  const batch = await getBatch(batchId, config);
   if (batch.status !== "completed") {
     throw new BatchEndedError(batchId, batch.status, batch.error?.message);
   }
@@ -212,8 +217,10 @@ export async function collectBatchResults(batchId: string): Promise<BatchCollect
   return { results, costUsd: count(batch.usage?.cost) };
 }
 
-function getBatch(batchId: string): Promise<WireBatch> {
-  return openRouterRequest<WireBatch>("GET", `/batches/${encodeURIComponent(batchId)}`);
+function getBatch(batchId: string, config: LlmConfig): Promise<WireBatch> {
+  return openRouterRequest<WireBatch>("GET", `/batches/${encodeURIComponent(batchId)}`, undefined, {
+    apiKey: config.apiKey,
+  });
 }
 
 function mapResult(r: WireResult): BatchResult {
@@ -243,7 +250,7 @@ function count(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
-export interface BatchGenerateOptions {
+export interface BatchGenerateOptions extends LlmConfig {
   /** Poll interval while waiting for the batch to end (default 10s). */
   pollIntervalMs?: number;
   /** Give up (throw) after this long (default 24h — the completion window). */
@@ -263,7 +270,7 @@ export async function batchGenerate(
   opts: BatchGenerateOptions = {},
 ): Promise<{ results: BatchResult[]; costUsd: number }> {
   if (requests.length === 0) return { results: [], costUsd: 0 };
-  const batchId = await submitBatch(requests);
+  const batchId = await submitBatch(requests, opts);
 
   const pollIntervalMs = opts.pollIntervalMs ?? 10_000;
   const maxWaitMs = opts.maxWaitMs ?? 24 * 60 * 60 * 1000;
@@ -271,7 +278,7 @@ export async function batchGenerate(
   for (;;) {
     // Wait first: a just-submitted batch can read as 404 for a few seconds.
     await sleep(pollIntervalMs);
-    const poll = await pollBatch(batchId);
+    const poll = await pollBatch(batchId, opts);
     opts.onPoll?.(poll);
     if (poll.status === "ended") break;
     if (Date.now() - startedAt > maxWaitMs) {
@@ -282,7 +289,7 @@ export async function batchGenerate(
     }
   }
 
-  const { results, costUsd } = await collectBatchResults(batchId);
+  const { results, costUsd } = await collectBatchResults(batchId, opts);
   return {
     results: requests.map(
       (r) =>

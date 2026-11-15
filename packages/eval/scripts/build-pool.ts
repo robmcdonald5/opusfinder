@@ -41,7 +41,7 @@ import { inArray, sql } from "drizzle-orm";
 import { createAuthDb, type AuthDb } from "@opusfinder/db/auth-client";
 import { getDatabaseUrl } from "@opusfinder/db/env";
 import { EMBEDDING_DIMENSIONS, jobs } from "@opusfinder/db/schema";
-import { embed } from "@opusfinder/embeddings";
+import { embed } from "@opusfinder/embeddings/node";
 import { composeProfileText, isRecord } from "@opusfinder/shared";
 import { runScript } from "@opusfinder/shared/script";
 

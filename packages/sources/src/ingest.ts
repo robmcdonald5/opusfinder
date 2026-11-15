@@ -6,7 +6,7 @@
  *
  * Worker-forward: the only environment touchpoints — argv, `process.env`, the embedder's Voyage
  * key — are INJECTED by the caller, never read here. The embedder is injected (not imported) so
- * this module carries zero dependency on `@opusfinder/embeddings` and its key-reading env module.
+ * this module carries zero dependency on `@opusfinder/embeddings` or on where its key comes from.
  */
 import type { Db } from "@opusfinder/db";
 import { describeDbError } from "@opusfinder/db/errors";

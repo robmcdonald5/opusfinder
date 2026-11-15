@@ -1,13 +1,10 @@
-import { loadPackageEnv, requireEnv } from "@opusfinder/shared/env";
-
-// Load packages/llm/.env relative to THIS module (see loadPackageEnv), so cross-package
-// callers pick up the key from their own directories too.
-loadPackageEnv(import.meta.url);
+import { requireEnv } from "@opusfinder/shared/require-env";
 
 /**
- * Read + validate OPENROUTER_API_KEY. The soft "sk-or-" prefix check warns but never
- * hard-fails (prefixes can change; the provider is the real authority) and echoes only
- * non-sensitive shape, never the key.
+ * Read + validate OPENROUTER_API_KEY from the ambient environment: the fallback for a call that passes
+ * no `apiKey`. The soft "sk-or-" prefix check warns but never hard-fails (prefixes can change; the
+ * provider is the real authority) and echoes only non-sensitive shape, never the key. Nothing is read at
+ * import, and no file is loaded here: packages/llm/.env is loaded by the Node entry (./node).
  */
 export const getOpenRouterApiKey = requireEnv({
   name: "OPENROUTER_API_KEY",

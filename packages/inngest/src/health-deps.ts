@@ -8,7 +8,7 @@
 import { createDb } from "@opusfinder/db";
 import { getDatabaseUrl } from "@opusfinder/db/env";
 import { healthOptionsFromEnv } from "@opusfinder/db/health";
-import { sendHealthAlert } from "@opusfinder/email";
+import { sendHealthAlert } from "@opusfinder/email/node";
 
 import { getHealthAlertCooldownH } from "./health-alert";
 import type { HealthCheckDeps } from "./health-check";

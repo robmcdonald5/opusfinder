@@ -24,6 +24,7 @@ export type {
   Usage,
 } from "./messages";
 export { OpenRouterError } from "./openrouter";
+export type { LlmConfig } from "./openrouter";
 export { modelId } from "./provider";
 export type { Effort, ModelAlias, Thinking } from "./provider";
 export { pdfPart } from "./file-part";
