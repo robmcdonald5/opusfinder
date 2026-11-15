@@ -18,16 +18,16 @@ async function main(): Promise<void> {
     return;
   }
 
-  const { embeddings } = await embed([query], { inputType: "query" });
+  const { embeddings, model } = await embed([query], { inputType: "query" });
   const vec = embeddings[0];
   if (!vec) throw new Error("Voyage returned no embedding for the query.");
 
   const db = createDb(getDatabaseUrl());
-  const matches = await nearestJobs(db, vec, 10);
+  const matches = await nearestJobs(db, { embedding: vec, model }, 10);
 
   if (matches.length === 0) {
     console.log(
-      "No embedded jobs found. Run `pnpm embeddings:backfill` (or ingest with a key) first.",
+      `No jobs embedded by ${model} found. Run \`pnpm embeddings:backfill\` (or ingest with a key) first.`,
     );
     return;
   }

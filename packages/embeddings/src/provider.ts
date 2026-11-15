@@ -16,9 +16,10 @@ export type VoyageInputType = "query" | "document" | null;
 const VOYAGE_URL = "https://api.voyageai.com/v1/embeddings";
 export const EMBED_MODEL = "voyage-4-large";
 // Must match the jobs.embedding column width (EMBEDDING_DIMENSIONS in @opusfinder/db).
-// Moving EMBED_MODEL to another embedding space needs a full corpus + profile re-embed even at
-// the same width: no row records which model produced its vector, so a mixed corpus silently
-// corrupts retrieval. Swap by flush-then-refill (packages/db/scripts/reset-embeddings.ts).
+// EMBED_MODEL is stored beside every vector it produces (jobs/user_profiles.embedding_model), and
+// retrieval only compares vectors carrying the same tag. So after moving it to another embedding
+// space, old vectors are never mixed in, but they match nothing until re-embedded: flush then refill
+// (packages/db/scripts/reset-embeddings.ts) and re-embed each profile.
 export const EMBED_DIMENSIONS = 1024;
 
 // Per-request limits the embed() chunker enforces. They live HERE (the swap point) with

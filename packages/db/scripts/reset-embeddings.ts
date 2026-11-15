@@ -7,10 +7,10 @@ import { getDatabaseUrl } from "../src/env";
 import { resultRows } from "../src/repos/sql";
 
 /**
- * Flush `jobs.embedding` ahead of an embedding-model swap (e.g. voyage-3-large → voyage-4-large). Two
- * models embed into DIFFERENT spaces and no row records its model, so a mixed corpus silently returns
- * garbage rankings: every old vector must go before the refill. `nearestJobs` skips NULL rows, so it only
- * ever sees the refilled subset. Idempotent.
+ * Flush `jobs.embedding` (and its `embedding_model` tag) ahead of an embedding-model swap (e.g.
+ * voyage-3-large → voyage-4-large). Two models embed into DIFFERENT spaces. Retrieval only compares
+ * vectors carrying the same model tag, so an old vector can't corrupt a ranking, but the backfill refills
+ * only NULL rows: an old vector must go before its job can be re-embedded and matched again. Idempotent.
  *
  * DRY RUN BY DEFAULT — prints how many vectors would be cleared. `--apply` clears them, in id-keyset batches.
  *
@@ -20,8 +20,8 @@ import { resultRows } from "../src/repos/sql";
  * `pnpm embeddings:backfill` (runs this checkout's EMBED_MODEL), and un-pause the drain only once the live
  * Vercel prod deploy is built from the commit that carries the new EMBED_MODEL.
  *
- * Re-embed the QUERY side too: a stored profile vector keeps the old model until
- * `pnpm profiles:restructure <email>`, so run NO digest until every user is re-embedded.
+ * Re-embed the QUERY side too: a stored profile vector keeps the old model's tag until
+ * `pnpm profiles:restructure <email>`, and until then that user's retrieval matches no refilled job.
  *
  *   pnpm --filter @opusfinder/db exec tsx scripts/reset-embeddings.ts           (dry run)
  *   pnpm --filter @opusfinder/db exec tsx scripts/reset-embeddings.ts --apply   (clear every vector)
@@ -49,7 +49,7 @@ await runScript("ResetEmbeddings", async () => {
   for (;;) {
     const res = await db.execute(sql`
       WITH batch AS (SELECT id FROM jobs WHERE embedding IS NOT NULL ORDER BY id LIMIT ${BATCH})
-      UPDATE jobs SET embedding = NULL WHERE id IN (SELECT id FROM batch) RETURNING id`);
+      UPDATE jobs SET embedding = NULL, embedding_model = NULL WHERE id IN (SELECT id FROM batch) RETURNING id`);
     const n = resultRows(res).length;
     total += n;
     if (n > 0) console.log(`cleared ${total} ...`);

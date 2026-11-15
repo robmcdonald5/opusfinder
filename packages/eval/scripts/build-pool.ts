@@ -83,7 +83,8 @@ function vectorLiteral(vec: number[]): string {
 }
 const VECTOR_CAST = sql.raw(`::vector(${EMBEDDING_DIMENSIONS})`);
 
-/** The shared base predicates — must mirror retrieval.ts's SQL conditions. */
+/** The shared base predicates — must mirror retrieval.ts's SQL conditions (the voyage arm adds the
+ *  model match, the other arms read text only). */
 const BASE_WHERE = sql`embedding IS NOT NULL AND lifecycle_state = 'active' AND COALESCE(posted_at, created_at) >= now() - ${RECENCY_DAYS} * interval '1 day'`;
 
 /** Local mirror of repos/sql.ts's resultRows (not on the repos public surface) — a few duplicated
@@ -115,7 +116,9 @@ function armRow(row: unknown): ArmRow {
     title: typeof r.title === "string" ? r.title : String(r.title),
     // RAW text, never trimmed — the harness's "embed what ships" invariant (see build-dataset).
     descriptionText:
-      typeof r.description_text === "string" ? r.description_text : String(r.description_text ?? ""),
+      typeof r.description_text === "string"
+        ? r.description_text
+        : String(r.description_text ?? ""),
     locations: parseLocations(r.locations),
     remote: r.remote === true,
     contentSignature: typeof r.content_signature === "string" ? r.content_signature : null,
@@ -166,13 +169,14 @@ class Pool {
 async function exactNearest(
   db: AuthDb,
   literal: string,
+  model: string,
 ): Promise<(ArmRow & { distance: number })[]> {
   const result = await db.execute(sql`
     SELECT * FROM (
       SELECT id, title, description_text, locations, remote, content_signature,
              embedding <=> ${literal}${VECTOR_CAST} AS distance
       FROM ${jobs}
-      WHERE ${BASE_WHERE}
+      WHERE ${BASE_WHERE} AND embedding_model = ${model}
       OFFSET 0
     ) candidates
     ORDER BY distance
@@ -190,10 +194,10 @@ async function buildPoolFor(db: AuthDb, profile: EvalProfile): Promise<PoolFile>
   // Arm 1 — voyage: query-side embedding (profiles/embed.ts's exact shape), exact nearest, then
   // retrieval.ts's post-processing semantic: distance||id tiebreak sort, signature collapse
   // (Pool.add — nearest member represents the group), trim to VOYAGE_K.
-  const { embeddings } = await embed([composeProfileText(profile)], { inputType: "query" });
+  const { embeddings, model } = await embed([composeProfileText(profile)], { inputType: "query" });
   const queryVec = embeddings[0];
   if (!queryVec) throw new Error(`embed() returned no vector for profile ${profile.id}.`);
-  const nearest = await exactNearest(db, vectorLiteral(queryVec));
+  const nearest = await exactNearest(db, vectorLiteral(queryVec), model);
   nearest.sort((a, b) => a.distance - b.distance || a.id - b.id);
   let voyageCount = 0;
   for (const c of nearest) {
@@ -232,7 +236,9 @@ async function buildPoolFor(db: AuthDb, profile: EvalProfile): Promise<PoolFile>
   // seeded per-profile), then fetch the accepted rows. Deterministic for a fixed corpus + profile
   // id; a corpus change reshuffles, which a pool rebuild is anyway.
   const eligible = resultRows(
-    await db.execute(sql`SELECT id, content_signature FROM ${jobs} WHERE ${BASE_WHERE} ORDER BY id`),
+    await db.execute(
+      sql`SELECT id, content_signature FROM ${jobs} WHERE ${BASE_WHERE} ORDER BY id`,
+    ),
   ).map((row) => {
     const r = row as Record<string, unknown>;
     return {
@@ -249,7 +255,10 @@ async function buildPoolFor(db: AuthDb, profile: EvalProfile): Promise<PoolFile>
   const rng = mulberry32(hashString(profile.id));
   for (let i = eligible.length - 1; i > 0; i--) {
     const j = Math.floor(rng() * (i + 1));
-    [eligible[i], eligible[j]] = [eligible[j] as (typeof eligible)[number], eligible[i] as (typeof eligible)[number]];
+    [eligible[i], eligible[j]] = [
+      eligible[j] as (typeof eligible)[number],
+      eligible[i] as (typeof eligible)[number],
+    ];
   }
   const randomIds: number[] = [];
   const pooledIds = new Set(pool.members.map((m) => m.id));
@@ -297,10 +306,14 @@ async function buildPoolFor(db: AuthDb, profile: EvalProfile): Promise<PoolFile>
   // No silent caps: an under-filled arm (a cross-post-dominated neighborhood deeper than the
   // fetch, or a narrow FTS match set) must be visible in the run log, not read as "covered".
   if (voyageCount < VOYAGE_K) {
-    console.error(`  WARNING: voyage arm filled ${voyageCount}/${VOYAGE_K} (fetch ${VOYAGE_FETCH}).`);
+    console.error(
+      `  WARNING: voyage arm filled ${voyageCount}/${VOYAGE_K} (fetch ${VOYAGE_FETCH}).`,
+    );
   }
   if (ftsAccepted < FTS_K) {
-    console.error(`  note: fts arm filled ${ftsAccepted}/${FTS_K} (narrow match set is expected for some profiles).`);
+    console.error(
+      `  note: fts arm filled ${ftsAccepted}/${FTS_K} (narrow match set is expected for some profiles).`,
+    );
   }
   console.error(
     `[${profile.id}] pool=${pool.members.length} (voyage ${voyageCount}, +fts ${ftsAccepted}, ` +
@@ -320,9 +333,7 @@ async function main(): Promise<void> {
   const args = process.argv.slice(2);
   const only = getFlag(args, "--profile");
   const force = args.includes("--force");
-  const targets = only
-    ? [loadProfileFile(`${PROFILES_DIR}/${only}.json`)]
-    : loadAllProfileFiles();
+  const targets = only ? [loadProfileFile(`${PROFILES_DIR}/${only}.json`)] : loadAllProfileFiles();
   if (targets.length === 0) {
     throw new Error(`no profile files in ${relativeToPkg(PROFILES_DIR)} — nothing to pool.`);
   }

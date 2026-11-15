@@ -36,15 +36,15 @@ import {
 } from "./adapters/run-adapter";
 
 /**
- * The injected embedder — the structural MINIMUM that `backfillJobEmbeddings` accepts. The real
- * `embed()` returns a superset, so it satisfies this via structural subtyping. Omit `embed` to
+ * The injected embedder — the structural MINIMUM that `backfillJobEmbeddings` accepts (`model` is the
+ * tag it stores beside each vector). The real `embed()` satisfies this via structural subtyping. Omit `embed` to
  * skip inline embedding (the Worker does: `@opusfinder/embeddings` can't enter its bundle): jobs are
  * still upserted; the idempotent backfill fills the still-NULL vectors later.
  */
 export type IngestEmbedFn = (
   texts: string[],
   params: { inputType: "query" | "document" | null },
-) => Promise<{ embeddings: number[][]; usage: { totalTokens: number } }>;
+) => Promise<{ embeddings: number[][]; usage: { totalTokens: number }; model: string }>;
 
 /**
  * One board's outcome, handed to the optional `onBoard` progress hook as each board finishes.
@@ -212,7 +212,14 @@ const DEFAULT_PACE_MS = 500;
 // (packages/discovery/src/probe.ts) still hits apply.workable.com at up to ~2.5 req/s (follow-up).
 const RATE_LIMIT_COOLDOWN_MAX_MS = 10 * 60_000;
 // What a board's first pass did to its jobs' lifecycle, kept when the second pass re-runs it (see there).
-const LIFECYCLE_COUNTS = ["revived", "swept", "closed", "wouldClose", "sweepFailed", "driftedBoards"] as const;
+const LIFECYCLE_COUNTS = [
+  "revived",
+  "swept",
+  "closed",
+  "wouldClose",
+  "sweepFailed",
+  "driftedBoards",
+] as const;
 
 /**
  * Run one ingestion pass. Per-board failures are ISOLATED — a dead slug / 5xx increments
@@ -504,7 +511,8 @@ export async function runIngestion(db: Db, opts: IngestionOptions = {}): Promise
     for (const company of list) {
       const board = boards.get(company.id);
       if (!board) continue; // never started: the budget stopped the loop first
-      for (const key of Object.keys(board.counts)) counts[key] = (counts[key] ?? 0) + (board.counts[key] ?? 0);
+      for (const key of Object.keys(board.counts))
+        counts[key] = (counts[key] ?? 0) + (board.counts[key] ?? 0);
       if (!board.result.ok && board.result.error !== undefined) {
         errorSample ??= sampleOf(company, board.result.error);
       }

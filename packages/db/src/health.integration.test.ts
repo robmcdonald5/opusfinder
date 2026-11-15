@@ -20,7 +20,7 @@ import { companySlug, jobId, type NormalizedJob } from "@opusfinder/shared";
 import { uid } from "@test/db/ids";
 import { createTestDb } from "@test/db/pglite";
 import { truncate } from "@test/db/truncate";
-import { oneHot } from "@test/db/vectors";
+import { oneHot, TEST_MODEL } from "@test/db/vectors";
 
 // The hydrate_skip_ratio inputs are read from the LATEST ingestion run's `counts` jsonb by KEY NAME. The
 // pure evaluator suite (health.test.ts) feeds canned signals, so it can't see a key that drifted from the
@@ -91,7 +91,9 @@ describe("gatherHealthSignals — hydrate_skip_ratio inputs (integration: real P
   });
 
   it("reads 0 / 0 from a run row written before the counters existed", async () => {
-    await db.insert(sourceRuns).values({ pipeline: "ingestion", status: "ok", counts: { jobs: 5 } });
+    await db
+      .insert(sourceRuns)
+      .values({ pipeline: "ingestion", status: "ok", counts: { jobs: 5 } });
 
     const signals = await gatherHealthSignals(db);
 
@@ -138,7 +140,7 @@ describe("gatherHealthSignals — embedding_backlog (integration: real PGlite)",
       .where(eq(jobs.externalId, jobId("closed")));
     await db
       .update(jobs)
-      .set({ embedding: oneHot(0) })
+      .set({ embedding: oneHot(0), embeddingModel: TEST_MODEL })
       .where(eq(jobs.externalId, jobId("embedded")));
 
     expect((await gatherHealthSignals(db)).embeddingBacklog).toBe(1);

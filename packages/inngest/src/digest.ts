@@ -385,7 +385,7 @@ export async function runPerUser(deps: DigestDeps, event: PerUserEvent, step: Pe
       hasSentDigestForRun(deps.db, userId, digestRunId),
     ]);
     if (alreadySent) return { skip: "already-sent" as const };
-    if (!profile || !profile.embedding) return { skip: "no-profile-or-embedding" as const };
+    if (!profile || !profile.query) return { skip: "no-profile-or-embedding" as const };
     if (
       !profile.emailVerified ||
       !prefs ||
@@ -420,13 +420,13 @@ export async function runPerUser(deps: DigestDeps, event: PerUserEvent, step: Pe
       alreadyShownJobIds(deps.db, userId),
       alreadyShownSignatures(deps.db, userId),
     ]);
-    if (!profile?.embedding) {
+    if (!profile?.query) {
       throw new Error(`digest: profile embedding disappeared mid-run (user ${userId}).`);
     }
     const { homePlaceId, radiusMiles } = loaded.prefs;
     const home = homePlaceId === null ? null : { placeId: homePlaceId, radiusMiles };
     const [rawCandidates, localStrings] = await Promise.all([
-      retrieveCandidatesForProfile(deps.db, profile.embedding, {
+      retrieveCandidatesForProfile(deps.db, profile.query, {
         limit: RETRIEVE_LIMIT,
         location: { mode: loaded.prefs.locationMode, home },
         recencyDays: loaded.prefs.recencyDays,

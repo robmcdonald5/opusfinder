@@ -25,7 +25,11 @@ function seamReturning(response: Awaited<ReturnType<ProfileEmbedFn>>) {
 
 describe("embedQuery — unwrap-and-validate over the injected embed seam (unit: pure, stubbed ProfileEmbedFn)", () => {
   it("calls the seam exactly once with a single-element [text] array and inputType query", async () => {
-    const embed = seamReturning({ embeddings: [[0.5, 0.5]], usage: { totalTokens: 7 } });
+    const embed = seamReturning({
+      embeddings: [[0.5, 0.5]],
+      usage: { totalTokens: 7 },
+      model: "m",
+    });
     await embedQuery(embed, "backend engineer profile");
     expect(embed).toHaveBeenCalledTimes(1);
     expect(embed).toHaveBeenCalledWith(["backend engineer profile"], { inputType: "query" });
@@ -34,7 +38,7 @@ describe("embedQuery — unwrap-and-validate over the injected embed seam (unit:
   it("returns the first vector by reference and the seam usage verbatim (totalTokens 42)", async () => {
     const vector = [0.25, 0.5, 0.75];
     const usage = { totalTokens: 42 };
-    const embed = seamReturning({ embeddings: [vector], usage });
+    const embed = seamReturning({ embeddings: [vector], usage, model: "m" });
     const result = await embedQuery(embed, "profile text");
     // Same REFERENCES, not copies — a defensive [...vector] / {...usage} would break these pins.
     expect(result.vector).toBe(vector);
@@ -44,20 +48,20 @@ describe("embedQuery — unwrap-and-validate over the injected embed seam (unit:
   });
 
   it("treats usage.totalTokens 0 as a normal result, not an error", async () => {
-    const embed = seamReturning({ embeddings: [[1]], usage: { totalTokens: 0 } });
+    const embed = seamReturning({ embeddings: [[1]], usage: { totalTokens: 0 }, model: "m" });
     const result = await embedQuery(embed, "tiny");
     expect(result.usage).toEqual({ totalTokens: 0 });
     expect(result.vector).toEqual([1]);
   });
 
   it("rejects with the exact no-usable-vector message when embeddings is []", async () => {
-    const embed = seamReturning({ embeddings: [], usage: { totalTokens: 3 } });
+    const embed = seamReturning({ embeddings: [], usage: { totalTokens: 3 }, model: "m" });
     const err = await rejectionOf(embedQuery(embed, "profile text"));
     expect(err.message).toBe(NO_VECTOR_MESSAGE);
   });
 
   it("rejects with the same exact message when the first vector is zero-length", async () => {
-    const embed = seamReturning({ embeddings: [[]], usage: { totalTokens: 3 } });
+    const embed = seamReturning({ embeddings: [[]], usage: { totalTokens: 3 }, model: "m" });
     const err = await rejectionOf(embedQuery(embed, "profile text"));
     expect(err.message).toBe(NO_VECTOR_MESSAGE);
   });
@@ -74,7 +78,11 @@ describe("embedQuery — unwrap-and-validate over the injected embed seam (unit:
 
   it("negative space: passes a wrong-width vector through unvalidated — dimension enforcement lives in db vectorLiteral, not here", async () => {
     const wrongWidth = [1, 2, 3]; // deliberately unrelated to EMBEDDING_DIMENSIONS
-    const embed = seamReturning({ embeddings: [wrongWidth], usage: { totalTokens: 5 } });
+    const embed = seamReturning({
+      embeddings: [wrongWidth],
+      usage: { totalTokens: 5 },
+      model: "m",
+    });
     const result = await embedQuery(embed, "profile text");
     // Resolved (no width throw) AND untransformed — pins that embedQuery adds no dimension check.
     expect(result.vector).toBe(wrongWidth);
@@ -82,7 +90,11 @@ describe("embedQuery — unwrap-and-validate over the injected embed seam (unit:
 
   it("negative space: ignores extra vectors beyond index 0 and passes non-finite elements (NaN) through — no finiteness check", async () => {
     const first = [Number.NaN, Number.POSITIVE_INFINITY, 0.5];
-    const embed = seamReturning({ embeddings: [first, [9, 9, 9]], usage: { totalTokens: 5 } });
+    const embed = seamReturning({
+      embeddings: [first, [9, 9, 9]],
+      usage: { totalTokens: 5 },
+      model: "m",
+    });
     const result = await embedQuery(embed, "profile text");
     expect(result.vector).toBe(first); // embeddings[1] is silently ignored
     expect(Number.isNaN(result.vector[0])).toBe(true); // NaN survives — no Number.isFinite guard
@@ -90,7 +102,7 @@ describe("embedQuery — unwrap-and-validate over the injected embed seam (unit:
   });
 
   it("negative space: forwards an empty text string to the seam unchecked — the empty-input guard is the callers' responsibility", async () => {
-    const embed = seamReturning({ embeddings: [[0.1]], usage: { totalTokens: 0 } });
+    const embed = seamReturning({ embeddings: [[0.1]], usage: { totalTokens: 0 }, model: "m" });
     const result = await embedQuery(embed, "");
     expect(embed).toHaveBeenCalledWith([""], { inputType: "query" });
     expect(result.vector).toEqual([0.1]);

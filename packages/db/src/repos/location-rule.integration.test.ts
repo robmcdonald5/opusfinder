@@ -18,7 +18,7 @@ import { companySlug, jobId, type LocationMode, type UnmatchedPlace } from "@opu
 import { P, seedPlaces } from "@test/db/places";
 import { truncate } from "@test/db/truncate";
 import { createTestDb } from "@test/db/pglite";
-import { blend, oneHot } from "@test/db/vectors";
+import { blend, oneHot, tagged, TEST_MODEL } from "@test/db/vectors";
 
 /** A job: its company, raw location strings, remote flag, and (unless stated) a vector at distance 0. */
 interface JobSpec {
@@ -107,6 +107,7 @@ describe("location rule in retrieval (integration: real PGlite)", () => {
     await writeJobEmbeddings(
       db,
       specs.map((s) => ({ id: ids.get(s.key)!, embedding: s.embedding ?? oneHot(0) })),
+      TEST_MODEL,
     );
     const rowsToStore = [];
     for (const s of strings) {
@@ -131,7 +132,7 @@ describe("location rule in retrieval (integration: real PGlite)", () => {
     limit = 50,
   ): Promise<string[]> {
     const byId = new Map([...ids].map(([k, v]) => [v, k]));
-    const result = await retrieveCandidatesForProfile(db, oneHot(0), { limit, location });
+    const result = await retrieveCandidatesForProfile(db, tagged(oneHot(0)), { limit, location });
     return result.map((c) => byId.get(c.id)!).sort();
   }
 
@@ -443,11 +444,13 @@ describe("location rule in retrieval (integration: real PGlite)", () => {
       ],
     );
     // No vector index ships, so build one for the planner to be pushed toward.
-    await db.execute(sql`CREATE INDEX test_hnsw_idx ON jobs USING hnsw (embedding vector_cosine_ops)`);
+    await db.execute(
+      sql`CREATE INDEX test_hnsw_idx ON jobs USING hnsw (embedding vector_cosine_ops)`,
+    );
     await db.execute(sql`SET enable_seqscan = off`);
     await db.execute(sql`SET hnsw.ef_search = 1`);
     try {
-      const result = await retrieveCandidatesForProfile(db, oneHot(0), {
+      const result = await retrieveCandidatesForProfile(db, tagged(oneHot(0)), {
         limit: 10,
         overFetch: 1,
         location: { mode: "any", home: COLUMBUS_50 },

@@ -13,6 +13,7 @@ import type { StructuredProfile, UserId } from "@opusfinder/shared";
 
 import type { Db } from "../client";
 import { user, userCvFiles, userProfiles, type CvFileStatus } from "../schema";
+import type { TaggedVector } from "./embeddings";
 import { NUL, stripNul, VECTOR_CAST, vectorLiteral } from "./sql";
 
 /** Cap on a stored `error_sample` — truncated and NUL-stripped; callers must pass a non-PII message
@@ -96,13 +97,15 @@ export interface UpsertUserProfileInput {
   userId: UserId;
   structured: StructuredProfile;
   embedding: number[];
+  /** The id of the model that produced `embedding`, as the embedder reported it. */
+  embeddingModel: string;
   sourceCvFileId: number;
 }
 
 /**
  * Upsert the user's profile (one row per `user_id`), latest CV wins. Writes the structured JSON, the
- * embedding vector, and the backing file id; bumps `updated_at`. The embedding is bound as the
- * pgvector text literal cast to `::vector(N)` (same form as the jobs embeddings).
+ * embedding vector with its model tag, and the backing file id; bumps `updated_at`. The embedding is
+ * bound as the pgvector text literal cast to `::vector(N)` (same form as the jobs embeddings).
  */
 export async function upsertUserProfile(
   db: Db,
@@ -114,6 +117,7 @@ export async function upsertUserProfile(
       userId: input.userId,
       structured: stripNul(input.structured) as StructuredProfile,
       embedding: sql`${vectorLiteral(input.embedding)}${VECTOR_CAST}`,
+      embeddingModel: input.embeddingModel,
       sourceCvFileId: input.sourceCvFileId,
     })
     .onConflictDoUpdate({
@@ -122,6 +126,7 @@ export async function upsertUserProfile(
       set: {
         structured: sql`excluded.structured`,
         embedding: sql`excluded.embedding`,
+        embeddingModel: sql`excluded.embedding_model`,
         sourceCvFileId: sql`excluded.source_cv_file_id`,
         updatedAt: sql`now()`,
       },
@@ -164,18 +169,25 @@ export async function getProfileTextKey(db: Db, userId: UserId): Promise<Profile
  */
 export interface ProfileForDigest {
   structured: StructuredProfile;
-  embedding: number[] | null;
+  /** The stored vector with its model tag, the only form retrieval accepts. Null when the row has no
+   *  vector; a vector without a tag can't be stored (user_profiles_embedding_model_paired), and is
+   *  read as null here all the same, so an untagged vector never reaches a comparison. */
+  query: TaggedVector | null;
   sourceCvFileId: number;
   /** `user.email_verified` — checked at GENERATION time too (not just the Phase-11 send gate), so a
    *  manual single-user trigger can't spend tokens on, or pollute the shown-history of, an unverified
    *  user the `--all` sweep (listDigestRecipients) would skip. */
   emailVerified: boolean;
 }
-export async function getProfileForDigest(db: Db, userId: UserId): Promise<ProfileForDigest | null> {
+export async function getProfileForDigest(
+  db: Db,
+  userId: UserId,
+): Promise<ProfileForDigest | null> {
   const rows = await db
     .select({
       structured: userProfiles.structured,
       embedding: userProfiles.embedding,
+      embeddingModel: userProfiles.embeddingModel,
       sourceCvFileId: userProfiles.sourceCvFileId,
       emailVerified: user.emailVerified,
     })
@@ -187,7 +199,10 @@ export async function getProfileForDigest(db: Db, userId: UserId): Promise<Profi
   if (!row) return null;
   return {
     structured: row.structured,
-    embedding: row.embedding,
+    query:
+      row.embedding !== null && row.embeddingModel !== null
+        ? { embedding: row.embedding, model: row.embeddingModel }
+        : null,
     sourceCvFileId: row.sourceCvFileId,
     emailVerified: row.emailVerified,
   };

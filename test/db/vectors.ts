@@ -23,3 +23,14 @@ export function blend(x: number, y: number): number[] {
   v[1] = y;
   return v;
 }
+
+/** The model tag the suites store beside their fixture vectors, and query with. */
+export const TEST_MODEL = "test-embed-1";
+
+/** A fixture vector as the tagged pair retrieval takes (TEST_MODEL unless another model is named). */
+export function tagged(
+  embedding: number[],
+  model = TEST_MODEL,
+): { embedding: number[]; model: string } {
+  return { embedding, model };
+}

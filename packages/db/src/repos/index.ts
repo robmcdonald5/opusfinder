@@ -23,7 +23,7 @@ export {
   nearestJobs,
   jobEmbeddingText,
 } from "./embeddings";
-export type { JobNeedingEmbedding, JobNeighbor } from "./embeddings";
+export type { JobNeedingEmbedding, JobNeighbor, TaggedVector } from "./embeddings";
 export {
   insertCvFile,
   patchCvFileExtracted,

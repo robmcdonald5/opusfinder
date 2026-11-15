@@ -119,16 +119,16 @@ async function explainUser(
       return;
     }
     printJob(job);
-    const rank = profile?.embedding
-      ? await cosineRankIgnoringLocation(db, profile.embedding, job.id, recencyDays)
+    const rank = profile?.query
+      ? await cosineRankIgnoringLocation(db, profile.query, job.id, recencyDays)
       : null;
     console.log(
-      `  cosine rank with location ignored: ${rank ?? (profile?.embedding ? "not a candidate (closed, unembedded or too old)" : "no profile embedding")}\n`,
+      `  cosine rank with location ignored: ${rank ?? (profile?.query ? "not a candidate (closed, not embedded by the profile's model, or too old)" : "no profile embedding")}\n`,
     );
     return;
   }
 
-  if (!profile?.embedding) {
+  if (!profile?.query) {
     console.log("  no profile embedding, so no candidates\n");
     return;
   }
@@ -136,7 +136,7 @@ async function explainUser(
     alreadyShownJobIds(db, userId),
     alreadyShownSignatures(db, userId),
   ]);
-  const candidates = await retrieveCandidatesForProfile(db, profile.embedding, {
+  const candidates = await retrieveCandidatesForProfile(db, profile.query, {
     limit: opts.limit,
     location: filter,
     recencyDays,

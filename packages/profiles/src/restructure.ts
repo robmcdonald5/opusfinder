@@ -43,12 +43,13 @@ export async function restructureProfile(
     throw new Error("restructureProfile: re-structured profile had no embeddable content");
   }
 
-  const { vector, usage } = await embedQuery(deps.embed, embedText);
+  const { vector, model, usage } = await embedQuery(deps.embed, embedText);
 
   await upsertUserProfile(db, {
     userId,
     structured,
     embedding: vector,
+    embeddingModel: model,
     sourceCvFileId: ref.sourceCvFileId,
   });
   return {

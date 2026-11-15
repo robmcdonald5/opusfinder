@@ -13,7 +13,7 @@ import { companySlug, jobId, type NormalizedJob } from "@opusfinder/shared";
 
 import { createTestDb } from "@test/db/pglite";
 import { truncate } from "@test/db/truncate";
-import { blend, oneHot } from "@test/db/vectors";
+import { blend, oneHot, tagged, TEST_MODEL } from "@test/db/vectors";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -88,7 +88,7 @@ describe("retrieveCandidatesForProfile — SQL filter + cosine rank + post-filte
     const embeds = specs.flatMap((s, i) =>
       s.embedding ? [{ id: ids[i]!, embedding: s.embedding }] : [],
     );
-    if (embeds.length > 0) await writeJobEmbeddings(db, embeds);
+    if (embeds.length > 0) await writeJobEmbeddings(db, embeds, TEST_MODEL);
     return ids;
   }
 
@@ -100,7 +100,7 @@ describe("retrieveCandidatesForProfile — SQL filter + cosine rank + post-filte
       { externalId: "mid", title: "Data Platform Engineer", embedding: blend(0.6, 0.8) },
       { externalId: "near", title: "Senior Platform Engineer", embedding: oneHot(0) },
     ]);
-    const result = await retrieveCandidatesForProfile(db, oneHot(0), { limit: 10 });
+    const result = await retrieveCandidatesForProfile(db, tagged(oneHot(0)), { limit: 10 });
     expect(result).toHaveLength(3);
     // If the SQL distance key is removed, the id tiebreak alone returns [C, B, A]; three strictly
     // distinct distances mean no tie can mask the regression.
@@ -125,7 +125,10 @@ describe("retrieveCandidatesForProfile — SQL filter + cosine rank + post-filte
     // the writeJobEmbeddings UPDATE's own row-processing order, and an ORDER-BY-dropped LIMIT 1
     // deterministically returns FAR (red), never NEAR by plan accident.
     await db.execute(sql`UPDATE ${jobs} SET updated_at = now() WHERE id = ${seeded[1]!}`);
-    const result = await retrieveCandidatesForProfile(db, oneHot(0), { limit: 1, overFetch: 1 });
+    const result = await retrieveCandidatesForProfile(db, tagged(oneHot(0)), {
+      limit: 1,
+      overFetch: 1,
+    });
     expect(result).toHaveLength(1);
     // Dropping the SQL distance ordering makes the seq scan feed LIMIT 1 its first physical row — FAR.
     expect(result[0]!.id).toBe(seeded[1]!);
@@ -150,10 +153,28 @@ describe("retrieveCandidatesForProfile — SQL filter + cosine rank + post-filte
         embedding: blend(0.6, 0.8),
       },
     ]);
-    const result = await retrieveCandidatesForProfile(db, oneHot(0), { limit: 10 });
+    const result = await retrieveCandidatesForProfile(db, tagged(oneHot(0)), { limit: 10 });
     expect(result).toHaveLength(1);
     expect(result[0]!.id).toBe(seeded[1]!);
     expect(result.map((c) => c.id)).not.toContain(seeded[0]!);
+  });
+
+  it("never compares across models: a profile only meets the jobs its own model embedded", async () => {
+    // The other model's vector is IDENTICAL to the query, so by distance alone it would rank first.
+    const seeded = await seedBoard([
+      { externalId: "other-model", title: "Senior Platform Engineer", embedding: oneHot(0) },
+      { externalId: "same-model", title: "Data Platform Engineer", embedding: blend(0.6, 0.8) },
+    ]);
+    await writeJobEmbeddings(db, [{ id: seeded[0]!, embedding: oneHot(0) }], "other-model");
+
+    const own = await retrieveCandidatesForProfile(db, tagged(oneHot(0)), { limit: 10 });
+    expect(own.map((c) => c.id)).toEqual([seeded[1]!]);
+    const other = await retrieveCandidatesForProfile(db, tagged(oneHot(0), "other-model"), {
+      limit: 10,
+    });
+    expect(other.map((c) => c.id)).toEqual([seeded[0]!]);
+    // A model no job was embedded by retrieves nothing, however close the vectors are.
+    expect(await retrieveCandidatesForProfile(db, tagged(oneHot(0), "third-model"))).toEqual([]);
   });
 
   // B4
@@ -166,9 +187,11 @@ describe("retrieveCandidatesForProfile — SQL filter + cosine rank + post-filte
     const idP = seeded[0]!;
     const idQ = seeded[1]!;
     // created_at is defaultNow() — only a raw UPDATE can backdate it (30d >> the 14d window).
-    await db.execute(sql`UPDATE ${jobs} SET created_at = now() - interval '30 days' WHERE id = ${idQ}`);
+    await db.execute(
+      sql`UPDATE ${jobs} SET created_at = now() - interval '30 days' WHERE id = ${idQ}`,
+    );
 
-    const result = await retrieveCandidatesForProfile(db, oneHot(0), { limit: 10 });
+    const result = await retrieveCandidatesForProfile(db, tagged(oneHot(0)), { limit: 10 });
     const ids = result.map((c) => c.id);
     // If COALESCE degrades to bare `posted_at >= ...`, NULL posted_at makes the predicate NULL
     // and P silently disappears.
@@ -196,10 +219,10 @@ describe("retrieveCandidatesForProfile — SQL filter + cosine rank + post-filte
     ]);
     const idOld = seeded[0]!;
     // Sanity anchor: the default 14-day window excludes the 30-day-old job.
-    const defaults = await retrieveCandidatesForProfile(db, oneHot(0), { limit: 10 });
+    const defaults = await retrieveCandidatesForProfile(db, tagged(oneHot(0)), { limit: 10 });
     expect(defaults.map((c) => c.id)).not.toContain(idOld);
 
-    const widened = await retrieveCandidatesForProfile(db, oneHot(0), {
+    const widened = await retrieveCandidatesForProfile(db, tagged(oneHot(0)), {
       limit: 10,
       recencyDays: 60,
     });
@@ -232,7 +255,7 @@ describe("retrieveCandidatesForProfile — SQL filter + cosine rank + post-filte
       },
       { externalId: "clean", title: "Platform Engineer", embedding: oneHot(1) },
     ]);
-    const result = await retrieveCandidatesForProfile(db, oneHot(0), {
+    const result = await retrieveCandidatesForProfile(db, tagged(oneHot(0)), {
       limit: 10,
       exclusions: ["ai"],
     });
@@ -262,7 +285,7 @@ describe("retrieveCandidatesForProfile — SQL filter + cosine rank + post-filte
         embedding: blend(0.6, 0.8),
       },
     ]);
-    const result = await retrieveCandidatesForProfile(db, oneHot(0), {
+    const result = await retrieveCandidatesForProfile(db, tagged(oneHot(0)), {
       limit: 10,
       exclusions: ["blockchain"],
     });
@@ -279,7 +302,7 @@ describe("retrieveCandidatesForProfile — SQL filter + cosine rank + post-filte
       { externalId: "mid-crypto", title: "Senior Crypto Analyst", embedding: blend(0.6, 0.8) },
       { externalId: "clean", title: "Data Engineer", embedding: oneHot(1) },
     ]);
-    const result = await retrieveCandidatesForProfile(db, oneHot(0), {
+    const result = await retrieveCandidatesForProfile(db, tagged(oneHot(0)), {
       limit: 1,
       exclusions: ["crypto"],
     });
@@ -299,7 +322,7 @@ describe("retrieveCandidatesForProfile — SQL filter + cosine rank + post-filte
       { externalId: "d072", title: "Staff Data Scientist", embedding: blend(0.28, 0.96) },
       { externalId: "d1", title: "Embedded Firmware Engineer", embedding: oneHot(1) },
     ]);
-    const result = await retrieveCandidatesForProfile(db, oneHot(0), { limit: 2 });
+    const result = await retrieveCandidatesForProfile(db, tagged(oneHot(0)), { limit: 2 });
     // Removing `.slice(0, limit)` returns all 4 rows.
     expect(result).toHaveLength(2);
     // The "two nearest, in order" half re-pins ordering-before-trim.
@@ -323,7 +346,7 @@ describe("retrieveCandidatesForProfile — SQL filter + cosine rank + post-filte
     // the raw SQL row order after this UPDATE is [T2, T1].
     await db.execute(sql`UPDATE ${jobs} SET updated_at = now() WHERE id = ${idT1}`);
 
-    const result = await retrieveCandidatesForProfile(db, oneHot(0), { limit: 10 });
+    const result = await retrieveCandidatesForProfile(db, tagged(oneHot(0)), { limit: 10 });
     expect(result).toHaveLength(2);
     // Removing the id tiebreak returns [T2, T1].
     expect(result.map((c) => c.id)).toEqual([idT1, idT2]);
@@ -342,7 +365,7 @@ describe("retrieveCandidatesForProfile — SQL filter + cosine rank + post-filte
       sql`UPDATE ${jobs} SET lifecycle_state = 'closed', closed_at = now() WHERE id = ${idX}`,
     );
 
-    const result = await retrieveCandidatesForProfile(db, oneHot(0), { limit: 10 });
+    const result = await retrieveCandidatesForProfile(db, tagged(oneHot(0)), { limit: 10 });
     expect(result).toHaveLength(1);
     // X sits at distance 0 — dropping `lifecycle_state = 'active'` surfaces it at rank 1 (a
     // farther-than-Y closed seed would be vacuous under small limits).
@@ -357,7 +380,7 @@ describe("retrieveCandidatesForProfile — SQL filter + cosine rank + post-filte
       { externalId: "u", title: "Senior Platform Engineer" },
       { externalId: "v", title: "Data Platform Engineer", embedding: oneHot(0) },
     ]);
-    const result = await retrieveCandidatesForProfile(db, oneHot(0), { limit: 10 });
+    const result = await retrieveCandidatesForProfile(db, tagged(oneHot(0)), { limit: 10 });
     expect(result).toHaveLength(1);
     // Number(null) === 0: without `embedding IS NOT NULL`, U comes back with a fake distance of 0.
     expect(result[0]!.id).toBe(seeded[1]!);
@@ -373,7 +396,7 @@ describe("retrieveCandidatesForProfile — SQL filter + cosine rank + post-filte
       { externalId: "h", title: "Data Platform Engineer", embedding: blend(0.6, 0.8) },
     ]);
     const idG = seeded[0]!;
-    const result = await retrieveCandidatesForProfile(db, oneHot(0), {
+    const result = await retrieveCandidatesForProfile(db, tagged(oneHot(0)), {
       limit: 10,
       excludeJobIds: [idG],
     });
@@ -406,7 +429,7 @@ describe("retrieveCandidatesForProfile — SQL filter + cosine rank + post-filte
     // upsertJobs signs S (it has a description) — a NULL-signature row needs a raw UPDATE.
     await db.execute(sql`UPDATE ${jobs} SET content_signature = NULL WHERE id = ${idS}`);
 
-    const result = await retrieveCandidatesForProfile(db, oneHot(0), {
+    const result = await retrieveCandidatesForProfile(db, tagged(oneHot(0)), {
       limit: 10,
       excludeSignatures: [sigR!],
     });
@@ -431,7 +454,7 @@ describe("retrieveCandidatesForProfile — SQL filter + cosine rank + post-filte
     const idX1 = seeded[0]!;
     const idX2 = seeded[1]!;
     const idY = seeded[2]!;
-    const result = await retrieveCandidatesForProfile(db, oneHot(0), { limit: 2 });
+    const result = await retrieveCandidatesForProfile(db, tagged(oneHot(0)), { limit: 2 });
     // limit=2 over exactly 3 candidates makes the back-fill observable: without the collapse (or
     // with collapse-after-trim) the two nearest rows are X1+X2 and Y can never seat.
     expect(result).toHaveLength(2);
@@ -448,7 +471,7 @@ describe("retrieveCandidatesForProfile — SQL filter + cosine rank + post-filte
       { externalId: "e1", title: "Software Engineer", description: "", embedding: oneHot(0) },
       { externalId: "e2", title: "Software  Engineer", description: "   ", embedding: oneHot(0) },
     ]);
-    const result = await retrieveCandidatesForProfile(db, oneHot(0), { limit: 10 });
+    const result = await retrieveCandidatesForProfile(db, tagged(oneHot(0)), { limit: 10 });
     expect(result.map((c) => c.id)).toEqual(seeded);
     expect(result.map((c) => c.contentSignature)).toEqual([null, null]);
   });
@@ -472,7 +495,7 @@ describe("retrieveCandidatesForProfile — SQL filter + cosine rank + post-filte
         embedding: blend(0.6, 0.8),
       },
     ]);
-    const result = await retrieveCandidatesForProfile(db, oneHot(0), {
+    const result = await retrieveCandidatesForProfile(db, tagged(oneHot(0)), {
       limit: 10,
       location: { mode: "remote_only", home: null },
     });
@@ -501,7 +524,7 @@ describe("retrieveCandidatesForProfile — SQL filter + cosine rank + post-filte
         embedding: blend(0.6, 0.8),
       },
     ]);
-    const result = await retrieveCandidatesForProfile(db, oneHot(0), {
+    const result = await retrieveCandidatesForProfile(db, tagged(oneHot(0)), {
       limit: 10,
       location: { mode: "onsite_only", home: null },
     });
@@ -524,7 +547,7 @@ describe("retrieveCandidatesForProfile — SQL filter + cosine rank + post-filte
       },
     ]);
     const idMap = seeded[0]!;
-    const result = await retrieveCandidatesForProfile(db, oneHot(0), { limit: 10 });
+    const result = await retrieveCandidatesForProfile(db, tagged(oneHot(0)), { limit: 10 });
     expect(result).toHaveLength(1);
     const candidate = result[0]!;
     expect(candidate.id).toBe(idMap);
@@ -548,7 +571,10 @@ describe("retrieveCandidatesForProfile — SQL filter + cosine rank + post-filte
     const seeded = await seedBoard([
       { externalId: "solo", title: "Senior Platform Engineer", embedding: oneHot(0) },
     ]);
-    const result = await retrieveCandidatesForProfile(db, oneHot(0), { limit: 1, overFetch: 0 });
+    const result = await retrieveCandidatesForProfile(db, tagged(oneHot(0)), {
+      limit: 1,
+      overFetch: 0,
+    });
     // Without the Math.max(1, ...) floor, fetchLimit = 1*0 = 0 → SQL `LIMIT 0` → [].
     expect(result).toHaveLength(1);
     expect(result[0]!.id).toBe(seeded[0]!);
@@ -560,9 +586,9 @@ describe("retrieveCandidatesForProfile — SQL filter + cosine rank + post-filte
     // pgvector's own plan-time cast error ("expected 1024 dimensions, not 3") ALSO matches /1024/,
     // so a bare /1024/ matcher would stay green with the guard deleted. Pin the guard's exact text
     // ("vectorLiteral:", "got 3") — only the sql.ts throw can produce it.
-    await expect(retrieveCandidatesForProfile(db, new Array<number>(3).fill(0))).rejects.toThrow(
-      /vectorLiteral: expected 1024 dimensions, got 3/,
-    );
+    await expect(
+      retrieveCandidatesForProfile(db, tagged(new Array<number>(3).fill(0))),
+    ).rejects.toThrow(/vectorLiteral: expected 1024 dimensions, got 3/);
   });
 
   // B20
@@ -584,11 +610,16 @@ describe("retrieveCandidatesForProfile — SQL filter + cosine rank + post-filte
       .update(jobs)
       .set({ lifecycleState: "closed", closedAt: sql`now()` })
       .where(inArray(jobs.id, seeded.slice(0, 30)));
-    await db.execute(sql`CREATE INDEX test_hnsw_idx ON jobs USING hnsw (embedding vector_cosine_ops)`);
+    await db.execute(
+      sql`CREATE INDEX test_hnsw_idx ON jobs USING hnsw (embedding vector_cosine_ops)`,
+    );
     await db.execute(sql`SET enable_seqscan = off`);
     await db.execute(sql`SET hnsw.ef_search = 1`);
     try {
-      const result = await retrieveCandidatesForProfile(db, oneHot(0), { limit: 10, overFetch: 1 });
+      const result = await retrieveCandidatesForProfile(db, tagged(oneHot(0)), {
+        limit: 10,
+        overFetch: 1,
+      });
       expect(result.map((c) => c.id)).toEqual(seeded.slice(30));
     } finally {
       await db.execute(sql`RESET enable_seqscan`);

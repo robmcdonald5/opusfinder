@@ -10,7 +10,7 @@ import type { PutObjectInput, StorageClient } from "@opusfinder/storage";
 import { uid } from "@test/db/ids";
 import { createTestDb } from "@test/db/pglite";
 import { truncate } from "@test/db/truncate";
-import { oneHot } from "@test/db/vectors";
+import { oneHot, TEST_MODEL } from "@test/db/vectors";
 import { rejectionOf, rejectionReasonOf } from "@test/rejection";
 
 import { ingestCv, type IngestCvOptions } from "./ingest";
@@ -140,6 +140,7 @@ function stubEmbed(vec: number[] = oneHot(3)) {
   return vi.fn<ProfileEmbedFn>(async (texts) => ({
     embeddings: texts.map(() => vec),
     usage: { totalTokens: 42 },
+    model: TEST_MODEL,
   }));
 }
 
@@ -216,6 +217,7 @@ describe("ingestCv — CV → profile pipeline (stub seams, real PGlite persiste
         userId,
         structured: { summary: "bystander profile", skills: ["Rust"], targetRoles: ["SRE"] },
         embedding: oneHot(7), // distinct from every vector the tests ingest for A
+        embeddingModel: TEST_MODEL,
         sourceCvFileId,
         ...over,
       })
@@ -326,6 +328,7 @@ describe("ingestCv — CV → profile pipeline (stub seams, real PGlite persiste
     expect(profile.id).toBe(result.profileId);
     expect(profile.structured).toEqual(FULL_PROFILE); // scrub is identity on the clean fixture
     expect(profile.embedding).toEqual(oneHot(3)); // exact float4 round-trip of the seam's vector
+    expect(profile.embeddingModel).toBe(TEST_MODEL); // the seam's model id, stored beside its vector
     expect(profile.sourceCvFileId).toBe(result.fileId);
 
     // B's profile byte-identical + A's older rows untouched (patch kept its id AND user scope).
@@ -514,6 +517,7 @@ describe("ingestCv — CV → profile pipeline (stub seams, real PGlite persiste
     const embed = vi.fn<ProfileEmbedFn>(async () => ({
       embeddings: [],
       usage: { totalTokens: 42 },
+      model: TEST_MODEL,
     }));
     const { client, puts } = spyStorage();
 
@@ -536,6 +540,7 @@ describe("ingestCv — CV → profile pipeline (stub seams, real PGlite persiste
     const embed = vi.fn<ProfileEmbedFn>(async () => ({
       embeddings: [[]],
       usage: { totalTokens: 42 },
+      model: TEST_MODEL,
     }));
     const { client } = spyStorage();
 

@@ -317,7 +317,9 @@ export async function upsertJobs(
 
   // The content-derived `embedding` resets to NULL when (and only when) title/description_text change, so
   // the backfill re-embeds next pass; any other (setWhere) churn KEEPS the existing vector (re-embedding
-  // identical prose is wasted work + tokens). The helper reads ${jobs.embedding} (the EXISTING row), NEVER
+  // identical prose is wasted work + tokens). Its `embedding_model` tag goes through the SAME helper, so
+  // the two clear together (jobs_embedding_model_paired rejects a row where they differ). The helper reads
+  // ${jobs.embedding} (the EXISTING row), NEVER
   // excluded.embedding: the INSERT VALUES omits the derived column, so excluded.* is the column DEFAULT
   // (NULL) and an `ELSE excluded.embedding` would silently NULL every already-embedded row on every
   // non-content churn. (content_signature is the exception — it is RECOMPUTED, not preserved, so it stays an
@@ -359,6 +361,7 @@ export async function upsertJobs(
       postedAt: sql`excluded.posted_at`,
       // Reset the derived embedding on a content change, keep it otherwise (see nullIfContentChanged above).
       embedding: nullIfContentChanged(jobs.embedding),
+      embeddingModel: nullIfContentChanged(jobs.embeddingModel),
       // content_signature: rewritten unconditionally from excluded title+desc via the ONE signatureSql
       // definition (the setWhere note below explains why it is written but NOT also tested).
       contentSignature: signatureSql(sql`excluded.title`, sql`(${description})`),

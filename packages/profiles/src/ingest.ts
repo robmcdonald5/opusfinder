@@ -108,12 +108,13 @@ export async function ingestCv(db: Db, opts: IngestCvOptions): Promise<IngestCvR
       };
     }
 
-    const { vector, usage } = await embedQuery(embed, embedText);
+    const { vector, model, usage } = await embedQuery(embed, embedText);
 
     const { id: profileId } = await upsertUserProfile(db, {
       userId,
       structured,
       embedding: vector,
+      embeddingModel: model,
       sourceCvFileId: fileId,
     });
     return { fileId, profileId, status: "extracted", embedTokens: usage.totalTokens, warnings };

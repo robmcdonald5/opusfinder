@@ -14,7 +14,7 @@ import type { UserId } from "@opusfinder/shared";
 import { uid } from "@test/db/ids";
 import { createTestDb } from "@test/db/pglite";
 import { truncate } from "@test/db/truncate";
-import { oneHot } from "@test/db/vectors";
+import { oneHot, TEST_MODEL } from "@test/db/vectors";
 
 // What this file proves: the profiles repo behaviors the ingest/restructure pipelines CANNOT observe.
 // (1) The userId ownership half of the `(id AND user_id)` UPDATE predicates in markCvFileFailed and
@@ -150,6 +150,7 @@ describe("profiles repo — UPDATE ownership predicates + getProfileForDigest (i
       sourceCvFileId: number,
       opts: { summary?: string; embedding?: number[] | null } = {},
     ): Promise<void> {
+      const embedding = opts.embedding === undefined ? oneHot(2) : opts.embedding;
       await db.insert(userProfiles).values({
         userId,
         structured: {
@@ -157,7 +158,8 @@ describe("profiles repo — UPDATE ownership predicates + getProfileForDigest (i
           skills: ["typescript", "postgres"],
           targetRoles: ["Platform Engineer"],
         },
-        embedding: opts.embedding === undefined ? oneHot(2) : opts.embedding,
+        embedding,
+        embeddingModel: embedding === null ? null : TEST_MODEL,
         sourceCvFileId,
       });
     }
@@ -182,7 +184,7 @@ describe("profiles repo — UPDATE ownership predicates + getProfileForDigest (i
           skills: ["typescript", "postgres"],
           targetRoles: ["Platform Engineer"],
         },
-        embedding: oneHot(2),
+        query: { embedding: oneHot(2), model: TEST_MODEL },
         sourceCvFileId: cvId,
         emailVerified: true,
       });
@@ -202,17 +204,17 @@ describe("profiles repo — UPDATE ownership predicates + getProfileForDigest (i
       expect(profile!.sourceCvFileId).toBe(cvId);
     });
 
-    it("returns embedding NULL (not a null profile) for a row written with no embeddable content", async () => {
+    it("returns query NULL (not a null profile) for a row written with no embeddable content", async () => {
       const a = await seedUser(1);
       const cvId = await seedCvFile(a, 1);
       await seedProfile(a, cvId, { embedding: null });
 
       const profile = await getProfileForDigest(db, a);
-      // The null-embedding arm is a NON-null profile with embedding === null — the digest caller
+      // The null-embedding arm is a NON-null profile with query === null — the digest caller
       // skips such users itself; collapsing this arm into the null return would be indistinguishable
       // from "no profile" and lose the distinction the caller logs on.
       expect(profile).not.toBeNull();
-      expect(profile!.embedding).toBeNull();
+      expect(profile!.query).toBeNull();
       expect(profile!.structured.summary).toBe("backend engineer, 6 yoe");
       expect(profile!.emailVerified).toBe(true);
     });
