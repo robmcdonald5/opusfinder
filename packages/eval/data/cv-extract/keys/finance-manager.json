@@ -3,7 +3,9 @@
   "group": "other-non-tech",
   "source": {
     "dataset": "opensporks/resumes",
-    "path": "data/data/FINANCE/28522529.pdf"
+    "revision": "ed4cb5f3fd1ce7e0a0e74e1a09c1a3b702c2c2eb",
+    "path": "data/data/FINANCE/28522529.pdf",
+    "sha256": "37cccf91871fb95c0213e3609f314a3d9707ddb954241f3ad7cf18a709293cbe"
   },
   "expected": {
     "summary": [["finance", "banking"]],

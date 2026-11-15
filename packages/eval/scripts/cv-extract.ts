@@ -5,7 +5,7 @@
  * version's profiles land in their own directory, so `score` compares every version kept there.
  * Not a CI gate: the model is live.
  *
- *   pnpm --filter @opusfinder/eval run cv-extract fetch      download the CVs the keys name (public dataset)
+ *   pnpm --filter @opusfinder/eval run cv-extract fetch      download the CVs the keys pin, and verify their checksums
  *   pnpm --filter @opusfinder/eval run cv-extract run        extract with the current prompt → data/cv-extract/v<N>/
  *   pnpm --filter @opusfinder/eval run cv-extract score      score every version → reports/cv-extract.json
  *   pnpm --filter @opusfinder/eval run cv-extract review     write the key as a review sheet (data/reviews/)
@@ -14,6 +14,7 @@
  * their transcripts stay under the gitignored data/cvs/; a cached transcript is reused, so a prompt
  * change re-pays only the structuring call. `run` needs OPENROUTER_API_KEY (packages/llm/.env).
  */
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -42,20 +43,32 @@ const SHEET = join(PKG_ROOT, "data", "reviews", "cv-extract.md");
 const CONCURRENCY = 4;
 
 const sourceUrl = (key: CvKey) =>
-  `https://huggingface.co/datasets/${key.source.dataset}/resolve/main/${key.source.path}`;
+  `https://huggingface.co/datasets/${key.source.dataset}/resolve/${key.source.revision}/${key.source.path}`;
 const pdfPath = (key: CvKey) => join(CVS, `${key.id}.pdf`);
 const transcriptPath = (key: CvKey) => join(CVS, `${key.id}.txt`);
 const versionDir = (version: number) => join(DATA, `v${version}`);
 
+/** Download each CV at its pinned dataset commit and check it, and any copy already here, against the key's SHA-256. */
 async function fetchCvs(keys: CvKey[]): Promise<void> {
   mkdirSync(CVS, { recursive: true });
   for (const key of keys) {
-    if (existsSync(pdfPath(key))) continue;
-    const res = await fetch(sourceUrl(key));
-    if (!res.ok) throw new Error(`${key.id}: ${res.status} from ${sourceUrl(key)}`);
-    writeFileSync(pdfPath(key), new Uint8Array(await res.arrayBuffer()));
-    console.log(`fetched ${key.id}`);
+    const had = existsSync(pdfPath(key));
+    if (!had) {
+      const res = await fetch(sourceUrl(key));
+      if (!res.ok) throw new Error(`${key.id}: ${res.status} from ${sourceUrl(key)}`);
+      writeFileSync(pdfPath(key), new Uint8Array(await res.arrayBuffer()));
+    }
+    const sha256 = createHash("sha256")
+      .update(readFileSync(pdfPath(key)))
+      .digest("hex");
+    if (sha256 !== key.source.sha256) {
+      throw new Error(
+        `${key.id}: ${relativeToPkg(pdfPath(key))} has SHA-256 ${sha256}, the key says ${key.source.sha256}`,
+      );
+    }
+    if (!had) console.log(`fetched ${key.id}`);
   }
+  console.log(`${keys.length} CVs present and matching their checksums`);
 }
 
 /** The key's spend so far in USD, to report what a run cost. Undefined if the lookup fails. */

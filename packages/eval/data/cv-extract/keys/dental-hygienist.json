@@ -3,7 +3,9 @@
   "group": "healthcare-licensed",
   "source": {
     "dataset": "opensporks/resumes",
-    "path": "data/data/ARTS/14248724.pdf"
+    "revision": "ed4cb5f3fd1ce7e0a0e74e1a09c1a3b702c2c2eb",
+    "path": "data/data/ARTS/14248724.pdf",
+    "sha256": "6c6d48553e3d6392b94bad5c4ceb1c81f95d785f1a43640902ccf66f8a1d20c9"
   },
   "expected": {
     "summary": [["dental hygienist", "dental hygiene"]],

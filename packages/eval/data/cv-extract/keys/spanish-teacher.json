@@ -3,7 +3,9 @@
   "group": "other-non-tech",
   "source": {
     "dataset": "opensporks/resumes",
-    "path": "data/data/TEACHER/25588694.pdf"
+    "revision": "ed4cb5f3fd1ce7e0a0e74e1a09c1a3b702c2c2eb",
+    "path": "data/data/TEACHER/25588694.pdf",
+    "sha256": "c115494ed7cb1223dccff25e1a9928292ec722286b77fc18a7504a7763546513"
   },
   "expected": {
     "summary": [["spanish"], ["teacher", "teaching", "instruction", "educator"]],

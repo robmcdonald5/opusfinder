@@ -3,7 +3,9 @@
   "group": "healthcare-licensed",
   "source": {
     "dataset": "opensporks/resumes",
-    "path": "data/data/ADVOCATE/17254634.pdf"
+    "revision": "ed4cb5f3fd1ce7e0a0e74e1a09c1a3b702c2c2eb",
+    "path": "data/data/ADVOCATE/17254634.pdf",
+    "sha256": "11e294076ff8706f7c9d330b454e308d61ff4336fab86465f3abd6c853814c49"
   },
   "expected": {
     "summary": [["pharmacy"]],

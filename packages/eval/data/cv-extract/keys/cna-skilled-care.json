@@ -3,7 +3,9 @@
   "group": "healthcare-licensed",
   "source": {
     "dataset": "opensporks/resumes",
-    "path": "data/data/HEALTHCARE/18714571.pdf"
+    "revision": "ed4cb5f3fd1ce7e0a0e74e1a09c1a3b702c2c2eb",
+    "path": "data/data/HEALTHCARE/18714571.pdf",
+    "sha256": "1c1ab05d6f98a322e43b8b1d7ed5f16412e3f293cdb2eec1fe65880fe3d332f9"
   },
   "expected": {
     "summary": [["nursing assistant", "cna"]],

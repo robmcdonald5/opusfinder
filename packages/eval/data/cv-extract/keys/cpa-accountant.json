@@ -3,7 +3,9 @@
   "group": "other-non-tech",
   "source": {
     "dataset": "opensporks/resumes",
-    "path": "data/data/ACCOUNTANT/15592167.pdf"
+    "revision": "ed4cb5f3fd1ce7e0a0e74e1a09c1a3b702c2c2eb",
+    "path": "data/data/ACCOUNTANT/15592167.pdf",
+    "sha256": "7503a5f49be55f3290877ad9d694be60ff682d35ce2b5f7b1b137251d0feb1e1"
   },
   "expected": {
     "summary": [["accountant", "accounting"]],

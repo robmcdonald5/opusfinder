@@ -89,8 +89,14 @@ const KeyLanguage = z.strictObject({
 const CvKeySchema = z.strictObject({
   id: z.string().regex(/^[a-z0-9-]+$/),
   group: z.enum(CV_GROUPS),
-  /** Where the CV comes from: a path inside a public dataset on Hugging Face. */
-  source: z.strictObject({ dataset: z.string(), path: z.string() }),
+  /** Where the CV comes from: a file in a public Hugging Face dataset, pinned to one commit of it and
+   *  to the file's SHA-256, so every download is the same bytes. */
+  source: z.strictObject({
+    dataset: z.string(),
+    revision: z.string().regex(/^[0-9a-f]{40}$/),
+    path: z.string(),
+    sha256: z.string().regex(/^[0-9a-f]{64}$/),
+  }),
   expected: z.strictObject({
     /** Each inner list must be met by the summary: it contains one of the list's aliases. */
     summary: z.array(aliases),

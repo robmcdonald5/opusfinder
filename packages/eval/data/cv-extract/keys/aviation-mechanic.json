@@ -3,7 +3,9 @@
   "group": "healthcare-licensed",
   "source": {
     "dataset": "opensporks/resumes",
-    "path": "data/data/AVIATION/82738323.pdf"
+    "revision": "ed4cb5f3fd1ce7e0a0e74e1a09c1a3b702c2c2eb",
+    "path": "data/data/AVIATION/82738323.pdf",
+    "sha256": "94da0beccba1a76e8f1db1cd58ee29d78e2e470b60bad148b8fd6902d58f7150"
   },
   "expected": {
     "summary": [["aircraft", "aviation"]],

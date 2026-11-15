@@ -123,8 +123,12 @@ model is live.
   (`healthcare-licensed`, `hourly-shift`, `other-non-tech`, `tech`), what a correct extraction holds,
   and the entries where another reading is defensible (`judgementCalls`). The format and its matching
   rules are documented in `src/cv-extract-key.ts`. The CVs are CC0 dataset PDFs (the same Kaggle
-  "Resume Dataset" as the pooled profiles); the keys name them, `cv-extract fetch` downloads them to
-  the gitignored `data/cvs/cv-extract/`, and their transcripts are cached there too.
+  "Resume Dataset" as the pooled profiles). They are not committed, because the dataset's
+  anonymisation leaves a few names and dates behind. Each key pins its file instead: the dataset
+  (`opensporks/resumes` on Hugging Face), the dataset commit, the path and the PDF's SHA-256.
+  `cv-extract fetch` downloads them to the gitignored `data/cvs/cv-extract/` and fails on any file
+  whose checksum differs, so every checkout works from the same bytes. Transcripts are cached there
+  too and are not committed either; a fresh checkout re-transcribes on its first `run`.
 - `data/cv-extract/v<N>/<id>.json` — the profile extraction version N produced for each CV. `v1` is
   the pre-`facts` prompt, kept as the baseline.
 - `reports/cv-extract.json` — every kept version scored against the key: overall, per group, per

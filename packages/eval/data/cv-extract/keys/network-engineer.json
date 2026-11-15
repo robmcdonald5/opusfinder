@@ -3,7 +3,9 @@
   "group": "tech",
   "source": {
     "dataset": "opensporks/resumes",
-    "path": "data/data/BPO/63158213.pdf"
+    "revision": "ed4cb5f3fd1ce7e0a0e74e1a09c1a3b702c2c2eb",
+    "path": "data/data/BPO/63158213.pdf",
+    "sha256": "505e599fe5ec25b80998e480e21e246bd56eeb40cb72c057dadb366be7bc3353"
   },
   "expected": {
     "summary": [["network"]],

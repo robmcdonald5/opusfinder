@@ -3,7 +3,9 @@
   "group": "hourly-shift",
   "source": {
     "dataset": "opensporks/resumes",
-    "path": "data/data/FITNESS/28321954.pdf"
+    "revision": "ed4cb5f3fd1ce7e0a0e74e1a09c1a3b702c2c2eb",
+    "path": "data/data/FITNESS/28321954.pdf",
+    "sha256": "16df9a02114af246fd04ce948fd215475db129363f58485f6d8fc20afbc20297"
   },
   "expected": {
     "summary": [["warehouse", "personal trainer", "fitness"]],

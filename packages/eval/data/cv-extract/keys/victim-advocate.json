@@ -3,7 +3,9 @@
   "group": "other-non-tech",
   "source": {
     "dataset": "opensporks/resumes",
-    "path": "data/data/ADVOCATE/13967854.pdf"
+    "revision": "ed4cb5f3fd1ce7e0a0e74e1a09c1a3b702c2c2eb",
+    "path": "data/data/ADVOCATE/13967854.pdf",
+    "sha256": "9183db6a904457bdba2f3252fa5543637d7d260394aaab557d7a709e31acf28e"
   },
   "expected": {
     "summary": [["advocate", "advocacy", "social work", "social worker"]],

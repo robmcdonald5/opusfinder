@@ -18,7 +18,7 @@ import { PKG_ROOT } from "./runner";
 const KEY: CvKey = {
   id: "nurse",
   group: "healthcare-licensed",
-  source: { dataset: "d", path: "p.pdf" },
+  source: { dataset: "d", revision: "0".repeat(40), path: "p.pdf", sha256: "0".repeat(64) },
   expected: {
     summary: [["nurse", "nursing"]],
     skills: [["wound care"], ["iv", "intravenous"]],
