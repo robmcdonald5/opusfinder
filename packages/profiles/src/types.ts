@@ -19,10 +19,10 @@ export type StructureFn = (text: string) => Promise<StructuredProfile>;
 
 /**
  * Embed query texts. Mirrors @opusfinder/embeddings' `embed()` return shape, so the real `embed`
- * passes by structural subtyping with no adapter (its extra `model` field is compatible). The impl
- * pulls @opusfinder/embeddings.
+ * passes by structural subtyping with no adapter. `model` is the id of the model that produced the
+ * vectors, stored beside the profile's vector. The impl pulls @opusfinder/embeddings.
  */
 export type ProfileEmbedFn = (
   texts: string[],
   params: { inputType: "query" | "document" | null },
-) => Promise<{ embeddings: number[][]; usage: { totalTokens: number } }>;
+) => Promise<{ embeddings: number[][]; usage: { totalTokens: number }; model: string }>;

@@ -3,7 +3,7 @@
  * embedding into a ranked candidate set. Kept separate from the embeddings backfill machinery
  * (embeddings.ts) so the digest read path is self-contained.
  *
- * SQL handles the plannable filters (has-embedding, active, recency, already-shown exclusions), the
+ * SQL handles the plannable filters (same embedding model, active, recency, already-shown exclusions), the
  * location rule (location-rule.ts) and the cosine ranking. Only the free-form exclusion keywords are
  * applied APP-SIDE, after an OVER-FETCH, before the trim, so they draw on the whole over-fetch buffer
  * instead of shrinking the returned set below `limit`.
@@ -14,11 +14,17 @@
  * carries no vector index, and the exact scan computes distances only for rows the filters (location rule
  * included) keep. The distance is computed in an `OFFSET 0` subquery, which Postgres doesn't flatten, so
  * the outer sort is on a plain column no vector index can serve, should one ever be added.
+ *
+ * ONE MODEL PER COMPARISON: the query arrives as a TaggedVector and the filter keeps only jobs whose
+ * `embedding_model` equals its tag, so a profile vector is never measured against another model's job
+ * vector (a distance across two embedding spaces is noise that still sorts). A corpus holding several
+ * models' vectors is therefore safe to read: the other models' rows are simply not candidates.
  */
 import { sql, type SQL } from "drizzle-orm";
 
 import type { Db } from "../client";
 import { jobs } from "../schema";
+import type { TaggedVector } from "./embeddings";
 import { homeAndStringFlagsSql, locationRule, type LocationFilter } from "./location-rule";
 import { intArrayLiteral, resultRows, textArrayLiteral, VECTOR_CAST, vectorLiteral } from "./sql";
 
@@ -58,12 +64,13 @@ export interface JobCandidate {
 }
 
 /**
- * The top candidate jobs for a profile embedding, deterministically filtered then cosine-ranked.
- * `minSalary` is intentionally NOT a filter — jobs carry no salary column.
+ * The top candidate jobs for a profile's query vector, deterministically filtered then cosine-ranked
+ * among the jobs embedded by the same model. `minSalary` is intentionally NOT a filter — jobs carry no
+ * salary column.
  */
 export async function retrieveCandidatesForProfile(
   db: Db,
-  embedding: number[],
+  query: TaggedVector,
   opts: RetrieveOpts = {},
 ): Promise<JobCandidate[]> {
   const limit = opts.limit ?? 50;
@@ -72,9 +79,9 @@ export async function retrieveCandidatesForProfile(
   const exclusions = compileExclusions(opts.exclusions ?? []);
   const fetchLimit = limit * overFetch;
 
-  const literal = vectorLiteral(embedding); // asserts the 1024-dim width up front
+  const literal = vectorLiteral(query.embedding); // asserts the 1024-dim width up front
 
-  const filter = candidateFilterSql(opts);
+  const filter = candidateFilterSql({ ...opts, embeddingModel: query.model });
   const rule = locationRule(opts.location ?? { mode: "any", home: null }, filter);
 
   // The query vector is bound once, in the inner projection; `OFFSET 0` keeps the plan an exact scan (see
@@ -117,17 +124,21 @@ export async function retrieveCandidatesForProfile(
 }
 
 /**
- * The SQL candidate filter over `jobs j`, before the location rule: has an embedding, active, inside the
- * recency window, not already shown. Shared by retrieval and locations:explain.
+ * The SQL candidate filter over `jobs j`, before the location rule: embedded by `embeddingModel`,
+ * active, inside the recency window, not already shown. Shared by retrieval and locations:explain.
  */
 export function candidateFilterSql(
-  opts: Pick<RetrieveOpts, "recencyDays" | "excludeJobIds" | "excludeSignatures">,
+  opts: Pick<RetrieveOpts, "recencyDays" | "excludeJobIds" | "excludeSignatures"> & {
+    /** The query vector's model: only jobs carrying this tag are candidates. */
+    embeddingModel: string;
+  },
 ): SQL {
   const recencyDays = opts.recencyDays ?? 14;
   const excludeJobIds = opts.excludeJobIds ?? [];
   const excludeSignatures = opts.excludeSignatures ?? [];
   const conditions = [
-    sql`j.embedding IS NOT NULL`,
+    // Also the has-a-vector test: a tag is stored only beside its vector (jobs_embedding_model_paired).
+    sql`j.embedding_model = ${opts.embeddingModel}`,
     sql`j.lifecycle_state = 'active'`,
     // posted_at is nullable — fall back to created_at so a NULL-posted job is not silently dropped.
     // `${n} * interval '1 day'` is the repo idiom (discovery.ts) and handles any numeric recencyDays.

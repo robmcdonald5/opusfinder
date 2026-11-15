@@ -239,6 +239,13 @@
       "when": 1793218093109,
       "tag": "0033_jobs_fetch_hash",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1794781541634,
+      "tag": "0034_embedding_model",
+      "breakpoints": true
     }
   ]
 }

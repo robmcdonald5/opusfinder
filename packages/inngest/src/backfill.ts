@@ -26,7 +26,7 @@ import { inngest } from "./inngest";
 type EmbedFn = (
   texts: string[],
   params: { inputType: "query" | "document" | null },
-) => Promise<{ embeddings: number[][]; usage: { totalTokens: number } }>;
+) => Promise<{ embeddings: number[][]; usage: { totalTokens: number }; model: string }>;
 
 /** Injected seams — wired by `buildBackfillDeps()` (./backfill-deps). Mirrors `DigestDeps`. */
 export interface BackfillDeps {

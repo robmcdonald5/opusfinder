@@ -9,7 +9,7 @@ import type { StorageClient } from "@opusfinder/storage";
 import { uid } from "@test/db/ids";
 import { createTestDb } from "@test/db/pglite";
 import { truncate } from "@test/db/truncate";
-import { oneHot } from "@test/db/vectors";
+import { oneHot, TEST_MODEL } from "@test/db/vectors";
 import { rejectionOf } from "@test/rejection";
 
 import { restructureProfile } from "./restructure";
@@ -70,6 +70,7 @@ function stubEmbed(vector: number[] = oneHot(0)) {
   return vi.fn<ProfileEmbedFn>(async (texts) => ({
     embeddings: texts.map(() => vector),
     usage: { totalTokens: 42 },
+    model: TEST_MODEL,
   }));
 }
 
@@ -129,7 +130,9 @@ describe("restructureProfile — cached-transcript re-run seam: lookup, scrub, e
     structured: StructuredProfile,
     embedding: number[],
   ): Promise<void> {
-    await db.insert(userProfiles).values({ userId, structured, embedding, sourceCvFileId });
+    await db
+      .insert(userProfiles)
+      .values({ userId, structured, embedding, embeddingModel: "older-model", sourceCvFileId });
   }
 
   function readProfiles(userId: UserId) {
@@ -175,7 +178,11 @@ describe("restructureProfile — cached-transcript re-run seam: lookup, scrub, e
     const { storage, getObjectKeys } = fakeStorage(transcriptMap({ [oldKey]: "old transcript" }));
 
     const err = await rejectionOf(
-      restructureProfile(db, { structure: stubStructure(CLEAN_PROFILE), embed: stubEmbed(), storage }, a),
+      restructureProfile(
+        db,
+        { structure: stubStructure(CLEAN_PROFILE), embed: stubEmbed(), storage },
+        a,
+      ),
     );
     expect(err.message).toBe(`restructureProfile: no cached transcript for user ${a}`);
     expect(getObjectKeys).toEqual([]);
@@ -217,7 +224,9 @@ describe("restructureProfile — cached-transcript re-run seam: lookup, scrub, e
     const embed = stubEmbed();
 
     const err = await rejectionOf(restructureProfile(db, { structure, embed, storage }, a));
-    expect(err.message).toBe("restructureProfile: transcript object missing at cv/text/missing.txt");
+    expect(err.message).toBe(
+      "restructureProfile: transcript object missing at cv/text/missing.txt",
+    );
     expect(structure).not.toHaveBeenCalled();
     expect(embed).not.toHaveBeenCalled();
     expect(await readProfiles(a)).toHaveLength(0);
@@ -305,7 +314,11 @@ describe("restructureProfile — cached-transcript re-run seam: lookup, scrub, e
     const a = await seedUser(1);
     await seedCvFile(a, { status: "extracted", r2TextKey: "cv/text/a.txt" });
     const { storage } = fakeStorage(transcriptMap({ "cv/text/a.txt": "transcript body" }));
-    const embed = vi.fn<ProfileEmbedFn>(async () => ({ embeddings: [], usage: { totalTokens: 0 } }));
+    const embed = vi.fn<ProfileEmbedFn>(async () => ({
+      embeddings: [],
+      usage: { totalTokens: 0 },
+      model: TEST_MODEL,
+    }));
 
     const err = await rejectionOf(
       restructureProfile(db, { structure: stubStructure(CLEAN_PROFILE), embed, storage }, a),
@@ -351,6 +364,7 @@ describe("restructureProfile — cached-transcript re-run seam: lookup, scrub, e
     expect(rows[0]!.structured).toStrictEqual(CLEAN_PROFILE);
     // Drizzle's typed vector column round-trips the stored pgvector back to number[].
     expect(rows[0]!.embedding).toEqual(vector);
+    expect(rows[0]!.embeddingModel).toBe(TEST_MODEL);
     expect(rows[0]!.sourceCvFileId).toBe(cvId);
   });
 
@@ -374,7 +388,10 @@ describe("restructureProfile — cached-transcript re-run seam: lookup, scrub, e
     const a = await seedUser(1);
     await seedCvFile(a, { status: "extracted", r2TextKey: "cv/text/v1.txt" });
     const { storage } = fakeStorage(
-      transcriptMap({ "cv/text/v1.txt": "first transcript", "cv/text/v2.txt": "second transcript" }),
+      transcriptMap({
+        "cv/text/v1.txt": "first transcript",
+        "cv/text/v2.txt": "second transcript",
+      }),
     );
     await restructureProfile(
       db,
@@ -407,6 +424,8 @@ describe("restructureProfile — cached-transcript re-run seam: lookup, scrub, e
     expect(row.id).toBe(firstRun.id); // the SAME row updated in place, not delete+insert
     expect(row.structured).toStrictEqual(profileV2);
     expect(row.embedding).toEqual(oneHot(4));
+    // The seeded row carried another model's tag: the re-embed replaces it with the seam's.
+    expect(row.embeddingModel).toBe(TEST_MODEL);
     expect(row.sourceCvFileId).toBe(cv2);
     // now() replaced the planted sentinel — the upsert's SET bumps updated_at on every conflict.
     expect(row.updatedAt.getTime()).toBeGreaterThan(planted.getTime());
@@ -456,9 +475,13 @@ describe("restructureProfile — cached-transcript re-run seam: lookup, scrub, e
     const cvBefore = await readCvFiles(a);
     expect(cvBefore).toHaveLength(2);
 
-    const { storage, getObjectKeys, putObject, deleteObject, close: closeSpy } = fakeStorage(
-      transcriptMap({ "cv/text/a.txt": "transcript body" }),
-    );
+    const {
+      storage,
+      getObjectKeys,
+      putObject,
+      deleteObject,
+      close: closeSpy,
+    } = fakeStorage(transcriptMap({ "cv/text/a.txt": "transcript body" }));
     await restructureProfile(
       db,
       { structure: stubStructure(CLEAN_PROFILE), embed: stubEmbed(), storage },

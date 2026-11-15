@@ -21,19 +21,23 @@ import type { PromptPreferences, UserId } from "@opusfinder/shared";
 import { buildDigestDeps } from "./deps";
 
 const GATED =
-  process.env.PREFS_LIVE_TEST !== "1" || !process.env.DATABASE_URL || !process.env.OPENROUTER_API_KEY;
+  process.env.PREFS_LIVE_TEST !== "1" ||
+  !process.env.DATABASE_URL ||
+  !process.env.OPENROUTER_API_KEY;
 const USER = (process.env.PREFS_LIVE_USER ?? "cda5e3ef-e387-4c9f-9709-194d3d2fe11e") as UserId;
 
 describe.skipIf(GATED)("preferences rerank (live: real Neon + Haiku)", () => {
   it("reranks a real pool baseline vs a low-YoE band, returning well-formed orderings", async () => {
     const db = createDb(getDatabaseUrl());
     const profile = await getProfileForDigest(db, USER);
-    if (!profile?.embedding) {
-      throw new Error(`user ${USER} has no profile embedding — pick a CV-ingested user via PREFS_LIVE_USER`);
+    if (!profile?.query) {
+      throw new Error(
+        `user ${USER} has no profile embedding — pick a CV-ingested user via PREFS_LIVE_USER`,
+      );
     }
 
     const pool = (
-      await retrieveCandidatesForProfile(db, profile.embedding, { recencyDays: 3650, limit: 26 })
+      await retrieveCandidatesForProfile(db, profile.query, { recencyDays: 3650, limit: 26 })
     ).map((c) => ({ id: c.id, title: c.title, descriptionText: c.descriptionText.slice(0, 2000) }));
     expect(pool.length).toBeGreaterThan(0);
     const poolIds = new Set(pool.map((c) => c.id));

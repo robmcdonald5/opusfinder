@@ -87,7 +87,7 @@ beforeEach(() => {
   // ---- per-user HAPPY defaults (each test overrides one seam to reach a branch) ----
   repos.getProfileForDigest.mockResolvedValue({
     structured: { skills: [] },
-    embedding: [0.1],
+    query: { embedding: [0.1], model: "m" },
     emailVerified: true,
   });
   repos.getPreferences.mockResolvedValue({
@@ -536,12 +536,12 @@ describe("runPerUser", () => {
   });
 
   it("skips no-profile-or-embedding when the profile is present but its embedding is null", async () => {
-    // The OTHER half of the load gate's OR (`!profile.embedding`): the profile row exists but its embedding
-    // column is null (e.g. not yet backfilled). Must skip at load, NOT fall through to the retrieve step's
+    // The OTHER half of the load gate's OR (`!profile.query`): the profile row exists but it has no stored
+    // vector (e.g. not yet backfilled). Must skip at load, NOT fall through to the retrieve step's
     // disappeared-mid-run throw.
     repos.getProfileForDigest.mockResolvedValue({
       structured: { skills: [] },
-      embedding: null,
+      query: null,
       emailVerified: true,
     });
     const { runs, tools } = recordingStep();
@@ -560,7 +560,7 @@ describe("runPerUser", () => {
   ])("skips ineligible (%s)", async (_label, profileOver, prefsOver) => {
     repos.getProfileForDigest.mockResolvedValue({
       structured: { skills: [] },
-      embedding: [0.1],
+      query: { embedding: [0.1], model: "m" },
       emailVerified: true,
       ...profileOver,
     });
@@ -656,10 +656,14 @@ describe("runPerUser", () => {
     // Load reads a valid embedding-bearing profile (passes the gate); the retrieve step RE-READS and finds the
     // embedding gone (a mid-run delete/re-embed race) → the disappeared-mid-run invariant must fire. Needs two
     // once-values because a single mockResolvedValue would return the same profile to both reads.
-    const validProfile = { structured: { skills: [] }, embedding: [0.1], emailVerified: true };
+    const validProfile = {
+      structured: { skills: [] },
+      query: { embedding: [0.1], model: "m" },
+      emailVerified: true,
+    };
     repos.getProfileForDigest
       .mockResolvedValueOnce(validProfile) // load read
-      .mockResolvedValueOnce({ ...validProfile, embedding: null }); // retrieve re-read
+      .mockResolvedValueOnce({ ...validProfile, query: null }); // retrieve re-read
     const { runs, tools } = recordingStep();
 
     await expect(runPerUser(makeDeps(), event(), tools)).rejects.toThrow(
@@ -718,7 +722,7 @@ describe("runPerUser", () => {
     const home = { placeId: 4509177, radiusMiles: 25 };
     expect(repos.retrieveCandidatesForProfile).toHaveBeenCalledWith(
       expect.anything(),
-      [0.1],
+      { embedding: [0.1], model: "m" },
       expect.objectContaining({ location: { mode: "onsite_only", home } }),
     );
     expect(repos.countLocalStrings).toHaveBeenCalledWith(expect.anything(), home);

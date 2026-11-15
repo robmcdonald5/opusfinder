@@ -25,13 +25,23 @@ type EmbedInputType = "query" | "document" | null;
 
 /**
  * The embedder shape this module needs. The real `embed` from `@opusfinder/embeddings`
- * is structurally assignable (its extra `model` return field and optional params are
- * compatible), so callers pass it directly.
+ * is structurally assignable (its optional params are compatible), so callers pass it directly.
+ * `model` is the id of the model that produced the vectors; it is stored beside each one.
  */
 type EmbedFn = (
   texts: string[],
   params: { inputType: EmbedInputType },
-) => Promise<{ embeddings: number[][]; usage: { totalTokens: number } }>;
+) => Promise<{ embeddings: number[][]; usage: { totalTokens: number }; model: string }>;
+
+/**
+ * A vector and the id of the model that produced it. Two models embed into different spaces, so a
+ * distance between their vectors means nothing: every read that compares vectors takes the query as
+ * this pair and reads only rows whose `embedding_model` equals `model`.
+ */
+export interface TaggedVector {
+  embedding: number[];
+  model: string;
+}
 
 export interface JobNeedingEmbedding {
   id: number;
@@ -106,7 +116,8 @@ export async function jobsNeedingEmbedding(
  * Write a batch of vectors back to `jobs.embedding`, one `UPDATE ... FROM (VALUES ...)`
  * statement per chunk — a single neon-http round-trip per chunk instead of one per row.
  * pgvector accepts the textual literal `[a,b,...]` cast to `vector` in SQL (the form
- * Drizzle's typed `vector` column emits). Only `embedding` is touched; `updated_at` is
+ * Drizzle's typed `vector` column emits). Only `embedding` and its `embedding_model` tag (`model`,
+ * the id the embedder reported for these vectors) are touched; `updated_at` is
  * left alone (it tracks content changes, and the embedding is derived). Chunks at
  * MAX_ROWS_PER_WRITE to stay under Postgres's 65535 bind-param ceiling. An empty `rows`
  * writes nothing. Returns the number of rows written.
@@ -120,6 +131,7 @@ export async function jobsNeedingEmbedding(
 export async function writeJobEmbeddings(
   db: Db,
   rows: { id: number; embedding: number[]; contentHash?: string }[],
+  model: string,
 ): Promise<number> {
   let written = 0;
   for (let i = 0; i < rows.length; i += MAX_ROWS_PER_WRITE) {
@@ -130,7 +142,7 @@ export async function writeJobEmbeddings(
     );
     const result: unknown = await db.execute(sql`
       UPDATE ${jobs}
-      SET embedding = v.embedding
+      SET embedding = v.embedding, embedding_model = ${model}
       FROM (VALUES ${sql.join(tuples, sql`, `)}) AS v(id, embedding, content_hash)
       WHERE ${jobs.id} = v.id AND (v.content_hash IS NULL OR ${contentHashSql} = v.content_hash)
       RETURNING ${jobs.id}
@@ -163,7 +175,7 @@ export async function embedNextPage(
   const batch = await jobsNeedingEmbedding(db, { companyId: opts.companyId, limit: opts.limit });
   if (batch.length === 0) return { embedded: 0, tokens: 0, done: true };
 
-  const { embeddings, usage } = await embed(
+  const { embeddings, usage, model } = await embed(
     batch.map((job) => jobEmbeddingText(job)),
     { inputType: opts.inputType ?? "document" },
   );
@@ -178,6 +190,7 @@ export async function embedNextPage(
       contentHash: job.contentHash,
       embedding: embeddings[i] as number[],
     })),
+    model,
   );
   return { embedded, tokens: usage.totalTokens, done: batch.length < opts.limit };
 }
@@ -221,21 +234,21 @@ export interface JobNeighbor {
 }
 
 /**
- * The `limit` jobs nearest to `queryVector` by cosine distance (`<=>`), an exact scan over the rows
- * that have an embedding. Unfiltered, so digest retrieval doesn't use it (see retrieval.ts).
+ * The `limit` jobs nearest to `query` by cosine distance (`<=>`), an exact scan over the rows embedded
+ * by the query's model. Otherwise unfiltered, so digest retrieval doesn't use it (see retrieval.ts).
  */
 export async function nearestJobs(
   db: Db,
-  queryVector: number[],
+  query: TaggedVector,
   limit: number,
 ): Promise<JobNeighbor[]> {
-  const literal = vectorLiteral(queryVector);
+  const literal = vectorLiteral(query.embedding);
   // Bind the (large) query vector ONCE: compute distance in the projection, then ORDER BY
   // the `distance` alias. Cast via the shared VECTOR_CAST (single dimension const).
   const result: unknown = await db.execute(sql`
     SELECT id, title, embedding <=> ${literal}${VECTOR_CAST} AS distance
     FROM ${jobs}
-    WHERE embedding IS NOT NULL
+    WHERE embedding_model = ${query.model}
     ORDER BY distance
     LIMIT ${limit}
   `);

@@ -9,6 +9,7 @@
 import { sql } from "drizzle-orm";
 import {
   boolean,
+  check,
   doublePrecision,
   foreignKey,
   index,
@@ -149,6 +150,10 @@ export const jobs = pgTable(
     // change: a contentMissing posting's content is never written, so its vector survives.
     // No vector index, on purpose: digest retrieval is an exact scan (see repos/retrieval.ts).
     embedding: vector("embedding", { dimensions: EMBEDDING_DIMENSIONS }),
+    // The id of the model that produced `embedding` (the embedder reports it; db code never names one).
+    // Vectors from different models aren't comparable, so retrieval matches this against the profile's
+    // tag. Set and cleared with the vector, never apart: jobs_embedding_model_paired below.
+    embeddingModel: text("embedding_model"),
     lifecycleState: text("lifecycle_state").$type<LifecycleState>().notNull().default("active"),
     // Consecutive trusted-fetch absences for this job — the streak hysteresis behind lifecycle closing
     // (sweepLifecycle). Incremented when an active job is absent from a complete board fetch, reset to 0
@@ -217,6 +222,13 @@ export const jobs = pgTable(
     index("jobs_unembedded_idx")
       .on(t.id)
       .where(sql`${t.embedding} IS NULL`),
+    // A vector always carries its model tag and a tag always has its vector, so no writer can leave an
+    // untagged vector for retrieval to compare across models. drizzle-kit emits the ADD CONSTRAINT bare;
+    // the migration wraps it in a DO/EXCEPTION block (same discipline as the FK below).
+    check(
+      "jobs_embedding_model_paired",
+      sql`(${t.embedding} IS NULL) = (${t.embeddingModel} IS NULL)`,
+    ),
     // FK with an explicit, stable constraint name. drizzle-kit emits a STANDALONE `ALTER TABLE ... ADD
     // CONSTRAINT`, and Postgres has no `ADD CONSTRAINT IF NOT EXISTS`, so the migration wraps it in a
     // DO/EXCEPTION block for idempotency (neon-http migrations aren't transactional). If you regenerate
@@ -327,6 +339,8 @@ export const userProfiles = pgTable(
       .references(() => user.id, { onDelete: "cascade" }),
     structured: jsonb("structured").$type<StructuredProfile>().notNull(),
     embedding: vector("embedding", { dimensions: EMBEDDING_DIMENSIONS }),
+    // The model that produced `embedding`; retrieval reads only jobs carrying the same tag.
+    embeddingModel: text("embedding_model"),
     sourceCvFileId: integer("source_cv_file_id").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -334,6 +348,11 @@ export const userProfiles = pgTable(
   (t) => [
     // One profile per user — the onConflict target for upsertUserProfile.
     uniqueIndex("user_profiles_user_id_uq").on(t.userId),
+    // Same pairing as jobs_embedding_model_paired.
+    check(
+      "user_profiles_embedding_model_paired",
+      sql`(${t.embedding} IS NULL) = (${t.embeddingModel} IS NULL)`,
+    ),
     // FK to the backing upload, explicit stable name. Same DO/EXCEPTION idempotency guard as jobs' FK above.
     foreignKey({
       columns: [t.sourceCvFileId],

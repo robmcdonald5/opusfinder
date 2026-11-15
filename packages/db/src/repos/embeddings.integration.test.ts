@@ -16,8 +16,9 @@ import { companies, jobs } from "@opusfinder/db/schema";
 import { companySlug, jobId, type NormalizedJob } from "@opusfinder/shared";
 
 import { createTestDb } from "@test/db/pglite";
+import { rejectionOf } from "@test/rejection";
 import { truncate } from "@test/db/truncate";
-import { oneHot } from "@test/db/vectors";
+import { oneHot, tagged, TEST_MODEL } from "@test/db/vectors";
 
 function job(
   externalId: string,
@@ -39,7 +40,11 @@ function job(
 
 /** A fake embedder: one one-hot vector per text. */
 async function fakeEmbed(texts: string[]) {
-  return { embeddings: texts.map((_, i) => oneHot(i)), usage: { totalTokens: texts.length } };
+  return {
+    embeddings: texts.map((_, i) => oneHot(i)),
+    usage: { totalTokens: texts.length },
+    model: TEST_MODEL,
+  };
 }
 
 // Phase 0 pilot — the load-bearing PGlite integration spec. It proves R1 (the neon-http `Db` cast works
@@ -80,19 +85,26 @@ describe("pgvector retrieval over PGlite (pilot: R1 driver compat + R2 pgvector 
 
     // writeJobEmbeddings: raw `db.execute` UPDATE ... FROM (VALUES ...) with the ::vector(1024) cast,
     // result normalized through resultRows() — the exact R1 raw-SQL path. Orthogonal one-hot vectors.
-    const written = await writeJobEmbeddings(db, [
-      { id: pending[0]!.id, embedding: oneHot(0) },
-      { id: pending[1]!.id, embedding: oneHot(1) },
-    ]);
+    const written = await writeJobEmbeddings(
+      db,
+      [
+        { id: pending[0]!.id, embedding: oneHot(0) },
+        { id: pending[1]!.id, embedding: oneHot(1) },
+      ],
+      TEST_MODEL,
+    );
     expect(written).toBe(2);
 
     // nearestJobs: raw `embedding <=> $1` cosine query. Querying with job-0's exact vector ranks job-0
     // first at distance 0; job-1 (orthogonal) is strictly farther.
-    const neighbours = await nearestJobs(db, oneHot(0), 5);
+    const neighbours = await nearestJobs(db, tagged(oneHot(0)), 5);
     expect(neighbours).toHaveLength(2);
     expect(neighbours[0]!.id).toBe(pending[0]!.id);
     expect(neighbours[0]!.distance).toBeCloseTo(0, 5);
     expect(neighbours[1]!.distance).toBeGreaterThan(neighbours[0]!.distance);
+
+    // The same vector under another model's tag is in another space: it has no neighbours here.
+    expect(await nearestJobs(db, tagged(oneHot(0), "other-model"), 5)).toEqual([]);
   });
 });
 
@@ -189,5 +201,37 @@ describe("embed backlog — selection, guarded write, page (integration: real PG
       .from(jobs)
       .where(inArray(jobs.id, [await idOf("p"), await idOf("q")]));
     expect(rows.every((r) => r.embedding === null)).toBe(true);
+  });
+
+  it("stores the embedder's model beside every vector it writes, and replaces the tag on a rewrite", async () => {
+    await upsertJobs(db, companyId, [job("1", "Role One"), job("2", "Role Two")]);
+    const stored = () =>
+      db
+        .select({ embedding: jobs.embedding, embeddingModel: jobs.embeddingModel })
+        .from(jobs)
+        .orderBy(jobs.id);
+
+    // The page writer takes the tag from the embedder's result, not from any constant.
+    const embed = async (texts: string[]) => ({ ...(await fakeEmbed(texts)), model: "model-a" });
+    expect(await embedNextPage(db, embed, { limit: 10 })).toMatchObject({ embedded: 2 });
+    for (const row of await stored()) {
+      expect(row.embedding).not.toBeNull();
+      expect(row.embeddingModel).toBe("model-a");
+    }
+
+    // Re-embedding a row under another model moves its tag with the vector.
+    const [first] = await db.select({ id: jobs.id }).from(jobs).orderBy(jobs.id).limit(1);
+    await writeJobEmbeddings(db, [{ id: first!.id, embedding: oneHot(5) }], "model-b");
+    expect((await stored()).map((r) => r.embeddingModel)).toEqual(["model-b", "model-a"]);
+  });
+
+  it("the database refuses a vector without a tag, and a tag without a vector", async () => {
+    await upsertJobs(db, companyId, [job("1", "Role One")]);
+
+    const untagged = await rejectionOf(db.update(jobs).set({ embedding: oneHot(0) }));
+    // Drizzle wraps the driver error; the constraint name is on the cause.
+    expect(String(untagged.cause ?? untagged)).toMatch(/jobs_embedding_model_paired/);
+    const vectorless = await rejectionOf(db.update(jobs).set({ embeddingModel: TEST_MODEL }));
+    expect(String(vectorless.cause ?? vectorless)).toMatch(/jobs_embedding_model_paired/);
   });
 });

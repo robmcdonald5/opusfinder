@@ -10,6 +10,7 @@ import type { LocationConfidence, PlaceKind, SourceName, UnmatchedPlace } from "
 
 import type { Db } from "../client";
 import { companies, jobs, locationStrings, places } from "../schema";
+import type { TaggedVector } from "./embeddings";
 import { activePairsSql, locationTextsSql, MAX_LOCATION_RAW_BYTES } from "./location-strings";
 import { locationRule, milesBetween, type LocationFilter } from "./location-rule";
 import { candidateFilterSql } from "./retrieval";
@@ -245,16 +246,16 @@ export async function explainJob(
 /**
  * Where a job ranks by cosine distance among the user's candidates with location ignored (the same
  * candidate filter retrieval uses, minus the location rule): 1 = closest. Null when the job is not a
- * candidate at all (closed, unembedded, outside the recency window).
+ * candidate at all (closed, not embedded by the query's model, outside the recency window).
  */
 export async function cosineRankIgnoringLocation(
   db: Db,
-  embedding: number[],
+  query: TaggedVector,
   jobId: number,
   recencyDays: number,
 ): Promise<number | null> {
-  const literal = vectorLiteral(embedding);
-  const filter = candidateFilterSql({ recencyDays });
+  const literal = vectorLiteral(query.embedding);
+  const filter = candidateFilterSql({ recencyDays, embeddingModel: query.model });
   const result = await db.execute(sql`
     WITH target AS (
       SELECT j.embedding <=> ${literal}${VECTOR_CAST} AS distance FROM ${jobs} j WHERE j.id = ${jobId} AND ${filter}

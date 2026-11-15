@@ -13,7 +13,7 @@ import { runIngestion } from "@opusfinder/sources";
 import { createTestDb } from "@test/db/pglite";
 import { setUpRole } from "@test/db/role";
 import { truncate } from "@test/db/truncate";
-import { oneHot } from "@test/db/vectors";
+import { oneHot, TEST_MODEL } from "@test/db/vectors";
 import { jsonResponse, routedFetch, textResponse, type Route } from "@test/http/fetch-router";
 
 // The scrapers Worker (apps/scrapers) connects as the scrapers_worker role. An ingest tick, a discovery run and
@@ -126,7 +126,11 @@ describe("the scrapers Worker's pipelines as scrapers_worker (integration: real 
     "an ingest tick inserts, updates, revives, sweeps and stale-closes (enforce=%s)",
     async (enforce) => {
       const acme = await seedCompany({ slug: companySlug("acme") });
-      await seedJob(acme, "1", { title: "old title", embedding: oneHot(0) }); // listed, changed
+      await seedJob(acme, "1", {
+        title: "old title",
+        embedding: oneHot(0),
+        embeddingModel: TEST_MODEL,
+      }); // listed, changed
       await seedJob(acme, "2", { lifecycleState: "closed", closedAt: daysAgo(1) }); // listed again: revives
       await seedJob(acme, "8", { lastSeenAt: daysAgo(30) }); // absent and past the TTL
       await seedJob(acme, "9", { consecutiveAbsences: 2 }); // absent at the close threshold
@@ -155,6 +159,7 @@ describe("the scrapers Worker's pipelines as scrapers_worker (integration: real 
       ]);
       expect(await job("3")).toBeDefined();
       expect((await job("1"))!.embedding).toBeNull();
+      expect((await job("1"))!.embeddingModel).toBeNull();
       expect((await job("2"))!.lifecycleState).toBe("active");
       expect((await company("acme"))!.lastIngestedAt).toBeInstanceOf(Date);
     },

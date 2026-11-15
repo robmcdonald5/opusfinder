@@ -129,11 +129,13 @@ describe("digests repo — recipient gates, shown-history anti-joins, persist/re
     const cv = cvRows[0];
     if (!cv) throw new Error("seedRecipient: user_cv_files insert returned no row");
     if (overrides.profileRow !== false) {
+      const embedding =
+        overrides.embedding === undefined ? new Array<number>(1024).fill(0.1) : overrides.embedding;
       await db.insert(userProfiles).values({
         userId,
         structured: { summary: "backend engineer", skills: ["ts"], targetRoles: ["Platform"] },
-        embedding:
-          overrides.embedding === undefined ? new Array<number>(1024).fill(0.1) : overrides.embedding,
+        embedding,
+        embeddingModel: embedding === null ? null : "test-embed-1",
         sourceCvFileId: cv.id,
       });
     }
@@ -204,7 +206,11 @@ describe("digests repo — recipient gates, shown-history anti-joins, persist/re
   }
 
   /** A NewDigestItem with a full snapshot (the interface makes snapshot fields non-optional). */
-  function item(forJobId: number, rank: number, overrides: Partial<NewDigestItem> = {}): NewDigestItem {
+  function item(
+    forJobId: number,
+    rank: number,
+    overrides: Partial<NewDigestItem> = {},
+  ): NewDigestItem {
     return {
       jobId: forJobId,
       rank,
@@ -288,7 +294,10 @@ describe("digests repo — recipient gates, shown-history anti-joins, persist/re
       const w1 = await seedRecipient(1, { digestCadence: "weekly", lastDigestSentAt: daysAgo(7) });
       // W2 at 1d is PAST the daily 20h window — it reds if a weekly user is evaluated on the daily interval.
       await seedRecipient(2, { digestCadence: "weekly", lastDigestSentAt: daysAgo(1) });
-      const m1 = await seedRecipient(3, { digestCadence: "monthly", lastDigestSentAt: daysAgo(29) });
+      const m1 = await seedRecipient(3, {
+        digestCadence: "monthly",
+        lastDigestSentAt: daysAgo(29),
+      });
       // M2 at 10d is PAST the weekly window — it reds if a monthly user hits the weekly interval.
       await seedRecipient(4, { digestCadence: "monthly", lastDigestSentAt: daysAgo(10) });
       // Stamped at a tick (the run's start) 6 / 28 days ago: the next tick is not yet due, or weekly drifts
@@ -313,7 +322,10 @@ describe("digests repo — recipient gates, shown-history anti-joins, persist/re
       const u3 = await seedRecipient(3);
       // Removing .limit makes page 1 length 3; removing .orderBy(user.id) risks a nondeterministic
       // order against this exact-sequence assertion.
-      expect(await listDigestRecipients(db, { limit: 2 })).toEqual([{ userId: u1 }, { userId: u2 }]);
+      expect(await listDigestRecipients(db, { limit: 2 })).toEqual([
+        { userId: u1 },
+        { userId: u2 },
+      ]);
       // Removing gt(user.id, afterId) restarts page 2 at u1.
       expect(await listDigestRecipients(db, { afterId: u2, limit: 2 })).toEqual([{ userId: u3 }]);
     });
@@ -420,7 +432,12 @@ describe("digests repo — recipient gates, shown-history anti-joins, persist/re
     it("insertDigest returns an id; a second insert for the same (user, run) rejects; a different run succeeds", async () => {
       const a = await seedRecipient(1);
       const r1 = await startDigestRun(db, "manual");
-      const first = await insertDigest(db, { userId: a, digestRunId: r1, itemCount: 2, counts: {} });
+      const first = await insertDigest(db, {
+        userId: a,
+        digestRunId: r1,
+        itemCount: 2,
+        counts: {},
+      });
       expect(first.id).toBeGreaterThan(0);
       // The digests_user_id_digest_run_id_uq index is the double-write guard — if a migration drops
       // or widens it, this expected rejection stops happening (rejectionOf fails the test).
@@ -432,7 +449,12 @@ describe("digests repo — recipient gates, shown-history anti-joins, persist/re
       expect(String(rejection.cause ?? rejection)).toMatch(/unique|duplicate/i);
       // Same user on a DIFFERENT run succeeds — the guard is the composite pair, not user_id alone.
       const r2 = await startDigestRun(db, "manual");
-      const second = await insertDigest(db, { userId: a, digestRunId: r2, itemCount: 1, counts: {} });
+      const second = await insertDigest(db, {
+        userId: a,
+        digestRunId: r2,
+        itemCount: 1,
+        counts: {},
+      });
       expect(second.id).toBeGreaterThan(first.id);
     });
 
@@ -462,9 +484,15 @@ describe("digests repo — recipient gates, shown-history anti-joins, persist/re
         { id: dB1.id, userId: b, digestRunId: r1 },
       ]);
       // Orphan items here = the digest_items FK ON DELETE CASCADE regressed.
-      expect(await db.select().from(digestItems).where(eq(digestItems.digestId, dA1.id))).toHaveLength(0);
-      expect(await db.select().from(digestItems).where(eq(digestItems.digestId, dA2.id))).toHaveLength(1);
-      expect(await db.select().from(digestItems).where(eq(digestItems.digestId, dB1.id))).toHaveLength(1);
+      expect(
+        await db.select().from(digestItems).where(eq(digestItems.digestId, dA1.id)),
+      ).toHaveLength(0);
+      expect(
+        await db.select().from(digestItems).where(eq(digestItems.digestId, dA2.id)),
+      ).toHaveLength(1);
+      expect(
+        await db.select().from(digestItems).where(eq(digestItems.digestId, dB1.id)),
+      ).toHaveLength(1);
       // No-op path: a second delete for the same (user, run) must not throw.
       await expect(deleteUserDigestForRun(db, a, r1)).resolves.toBeUndefined();
     });
@@ -520,7 +548,9 @@ describe("digests repo — recipient gates, shown-history anti-joins, persist/re
       expect(row.remote).toBe(true);
       // Empty-list smoke: inserts nothing, throws nothing.
       await expect(insertDigestItems(db, digestId, a, [])).resolves.toBeUndefined();
-      expect(await db.select().from(digestItems).where(eq(digestItems.digestId, digestId))).toHaveLength(1);
+      expect(
+        await db.select().from(digestItems).where(eq(digestItems.digestId, digestId)),
+      ).toHaveLength(1);
     });
 
     it("getJobSnapshots keys live jobs⋈companies display fields by id; missing ids absent; empty input → empty Map", async () => {
@@ -560,9 +590,18 @@ describe("digests repo — recipient gates, shown-history anti-joins, persist/re
       // Explicit created_at sentinels — relying on defaultNow() would make every ordering assertion
       // vacuous (all rows get near-identical stamps). d1 (LOWEST id) gets the NEWEST date so id order
       // OPPOSES created_at order; d2/d3 tie so id DESC has its own witness.
-      await db.update(digests).set({ createdAt: new Date("2026-03-01T00:00:00Z") }).where(eq(digests.id, d1));
-      await db.update(digests).set({ createdAt: new Date("2026-02-01T00:00:00Z") }).where(eq(digests.id, d2));
-      await db.update(digests).set({ createdAt: new Date("2026-02-01T00:00:00Z") }).where(eq(digests.id, d3));
+      await db
+        .update(digests)
+        .set({ createdAt: new Date("2026-03-01T00:00:00Z") })
+        .where(eq(digests.id, d1));
+      await db
+        .update(digests)
+        .set({ createdAt: new Date("2026-02-01T00:00:00Z") })
+        .where(eq(digests.id, d2));
+      await db
+        .update(digests)
+        .set({ createdAt: new Date("2026-02-01T00:00:00Z") })
+        .where(eq(digests.id, d3));
       // d2's items inserted OUT of rank order (2 then 1) so the items orderBy(rank) is load-bearing.
       await insertDigestItems(db, d2, a, [item(j2, 2, { score: 0.25 }), item(j1, 1)]);
 
@@ -627,7 +666,9 @@ describe("digests repo — recipient gates, shown-history anti-joins, persist/re
       const dARows = await db.select().from(digestItems).where(eq(digestItems.digestId, dA));
       expect(dARows.map((r) => r.jobId).sort((x, y) => x - y)).toEqual([j1, j3]);
       // dB's job-2 item surviving = the `digest_id = ${digestId}` half of the CTE WHERE held.
-      expect(await db.select().from(digestItems).where(eq(digestItems.digestId, dB))).toHaveLength(1);
+      expect(await db.select().from(digestItems).where(eq(digestItems.digestId, dB))).toHaveLength(
+        1,
+      );
       const header = await readDigest(dA);
       expect(header.itemCount).toBe(2);
       // retrieved:5 preserved = the `counts || $::jsonb` MERGE (a plain assignment would lose it).
@@ -653,7 +694,9 @@ describe("digests repo — recipient gates, shown-history anti-joins, persist/re
       await dropDigestItemsAndRecount(db, dC, [], 7, { probedOk: 7 });
 
       // Empty int[] (`{}`::int[]) must delete nothing.
-      expect(await db.select().from(digestItems).where(eq(digestItems.digestId, dC))).toHaveLength(2);
+      expect(await db.select().from(digestItems).where(eq(digestItems.digestId, dC))).toHaveLength(
+        2,
+      );
       const header = await readDigest(dC);
       expect(header.itemCount).toBe(7);
       expect(header.counts).toEqual({ retrieved: 9, probedOk: 7 });
@@ -939,7 +982,9 @@ describe("digests repo — recipient gates, shown-history anti-joins, persist/re
       expect(prefsB.lastDigestSentAt).toBeNull();
       expect(prefsB.lastDigestEmailId).toBeNull();
       // ...and the stamp feeds cadenceDuePredicate — A is off the window, B is still due.
-      expect(await listDigestRecipients(db, { limit: 10, cadenceDue: true })).toEqual([{ userId: b }]);
+      expect(await listDigestRecipients(db, { limit: 10, cadenceDue: true })).toEqual([
+        { userId: b },
+      ]);
     });
 
     it("the cadence clock is the run's start, not the send time, and never moves back", async () => {
@@ -966,7 +1011,9 @@ describe("digests repo — recipient gates, shown-history anti-joins, persist/re
 
       expect((await readPrefs(a)).lastDigestSentAt).toEqual(startedAt);
       expect((await readPrefs(b)).lastDigestSentAt).toEqual(bStamp);
-      expect(await listDigestRecipients(db, { limit: 10, cadenceDue: true })).toEqual([{ userId: a }]);
+      expect(await listDigestRecipients(db, { limit: 10, cadenceDue: true })).toEqual([
+        { userId: a },
+      ]);
     });
 
     it("recordDigestDeliveryOutcome without suppress upgrades ONLY delivery_status; an unknown id throws", async () => {
@@ -983,16 +1030,19 @@ describe("digests repo — recipient gates, shown-history anti-joins, persist/re
       expect(prefs.digestSuppressedAt).toBeNull();
       expect(prefs.digestBounceStatus).toBe("none");
 
-      await expect(recordDigestDeliveryOutcome(db, 999999, { status: "delivered" })).rejects.toThrow(
-        /matched no digest/,
-      );
+      await expect(
+        recordDigestDeliveryOutcome(db, 999999, { status: "delivered" }),
+      ).rejects.toThrow(/matched no digest/);
     });
 
     it("suppressing outcomes COALESCE-keep an existing suppression timestamp and touch bounce status only when given", async () => {
       // (a) bounce path: fresh suppression + hard bounce recorded together.
       const a = await seedRecipient(1);
       const dA = (await seedDigestForUser(a)).digestId;
-      await recordDigestDeliveryOutcome(db, dA, { status: "bounced", suppress: { bounce: "hard" } });
+      await recordDigestDeliveryOutcome(db, dA, {
+        status: "bounced",
+        suppress: { bounce: "hard" },
+      });
       let prefsA = await readPrefs(a);
       expect(prefsA.digestSuppressedAt).toBeInstanceOf(Date);
       expect(prefsA.digestBounceStatus).toBe("hard");
@@ -1005,7 +1055,10 @@ describe("digests repo — recipient gates, shown-history anti-joins, persist/re
         .update(userPreferences)
         .set({ digestSuppressedAt: planted })
         .where(eq(userPreferences.userId, a));
-      await recordDigestDeliveryOutcome(db, dA, { status: "bounced", suppress: { bounce: "hard" } });
+      await recordDigestDeliveryOutcome(db, dA, {
+        status: "bounced",
+        suppress: { bounce: "hard" },
+      });
       prefsA = await readPrefs(a);
       // A moved timestamp = COALESCE(existing, now()) replaced by a plain now() assignment — a retried
       // record step would rewrite suppression history.

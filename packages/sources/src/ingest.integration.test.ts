@@ -23,7 +23,7 @@ import {
 import { createTestDb } from "@test/db/pglite";
 import { rejectionOf } from "@test/rejection";
 import { truncate } from "@test/db/truncate";
-import { oneHot } from "@test/db/vectors";
+import { oneHot, TEST_MODEL } from "@test/db/vectors";
 import { jsonResponse, routedFetch, textResponse, type Route } from "@test/http/fetch-router";
 
 // What this file proves: the runIngestion ORCHESTRATION over real PGlite — iterate the companies chunk,
@@ -69,7 +69,14 @@ vi.mock("@opusfinder/db/repos", async (importOriginal) => {
     sweepStaleJobs: vi.fn(actual.sweepStaleJobs),
   };
 });
-const repoSpies = [upsertCompany, upsertJobs, listCompanies, markJobsPresent, sweepLifecycle, sweepStaleJobs];
+const repoSpies = [
+  upsertCompany,
+  upsertJobs,
+  listCompanies,
+  markJobsPresent,
+  sweepLifecycle,
+  sweepStaleJobs,
+];
 
 // Adapter tuning that removes real waits: no retries (a 5xx fails the board on the first attempt, no
 // `backoff` setTimeout) — paired with paceMs:0 (the stubbed sleep is a no-op anyway).
@@ -99,7 +106,12 @@ const failRoute = (slug: string, status = 500): Route => ({
 function wkJob(code: string): { shortcode: string; title: string; url: string } {
   return { shortcode: code, title: `W ${code}`, url: `https://x/${code}` };
 }
-const workableBoard = (slug: string, status: number, jobList: unknown[] = [], retryAfter?: string): Route => ({
+const workableBoard = (
+  slug: string,
+  status: number,
+  jobList: unknown[] = [],
+  retryAfter?: string,
+): Route => ({
   match: (url) => url.includes(`/widget/accounts/${slug}?`),
   respond: () => {
     paced.events.push(`fetch:${slug}`);
@@ -212,7 +224,10 @@ describe("runIngestion — orchestration over real PGlite (fetch stubbed)", () =
     return db.select().from(jobs).where(eq(jobs.companyId, companyId)).orderBy(jobs.externalId);
   }
   async function jobByExt(externalId: string) {
-    const rows = await db.select().from(jobs).where(eq(jobs.externalId, jobId(externalId)));
+    const rows = await db
+      .select()
+      .from(jobs)
+      .where(eq(jobs.externalId, jobId(externalId)));
     return rows[0];
   }
   async function companyById(id: number) {
@@ -277,7 +292,14 @@ describe("runIngestion — orchestration over real PGlite (fetch stubbed)", () =
       });
 
       // A per-board throw NEVER fails the run — only failed++ + first-error capture.
-      expect(counts).toMatchObject({ companies: 3, processed: 3, ok: 1, failed: 2, jobs: 1, changed: 1 });
+      expect(counts).toMatchObject({
+        companies: 3,
+        processed: 3,
+        ok: 1,
+        failed: 2,
+        jobs: 1,
+        changed: 1,
+      });
       const runs = await allSourceRuns();
       expect(runs[0]!.status).toBe("ok"); // an isolated board error must not terminalize the run 'error'
       expect(runs[0]!.errorSample).toMatch(/badalpha/);
@@ -298,7 +320,10 @@ describe("runIngestion — orchestration over real PGlite (fetch stubbed)", () =
     it("defaults activeOnly:true — a deactivated board is never fetched", async () => {
       const active = await seedCompany({ slug: "activeco", active: true });
       const inactive = await seedCompany({ slug: "inactiveco", active: false });
-      const fx = installFetch([boardRoute("activeco", [ghJob(1)]), boardRoute("inactiveco", [ghJob(1)])]);
+      const fx = installFetch([
+        boardRoute("activeco", [ghJob(1)]),
+        boardRoute("inactiveco", [ghJob(1)]),
+      ]);
 
       const counts = await runIngestion(db, { paceMs: 0, adapter: NO_RETRY });
 
@@ -407,7 +432,9 @@ describe("runIngestion — orchestration over real PGlite (fetch stubbed)", () =
         await runIngestion(db, { maxRunMs: 0, paceMs: 0, adapter: NO_RETRY }); // stops after board 1
         await runIngestion(db, { paceMs: 0, adapter: NO_RETRY }); // processes all 3
 
-        const summaries = log.mock.calls.map((c) => String(c[0])).filter((l) => l.startsWith("Ingestion:"));
+        const summaries = log.mock.calls
+          .map((c) => String(c[0]))
+          .filter((l) => l.startsWith("Ingestion:"));
         expect(summaries).toHaveLength(2);
         const [stopped, full] = summaries;
         expect(stopped).toMatch(/^Ingestion: 3 board\(s\) — 1 ok; budget stop: processed 1\/3; /);
@@ -467,7 +494,12 @@ describe("runIngestion — orchestration over real PGlite (fetch stubbed)", () =
 
   describe("partial listing (a Trakstar board ending well short of its meta.total)", () => {
     it("skips the sweep but still stamps and certifies the board, as for a capped one", async () => {
-      const partco = await seedCompany({ slug: "partco", source: "trakstar", active: true, lastIngestedAt: null });
+      const partco = await seedCompany({
+        slug: "partco",
+        source: "trakstar",
+        active: true,
+        lastIngestedAt: null,
+      });
       // gone-1 is not listed: a sweep would count it absent.
       await seedJob(partco, { externalId: "gone-1", source: "trakstar", consecutiveAbsences: 0 });
       // meta.total says 40, but the second page (offset 2) comes back empty.
@@ -477,7 +509,12 @@ describe("runIngestion — orchestration over real PGlite (fetch stubbed)", () =
           respond: (url) =>
             jsonResponse({
               meta: { total: 40 },
-              objects: url.endsWith("offset=0") ? [{ id: "t-1", title: "T 1" }, { id: "t-2", title: "T 2" }] : [],
+              objects: url.endsWith("offset=0")
+                ? [
+                    { id: "t-1", title: "T 1" },
+                    { id: "t-2", title: "T 2" },
+                  ]
+                : [],
             }),
         },
       ]);
@@ -628,6 +665,7 @@ describe("runIngestion — orchestration over real PGlite (fetch stubbed)", () =
         return Promise.resolve({
           embeddings: texts.map(() => oneHot(0)),
           usage: { totalTokens: texts.length * 10 },
+          model: TEST_MODEL,
         });
       };
 
@@ -785,7 +823,7 @@ describe("runIngestion — orchestration over real PGlite (fetch stubbed)", () =
       }
       await db
         .update(jobs)
-        .set({ embedding: oneHot(0), contentSignature: "stored-sig" })
+        .set({ embedding: oneHot(0), embeddingModel: TEST_MODEL, contentSignature: "stored-sig" })
         .where(eq(jobs.companyId, sr));
       // sr-2 is brand new and its detail 500s too; sr-3 hydrates normally.
       installFetch(
@@ -820,7 +858,10 @@ describe("runIngestion — orchestration over real PGlite (fetch stubbed)", () =
       expect(await jobByExt("sr-2")).toBeUndefined(); // no content yet — waits for a run that fetches it
       expect((await jobByExt("sr-3"))!.descriptionText).toBe("About sr-3");
       // Persisted with the run row, so `pnpm runs` shows it.
-      expect((await allSourceRuns())[0]!.counts).toMatchObject({ hydrateSkipped: 3, hydrateListed: 4 });
+      expect((await allSourceRuns())[0]!.counts).toMatchObject({
+        hydrateSkipped: 3,
+        hydrateListed: 4,
+      });
     });
 
     it("a board whose EVERY detail fetch failed writes nothing yet is still present and certified", async () => {
@@ -902,7 +943,7 @@ describe("runIngestion — orchestration over real PGlite (fetch stubbed)", () =
       expect(counts).toMatchObject({ ok: 0, failed: 1, jobs: 0, hydrateSkipped: 0 });
       // The recorded error leads with the Postgres reason, and drizzle's params line is gone.
       expect((await allSourceRuns())[0]!.errorSample).toBe(
-        'smartrecruiters:srfail [code=22001] value too long for type character varying(255) | ' +
+        "smartrecruiters:srfail [code=22001] value too long for type character varying(255) | " +
           'Failed query: insert into "jobs" ("id") values ($1)',
       );
     });
@@ -915,7 +956,10 @@ describe("runIngestion — orchestration over real PGlite (fetch stubbed)", () =
       const gh = await seedCompany({ slug: "inline", active: true });
       // Same title as ghJob(1), so only the description differs (a title change would rightly re-embed).
       await seedJob(gh, { externalId: "1", title: "Job 1", descriptionText: "Stored body" });
-      await db.update(jobs).set({ embedding: oneHot(1) }).where(eq(jobs.companyId, gh));
+      await db
+        .update(jobs)
+        .set({ embedding: oneHot(1), embeddingModel: TEST_MODEL })
+        .where(eq(jobs.companyId, gh));
       installFetch([boardRoute("inline", [ghJob(1)])]); // ghJob carries no `content` ⇒ descriptionText ""
 
       const counts = await runIngestion(db, { paceMs: 0, adapter: NO_RETRY });
@@ -941,8 +985,16 @@ describe("runIngestion — orchestration over real PGlite (fetch stubbed)", () =
 
     it("a posting that MOVED boards and whose detail fails moves to the new board and stays live (never closed)", async () => {
       // srold (lower id, processed first) listed mv-1 before; now only srnew lists it — and its detail 500s.
-      const oldBoard = await seedCompany({ slug: "srold", source: "smartrecruiters", active: true });
-      const newBoard = await seedCompany({ slug: "srnew", source: "smartrecruiters", active: true });
+      const oldBoard = await seedCompany({
+        slug: "srold",
+        source: "smartrecruiters",
+        active: true,
+      });
+      const newBoard = await seedCompany({
+        slug: "srnew",
+        source: "smartrecruiters",
+        active: true,
+      });
       await seedJob(oldBoard, {
         externalId: "mv-1",
         source: "smartrecruiters",
@@ -973,11 +1025,17 @@ describe("runIngestion — orchestration over real PGlite (fetch stubbed)", () =
       // many runs its detail is unavailable; hydrate_skip_ratio is what surfaces it.
       const sr = await seedCompany({ slug: "srunavail", source: "smartrecruiters", active: true });
       for (const id of ["g-404", "g-msg"]) {
-        await seedJob(sr, { externalId: id, source: "smartrecruiters", descriptionText: `Stored ${id}` });
+        await seedJob(sr, {
+          externalId: id,
+          source: "smartrecruiters",
+          descriptionText: `Stored ${id}`,
+        });
       }
       installFetch(
         srBoard("srunavail", ["g-404", "g-msg"], (id) =>
-          id === "g-404" ? textResponse("missing", 404) : jsonResponse({ message: "Posting not available" }),
+          id === "g-404"
+            ? textResponse("missing", 404)
+            : jsonResponse({ message: "Posting not available" }),
         ),
       );
 
@@ -996,13 +1054,11 @@ describe("runIngestion — orchestration over real PGlite (fetch stubbed)", () =
   describe("politeness pacing — per pacing key, ≥ paceMs after that key's previous board FINISHED", () => {
     // Each board's fetch records `fetch:<slug>` and advances the injected fake clock by `tookMs` (the
     // board's duration); the stubbed sleep advances it by what it slept. DB work takes 0 fake ms.
-    const record =
-      (slug: string, body: unknown, tookMs: number) =>
-      (): Response => {
-        paced.events.push(`fetch:${slug}`);
-        paced.now += tookMs;
-        return jsonResponse(body);
-      };
+    const record = (slug: string, body: unknown, tookMs: number) => (): Response => {
+      paced.events.push(`fetch:${slug}`);
+      paced.now += tookMs;
+      return jsonResponse(body);
+    };
     const gh = (slug: string, tookMs = 0): Route => ({
       match: boardMatch(slug),
       respond: record(slug, { jobs: [] }, tookMs),
@@ -1045,7 +1101,13 @@ describe("runIngestion — orchestration over real PGlite (fetch stubbed)", () =
       await seedCompany({ slug: "ac", active: true });
       await seedCompany({ slug: "ad", source: "lever", active: true });
       await seedCompany({ slug: "ae", active: true });
-      installFetch([gh("aa", 100), lever("ab", 100), gh("ac", 100), lever("ad", 100), gh("ae", 100)]);
+      installFetch([
+        gh("aa", 100),
+        lever("ab", 100),
+        gh("ac", 100),
+        lever("ad", 100),
+        gh("ae", 100),
+      ]);
 
       await runIngestion(db, clocked);
 
@@ -1211,7 +1273,12 @@ describe("runIngestion — orchestration over real PGlite (fetch stubbed)", () =
     it("skips the key's boards inside the window: no request, no pause, no presence, not failed — other keys run", async () => {
       await seedCompany({ slug: "wa", source: "workable", active: true });
       await seedCompany({ slug: "g1", active: true });
-      const wb = await seedCompany({ slug: "wb", source: "workable", active: true, lastIngestedAt: null });
+      const wb = await seedCompany({
+        slug: "wb",
+        source: "workable",
+        active: true,
+        lastIngestedAt: null,
+      });
       await seedCompany({ slug: "g2", active: true });
       const wc = await seedCompany({ slug: "wc", source: "workable", active: true });
       // wb's stored job is on its listing: had wb been fetched, it would be stamped present and wb certified.
@@ -1282,7 +1349,11 @@ describe("runIngestion — orchestration over real PGlite (fetch stubbed)", () =
         await seedCompany({ slug: "wa", source: "workable", active: true });
         await seedCompany({ slug: "g1", active: true });
         await seedCompany({ slug: "wb", source: "workable", active: true });
-        installFetch([workableBoard("wa", 429, [], retryAfter), ghBoard("g1", gapMs), workableBoard("wb", 200)]);
+        installFetch([
+          workableBoard("wa", 429, [], retryAfter),
+          ghBoard("g1", gapMs),
+          workableBoard("wb", 200),
+        ]);
 
         const counts = await runIngestion(db, clocked);
 
@@ -1292,7 +1363,11 @@ describe("runIngestion — orchestration over real PGlite (fetch stubbed)", () =
             ? ["fetch:wa", "fetch:g1", "fetch:wb", "sleep:1000", "fetch:wa"]
             : ["fetch:wa", "fetch:g1"],
         );
-        expect(counts).toMatchObject({ processed: 3, failed: 1, rateLimitSkipped: attempted ? 0 : 1 });
+        expect(counts).toMatchObject({
+          processed: 3,
+          failed: 1,
+          rateLimitSkipped: attempted ? 0 : 1,
+        });
       },
     );
 
@@ -1322,7 +1397,10 @@ describe("runIngestion — orchestration over real PGlite (fetch stubbed)", () =
       const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
       let counts: IngestionCounts;
       try {
-        counts = await runIngestion(db, { ...clocked, adapter: { ...FAIL_FAST, hydrateConcurrency: 1 } });
+        counts = await runIngestion(db, {
+          ...clocked,
+          adapter: { ...FAIL_FAST, hydrateConcurrency: 1 },
+        });
       } finally {
         warn.mockRestore();
       }
@@ -1342,7 +1420,12 @@ describe("runIngestion — orchestration over real PGlite (fetch stubbed)", () =
 
     it("second pass: a blip is recovered in-tick — the 429'd board and the skipped one are retried once cooled", async () => {
       await seedCompany({ slug: "wa", source: "workable", active: true });
-      const wb = await seedCompany({ slug: "wb", source: "workable", active: true, lastIngestedAt: null });
+      const wb = await seedCompany({
+        slug: "wb",
+        source: "workable",
+        active: true,
+        lastIngestedAt: null,
+      });
       await seedCompany({ slug: "g1", active: true });
       const g2 = await seedCompany({ slug: "g2", active: true });
       let waCalls = 0;
@@ -1421,7 +1504,11 @@ describe("runIngestion — orchestration over real PGlite (fetch stubbed)", () =
       const sr = await seedCompany({ slug: "sr1", source: "smartrecruiters", active: true });
       await seedCompany({ slug: "g1", active: true });
       // A stored posting sr1 no longer lists: each sweep adds one to its absence streak.
-      await seedJob(sr, { externalId: "gone-1", source: "smartrecruiters", consecutiveAbsences: 0 });
+      await seedJob(sr, {
+        externalId: "gone-1",
+        source: "smartrecruiters",
+        consecutiveAbsences: 0,
+      });
       let h1Calls = 0;
       const fx = installFetch([
         ...srBoard("sr1", ["h-1", "h-2"], (id) =>
@@ -1447,7 +1534,13 @@ describe("runIngestion — orchestration over real PGlite (fetch stubbed)", () =
       // sr1: list + h-1 (429, the pool stops); g1; then sr1 again: list + h-1 + h-2.
       expect(fx.calls.filter((u) => u.includes("/companies/sr1/"))).toHaveLength(5);
       // Its final outcome is the re-run's: fully hydrated.
-      expect(counts).toMatchObject({ ok: 2, failed: 0, jobs: 2, hydrateSkipped: 0, hydrateListed: 2 });
+      expect(counts).toMatchObject({
+        ok: 2,
+        failed: 0,
+        jobs: 2,
+        hydrateSkipped: 0,
+        hydrateListed: 2,
+      });
       expect(boards.map((b) => [b.slug, b.hydrateSkipped])).toEqual([
         ["g1", 0],
         ["sr1", 0],
@@ -1594,7 +1687,11 @@ describe("runIngestion — orchestration over real PGlite (fetch stubbed)", () =
       vi.mocked(markJobsPresent).mockRejectedValueOnce(new Error("stamp down"));
 
       const boards: IngestBoardResult[] = [];
-      const counts = await runIngestion(db, { paceMs: 0, adapter: NO_RETRY, onBoard: (b) => boards.push(b) });
+      const counts = await runIngestion(db, {
+        paceMs: 0,
+        adapter: NO_RETRY,
+        onBoard: (b) => boards.push(b),
+      });
 
       expect(counts).toMatchObject({ ok: 1, failed: 0, jobs: 1, markFailed: 1 });
       expect(boards[0]).toMatchObject({ ok: true });
@@ -1618,7 +1715,11 @@ describe("runIngestion — orchestration over real PGlite (fetch stubbed)", () =
       installFetch([boardRoute("ghco", [ghJob(1)])]);
       vi.mocked(sweepStaleJobs).mockRejectedValueOnce(new Error("stale down"));
 
-      const counts = await runIngestion(db, { paceMs: 0, adapter: NO_RETRY, staleSweep: { enforce: true } });
+      const counts = await runIngestion(db, {
+        paceMs: 0,
+        adapter: NO_RETRY,
+        staleSweep: { enforce: true },
+      });
 
       expect(counts).toMatchObject({ ok: 1, staleSweepFailed: 1, staleClosed: 0 });
       expect((await allSourceRuns())[0]!.status).toBe("ok");
@@ -1661,7 +1762,11 @@ describe("runIngestion — orchestration over real PGlite (fetch stubbed)", () =
       expect(runs[0]!.status).toBe("ok"); // isolated, not an infrastructural failure
       // A clear, shape-only cause (no opaque TypeError), exactly.
       expect(runs[0]!.errorSample).toBe('nonesuch:p2 unknown source "nonesuch"');
-      expect(boards[1]).toMatchObject({ slug: "p2", ok: false, error: 'unknown source "nonesuch"' });
+      expect(boards[1]).toMatchObject({
+        slug: "p2",
+        ok: false,
+        error: 'unknown source "nonesuch"',
+      });
     });
   });
 
