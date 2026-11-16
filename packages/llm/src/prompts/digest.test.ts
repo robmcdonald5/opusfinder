@@ -22,4 +22,51 @@ describe("buildDigestSystem", () => {
     expect(withPrefs.startsWith(`${base}\n\n=== Candidate stated preferences ===\n`)).toBe(true);
     expect(withPrefs).toContain("Target years of experience: 2-5");
   });
+
+  // Hand-written, never computed through the shared composer, so a change to what the notes read
+  // cannot rewrite the expectation along with the behaviour.
+  it("renders the rubric, the profile block, then the preferences block for a fixed profile", () => {
+    const profile: StructuredProfile = {
+      summary: "Registered nurse with 8 years in acute medical-surgical care.",
+      skills: ["Patient assessment", "IV therapy", "Epic"],
+      targetRoles: ["Charge Nurse", "Clinical Nurse Educator"],
+      facts: {
+        credentials: [
+          {
+            name: "Registered Nurse",
+            issuer: "Texas Board of Nursing",
+            status: "active",
+            expires: "2027-03",
+          },
+        ],
+        education: [{ level: "bachelor", field: "Nursing", completed: true }],
+        yearsExperience: { total: 8, byRoleFamily: [{ roleFamily: "Nursing", years: 8 }] },
+        languages: [{ language: "Spanish", proficiency: "conversational" }],
+        workAuthorization: "Authorized to work in the US",
+      },
+      extractVersion: 2,
+    };
+    const profileBlock =
+      "=== Candidate profile ===\n" +
+      "Registered nurse with 8 years in acute medical-surgical care.\n\n" +
+      "Skills: Patient assessment, IV therapy, Epic\n\n" +
+      "Target roles: Charge Nurse, Clinical Nurse Educator";
+
+    expect(buildDigestSystem(profile)).toBe(`${DIGEST_SYNTHESIS_SYSTEM}\n\n${profileBlock}`);
+    expect(
+      buildDigestSystem(profile, {
+        yoeMin: 5,
+        yoeMax: null,
+        minSalary: null,
+        maxSalary: 110000,
+        dealbreakers: ["night shifts"],
+      }),
+    ).toBe(
+      `${DIGEST_SYNTHESIS_SYSTEM}\n\n${profileBlock}\n\n` +
+        "=== Candidate stated preferences ===\n" +
+        "Target years of experience: at least 5\n" +
+        "Salary preference: up to 110000\n" +
+        "Dealbreakers (avoid): night shifts",
+    );
+  });
 });
