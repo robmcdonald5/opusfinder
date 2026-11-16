@@ -20,7 +20,7 @@ import { createTestDb } from "@test/db/pglite";
 import { P, seedPlaces } from "@test/db/places";
 import { truncate } from "@test/db/truncate";
 
-import { ATS_SELECTION, exportProductionSlice } from "./export";
+import { ATS_SELECTION, exportProductionSlice, type Queryable } from "./export";
 import {
   decodeJsonl,
   SnapshotCompanySchema,
@@ -302,8 +302,8 @@ describe("snapshot export and load (integration: real PGlite)", () => {
   });
 
   it("refuses to run when the session is not read-only", async () => {
-    const lying = {
-      query: (text: string, params?: unknown[]) =>
+    const lying: Queryable = {
+      query: (text, params) =>
         text.startsWith("BEGIN") ? client.query("BEGIN") : client.query(text, params),
     };
     await expect(exportProductionSlice(lying, () => dir)).rejects.toThrow(/not read-only/);

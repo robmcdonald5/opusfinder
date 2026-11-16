@@ -77,8 +77,8 @@ function writeTable(objectsDir: string, table: SnapshotTable, rows: unknown[]): 
 }
 
 /**
- * Read the slice and write its objects under `objectsDir`. `onStart` gets the transaction's clock
- * before anything is written (the caller names the snapshot after its date).
+ * Read the slice and write its objects. `objectsDirFor` gets the transaction's clock before anything
+ * is written and returns the folder to write to (the caller names the snapshot after that date).
  */
 export async function exportProductionSlice(
   db: Queryable,

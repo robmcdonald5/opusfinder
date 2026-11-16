@@ -82,31 +82,31 @@ export function openSnapshot(id: string, snapshotsDir = SNAPSHOTS_DIR): Snapshot
         );
       }
       const width = opts.width ?? model.dimensions;
+      // Filled part by part into one matrix sized from the manifest, so the peak is the matrix plus
+      // one part (a 4096-wide model over 80k jobs is 1.3 GB as it is).
+      const parts = jobsParts();
+      const rowsOf = new Map(manifest.objects.map((o) => [o.path, o.rows]));
+      const total = parts.reduce((sum, p) => sum + (rowsOf.get(p) ?? 0), 0);
       const jobIds: number[] = [];
-      const blocks: Float32Array[] = [];
-      for (const path of jobsParts()) {
+      const matrix = new Float32Array(total * width);
+      for (const path of parts) {
+        const offset = jobIds.length;
         for (const job of readJobsPart(paths.objects, path)) jobIds.push(job.id);
         const part = vectorsPartPath(modelSlug, path);
         const full = decodeVectors(readObject(paths.objects, part), model.dimensions, part);
+        if (full.length !== (jobIds.length - offset) * model.dimensions) {
+          throw new Error(`${part} does not line up with ${path}; run snapshot:rebuild.`);
+        }
         if (width === model.dimensions) {
-          blocks.push(full);
+          matrix.set(full, offset * width);
           continue;
         }
-        const rows = full.length / model.dimensions;
-        const cut = new Float32Array(rows * width);
-        for (let r = 0; r < rows; r++) {
-          cut.set(
+        for (let r = 0; r < jobIds.length - offset; r++) {
+          matrix.set(
             truncateVector(full.subarray(r * model.dimensions, (r + 1) * model.dimensions), width),
-            r * width,
+            (offset + r) * width,
           );
         }
-        blocks.push(cut);
-      }
-      const matrix = new Float32Array(jobIds.length * width);
-      let offset = 0;
-      for (const block of blocks) {
-        matrix.set(block, offset);
-        offset += block.length;
       }
       return { model: model.id, dimensions: width, jobIds, matrix };
     },

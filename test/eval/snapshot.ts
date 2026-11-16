@@ -8,7 +8,7 @@ import {
   type SnapshotSlice,
 } from "../../packages/eval/src/snapshot/format";
 import { writeObject } from "../../packages/eval/src/snapshot/store";
-import type { PutObjectInput, StorageClient } from "@opusfinder/storage";
+import type { PutObjectInput, StorageClient } from "../../packages/storage/src/types";
 
 /** A snapshot job with sensible defaults; `flags` are computed, as the export computes them. */
 export function snapshotJob(

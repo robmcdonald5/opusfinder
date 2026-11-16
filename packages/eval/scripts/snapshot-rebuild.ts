@@ -24,7 +24,8 @@ async function main(): Promise<void> {
   const args = process.argv.slice(2);
   const id = getFlag(args, "--id");
   if (!id) throw new Error("--id <snapshot date> is required.");
-  const paths = snapshotPaths(id);
+  // --snapshots-dir rebuilds somewhere other than data/snapshots/ (it must hold <id>/manifest.json).
+  const paths = snapshotPaths(id, getFlag(args, "--snapshots-dir"));
   const manifest = parseManifest(JSON.parse(readFileSync(paths.manifest, "utf8")));
 
   if (!args.includes("--offline")) {
