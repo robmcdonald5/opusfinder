@@ -1,0 +1,79 @@
+{
+  "summary": "Carpenter foreman with roughly a decade of concrete and formwork experience, moving from carpentry into supervision of craft crews and subcontractors on construction sites. Works from plans and specifications at metric and imperial scales, forms slabs, columns and walls for concrete pours, and erects scaffolding and decking. Operates a range of heavy equipment including excavators, cranes, skid steers and aerial lifts, and holds rigging and signal certification. Experienced with multiple forming systems and strong on site safety, daily scheduling, manpower and material coordination, and documentation.",
+  "skills": [
+    "concrete forming",
+    "formwork",
+    "slab forming",
+    "column forming",
+    "wall forming",
+    "concrete finishing",
+    "scaffolding erection",
+    "blueprint reading",
+    "plan and specification interpretation",
+    "rigging",
+    "signal person",
+    "welding",
+    "cutting",
+    "skid steer operation",
+    "front end loader operation",
+    "forklift operation",
+    "aerial lift operation",
+    "excavator operation",
+    "crane operation",
+    "roller operation",
+    "Aluminum forming systems",
+    "Gang Form",
+    "Simons forming systems",
+    "EFCO forming systems",
+    "MEVA forming systems",
+    "wood forms",
+    "site safety",
+    "job hazard analysis",
+    "crew supervision",
+    "subcontractor coordination",
+    "production scheduling",
+    "prevailing wage compliance",
+    "carpentry",
+    "plumb and layout measurement"
+  ],
+  "targetRoles": [
+    "Carpenter Foreman",
+    "Carpenter",
+    "Concrete Foreman"
+  ],
+  "facts": {
+    "credentials": [
+      {
+        "name": "Certified rigger",
+        "issuer": null,
+        "status": null,
+        "expires": null
+      },
+      {
+        "name": "Certified signal person",
+        "issuer": null,
+        "status": null,
+        "expires": null
+      }
+    ],
+    "education": [
+      {
+        "level": "high_school",
+        "field": null,
+        "completed": true
+      },
+      {
+        "level": "associate",
+        "field": "General studies (A.S.)",
+        "completed": true
+      }
+    ],
+    "yearsExperience": {
+      "total": null,
+      "byRoleFamily": []
+    },
+    "languages": [],
+    "workAuthorization": null
+  },
+  "extractVersion": 2
+}

@@ -1,0 +1,43 @@
+{
+  "id": "sales-associate-retail",
+  "group": "hourly-shift",
+  "source": {
+    "dataset": "opensporks/resumes",
+    "revision": "ed4cb5f3fd1ce7e0a0e74e1a09c1a3b702c2c2eb",
+    "path": "data/data/SALES/33236701.pdf",
+    "sha256": "64691bae27e6b80ce99f3cca49816d8c40d6a7744f6318d249d135e8fef9403a"
+  },
+  "expected": {
+    "summary": [["retail", "sales associate"]],
+    "skills": [
+      ["merchandising", "visual merchandising"],
+      ["pos", "point of sale", "cash register", "cash handling", "money handling"],
+      ["inventory"]
+    ],
+    "targetRoles": ["sales associate", "retail", "cashier", "server", "host", "hostess"],
+    "credentials": [
+      {
+        "match": ["cpr"]
+      },
+      {
+        "match": ["aed"],
+        "optional": true
+      },
+      {
+        "match": ["servsafe", "serv safe"]
+      }
+    ],
+    "education": [
+      {
+        "level": ["high_school"],
+        "completed": "any"
+      }
+    ],
+    "years": [],
+    "languages": [],
+    "workAuthorization": ["authorized to work in the us", "authorized to work in the united states"]
+  },
+  "judgementCalls": [
+    "'Graduate in August of 2016' is unclear about whether school is finished, so completed is not checked."
+  ]
+}

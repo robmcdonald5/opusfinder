@@ -1,0 +1,78 @@
+{
+  "id": "systems-eng-manager",
+  "group": "tech",
+  "source": {
+    "dataset": "opensporks/resumes",
+    "revision": "ed4cb5f3fd1ce7e0a0e74e1a09c1a3b702c2c2eb",
+    "path": "data/data/ENGINEERING/61579998.pdf",
+    "sha256": "9b46dbab5d6cbc0beb95f69b6cc90c2fb99745a08888677db89fb3e52ac732df"
+  },
+  "expected": {
+    "summary": [
+      [
+        "systems engineering",
+        "systems engineer",
+        "technical manager",
+        "engineering manager",
+        "technical program"
+      ]
+    ],
+    "skills": [
+      ["systems engineering", "requirements engineering", "system architecture", "doors"],
+      ["solidworks", "creo", "ansys", "autocad"],
+      [
+        "agile",
+        "jira",
+        "ms project",
+        "program management",
+        "project management",
+        "technical program management"
+      ]
+    ],
+    "targetRoles": [
+      "systems engineering manager",
+      "engineering manager",
+      "program manager",
+      "technical program manager",
+      "systems engineer",
+      "technical manager"
+    ],
+    "credentials": [
+      {
+        "match": ["secret"],
+        "status": "active"
+      },
+      {
+        "match": ["six sigma"],
+        "status": "any",
+        "optional": true
+      }
+    ],
+    "education": [
+      {
+        "level": ["bachelor"],
+        "field": ["mechanical engineering"]
+      },
+      {
+        "level": ["certificate", "other"],
+        "field": ["enterprise system architecture", "system architecture", "enterprise"],
+        "completed": "any"
+      }
+    ],
+    "years": [],
+    "languages": [
+      {
+        "match": ["arabic"]
+      },
+      {
+        "match": ["english"]
+      }
+    ],
+    "workAuthorization": ["citizen"]
+  },
+  "judgementCalls": [
+    "'Active Secret Security Clearance' is a credential with status active.",
+    "LEAN/Six Sigma appears only as a skill, so it is allowed but not required as a credential.",
+    "'(US Citizen)' next to the languages is the work-authorisation statement."
+  ]
+}

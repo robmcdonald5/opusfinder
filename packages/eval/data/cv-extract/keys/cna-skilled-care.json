@@ -1,0 +1,64 @@
+{
+  "id": "cna-skilled-care",
+  "group": "healthcare-licensed",
+  "source": {
+    "dataset": "opensporks/resumes",
+    "revision": "ed4cb5f3fd1ce7e0a0e74e1a09c1a3b702c2c2eb",
+    "path": "data/data/HEALTHCARE/18714571.pdf",
+    "sha256": "1c1ab05d6f98a322e43b8b1d7ed5f16412e3f293cdb2eec1fe65880fe3d332f9"
+  },
+  "expected": {
+    "summary": [["nursing assistant", "cna"]],
+    "skills": [
+      ["vitals", "vital signs", "vital"],
+      ["adl", "adls", "activities of daily living", "daily living"],
+      [
+        "mechanical lift",
+        "mechanical lifts",
+        "sliding board",
+        "gait belt",
+        "patient transfer",
+        "patient transfers"
+      ]
+    ],
+    "targetRoles": ["nursing assistant", "cna", "nurse aide"],
+    "credentials": [
+      {
+        "match": ["cna", "certified nursing assistant", "nursing assistant"],
+        "also": ["pennsylvania", "pa"]
+      },
+      {
+        "match": ["cna", "certified nursing assistant", "nursing assistant"],
+        "also": ["south carolina", "sc"],
+        "status": "inactive"
+      }
+    ],
+    "education": [
+      {
+        "level": ["associate"],
+        "field": ["visual communications"]
+      },
+      {
+        "level": ["high_school"]
+      },
+      {
+        "level": ["certificate", "other", "associate"],
+        "field": ["computer"],
+        "completed": "any"
+      }
+    ],
+    "years": [
+      {
+        "years": 11,
+        "slot": "either"
+      }
+    ],
+    "languages": [],
+    "workAuthorization": null
+  },
+  "judgementCalls": [
+    "Two CNA entries are required: Pennsylvania (no status) and the 'previous' South Carolina one (inactive).",
+    "'AST Degree' is keyed as an associate degree.",
+    "The community-college computer coursework is required as an entry, any of certificate / other / associate, completed or not."
+  ]
+}

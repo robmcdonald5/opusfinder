@@ -1,0 +1,65 @@
+{
+  "summary": "Licensed vocational nurse with 25+ years of experience across acute respiratory support, home health, private duty and substance detox settings. Delivers patient-centered care including medication administration, wound and tracheotomy care, IV therapy management, and enteral feeding, with strong patient and family education and physician liaison skills. Has coordinated care plans with physicians and registered nurses, supervised certified nursing assistants, and managed high-acuity patient loads of 10+ per shift.",
+  "skills": [
+    "Medication administration",
+    "Wound care",
+    "Tracheotomy care",
+    "IV therapy",
+    "Enteral feeding",
+    "Ventilator care",
+    "Suctioning",
+    "Patient assessment",
+    "Patient education",
+    "Medical records documentation",
+    "Vital signs monitoring",
+    "Blood glucose testing",
+    "Specimen collection",
+    "Lab testing",
+    "Range of motion exercises",
+    "Patient transfer",
+    "Care plan development",
+    "Colostomy care",
+    "Catheter care",
+    "Substance withdrawal monitoring",
+    "Supervision of nursing assistants"
+  ],
+  "targetRoles": [
+    "Licensed Vocational Nurse",
+    "Field Nurse",
+    "Home Health Nurse"
+  ],
+  "facts": {
+    "credentials": [
+      {
+        "name": "Licensed Vocational Nurse (LVN), California",
+        "issuer": "State of California",
+        "status": null,
+        "expires": null
+      }
+    ],
+    "education": [
+      {
+        "level": "bachelor",
+        "field": "Business Administration",
+        "completed": true
+      },
+      {
+        "level": "associate",
+        "field": "Arts",
+        "completed": true
+      },
+      {
+        "level": "certificate",
+        "field": "Vocational Nursing",
+        "completed": true
+      }
+    ],
+    "yearsExperience": {
+      "total": 25,
+      "byRoleFamily": []
+    },
+    "languages": [],
+    "workAuthorization": null
+  },
+  "extractVersion": 2
+}

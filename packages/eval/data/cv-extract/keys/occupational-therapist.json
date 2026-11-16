@@ -1,0 +1,71 @@
+{
+  "id": "occupational-therapist",
+  "group": "healthcare-licensed",
+  "source": {
+    "dataset": "opensporks/resumes",
+    "revision": "ed4cb5f3fd1ce7e0a0e74e1a09c1a3b702c2c2eb",
+    "path": "data/data/HEALTHCARE/60624892.pdf",
+    "sha256": "8a4ab8781ef96d21ac462fc9181c57fad3c9eef371cea7894c749ff4f6dba204"
+  },
+  "expected": {
+    "summary": [["occupational therapist", "occupational therapy"]],
+    "skills": [
+      ["occupational therapy"],
+      ["home health", "regulatory compliance", "compliance"],
+      [
+        "program development",
+        "operations management",
+        "operational management",
+        "business operations"
+      ]
+    ],
+    "targetRoles": [
+      "occupational therapist",
+      "director",
+      "operations",
+      "rehabilitation",
+      "therapy",
+      "healthcare"
+    ],
+    "credentials": [
+      {
+        "match": ["cpa", "certified public accountant"],
+        "status": "in_progress"
+      },
+      {
+        "match": ["occupational therapist", "occupational therapy", "otr"],
+        "status": "any",
+        "optional": true
+      }
+    ],
+    "education": [
+      {
+        "level": ["bachelor"],
+        "field": ["occupational therapy"]
+      },
+      {
+        "level": ["master"],
+        "field": ["healthcare management", "business administration", "business"]
+      },
+      {
+        "level": ["certificate", "other"],
+        "field": ["accounting"],
+        "completed": "any"
+      }
+    ],
+    "years": [
+      {
+        "years": 10,
+        "slot": "either"
+      }
+    ],
+    "languages": [],
+    "workAuthorization": null
+  },
+  "judgementCalls": [
+    "'CPA Exam Candidate' is keyed as a CPA credential with status in_progress.",
+    "No OT licence is stated, only the job title; an OT licence entry is allowed but not required.",
+    "'10+ years in leadership and management' is accepted as the total or as a role-family figure.",
+    "The first target role may be the therapist or the operations-director track."
+  ]
+}

@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import type { StructuredProfile } from "@opusfinder/shared";
+import { CREDENTIAL_STATUSES, EDUCATION_LEVELS, type StructuredProfile } from "@opusfinder/shared";
 
 import { pdfPart } from "../file-part";
 import { generate } from "../generate";
@@ -24,40 +24,124 @@ export const CV_TRANSCRIBE_SYSTEM = `You transcribe the career-relevant content 
 Rules:
 - Output ONLY the transcribed text — no preamble, commentary, or markdown code fences.
 - Preserve the meaningful content and its logical reading order: section headings, role titles,
-  employers, dates, bullet points, skills, education, projects. For a multi-column layout, follow the
-  human reading order within each column rather than reading straight across the columns.
+  employers, dates, bullet points, skills, education, projects, licences and certifications,
+  languages. For a multi-column layout, follow the human reading order within each column rather
+  than reading straight across the columns.
+- Keep what the CV says about licences, certifications, languages and the right to work (work
+  authorisation, citizenship or visa status, sponsorship) wherever it sits: a sidebar, the header, or
+  a "Personal information" / "Additional information" block.
 - Transcribe what is actually written. Do NOT invent, summarize, paraphrase, or embellish. If a region
   is unreadable, omit it rather than guessing.
 - OMIT page furniture and non-career noise: page numbers, repeated headers/footers, decorative rules,
-  "references available on request", and contact details (email, phone, street address, personal
-  links) — none of it carries job-matching signal.
+  "references available on request", contact details (email, phone, street address, personal
+  links), and personal details such as date or place of birth, marital status and gender — none of
+  it carries job-matching signal.
 - Keep skills / technology lists verbatim. Normalize whitespace; separate sections with a blank line.`;
+
+/**
+ * The version of the Layer-2 extraction (prompt + schema), stamped on every profile {@link structureCv}
+ * returns. Bump it whenever a change makes old and new profiles differ in shape or meaning, so stored
+ * profiles can be told apart and re-extracted from their cached transcripts. Version 1 had no tag.
+ */
+export const CV_EXTRACT_VERSION = 2;
 
 /**
  * Layer 2 — structuring. Turns the transcribed text into the {@link CvProfileSchema} profile. Used
  * with `generateObject` over the TEXT (so it re-runs cheaply from cached text). It is not cached: a CV is
  * structured once, so a cache write would rarely be read.
  */
-export const CV_STRUCTURE_SYSTEM = `You convert the plain text of a CV / résumé into a compact, PII-free semantic profile used for job matching. You are given the CV text; return ONLY the structured fields.
+export const CV_STRUCTURE_SYSTEM = `You convert the plain text of a CV / résumé into a compact, PII-free profile used for job matching. The people behind these CVs work in every field: nurses and care aides, electricians and mechanics, cooks, cashiers and warehouse staff, drivers, teachers, accountants, civil servants, engineers. You are given the CV text; return ONLY the structured fields.
 
-The profile is embedded as a QUERY vector and matched against job postings, so it is tuned for retrieval signal, NOT for reproducing the CV. It has three fields:
+The profile has two parts. summary, skills and targetRoles are embedded as a QUERY vector and matched against job postings, so they are tuned for retrieval signal, NOT for reproducing the CV. facts records what the CV states about eligibility; it is stored as written and never embedded, so it is tuned for accuracy, not signal.
 
-summary — a dense, third-person prose summary of the candidate's professional profile (about 3–6 sentences). Lead with seniority and primary discipline (e.g. "Senior backend engineer with ~8 years..."), then core domains, standout skills/technologies, and the scope/impact they operate at. Write for matching: emphasize transferable, role-relevant signal. Do NOT include the person's name, contact details, specific dates, first-person voice, or employer names (unless an employer is itself strong domain signal).
+summary — a dense, third-person prose summary of the candidate's professional profile (about 3–6 sentences). Lead with level and primary occupation in that occupation's own terms (e.g. "Senior backend engineer with ~8 years...", "Registered nurse with 14 years in medical-surgical and geriatric care...", "Line cook with fast-casual and catering experience...", "Journeyman electrician..."), then the settings or domains worked in, standout skills, and the scope they operate at (team led, patient load, volume, budget, territory). Write for matching: emphasize transferable, role-relevant signal. Do NOT include the person's name, contact details, specific dates, first-person voice, or employer names (unless an employer is itself strong domain signal).
 
-skills — a deduplicated, normalized list of CONCRETE skills, technologies, tools, languages, frameworks, and methodologies the candidate demonstrably has. Prefer canonical names ("PostgreSQL" not "postgres db"), but keep widely-used short forms where those are canonical. Include both hard technical skills and concrete professional competencies (e.g. "distributed systems design", "technical leadership"). EXCLUDE vague soft-skill filler ("hard worker", "team player", "detail-oriented") and anything the CV does not support.
+skills — a deduplicated, normalized list of CONCRETE skills the candidate demonstrably has: procedures, equipment, tools, systems, technologies, methods and professional competencies. Examples by field — clinical: "wound care", "IV therapy", "medication administration", "Epic"; trades: "conduit bending", "MIG welding", "blueprint reading", "concrete forming"; retail and hospitality: "POS operation", "cash handling", "visual merchandising", "food prep"; logistics: "order picking", "pallet jack operation", "route delivery"; public sector: "case management", "grant administration", "regulatory inspection"; software: "PostgreSQL", "distributed systems design". Prefer canonical names ("PostgreSQL" not "postgres db"), but keep widely-used short forms where those are canonical. A licence or certification belongs in facts.credentials; also list it here when postings ask for it by name ("CDL Class A", "ServSafe", "CCNA"). EXCLUDE vague soft-skill filler ("hard worker", "team player", "detail-oriented") and anything the CV does not support.
 
-targetRoles — the roles the candidate is a strong fit for, as canonical market role titles (e.g. "Senior Backend Engineer", "Staff Software Engineer", "Engineering Manager"). Infer from their most recent and most senior titles plus trajectory — not just the literal last title. Return 1–5 roles, most-fitting first; prefer standard titles over company-specific ones.
+targetRoles — the roles the candidate is a strong fit for, as canonical market role titles (e.g. "Registered Nurse", "Charge Nurse", "Certified Nursing Assistant", "Electrician", "Line Cook", "Warehouse Associate", "Retail Store Manager", "Staff Accountant", "Senior Backend Engineer"). Infer from their most recent and most senior titles plus trajectory — not just the literal last title; a role the CV says the candidate is seeking counts too. Return 1–5 roles, most-fitting first; prefer standard titles over company-specific ones.
+
+facts — only what the CV says. Each field stays empty or null when the CV is silent; an empty answer is correct, a guessed one is an error.
+
+facts.credentials — licences, registrations, certifications, cards and clearances that qualify someone to do a kind of work: a nursing or teaching licence, CNA, CPA, bar admission, CDL or a driver's licence, FAA A&P, a journeyman card, ServSafe, a food handler card, CPR / BLS / ACLS, OSHA 10 or 30, a forklift certification, TWIC, a security clearance, PMP, vendor certifications (CCNA, CompTIA A+). One entry per credential.
+  - name: the credential in its usual form, with the level, class, state or specialty the CV gives ("Registered Nurse (RN)", "Licensed Vocational Nurse (LVN), California", "CDL Class A", "Secret security clearance"). NEVER the licence or registration number.
+  - issuer: the body that granted it, if the CV names one ("American Red Cross", "State of Illinois"); otherwise null.
+  - status: "active" only if the CV calls that credential active, current or in good standing; "inactive" only if it calls it expired, lapsed, inactive or previous; "in_progress" only if it says the candidate is pursuing it, is an exam candidate or expects it. Otherwise null, which is the usual case: holding a credential ("licensed", "certified", "permanent certification") or giving its expiry date does not state a status.
+  - expires: the expiry the CV gives, as "YYYY-MM" or "YYYY"; for a stated validity period, its end. Otherwise null. The date a credential was earned is not an expiry.
+  - A credential the CV uses as a designation counts as stated, even with no licence line: a job title "RN Staff Nurse" or "CNA in Skilled Healthcare" states the RN or CNA; so do "Jane Doe, CPA" and "Certified Pharmacy Technician".
+  - Record every licence the CV says the candidate holds, including ones outside their main occupation (a driving licence, an insurance licence held by a teacher).
+  - NOT credentials: degrees and diplomas (they go in education), courses, trainings, workshops and conferences attended, awards, memberships, and a bare claim of being "trained in" something.
+
+facts.education — one entry per programme the CV lists, including high school when it is listed.
+  - level: "high_school" (diploma or GED); "certificate" (vocational, trade, technical or other non-degree programme, including an apprenticeship or academy); "associate" (AA, AS, AAS, ADN); "bachelor" (BA, BS, B.Sc, BSN, B.Tech, B.Com); "master" (MA, MS, M.Sc, MBA, MSN); "doctorate" (PhD and professional doctorates such as MD, JD, PharmD, DNP); "other" when the CV does not make the level clear.
+  - field: the subject as the CV gives it ("Nursing", "Process Technology"); null if none is given.
+  - completed: false if the CV says it is in progress, expected, or attended without finishing; otherwise true.
+
+facts.yearsExperience — only lengths of experience the CV states in words or figures ("25+ years of experience" → 25, "eleven years" → 11, "5 years 7 months" → 5.6). Never add up or subtract employment dates: a CV that only lists dated jobs states no length, so total is null and byRoleFamily is empty. Each stated figure goes in one place, total or byRoleFamily, never both.
+  - total: the stated length of the candidate's working experience overall or in their main occupation; null if the CV gives no such figure.
+  - byRoleFamily: stated lengths scoped to one function, specialty or setting, when that scope is narrower than the whole career ("8 years in nursing and 3 in management" → two entries; "6 years of ETL experience" → one). roleFamily is a short label in the CV's words. Empty if none are stated.
+
+facts.languages — human languages the CV lists, each with the proficiency it gives ("native", "fluent", "conversational", "bilingual") or null. Do not add the language the CV is written in unless the CV lists it, and add nothing for a bare "bilingual" that names no language. Programming languages are skills, not languages.
+
+facts.workAuthorization — the CV's own statement about the right to work or sponsorship, kept close to its wording ("Authorized to work in the US for any employer", "US citizen", "Green card holder", "Work permit, no visa sponsorship required"); null if the CV makes none. A place of birth, a nationality, a country of study or past work, a name or a language is NOT such a statement — never derive one.
 
 Extraction rules:
-- Ground everything in the CV text. Never invent skills, roles, or seniority the content does not support.
-- Resolve seniority from titles + years of experience + scope, not title inflation alone.
+- Ground everything in the CV text. Never invent skills, roles, seniority, credentials or any other value the content does not support.
+- Resolve seniority from titles + stated experience + scope, not title inflation alone.
 - For career changers or students with little history, summarize the strongest available signal (education, projects, internships) and target appropriate entry or transition roles.
 - Normalize and deduplicate skills; collapse obvious synonyms.
 - Drop all PII (name, email, phone, address, links) and all CV formatting — none of it belongs in the profile.
+- Never record or infer age, date or place of birth, gender, marital or family status, race, ethnicity, national origin, religion, disability or health, in any field, even when the CV states them.
 - If the text is too sparse to support a field, return the best-supported minimal value (e.g. an empty skills list rather than guessed skills).`;
 
+const CvFactsSchema = z.object({
+  credentials: z
+    .array(
+      z.object({
+        name: z.string().describe("The credential, without any licence or registration number."),
+        issuer: z.string().nullable().describe("The granting body if the CV names it, else null."),
+        status: z
+          .enum(CREDENTIAL_STATUSES)
+          .nullable()
+          .describe("Only if the CV states it, else null."),
+        expires: z.string().nullable().describe('Stated expiry as "YYYY-MM" or "YYYY", else null.'),
+      }),
+    )
+    .describe("Licences, registrations, certifications, cards and clearances the CV states."),
+  education: z
+    .array(
+      z.object({
+        level: z.enum(EDUCATION_LEVELS),
+        field: z.string().nullable().describe("Subject as the CV gives it, else null."),
+        completed: z
+          .boolean()
+          .describe("False only if the CV says in progress, expected or unfinished."),
+      }),
+    )
+    .describe("One entry per programme the CV lists."),
+  yearsExperience: z
+    .object({
+      total: z.number().nullable().describe("Stated overall years of experience, else null."),
+      byRoleFamily: z
+        .array(z.object({ roleFamily: z.string(), years: z.number() }))
+        .describe("Stated years scoped to one function, specialty or setting."),
+    })
+    .describe("Lengths of experience the CV states; never computed from dates."),
+  languages: z
+    .array(
+      z.object({
+        language: z.string(),
+        proficiency: z.string().nullable().describe("As the CV gives it, else null."),
+      }),
+    )
+    .describe("Human languages the CV lists."),
+  workAuthorization: z
+    .string()
+    .nullable()
+    .describe("The CV's own right-to-work or sponsorship statement, else null."),
+});
+
 /**
- * Layer-2 output schema — the same `{ summary, skills, targetRoles }` shape as `StructuredProfile`
+ * Layer-2 output schema: the `{ summary, skills, targetRoles, facts }` of `StructuredProfile`
  * (@opusfinder/shared). The CV pipeline types its `structure()` seam as returning `StructuredProfile`,
  * so any drift between this schema and that type fails the pipeline's typecheck.
  */
@@ -71,16 +155,20 @@ export const CvProfileSchema = z.object({
   targetRoles: z
     .array(z.string())
     .describe("Canonical role titles the candidate fits / targets, most-fitting first (1–5)."),
+  facts: CvFactsSchema.describe("What the CV states about eligibility. Stored, not embedded."),
 });
 
-/** The structured profile inferred from {@link CvProfileSchema}; matches `StructuredProfile`. */
+/** What the model returns; {@link structureCv} adds the version tag to make a `StructuredProfile`. */
 export type CvProfile = z.infer<typeof CvProfileSchema>;
 
-// Compile-time tripwire: CvProfileSchema must infer EXACTLY StructuredProfile (summary, skills[],
-// targetRoles[]). A drift in either fails `pnpm --filter @opusfinder/llm typecheck` NOW, not silently
-// when the CV pipeline wires its `structure()` seam (which is typed to return StructuredProfile).
+// Compile-time tripwire: CvProfileSchema must infer EXACTLY StructuredProfile's extracted fields. A
+// drift in either fails `pnpm --filter @opusfinder/llm typecheck` NOW, not silently when the CV
+// pipeline wires its `structure()` seam (which is typed to return StructuredProfile).
 type Equal<A, B> = [A] extends [B] ? ([B] extends [A] ? true : never) : never;
-const _cvProfileMatchesStructuredProfile: Equal<CvProfile, StructuredProfile> = true;
+const _cvProfileMatchesStructuredProfile: Equal<
+  CvProfile,
+  Required<Omit<StructuredProfile, "extractVersion">>
+> = true;
 
 /** Layer 1: Haiku vision over the PDF → clean transcript text. */
 export async function transcribeCv(pdf: Uint8Array, config: LlmConfig = {}): Promise<string> {
@@ -113,7 +201,7 @@ export async function transcribeCv(pdf: Uint8Array, config: LlmConfig = {}): Pro
 }
 
 /** Layer 2: Haiku structured extraction over the transcript → a RAW profile (callers scrub PII). */
-export async function structureCv(text: string, config: LlmConfig = {}): Promise<CvProfile> {
+export async function structureCv(text: string, config: LlmConfig = {}): Promise<StructuredProfile> {
   const { object } = await generateObject({
     ...config,
     model: "haiku",
@@ -125,5 +213,5 @@ export async function structureCv(text: string, config: LlmConfig = {}): Promise
     maxOutputTokens: 8192,
     messages: [{ role: "user", content: text }],
   });
-  return object;
+  return { ...object, extractVersion: CV_EXTRACT_VERSION };
 }

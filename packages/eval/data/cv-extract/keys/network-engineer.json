@@ -1,0 +1,67 @@
+{
+  "id": "network-engineer",
+  "group": "tech",
+  "source": {
+    "dataset": "opensporks/resumes",
+    "revision": "ed4cb5f3fd1ce7e0a0e74e1a09c1a3b702c2c2eb",
+    "path": "data/data/BPO/63158213.pdf",
+    "sha256": "505e599fe5ec25b80998e480e21e246bd56eeb40cb72c057dadb366be7bc3353"
+  },
+  "expected": {
+    "summary": [["network"]],
+    "skills": [
+      ["bgp"],
+      ["ospf"],
+      ["cisco asa", "asa", "firewall", "firewalls", "palo alto"],
+      ["mpls"]
+    ],
+    "targetRoles": ["network engineer", "network"],
+    "credentials": [
+      {
+        "match": ["cct"]
+      },
+      {
+        "match": ["ccnp"]
+      },
+      {
+        "match": ["ccna"]
+      },
+      {
+        "match": ["mcse"]
+      },
+      {
+        "match": ["security"]
+      },
+      {
+        "match": ["network"]
+      },
+      {
+        "match": ["comptia a", "a"]
+      }
+    ],
+    "education": [
+      {
+        "level": ["master"],
+        "field": ["it", "information technology"]
+      },
+      {
+        "level": ["certificate", "other", "master"],
+        "field": ["management"]
+      },
+      {
+        "level": ["associate"]
+      }
+    ],
+    "years": [],
+    "languages": [],
+    "workAuthorization": [
+      "authorized to work in the us",
+      "authorized to work in the united states"
+    ],
+    "forbidden": ["hyderabad", "1982", "married", "male", "birth"]
+  },
+  "judgementCalls": [
+    "'Bilingual' is stated without naming the languages, so languages stays empty.",
+    "PGDMS (a postgraduate diploma) is accepted as certificate, other or master."
+  ]
+}

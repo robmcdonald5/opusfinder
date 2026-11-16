@@ -1,0 +1,59 @@
+{
+  "summary": "Overnight pharmacy technician with about a decade of hospital, long-term care and retail pharmacy experience, including sterile IV, chemotherapy and pediatric admixture compounding. Works under STAT and time-sensitive conditions, filling patient orders, emergency drug kits and narcotic prescriptions, and maintaining inventory against par levels. Holds an Associate of Applied Science in Pharmacy and an Illinois pharmacy technician licence, with prior cash handling and customer service experience.",
+  "skills": [
+    "IV admixture compounding",
+    "chemotherapy compounding",
+    "pediatric compounding",
+    "sterile compounding",
+    "aseptic technique",
+    "closed-system compounding",
+    "unit dose medication preparation",
+    "prescription dispensing",
+    "prescription order processing",
+    "dosage calculation",
+    "pharmaceutical calculations",
+    "medication labeling",
+    "emergency drug kit preparation",
+    "narcotic inventory control",
+    "inventory management",
+    "Pyxis automated dispensing",
+    "Care Connection",
+    "insurance claims troubleshooting",
+    "HIPAA compliance",
+    "cash handling",
+    "customer service",
+    "Microsoft Word",
+    "Microsoft Excel",
+    "Microsoft Access",
+    "Microsoft PowerPoint"
+  ],
+  "targetRoles": [
+    "Pharmacy Technician",
+    "Hospital Pharmacy Technician",
+    "IV Compounding Technician"
+  ],
+  "facts": {
+    "credentials": [
+      {
+        "name": "Pharmacy Technician (Certified and Licensed), Illinois",
+        "issuer": "State of Illinois",
+        "status": null,
+        "expires": null
+      }
+    ],
+    "education": [
+      {
+        "level": "associate",
+        "field": "Pharmacy",
+        "completed": true
+      }
+    ],
+    "yearsExperience": {
+      "total": null,
+      "byRoleFamily": []
+    },
+    "languages": [],
+    "workAuthorization": null
+  },
+  "extractVersion": 2
+}

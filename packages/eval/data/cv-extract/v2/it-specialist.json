@@ -1,0 +1,118 @@
+{
+  "summary": "Information technology specialist with more than two decades of progressive experience in network administration, desktop support and IT infrastructure across academic, public-sector and corporate settings. Has configured and maintained LAN and wireless networks, routers, layer 3 switches, servers, DHCP and Active Directory domain services, and video conferencing systems. Supports Windows and Macintosh environments with software deployment, imaging, licence management, endpoint security and mobile device setup. Holds CompTIA A+, Network+ and Security+ certifications and Cisco CCNA and Microsoft MCSE credentials, and has managed vendor relationships and network monitoring for enterprise-scale user bases.",
+  "skills": [
+    "Network infrastructure administration",
+    "Wired and wireless networking",
+    "LAN administration",
+    "Router configuration",
+    "Layer 3 switch configuration",
+    "Switch configuration",
+    "Server administration",
+    "DHCP",
+    "Active Directory",
+    "Domain controller administration",
+    "Windows Server",
+    "Windows 7",
+    "Windows",
+    "macOS",
+    "Desktop support",
+    "Hardware troubleshooting",
+    "Software installation and troubleshooting",
+    "Software deployment",
+    "Ghost imaging",
+    "KBOX",
+    "Network security",
+    "Endpoint security",
+    "Mobile device configuration",
+    "Android",
+    "E-mail account administration",
+    "Printer, scanner and fax setup",
+    "Video conferencing",
+    "Polycom",
+    "Tandberg",
+    "Smart board and projector support",
+    "Virtual machine setup",
+    "Software license management",
+    "License server administration",
+    "Intermapper network monitoring",
+    "Network troubleshooting",
+    "TCP/IP",
+    "IP addressing",
+    "Structured cabling",
+    "Vendor management",
+    "CompTIA A+",
+    "CompTIA Network+",
+    "CompTIA Security+",
+    "CCNA",
+    "MCSE"
+  ],
+  "targetRoles": [
+    "IT Specialist",
+    "Network Administrator",
+    "Network Support Technician",
+    "Desktop Support Specialist"
+  ],
+  "facts": {
+    "credentials": [
+      {
+        "name": "CompTIA A+ certification",
+        "issuer": "CompTIA",
+        "status": null,
+        "expires": null
+      },
+      {
+        "name": "CompTIA Network+ certification",
+        "issuer": "CompTIA",
+        "status": null,
+        "expires": null
+      },
+      {
+        "name": "CompTIA Security+ certification",
+        "issuer": "CompTIA",
+        "status": null,
+        "expires": null
+      },
+      {
+        "name": "CCNA (Cisco Certified Network Associate)",
+        "issuer": "Cisco",
+        "status": null,
+        "expires": null
+      },
+      {
+        "name": "MCSE (Microsoft Certified Systems Engineer)",
+        "issuer": "Microsoft",
+        "status": null,
+        "expires": "2003"
+      }
+    ],
+    "education": [
+      {
+        "level": "associate",
+        "field": "Networking",
+        "completed": true
+      },
+      {
+        "level": "associate",
+        "field": "Microcomputer Specialization",
+        "completed": true
+      },
+      {
+        "level": "bachelor",
+        "field": "Biology",
+        "completed": true
+      },
+      {
+        "level": "master",
+        "field": "Education Biology and General Science",
+        "completed": true
+      }
+    ],
+    "yearsExperience": {
+      "total": null,
+      "byRoleFamily": []
+    },
+    "languages": [],
+    "workAuthorization": null
+  },
+  "extractVersion": 2
+}

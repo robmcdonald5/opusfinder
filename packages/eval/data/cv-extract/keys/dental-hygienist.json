@@ -1,0 +1,51 @@
+{
+  "id": "dental-hygienist",
+  "group": "healthcare-licensed",
+  "source": {
+    "dataset": "opensporks/resumes",
+    "revision": "ed4cb5f3fd1ce7e0a0e74e1a09c1a3b702c2c2eb",
+    "path": "data/data/ARTS/14248724.pdf",
+    "sha256": "6c6d48553e3d6392b94bad5c4ceb1c81f95d785f1a43640902ccf66f8a1d20c9"
+  },
+  "expected": {
+    "summary": [["dental hygienist", "dental hygiene"]],
+    "skills": [
+      ["dentrix"],
+      ["radiograph", "radiographs", "radiography"],
+      ["periodontal", "soft tissue management"]
+    ],
+    "targetRoles": ["dental hygienist"],
+    "credentials": [
+      {
+        "match": ["dental hygienist", "rdh"]
+      }
+    ],
+    "education": [
+      {
+        "level": ["master"],
+        "field": ["health sciences", "health science"]
+      },
+      {
+        "level": ["bachelor"],
+        "field": ["dental hygiene"]
+      },
+      {
+        "level": ["associate"],
+        "field": ["dental hygiene"]
+      },
+      {
+        "level": ["certificate"],
+        "field": ["dental assisting"]
+      }
+    ],
+    "years": [
+      {
+        "years": 16,
+        "slot": "either"
+      }
+    ],
+    "languages": [],
+    "workAuthorization": null
+  },
+  "judgementCalls": []
+}

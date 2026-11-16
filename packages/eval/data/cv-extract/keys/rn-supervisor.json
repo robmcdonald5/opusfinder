@@ -1,0 +1,84 @@
+{
+  "id": "rn-supervisor",
+  "group": "healthcare-licensed",
+  "source": {
+    "dataset": "opensporks/resumes",
+    "revision": "ed4cb5f3fd1ce7e0a0e74e1a09c1a3b702c2c2eb",
+    "path": "data/data/FITNESS/24219583.pdf",
+    "sha256": "8c3a0ba3c89b5003a1532e82c7bb92de6f3823e2404cdd6a5703edde4d713676"
+  },
+  "expected": {
+    "summary": [["nurse", "nursing"]],
+    "skills": [
+      ["wound care"],
+      ["iv", "intravenous"],
+      ["ventilation", "ventilator", "tracheostomy", "tracheotomy"]
+    ],
+    "targetRoles": ["nurse", "nursing", "rn"],
+    "credentials": [
+      {
+        "match": ["registered nurse", "rn"],
+        "expires": "2016-12"
+      },
+      {
+        "match": ["bls", "basic life support"],
+        "expires": "2017-07"
+      },
+      {
+        "match": ["acls", "advanced cardiac life support"],
+        "expires": "2016-09"
+      },
+      {
+        "match": ["fire and life safety", "fire life safety"],
+        "expires": "2020-01"
+      },
+      {
+        "match": ["critical care"]
+      },
+      {
+        "match": ["dysrhythmia"]
+      },
+      {
+        "match": ["iv therapy"]
+      },
+      {
+        "match": ["mechanical ventilation"]
+      },
+      {
+        "match": ["cna", "certified nursing assistant"],
+        "status": "any",
+        "expires": "any",
+        "optional": true
+      },
+      {
+        "match": ["therapeutic modalities"],
+        "status": "any",
+        "expires": "any",
+        "optional": true
+      }
+    ],
+    "education": [
+      {
+        "level": ["bachelor"],
+        "field": ["nursing"]
+      },
+      {
+        "level": ["associate"],
+        "field": ["nursing"]
+      },
+      {
+        "level": ["high_school"]
+      }
+    ],
+    "years": [],
+    "languages": [],
+    "workAuthorization": null,
+    "forbidden": ["848911", "methodist", "church"]
+  },
+  "judgementCalls": [
+    "The four 'X Certified' items in the Licenses line (critical care, dysrhythmia, IV therapy, mechanical ventilation) are required as credentials.",
+    "'CNA' appears only in the keyword skills list, so it is allowed but not required.",
+    "The dementia and stroke training courses are not credentials.",
+    "'Dysrhythmia Interpretation and Therapeutic Modalities Certified' may come out as one entry or two."
+  ]
+}

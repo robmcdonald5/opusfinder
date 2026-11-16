@@ -1,0 +1,55 @@
+{
+  "id": "warehouse-selector",
+  "group": "hourly-shift",
+  "source": {
+    "dataset": "opensporks/resumes",
+    "revision": "ed4cb5f3fd1ce7e0a0e74e1a09c1a3b702c2c2eb",
+    "path": "data/data/FITNESS/28321954.pdf",
+    "sha256": "16df9a02114af246fd04ce948fd215475db129363f58485f6d8fc20afbc20297"
+  },
+  "expected": {
+    "summary": [["warehouse", "personal trainer", "fitness"]],
+    "skills": [
+      ["pallet jack", "order picking", "order selection", "voxware"],
+      [
+        "personal training",
+        "fitness assessment",
+        "fitness assessments",
+        "program design",
+        "strength training",
+        "weight training"
+      ]
+    ],
+    "targetRoles": [
+      "warehouse",
+      "order selector",
+      "selector",
+      "personal trainer",
+      "fitness trainer",
+      "trainer"
+    ],
+    "credentials": [],
+    "education": [
+      {
+        "level": ["high_school"]
+      },
+      {
+        "level": ["other", "associate", "certificate"],
+        "completed": "any"
+      }
+    ],
+    "years": [
+      {
+        "years": 8,
+        "slot": "either"
+      }
+    ],
+    "languages": [],
+    "workAuthorization": null
+  },
+  "judgementCalls": [
+    "'2 Years Completed, Murray State College' is required as an education entry of unclear level, completed or not.",
+    "'Personal Trainer for eight plus years' is accepted as the total or as a role-family figure.",
+    "The first target role may be the warehouse or the personal-trainer track."
+  ]
+}

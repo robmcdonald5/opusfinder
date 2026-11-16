@@ -28,7 +28,7 @@ export type { LlmConfig } from "./openrouter";
 export { modelId } from "./provider";
 export type { Effort, ModelAlias, Thinking } from "./provider";
 export { pdfPart } from "./file-part";
-export { structureCv, transcribeCv } from "./prompts/cv-extract";
+export { CV_EXTRACT_VERSION, structureCv, transcribeCv } from "./prompts/cv-extract";
 // Digest prompts: the rerank output schema + candidate renderer, and the synthesis rubric +
 // renderers. The rerank SCORING rubric + orchestration live in @opusfinder/rerank (shared with eval).
 export { RerankScoresSchema, renderRerankCandidates } from "./prompts/rerank";

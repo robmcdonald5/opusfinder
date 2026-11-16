@@ -1,0 +1,97 @@
+{
+  "summary": "Federal grain inspector with five years of industrial experience, including federal grain inspection and process operations. Performs grain sample preparation, moisture, test weight, dockage and foreign material testing, aflatoxin and protein analysis, and certificate reporting. Background includes process monitoring and equipment checks, electrical installation and conduit bending, and ship hold inspection for loading safety. Holds industrial safety, marine and port security, and first aid credentials, with an associate degree in process technology.",
+  "skills": [
+    "Grain inspection",
+    "Grain sampling",
+    "Moisture testing",
+    "Test weight determination",
+    "Dockage analysis",
+    "Foreign material analysis",
+    "Aflatoxin testing",
+    "Protein analysis",
+    "Laboratory testing",
+    "Equipment calibration",
+    "Process monitoring",
+    "Process operation",
+    "Equipment troubleshooting",
+    "Mechanical aptitude",
+    "Industrial safety",
+    "Environmental safety",
+    "Ship hold inspection",
+    "Electrical installation",
+    "Conduit bending",
+    "Hydraulic bending",
+    "Pipe threading",
+    "Basic math",
+    "Basic computer skills",
+    "OSHA safety compliance",
+    "First aid",
+    "CPR",
+    "AED"
+  ],
+  "targetRoles": [
+    "Federal Grain Inspector",
+    "Process Operator",
+    "Industrial Electrician"
+  ],
+  "facts": {
+    "credentials": [
+      {
+        "name": "OSHA card",
+        "issuer": null,
+        "status": null,
+        "expires": null
+      },
+      {
+        "name": "Security Passport",
+        "issuer": null,
+        "status": null,
+        "expires": null
+      },
+      {
+        "name": "TWIC card",
+        "issuer": null,
+        "status": "active",
+        "expires": null
+      },
+      {
+        "name": "Water Survival / HUET",
+        "issuer": null,
+        "status": null,
+        "expires": null
+      },
+      {
+        "name": "First Aid, CPR and AED",
+        "issuer": null,
+        "status": null,
+        "expires": null
+      },
+      {
+        "name": "Fall Prevention and Protection Worker",
+        "issuer": null,
+        "status": null,
+        "expires": null
+      },
+      {
+        "name": "B Class Electrician",
+        "issuer": null,
+        "status": null,
+        "expires": null
+      }
+    ],
+    "education": [
+      {
+        "level": "associate",
+        "field": "Process Technology",
+        "completed": true
+      }
+    ],
+    "yearsExperience": {
+      "total": 5,
+      "byRoleFamily": []
+    },
+    "languages": [],
+    "workAuthorization": null
+  },
+  "extractVersion": 2
+}

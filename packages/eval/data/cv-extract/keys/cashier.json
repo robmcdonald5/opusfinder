@@ -1,0 +1,35 @@
+{
+  "id": "cashier",
+  "group": "hourly-shift",
+  "source": {
+    "dataset": "opensporks/resumes",
+    "revision": "ed4cb5f3fd1ce7e0a0e74e1a09c1a3b702c2c2eb",
+    "path": "data/data/APPAREL/16391949.pdf",
+    "sha256": "a1ec6c0d6e2a542d375d601545534ae40c5aa149e8fce6837906c55d65557d8d"
+  },
+  "expected": {
+    "summary": [["cashier", "retail"]],
+    "skills": [
+      ["cash handling", "cash register", "pos", "point of sale", "payment processing"],
+      ["merchandising", "stocking", "inventory", "displays", "stock rotation"]
+    ],
+    "targetRoles": ["cashier", "sales associate", "retail", "customer service"],
+    "credentials": [],
+    "education": [
+      {
+        "level": ["high_school"]
+      },
+      {
+        "level": ["associate"],
+        "field": ["guidance"],
+        "completed": "any"
+      }
+    ],
+    "years": [],
+    "languages": [],
+    "workAuthorization": null
+  },
+  "judgementCalls": [
+    "The Associate of Arts is dated 2018, after the latest job; completed is not checked."
+  ]
+}

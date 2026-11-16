@@ -11,6 +11,7 @@
     "eval": "tsx scripts/eval.ts",
     "eval:compare": "tsx scripts/compare.ts",
     "extract-profile": "tsx scripts/extract-profile.ts",
+    "cv-extract": "tsx scripts/cv-extract.ts",
     "build:pool": "tsx scripts/build-pool.ts",
     "draft-labels": "tsx scripts/draft-labels.ts",
     "build:dataset": "tsx scripts/build-dataset.ts",

@@ -1,0 +1,52 @@
+{
+  "summary": "Food server with experience in high-volume student dining, meal distribution and tray service, plus prior substitute pre-K teaching and bank loan processing. Handles cash, data entry and reconciliation work, and supports special-diet and sanitation compliance. Brings a people-focused, service-oriented approach to customer and group settings.",
+  "skills": [
+    "Food service",
+    "Food preparation",
+    "Sanitation",
+    "Cash handling",
+    "Data entry",
+    "Tray service",
+    "Special diet compliance",
+    "Customer service",
+    "Tutoring",
+    "Classroom management",
+    "Early childhood education",
+    "Check processing",
+    "Account reconciliation",
+    "Loan processing",
+    "Financial reporting review",
+    "Computer hardware and software support",
+    "Customer relationship management"
+  ],
+  "targetRoles": [
+    "Food Server",
+    "Restaurant Server",
+    "Cafeteria Worker",
+    "Teacher Assistant"
+  ],
+  "facts": {
+    "credentials": [
+      {
+        "name": "ServSafe Certification",
+        "issuer": null,
+        "status": null,
+        "expires": null
+      }
+    ],
+    "education": [
+      {
+        "level": "high_school",
+        "field": "Business",
+        "completed": true
+      }
+    ],
+    "yearsExperience": {
+      "total": null,
+      "byRoleFamily": []
+    },
+    "languages": [],
+    "workAuthorization": null
+  },
+  "extractVersion": 2
+}

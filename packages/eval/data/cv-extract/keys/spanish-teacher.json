@@ -1,0 +1,83 @@
+{
+  "id": "spanish-teacher",
+  "group": "other-non-tech",
+  "source": {
+    "dataset": "opensporks/resumes",
+    "revision": "ed4cb5f3fd1ce7e0a0e74e1a09c1a3b702c2c2eb",
+    "path": "data/data/TEACHER/25588694.pdf",
+    "sha256": "c115494ed7cb1223dccff25e1a9928292ec722286b77fc18a7504a7763546513"
+  },
+  "expected": {
+    "summary": [["spanish"], ["teacher", "teaching", "instruction", "educator"]],
+    "skills": [
+      ["spanish"],
+      ["lesson planning", "lesson plans", "curriculum", "classroom management"]
+    ],
+    "targetRoles": ["spanish teacher", "teacher", "world language"],
+    "credentials": [
+      {
+        "match": ["spanish"],
+        "expires": "any",
+        "status": "any"
+      },
+      {
+        "match": [
+          "certification",
+          "spanish",
+          "inclusive education",
+          "inclusive",
+          "teaching",
+          "teacher"
+        ],
+        "status": "any",
+        "expires": "any",
+        "optional": true
+      }
+    ],
+    "education": [
+      {
+        "level": ["master"]
+      },
+      {
+        "level": ["bachelor"]
+      },
+      {
+        "level": [
+          "high_school",
+          "certificate",
+          "associate",
+          "bachelor",
+          "master",
+          "doctorate",
+          "other"
+        ],
+        "completed": "any",
+        "optional": true
+      }
+    ],
+    "years": [
+      {
+        "years": 10,
+        "slot": "either"
+      }
+    ],
+    "languages": [
+      {
+        "match": ["spanish"],
+        "optional": true
+      },
+      {
+        "match": ["english"],
+        "optional": true
+      }
+    ],
+    "workAuthorization": null,
+    "forbidden": ["catholic"]
+  },
+  "judgementCalls": [
+    "The teaching certifications overlap (professional and permanent, Spanish and inclusive education). One Spanish certification is required; the rest are allowed.",
+    "The education section is jumbled; a master's and a bachelor's are required, anything else is allowed.",
+    "No languages section exists. Spanish as a language is allowed but not required.",
+    "'Permanent Certification' may be read as an active status; status is not checked."
+  ]
+}

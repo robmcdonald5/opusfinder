@@ -112,6 +112,45 @@ not overwrite existing labels without `--force`.
 Scale the set toward the spec's ~50 examples via public CV datasets (Kaggle/HuggingFace) + more ATS
 boards as adapters land.
 
+## CV extraction check
+
+`cv-extract` scores the production CV extraction (transcribe → structure → scrub, the calls
+`ingestCv` makes) against a hand-checked key, field by field. Run it before changing the CV prompts or
+schema, and bump `CV_EXTRACT_VERSION` (`@opusfinder/llm`) with the change. It is not a CI gate: the
+model is live.
+
+- `data/cv-extract/keys/<id>.json` — one key per test CV: where the CV comes from, its field group
+  (`healthcare-licensed`, `hourly-shift`, `other-non-tech`, `tech`), what a correct extraction holds,
+  and the entries where another reading is defensible (`judgementCalls`). The format and its matching
+  rules are documented in `src/cv-extract-key.ts`. The CVs are CC0 dataset PDFs (the same Kaggle
+  "Resume Dataset" as the pooled profiles). They are not committed, because the dataset's
+  anonymisation leaves a few names and dates behind. Each key pins its file instead: the dataset
+  (`opensporks/resumes` on Hugging Face), the dataset commit, the path and the PDF's SHA-256.
+  `cv-extract fetch` downloads them to the gitignored `data/cvs/cv-extract/` and fails on any file
+  whose checksum differs, so every checkout works from the same bytes. Transcripts are cached there
+  too and are not committed either; a fresh checkout re-transcribes on its first `run`.
+- `data/cv-extract/v<N>/<id>.json` — the profile extraction version N produced for each CV. `v1` is
+  the baseline: the structuring prompt as it was before `facts` existed, run once over the same
+  transcripts. It cannot be regenerated from the current code and does not need to be.
+- `reports/cv-extract.json` — every kept version scored against the key: overall, per group, per
+  field, and each wrong field with the reason.
+
+```
+pnpm --filter @opusfinder/eval run cv-extract fetch     # download the CVs (public, no key)
+pnpm --filter @opusfinder/eval run cv-extract run       # extract with the current prompt (OpenRouter)
+pnpm --filter @opusfinder/eval run cv-extract score     # score every version, write the report
+pnpm --filter @opusfinder/eval run cv-extract review    # the key as a review sheet (data/reviews/)
+```
+
+**The keys are drafted and not yet owner-checked**, so the committed report's numbers are provisional.
+Each key's `judgementCalls` lists where another reading of the CV is defensible; check those, and the
+rules behind them (a licence used as a job title counts, trainings are not credentials, years are
+stated-only, no status is inferred), before relying on the numbers or seeding anything from `facts`.
+
+A field is right only when everything the key requires is there and nothing it does not allow is, so
+one extra or missing licence fails the whole `credentials` field for that CV. A version-1 profile has
+no `facts` and is scored as stating none.
+
 ## Status (Phase 5)
 
 - Harness, metrics, random baseline, embedding ranker, `pnpm eval` + reports: **done**.

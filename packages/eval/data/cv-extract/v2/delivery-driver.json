@@ -1,0 +1,51 @@
+{
+  "summary": "Customer-service-oriented candidate with about 4 years of combined experience across delivery dispatch, medical office administration and construction labor. Managed a bicycle and tricycle delivery spoke route, handling order picking, loading, cyclist dispatch, and daily delivery reporting to warehouse management. Background in front-desk operations, patient billing data, appointment scheduling and facility open/close and safety procedures. Early construction exposure on residential, commercial and hotel renovation projects under a licensed contractor. Holds an associate degree in general studies and brings Microsoft Office proficiency.",
+  "skills": [
+    "customer service",
+    "order picking",
+    "load planning",
+    "delivery dispatch",
+    "route management",
+    "delivery reporting",
+    "Microsoft Office",
+    "medical billing",
+    "insurance verification",
+    "patient scheduling",
+    "front desk operations",
+    "data entry",
+    "safety procedures",
+    "hazardous material disposal",
+    "construction labor",
+    "renovation",
+    "budget tracking"
+  ],
+  "targetRoles": [
+    "Delivery Driver",
+    "Dispatcher",
+    "Warehouse Associate",
+    "Medical Office Assistant",
+    "Customer Service Representative"
+  ],
+  "facts": {
+    "credentials": [],
+    "education": [
+      {
+        "level": "associate",
+        "field": "General Studies",
+        "completed": true
+      },
+      {
+        "level": "high_school",
+        "field": "Communications",
+        "completed": true
+      }
+    ],
+    "yearsExperience": {
+      "total": 4,
+      "byRoleFamily": []
+    },
+    "languages": [],
+    "workAuthorization": null
+  },
+  "extractVersion": 2
+}

@@ -1,0 +1,92 @@
+{
+  "summary": "Registered nurse with roughly 14 years of hospital and long-term care experience across medical-surgical, geriatric, skilled nursing, emergency and women's health settings. Progressed from staff nurse to charge nurse and resident care manager, directing licensed staff, assigning acuity-based workloads and managing interdisciplinary care plans. Skilled in telemetry, IV therapy, wound care including wound vacs, medication reconciliation, and evidence-based practice, with certified instructor and oncology certification credentials. Prior administrative and banking background adds strength in records management and reporting.",
+  "skills": [
+    "Telemetry monitoring",
+    "IV therapy",
+    "Wound care",
+    "Negative pressure wound therapy",
+    "Dressing changes",
+    "Medication reconciliation",
+    "Care plan development",
+    "Patient assessment",
+    "Geriatric assessment",
+    "Pain management",
+    "Evidence-based practice",
+    "Interdisciplinary care coordination",
+    "Acuity assessment",
+    "Staff assignment and scheduling",
+    "Charge nurse leadership",
+    "Management of Aggressive Behavior (MOAB)",
+    "Teach-back communication",
+    "Bedside shift report",
+    "Electronic medical records",
+    "Medical record documentation",
+    "Staff training and instruction",
+    "Policy and procedure development",
+    "Accounts reconciliation",
+    "Administrative support"
+  ],
+  "targetRoles": [
+    "Registered Nurse",
+    "Charge Nurse",
+    "Resident Care Manager",
+    "Nurse Manager"
+  ],
+  "facts": {
+    "credentials": [
+      {
+        "name": "Registered Nurse (RN)",
+        "issuer": null,
+        "status": null,
+        "expires": null
+      },
+      {
+        "name": "Oncology Certification",
+        "issuer": null,
+        "status": null,
+        "expires": null
+      },
+      {
+        "name": "Geriatric Resource Nurse (GRN) certification",
+        "issuer": null,
+        "status": "inactive",
+        "expires": "2008"
+      },
+      {
+        "name": "Management of Aggressive Behavior (MOAB) Certified Instructor",
+        "issuer": null,
+        "status": null,
+        "expires": null
+      }
+    ],
+    "education": [
+      {
+        "level": "bachelor",
+        "field": "Nursing",
+        "completed": true
+      },
+      {
+        "level": "associate",
+        "field": "Nursing",
+        "completed": true
+      },
+      {
+        "level": "associate",
+        "field": "General Studies",
+        "completed": true
+      },
+      {
+        "level": "certificate",
+        "field": "Medical Administrative Assistant in Front/Back Office",
+        "completed": true
+      }
+    ],
+    "yearsExperience": {
+      "total": null,
+      "byRoleFamily": []
+    },
+    "languages": [],
+    "workAuthorization": null
+  },
+  "extractVersion": 2
+}

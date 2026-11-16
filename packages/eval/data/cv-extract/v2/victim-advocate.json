@@ -1,0 +1,71 @@
+{
+  "summary": "Social worker and multicultural victim advocate with more than five years of experience in case management, crisis intervention and court accompaniment for survivors of domestic violence, human trafficking and related harms. Works with Latino and immigrant clients from varied ethnic and socio-economic backgrounds, providing safety planning, victim compensation navigation, referrals and legal-system guidance. Bilingual in Spanish and English with court interpretation and translation experience, and has trained professionals and facilitated community support groups. Brings strong interpersonal, records-management and strategic planning skills and is seeking a people-focused HR generalist role.",
+  "skills": [
+    "case management",
+    "crisis intervention",
+    "safety planning",
+    "client relations",
+    "trauma-informed advocacy",
+    "human trafficking intervention",
+    "child abuse indicators",
+    "victim compensation claims",
+    "legal navigation",
+    "court accompaniment",
+    "civil court system knowledge",
+    "immigration advocacy",
+    "U-visa process",
+    "DACA",
+    "referral services",
+    "group facilitation",
+    "community education and training",
+    "public speaking",
+    "cultural competency",
+    "Spanish-English interpretation",
+    "Spanish-English translation",
+    "consecutive interpretation",
+    "simultaneous interpretation",
+    "whispered interpretation",
+    "database data entry",
+    "file and records maintenance",
+    "strategic planning",
+    "decision making"
+  ],
+  "targetRoles": [
+    "Victim Advocate",
+    "Bilingual Case Manager",
+    "Human Resources Generalist"
+  ],
+  "facts": {
+    "credentials": [
+      {
+        "name": "CPR",
+        "issuer": "YWCA",
+        "status": null,
+        "expires": null
+      }
+    ],
+    "education": [
+      {
+        "level": "bachelor",
+        "field": "Professional Studies, International Organizational Leadership",
+        "completed": true
+      }
+    ],
+    "yearsExperience": {
+      "total": 5,
+      "byRoleFamily": []
+    },
+    "languages": [
+      {
+        "language": "Spanish",
+        "proficiency": "bilingual"
+      },
+      {
+        "language": "English",
+        "proficiency": "bilingual"
+      }
+    ],
+    "workAuthorization": null
+  },
+  "extractVersion": 2
+}

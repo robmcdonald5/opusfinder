@@ -1,0 +1,38 @@
+{
+  "id": "line-cook",
+  "group": "hourly-shift",
+  "source": {
+    "dataset": "opensporks/resumes",
+    "revision": "ed4cb5f3fd1ce7e0a0e74e1a09c1a3b702c2c2eb",
+    "path": "data/data/ARTS/39064638.pdf",
+    "sha256": "014ec9eec1dc9d2cd76ee6416c503482b4f13781e258a16e591503581aaadab9"
+  },
+  "expected": {
+    "summary": [["cook", "chef", "culinary", "kitchen"]],
+    "skills": [
+      ["food prep", "food preparation", "prep work"],
+      ["inventory", "cycle counting"]
+    ],
+    "targetRoles": ["cook", "chef"],
+    "credentials": [
+      {
+        "match": ["cpr"],
+        "issuer": ["red cross"]
+      },
+      {
+        "match": ["aed"],
+        "issuer": ["red cross"],
+        "optional": true
+      }
+    ],
+    "education": [
+      {
+        "level": ["high_school"]
+      }
+    ],
+    "years": [],
+    "languages": [],
+    "workAuthorization": ["authorized to work in the us", "authorized to work in the united states"]
+  },
+  "judgementCalls": ["'CPR/AED certified through the Red Cross' may come out as one entry or two."]
+}

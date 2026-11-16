@@ -1,0 +1,48 @@
+{
+  "id": "city-carrier",
+  "group": "hourly-shift",
+  "source": {
+    "dataset": "opensporks/resumes",
+    "revision": "ed4cb5f3fd1ce7e0a0e74e1a09c1a3b702c2c2eb",
+    "path": "data/data/PUBLIC-RELATIONS/31211074.pdf",
+    "sha256": "f5de8e8586414da74dd8f84c6b442a3c15e82646929542211b594b598c59c905"
+  },
+  "expected": {
+    "summary": [["psychology", "carrier", "delivery", "customer service", "retail"]],
+    "skills": [
+      ["spss"],
+      ["customer service", "pallet jack", "pos", "delivery", "stocking", "merchandising"]
+    ],
+    "targetRoles": [
+      "carrier",
+      "mail",
+      "postal",
+      "delivery",
+      "driver",
+      "customer service",
+      "case manager",
+      "psychology",
+      "stock",
+      "retail",
+      "project",
+      "research"
+    ],
+    "credentials": [],
+    "education": [
+      {
+        "level": ["bachelor"],
+        "field": ["psychology"]
+      },
+      {
+        "level": ["high_school"]
+      }
+    ],
+    "years": [],
+    "languages": [],
+    "workAuthorization": null,
+    "forbidden": ["agape", "worship"]
+  },
+  "judgementCalls": [
+    "Recent psychology graduate working as a mail carrier: the first target role is hard to call, so a wide set is accepted."
+  ]
+}

@@ -1,0 +1,68 @@
+{
+  "summary": "ETL developer with about 6 years of data warehouse experience, working as a DataStage developer and production support analyst across banking and credit card data programmes. Builds and migrates IBM DataStage jobs (versions 8.5, 9.1 and 11.5) for ETL and ELT on DB2, Netezza, Oracle, SQL Server and Hadoop Hive platforms, with source-to-target mapping and dimensional fact and dimension loads. Migrated over 100 TB to Netezza, converted 180 Informatica mappings to DataStage, and moved 1000+ jobs between server versions. Leads offshore and nearshore teams, gathers requirements, and handles release, defect tracking and production support for mid-level to large business intelligence applications.",
+  "skills": [
+    "IBM DataStage",
+    "ETL",
+    "ELT",
+    "Unix shell scripting",
+    "SQL",
+    "Oracle",
+    "IBM DB2",
+    "Netezza",
+    "SQL Server",
+    "Hadoop Hive",
+    "IBM BigInsights",
+    "Informatica PowerCenter",
+    "Control-M",
+    "data warehousing",
+    "dimensional modeling",
+    "source-to-target mapping",
+    "data migration",
+    "mainframe COBOL data sources",
+    "requirements analysis",
+    "production support",
+    "offshore team leadership"
+  ],
+  "targetRoles": [
+    "DataStage Developer",
+    "ETL Developer",
+    "Data Warehouse Developer",
+    "Production Support Analyst"
+  ],
+  "facts": {
+    "credentials": [
+      {
+        "name": "IBM Certified Solution Developer - InfoSphere DataStage v8.5",
+        "issuer": "IBM",
+        "status": null,
+        "expires": null
+      },
+      {
+        "name": "IBM Certified Solution Developer - InfoSphere DataStage v9.1",
+        "issuer": "IBM",
+        "status": null,
+        "expires": null
+      },
+      {
+        "name": "Oracle Database 11g: SQL Fundamentals I",
+        "issuer": null,
+        "status": null,
+        "expires": null
+      }
+    ],
+    "education": [
+      {
+        "level": "bachelor",
+        "field": null,
+        "completed": true
+      }
+    ],
+    "yearsExperience": {
+      "total": 6,
+      "byRoleFamily": []
+    },
+    "languages": [],
+    "workAuthorization": null
+  },
+  "extractVersion": 2
+}

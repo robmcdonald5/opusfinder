@@ -1,0 +1,93 @@
+{
+  "summary": "Occupational therapist with over 10 years of combined clinical and healthcare operations leadership. Delivers pediatric and geriatric occupational therapy, including sensory, oral motor, and fine and gross motor evaluation and treatment, and prescribes and fits medical devices for people with disabilities. Has directed multi-site home health, outpatient rehabilitation, and skilled nursing operations across multiple states, overseeing regional directors and more than 200 staff. Strengths include regulatory compliance, policy and procedure development, revenue and margin growth, start-up agency development, staff training and mentoring, and clinical program development. Holds an MBA in healthcare management.",
+  "skills": [
+    "Occupational therapy",
+    "Pediatric occupational therapy",
+    "Geriatric occupational therapy",
+    "Sensory integration therapy",
+    "Oral motor therapy",
+    "Fine motor assessment",
+    "Gross motor assessment",
+    "Medical device fitting and training",
+    "Electronic medical records",
+    "Documentation",
+    "Microsoft Word",
+    "Microsoft Excel",
+    "Microsoft Access",
+    "Microsoft PowerPoint",
+    "Microsoft Publisher",
+    "Microsoft Outlook",
+    "QuickBooks",
+    "Program development",
+    "Clinical program development",
+    "Continuing education program development",
+    "Policy and procedure development",
+    "Regulatory compliance",
+    "Medicare survey readiness",
+    "Home health operations",
+    "Outpatient rehabilitation operations",
+    "Skilled nursing operations",
+    "Start-up agency development",
+    "Business operations management",
+    "Financial analysis",
+    "Financial reporting",
+    "Budget oversight",
+    "Revenue growth",
+    "Marketing",
+    "Business development",
+    "Customer satisfaction management",
+    "Staff recruitment",
+    "Staffing",
+    "Team building",
+    "Staff training",
+    "Clinical mentoring",
+    "Caseload management",
+    "Quality improvement",
+    "Presentation skills"
+  ],
+  "targetRoles": [
+    "Occupational Therapist",
+    "Healthcare Operations Director",
+    "Home Health Administrator"
+  ],
+  "facts": {
+    "credentials": [
+      {
+        "name": "Occupational Therapist (OT)",
+        "issuer": null,
+        "status": null,
+        "expires": null
+      },
+      {
+        "name": "Certified Public Accountant (CPA)",
+        "issuer": null,
+        "status": "in_progress",
+        "expires": null
+      }
+    ],
+    "education": [
+      {
+        "level": "bachelor",
+        "field": "Occupational Therapy",
+        "completed": true
+      },
+      {
+        "level": "master",
+        "field": "Healthcare Management",
+        "completed": true
+      },
+      {
+        "level": "certificate",
+        "field": "Accounting",
+        "completed": true
+      }
+    ],
+    "yearsExperience": {
+      "total": 10,
+      "byRoleFamily": []
+    },
+    "languages": [],
+    "workAuthorization": null
+  },
+  "extractVersion": 2
+}

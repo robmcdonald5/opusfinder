@@ -95,6 +95,12 @@ profile representation retrieval uses.
 Contact info / addresses are intentionally omitted (no job-alignment signal); `preferences` is not
 part of the vector (it comes from the Phase-12 form, feeds the deterministic filter).
 
+From extraction version 2 a profile also carries `facts` (`CvFacts`: licences and certifications,
+education, stated years of experience, languages, work authorisation) and `extractVersion`. Both are
+stored with the profile and **never embedded**: `composeProfileText` reads only the three fields above.
+`facts` holds only what the CV states; a field the CV is silent on stays empty or null.
+`profileExtractVersion(profile)` reads the version, and a profile stored before the tag existed is 1.
+
 ## Script runner
 
 `runScript(label, main)` (from `@opusfinder/shared/script`) is the shared failure

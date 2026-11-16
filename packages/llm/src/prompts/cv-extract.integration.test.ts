@@ -5,7 +5,7 @@ import { messagesReply, OPENROUTER_MESSAGES_URL } from "@test/msw/fixtures/openr
 import { server } from "@test/msw/server";
 import { rejectionOf } from "@test/rejection";
 
-import { transcribeCv } from "./cv-extract";
+import { CV_EXTRACT_VERSION, structureCv, transcribeCv } from "./cv-extract";
 
 // A cached transcript is permanent, so anything but a natural stop must throw. Runs over MSW so the wire
 // stop_reason reaches the gate exactly as OpenRouter sends it.
@@ -23,10 +23,10 @@ function respondWith(stopReason: string) {
   );
 }
 
-describe("transcribeCv — stop-reason gate over MSW", () => {
-  beforeAll(() => vi.stubEnv("OPENROUTER_API_KEY", "sk-or-test"));
-  afterAll(() => vi.unstubAllEnvs());
+beforeAll(() => vi.stubEnv("OPENROUTER_API_KEY", "sk-or-test"));
+afterAll(() => vi.unstubAllEnvs());
 
+describe("transcribeCv — stop-reason gate over MSW", () => {
   it("returns the transcript when the model ends its turn", async () => {
     respondWith("end_turn");
     expect(await transcribeCv(PDF)).toBe("Senior engineer, Go");
@@ -40,4 +40,31 @@ describe("transcribeCv — stop-reason gate over MSW", () => {
       expect(err.message).toContain(`transcription stopped with "${stopReason}"`);
     },
   );
+});
+
+describe("structureCv", () => {
+  const extracted = {
+    summary: "Registered nurse with 14 years in medical-surgical care.",
+    skills: ["wound care"],
+    targetRoles: ["Registered Nurse"],
+    facts: {
+      credentials: [{ name: "Registered Nurse (RN)", issuer: null, status: null, expires: "2027" }],
+      education: [{ level: "bachelor", field: "Nursing", completed: true }],
+      yearsExperience: { total: 14, byRoleFamily: [] },
+      languages: [],
+      workAuthorization: null,
+    },
+  };
+
+  it("returns the model's profile tagged with the extraction version", async () => {
+    server.use(
+      http.post(OPENROUTER_MESSAGES_URL, () =>
+        HttpResponse.json(messagesReply({ text: JSON.stringify(extracted) })),
+      ),
+    );
+    expect(await structureCv("RN Staff Nurse ...")).toEqual({
+      ...extracted,
+      extractVersion: CV_EXTRACT_VERSION,
+    });
+  });
 });

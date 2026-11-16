@@ -1,0 +1,114 @@
+{
+  "summary": "Registered Nurse with supervisory experience leading a 53-bed sub-acute unit, overseeing LVN, respiratory therapy and CNA staff to maintain policy adherence and safe staffing. Experienced across medical-surgical, post-surgical and intensive care acuity levels, with skills in comprehensive admission assessment, IV therapy, wound care, tracheostomy and mechanical ventilation care, and cardiac drip and PCA pump management. Develops evidence-based care plans, communicates changes in condition with physicians, and delivers staff in-services and patient and family teaching. Holds a Bachelor of Science in Nursing and an Associate of Science in Nursing.",
+  "skills": [
+    "Comprehensive nursing assessment",
+    "IV therapy",
+    "Wound care",
+    "Tracheostomy care",
+    "Mechanical ventilation care",
+    "Cardiac drip management",
+    "PCA pump management",
+    "Hemodynamic monitoring",
+    "Medication administration",
+    "Electronic medication administration records",
+    "Care plan development",
+    "Staff supervision and scheduling",
+    "Staff in-services",
+    "Patient and family teaching",
+    "Interdisciplinary communication",
+    "Clinical documentation",
+    "PointClickCare",
+    "Microsoft Excel",
+    "Microsoft Word",
+    "Microsoft PowerPoint",
+    "Basic Life Support (BLS)",
+    "Advanced Cardiac Life Support (ACLS)"
+  ],
+  "targetRoles": [
+    "Registered Nurse Supervisor",
+    "Charge Nurse",
+    "Registered Nurse"
+  ],
+  "facts": {
+    "credentials": [
+      {
+        "name": "Registered Nurse (RN)",
+        "issuer": null,
+        "status": null,
+        "expires": "2016-12"
+      },
+      {
+        "name": "Basic Life Support (BLS)",
+        "issuer": null,
+        "status": null,
+        "expires": "2017-07"
+      },
+      {
+        "name": "Advanced Cardiac Life Support (ACLS)",
+        "issuer": null,
+        "status": null,
+        "expires": "2016-09"
+      },
+      {
+        "name": "Hospital Fire and Life Safety Card",
+        "issuer": null,
+        "status": null,
+        "expires": "2020-01"
+      },
+      {
+        "name": "Critical Care Nursing Certified",
+        "issuer": null,
+        "status": null,
+        "expires": null
+      },
+      {
+        "name": "Dysrhythmia Interpretation Certified",
+        "issuer": null,
+        "status": null,
+        "expires": null
+      },
+      {
+        "name": "Therapeutic Modalities Certified",
+        "issuer": null,
+        "status": null,
+        "expires": null
+      },
+      {
+        "name": "IV Therapy Certified",
+        "issuer": null,
+        "status": null,
+        "expires": null
+      },
+      {
+        "name": "Mechanical Ventilation Certified",
+        "issuer": null,
+        "status": null,
+        "expires": null
+      }
+    ],
+    "education": [
+      {
+        "level": "bachelor",
+        "field": "Nursing",
+        "completed": true
+      },
+      {
+        "level": "associate",
+        "field": "Nursing, Transfer Studies",
+        "completed": true
+      },
+      {
+        "level": "high_school",
+        "field": null,
+        "completed": true
+      }
+    ],
+    "yearsExperience": {
+      "total": null,
+      "byRoleFamily": []
+    },
+    "languages": [],
+    "workAuthorization": null
+  },
+  "extractVersion": 2
+}

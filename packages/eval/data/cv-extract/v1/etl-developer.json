@@ -1,0 +1,35 @@
+{
+  "summary": "Senior ETL developer with about 6 years of data warehousing and ETL experience, progressing from production support analyst to DataStage developer and project lead. Deep expertise in IBM InfoSphere DataStage (8.5, 9.1, 11.5) for ETL/ELT across mainframe COBOL/ASCII sources and distributed RDBMS, with warehouses on Netezza, DB2, Oracle, SQL Server and Hive. Led large-scale enterprise migrations including Informatica-to-DataStage conversion (180 mappings), DataStage version upgrades (1000+ jobs), and a 100+ TB migration to Netezza. Covers the full SDLC from requirements and source-to-target design through production support, leading offshore and nearshore teams and delivering on schedule. Also built Hadoop/Hive data archival frameworks using Unix shell scripting.",
+  "skills": [
+    "IBM DataStage",
+    "ETL",
+    "ELT",
+    "Informatica PowerCenter",
+    "Unix Shell Scripting",
+    "SQL",
+    "IBM DB2",
+    "Netezza",
+    "SQL Server",
+    "Oracle Database",
+    "Hadoop",
+    "Hive",
+    "BigInsights",
+    "Control-M",
+    "Data Warehousing",
+    "Dimensional Modeling",
+    "Source-to-Target Mapping",
+    "Data Migration",
+    "Production Support",
+    "Requirements Analysis",
+    "Technical Leadership",
+    "Offshore Team Management",
+    "Mainframe COBOL",
+    "Data Modeling"
+  ],
+  "targetRoles": [
+    "Senior ETL Developer",
+    "Data Warehouse Engineer",
+    "ETL Lead",
+    "Data Engineer"
+  ]
+}

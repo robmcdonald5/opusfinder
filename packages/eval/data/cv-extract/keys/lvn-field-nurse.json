@@ -1,0 +1,51 @@
+{
+  "id": "lvn-field-nurse",
+  "group": "healthcare-licensed",
+  "source": {
+    "dataset": "opensporks/resumes",
+    "revision": "ed4cb5f3fd1ce7e0a0e74e1a09c1a3b702c2c2eb",
+    "path": "data/data/HEALTHCARE/25834360.pdf",
+    "sha256": "d4dd217be0233d5eba9a749aaea173147babf997f50a29049b25bbb7f84f9365"
+  },
+  "expected": {
+    "summary": [["vocational nurse", "lvn", "nurse"]],
+    "skills": [
+      ["medication administration"],
+      ["wound care", "wound cleaning"],
+      ["iv", "intravenous"]
+    ],
+    "targetRoles": ["vocational nurse", "lvn", "lpn", "practical nurse", "nurse"],
+    "credentials": [
+      {
+        "match": ["vocational nurse", "lvn"]
+      }
+    ],
+    "education": [
+      {
+        "level": ["bachelor"],
+        "field": ["business administration"]
+      },
+      {
+        "level": ["associate"]
+      },
+      {
+        "level": ["certificate", "other"],
+        "field": ["vocational nurs", "vocational nurse", "vocational nursing", "nursing"],
+        "optional": true
+      }
+    ],
+    "years": [
+      {
+        "years": 25,
+        "slot": "total"
+      }
+    ],
+    "languages": [],
+    "workAuthorization": null,
+    "forbidden": ["vn133323", "133323"]
+  },
+  "judgementCalls": [
+    "'California-licensed' is not read as a stated 'active' status, so status is null.",
+    "The 'Licensed Vocational Nurse, San Francisco Community College' line is allowed as an education entry but not required."
+  ]
+}
