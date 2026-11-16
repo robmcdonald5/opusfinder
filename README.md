@@ -11,15 +11,17 @@ pipeline, and delivers a personalized digest on a regular cadence. See
 | ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `apps/web/`            | SvelteKit headless production runtime — `/api/inngest` + `/api/health` on Vercel + Inngest Cloud (Phase 12a) ([README](apps/web/README.md))                                                              |
 | `apps/control/`        | Cloudflare control-plane Worker + D1 — desired state, change log, approval queue, run ledger behind Cloudflare Access; JSON API + owner panel (control plane slice 1) ([README](apps/control/README.md)) |
+| `apps/digest/`         | Cloudflare Worker `opusfinder-digest` — the per-user digest on Cloudflare Workflows and the health check, switched by the control plane ([README](apps/digest/README.md))                                |
 | `apps/scrapers/`       | Cloudflare Workers cron runtime — scheduled ingestion + discovery against Neon (Phase 8) ([README](apps/scrapers/README.md))                                                                             |
 | `packages/auth/`       | Better Auth (email+password) — `user`/`session`/`account` schema + user-creation service + management CLIs (Phase 9.5; node/server-only, never in the Worker) ([README](packages/auth/README.md))        |
 | `packages/control/`    | The control plane's pure core — stage registry, fail-closed `effectiveMode()`, `classify(change, role)`; Worker-safe, dependency-free ([README](apps/control/README.md))                                 |
 | `packages/ctl/`        | `pnpm ctl` — the agent CLI for the control Worker (status / set / propose / proposals / withdraw) ([README](apps/control/README.md))                                                                     |
 | `packages/db/`         | Drizzle ORM over Neon Postgres + pgvector ([README](packages/db/README.md))                                                                                                                              |
+| `packages/digest/`     | The digest's stage code (orchestrator + per-user run, written against injected step tools), its production deps and the health check; engine-free and Worker-safe; `pnpm health`                         |
 | `packages/discovery/`  | Slug-discovery pipeline — seed lanes (outscal + HN) → probe → upsert + staleness (Phase 7; F5 lane registry) ([README](packages/discovery/README.md))                                                    |
 | `packages/embeddings/` | Voyage `voyage-4-large` embeddings + cosine search ([README](packages/embeddings/README.md))                                                                                                             |
 | `packages/eval/`       | Matching-quality eval harness — metrics, rankers, reports ([README](packages/eval/README.md))                                                                                                            |
-| `packages/inngest/`    | Per-user digest pipeline on Inngest — orchestrator + per-user fn + cadence cron + F8 backfills, serve + trigger CLI (Phase 10; cadence/backfills Phase 12a) ([README](packages/inngest/README.md))       |
+| `packages/inngest/`    | The digest and health check as Inngest functions (thin adapters over `packages/digest`, paused; superseded by `apps/digest`) + the F8 backfill drain, serve + trigger CLI ([README](packages/inngest/README.md)) |
 | `packages/llm/`        | Claude (Haiku/Sonnet 5.5) through OpenRouter: prompt caching, structured output, effort/thinking controls, Batch API ([README](packages/llm/README.md))                                                  |
 | `packages/locations/`  | Location normalizer — each company's location strings → GeoNames places, checked and stored once; sync / backfill / report / explain CLIs ([README](packages/locations/README.md))                       |
 | `packages/profiles/`   | CV → semantic-profile pipeline — transcribe → structure → embed (Phase 9) ([README](packages/profiles/README.md))                                                                                        |
@@ -97,7 +99,7 @@ pnpm db:ping      # round-trips SELECT 1 against Neon
 | `pnpm user:create --email … --password …` | Create a verified user + default prefs (`[--name] [--location-mode] [--min-salary] [--max-salary] [--min-yoe] [--max-yoe] [--dealbreakers] [--exclusions] [--recency-days] [--cadence] [--enabled]`)                                                                 |
 | `pnpm user:set-prefs --email … [flags]`   | Patch a user's preferences (same pref flags, plus `--home "City, Region" \| <geonames id> \| none` and `--radius-miles N`; a home must match exactly one city)                                                                                                       |
 | `pnpm user:approve --email …`             | Grant the fail-closed digest send permit (`digest_approved_at`); a new user gets no digest until this runs (`[--revoke]`)                                                                                                                                            |
-| `pnpm user:list`                          | List users — masked email, verified, approved, suppressed + bounce, cadence, enabled, has-profile, id                                                                                                                                                                |
+| `pnpm user:list`                          | List users — masked email, verified, approved, suppressed + bounce, cadence, enabled, delivery (email or logs), has-profile, id                                                                                                                                      |
 | `pnpm digest`                             | Trigger a per-user digest run + poll for the result (`--user <uuid>` or `--all`; `[--timeout-ms] [--poll-ms]`)                                                                                                                                                       |
 | `pnpm inngest:serve`                      | Local Inngest serve endpoint for the digest functions (bare Node http, port 3000; dev-only)                                                                                                                                                                          |
 | `pnpm inngest:dev`                        | Local Inngest dev server (keyless; registers the serve URL for discovery + invocation)                                                                                                                                                                               |
@@ -118,8 +120,9 @@ The schedules live in two runtimes; a change ships per runtime, and the watchdog
 2. **Scrapers Worker**: `pnpm --filter @opusfinder/scrapers run deploy` (`wrangler deploy` registers the
    `[triggers]` crons and the `[vars]` such as `INGEST_LIMIT`). Then confirm the NEW cron string fires and
    the old one stops; the deployed schedules are not proof (`apps/scrapers/README.md` "Deploy").
-3. **Inngest crons** (`health-check-alert` `10 */2 * * *`, `digest-cadence` `10 12 * * *`): ship with the
-   next `apps/web` deploy + Inngest app sync. They are paused in the Inngest dashboard until resumed.
+3. **Digest Worker crons** (health check `10 */2 * * *`, digest `10 12 * * *`):
+   `pnpm --dir apps/digest run deploy`, then confirm each string fires (`apps/digest/README.md` "Deploy").
+   Their Inngest copies (`health-check-alert`, `digest-cadence`) stay paused in the Inngest dashboard.
 4. If `HEALTH_INGEST_MAX_AGE_H` is overridden anywhere (`packages/db/.env`, Vercel), set it to 5 or unset it.
 
 ## Data attribution
