@@ -20,6 +20,11 @@
   // (key-cache.ts, auth-config.ts, limits.ts: no Workers or Node globals), so it compiles under either
   // type set; the rest of its src is checked by apps/control/tsconfig.json under Workers types (in
   // `pnpm typecheck:test`).
-  "include": ["test/**/*.ts", "packages/*/src/**/*.test.ts", "apps/control/src/**/*.test.ts"],
+  "include": [
+    "test/**/*.ts",
+    "packages/*/src/**/*.test.ts",
+    "apps/control/src/**/*.test.ts",
+    "apps/digest/src/**/*.test.ts"
+  ],
   "exclude": ["**/node_modules", "**/dist", "**/.svelte-kit", "**/.wrangler", "apps/scrapers"]
 }

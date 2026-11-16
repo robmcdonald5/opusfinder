@@ -9,7 +9,7 @@
 // is built on (packages/control) — the control plane must never be able to wake Neon (C4) and the registry
 // will also be imported by the scrapers Worker, so both are held to an ALLOW-list, not just a deny-list.
 //
-// Per Worker (scrapers, control), THREE scans (each fails the run, exit 1):
+// Per Worker (scrapers, control, digest), THREE scans (each fails the run, exit 1):
 //   1. Direct source scan  — forbidden import string in the Worker's src/*.ts (catches a direct import
 //      AND a stray mention in a comment/string; cheap defense-in-depth). The control Worker's
 //      *.test.ts files are node-side Miniflare harnesses that never ship, so they are not scanned.
@@ -21,7 +21,8 @@
 //      surface, which scans 1+2 are blind to. A node:* builtin leak also surfaces here as a browser-platform
 //      BUILD FAILURE (the clean graph bundles, so any failure is a real signal). The scrapers Worker is
 //      checked against a deny-list of paths; the control Worker against an ALLOW-list (its own src + the
-//      pure registry, nothing from node_modules at all).
+//      pure registry, nothing from node_modules at all); the digest Worker (apps/digest: the digest
+//      Workflows and the health check) against the everywhere-forbidden paths only, since it sends mail.
 // Plus the WORKER-SAFE PACKAGES check: test/worker/shared-packages.ts imports all four shared packages the
 // way a Worker would; it must bundle for the edge runtime (so no node:* builtin anywhere in their graphs)
 // with none of the everywhere-forbidden modules reachable. packages/locations runs that same bundle in
@@ -101,6 +102,9 @@ const FORBIDDEN_BUNDLE_PATHS = [
   "/resend/",
 ];
 
+// What the digest Worker may import and declare that the scrapers Worker may not.
+const DIGEST_MAY_IMPORT = ["@opusfinder/email"];
+
 const WORKERS = [
   {
     name: "scrapers",
@@ -129,6 +133,27 @@ const WORKERS = [
       "node_modules/.pnpm/postal-mime@",
     ],
     external: ["cloudflare:workers"],
+  },
+  {
+    // The digest Worker reads user tables and sends mail, so on top of the everywhere-forbidden modules it
+    // may bundle email (resend), rerank and the prompts. Auth, the Inngest pipeline and every env loader
+    // and Node entry stay out, as for any Worker. Its *.test.ts files are node-side harnesses that never
+    // ship, so they are not scanned.
+    name: "digest",
+    src: "apps/digest/src",
+    entry: "apps/digest/src/index.ts",
+    pkg: "apps/digest/package.json",
+    scanTests: false,
+    forbiddenImports: FORBIDDEN_IMPORTS.filter((name) => !DIGEST_MAY_IMPORT.includes(name)),
+    forbiddenDeps: FORBIDDEN_DEPS.filter((name) => !DIGEST_MAY_IMPORT.includes(name)),
+    forbiddenBundlePaths: FORBIDDEN_EVERYWHERE_PATHS,
+    // What it exists to run: a bundle without these proves nothing about them.
+    requiredInputs: [
+      "packages/digest/src/digest.ts",
+      "packages/email/src/transport.ts",
+      "packages/rerank/src/index.ts",
+    ],
+    external: ["cloudflare:workers", "cloudflare:workflows"],
   },
 ];
 
@@ -244,6 +269,12 @@ for (const worker of WORKERS) {
   try {
     inputs = await bundleInputs(worker.entry, worker.external);
     checkInputs(label, inputs, worker);
+    for (const required of worker.requiredInputs ?? []) {
+      if (!inputs.includes(required)) {
+        console.error(`MISSING from the ${label} bundle graph: ${required}`);
+        failures++;
+      }
+    }
   } catch (err) {
     bundleFailure(label, err);
   }
@@ -323,7 +354,8 @@ if (failures > 0) {
 } else {
   console.log(
     `Worker-isolation guard OK — ${summaries.join("; ")} (browser/workerd conditions). No auth / neon-serverless / ` +
-      `inngest / email / env-loader leakage reachable from either Worker entry; the control Worker bundles only its ` +
-      `own src + the pure registry; the shared packages bundle for the edge runtime.`,
+      `inngest / env-loader leakage reachable from any Worker entry, and no email from the scrapers or control ` +
+      `Worker; the control Worker bundles only its own src + the pure registry; the shared packages bundle for ` +
+      `the edge runtime.`,
   );
 }

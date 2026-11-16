@@ -26,7 +26,8 @@ export const TOP_RANK = 2;
 
 export type Runtime =
   | "cf:opusfinder-scrapers" // Cloudflare Worker; reads gates via a service binding (RPC)
-  | "inngest:opusfinder" // Inngest functions served from apps/web on Vercel
+  | "cf:opusfinder-digest" // Cloudflare Worker (apps/digest): the digest Workflows and the health check
+  | "inngest:opusfinder" // Inngest functions served from apps/web on Vercel (paused; only embed is left)
   | "gh:live-integration.yml" // GitHub Actions workflow
   | "gh:backup.yml" // GitHub Actions workflow
   | "cli"; // run by hand (pnpm …)
@@ -190,12 +191,15 @@ export const globalSwitch: GlobalDef = {
 //   - apps/scrapers: the ingest, discover and locations crons (through the Worker's own dispatch),
 //     ingest.boardsPerTick's default, min and max, the discover knobs' defaults, and (against
 //     wrangler.toml's vars) the close / stale_sweep / prune initial modes and stale_sweep.ttlDays's default;
+//   - apps/digest: the digest and alerts crons, its runtime id, the units its ledger rows carry, and that
+//     it reads digest.maxRecipientsPerRun, alerts.cooldownH, the close policy and every health check's mode
+//     and threshold from its gate;
 //   - packages/inngest: each Inngest stage's platformId and the cron its served function registers;
 //   - packages/db (for the health.* policies below): the check ids, threshold defaults and env var names.
 // NOT pinned, so keep them in step by hand: live_integration's and backup's crons (.github/workflows/
 // live-integration.yml and backup.yml), the discover knobs' min/max, every `expect` period (change it with
-// its cron), embed.pagesPerRun, digest.topK and alerts.cooldownH. (embed.tokensPerRun and
-// digest.maxRecipientsPerRun have no runtime counterpart yet.)
+// its cron), embed.pagesPerRun and digest.topK (a constant in the digest's stage code, which no runtime
+// reads from its gate). (embed.tokensPerRun has no runtime counterpart yet.)
 export const stages = {
   ingest: {
     label: "Ingest job boards",
@@ -321,14 +325,15 @@ export const stages = {
   },
   alerts: {
     label: "Health alerts",
-    runtime: "inngest:opusfinder",
-    platformId: "health-check-alert",
+    runtime: "cf:opusfinder-digest",
     trigger: { cron: "10 */2 * * *" }, // 10 min after each ingest tick starts, while Neon is awake
-    // Shadow not offered: per-check shadow already exists at the policy level (§5.2).
+    // Shadow not offered: per-check shadow already exists at the policy level (§5.2). So `on` with every
+    // check in shadow is this stage's logs-only state: the check runs and reports, and emails nothing.
     modes: ["off", "on"],
     initial: "off",
-    gate: "unwired",
-    units: ["resend.emails", "neon.awake_s"],
+    // The digest Worker's health tick does nothing unless this says on (apps/digest/src/control.ts).
+    gate: "enforced",
+    units: ["resend.emails", "neon.awake_s", "cf.wall_ms"],
     // Turning alerting off is how an outage goes unseen, so — like the health checks — every agent move
     // here, the cooldown knob included, needs the owner (decision 2026-10-04).
     agent: "approval",
@@ -349,14 +354,20 @@ export const stages = {
   },
   digest: {
     label: "User digests",
-    runtime: "inngest:opusfinder",
-    platformId: "digest-cadence", // + digest-orchestrator, digest-user (event-driven)
+    runtime: "cf:opusfinder-digest",
+    platformId: "opusfinder-digest-run", // the orchestrator Workflow; + opusfinder-digest-user, one per user
     trigger: { cron: "10 12 * * *" }, // 10 min after the 12:00 ingest tick (8:10am EDT)
     modes: ["off", "shadow", "on"],
-    shadowMeans: "resolve eligible users and retrieve candidates; no LLM, no email",
+    // Shadow SPENDS: it runs the paid rerank and synthesis for every user who is due. Only the email is
+    // withheld. So off → shadow is a move toward more (MODE_RANK), which an agent can only propose.
+    shadowMeans:
+      "build and store every due user's digest in full (paid rerank and synthesis); send no email, whatever the account's delivery setting",
     initial: "off",
-    gate: "unwired",
+    // The digest Worker's daily tick starts nothing unless this says shadow or on, and its send step reads
+    // it again before any email (apps/digest/src/control.ts).
+    gate: "enforced",
     units: [
+      "cf.wall_ms",
       "anthropic.haiku.in",
       "anthropic.haiku.out",
       "anthropic.haiku.cache_write",
@@ -377,6 +388,7 @@ export const stages = {
         int: true,
       },
     },
+    // The LLM spend is the same in shadow and on (shadow only withholds the email).
     budget: { targetUsdPerMonth: 15, runaway: { unit: "usd", perDay: 3 } },
     expect: { everyMin: 24 * 60, graceMin: 120 },
   },

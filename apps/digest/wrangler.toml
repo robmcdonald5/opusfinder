@@ -1,0 +1,63 @@
+name = "opusfinder-digest"
+main = "src/index.ts"
+compatibility_date = "2026-06-03"
+# No compatibility_flags: everything in the bundle is fetch-based (neon-http, OpenRouter, Resend) and takes
+# its keys as parameters, so nodejs_compat is not needed (worker.integration.test.ts runs the real bundle
+# in workerd without it).
+
+# Cron-only (no fetch handler), so no public hostname: a request to one could only throw.
+workers_dev = false
+preview_urls = false
+
+[observability]
+enabled = true
+
+[limits]
+# Subrequests per invocation or Workflow instance (Workers Paid defaults to 10,000; not billed). The
+# orchestrator's fan-out makes about four per user who is due (two status reads, a write, a start), so the
+# default would cap a tick near 2,500 users; a per-user run makes a few hundred at most (the synthesis
+# poll schedule is 171 polls).
+subrequests = 100000
+
+[triggers]
+# UTC. Both ride the scrapers Worker's ingestion ticks (`0 */2 * * *`): 10 min after one starts, so Neon is
+# already awake. The strings MUST match the `case` labels in src/index.ts character for character
+# (dispatch.test.ts reads this array). A deploy's output is not proof a trigger fires: after the first
+# deploy and after any change here, confirm each string fires (Cloudflare has kept firing a replaced
+# trigger before).
+crons = [
+  "10 12 * * *",  # digest — daily at 12:10, starts the orchestrator Workflow
+  "10 */2 * * *", # health check — every 2 h at :10
+]
+
+# NO [vars]: nothing here switches or tunes this Worker. The secrets (DATABASE_URL, OPENROUTER_API_KEY,
+# RESEND_API_KEY, RESEND_API_KEY_FULL, EMAIL_FROM, ALERT_TO) are set with `wrangler secret put` (README
+# "Secrets"), and everything else comes from the control plane.
+
+# The control plane (apps/control, Worker `opusfinder-control`), ENFORCED (src/control.ts): each tick does
+# nothing unless the gate says its stage is on, and both stages ship off. The gate also carries what the
+# stages run with: the `close` policy (the pre-send probe's 410 close, the same row the scrapers Worker's
+# closes follow), the most users one digest tick starts, each health check's mode and threshold, and the
+# alert cooldown. All of it is set on the control panel; a health check emails only once its row says
+# enforce (set ALERT_TO first).
+# `props.name` is this Worker's runtime id in the registry, which its ledger rows carry and which the
+# control Worker checks against each stage's runtime (control.test.ts pins it).
+# Deploy order: the CONTROL Worker first, whenever the registry changes what this Worker sends.
+[[services]]
+binding = "CONTROL"
+service = "opusfinder-control"
+entrypoint = "ControlRpc"
+props = { name = "cf:opusfinder-digest" }
+
+# The orchestrator: one instance per daily tick.
+[[workflows]]
+name = "opusfinder-digest-run"
+binding = "DIGEST_RUN"
+class_name = "DigestRunWorkflow"
+
+# One instance per due user per tick. A finished instance's state (its steps' outputs: the profile and the
+# retrieved jobs' text) is kept for the platform default of 7 days.
+[[workflows]]
+name = "opusfinder-digest-user"
+binding = "DIGEST_USER"
+class_name = "DigestUserWorkflow"

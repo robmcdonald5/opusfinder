@@ -82,6 +82,34 @@ importers:
         specifier: ^4
         version: 4.101.0(@cloudflare/workers-types@4.20260617.1)
 
+  apps/digest:
+    dependencies:
+      '@opusfinder/control':
+        specifier: workspace:*
+        version: link:../../packages/control
+      '@opusfinder/db':
+        specifier: workspace:*
+        version: link:../../packages/db
+      '@opusfinder/digest':
+        specifier: workspace:*
+        version: link:../../packages/digest
+      '@opusfinder/email':
+        specifier: workspace:*
+        version: link:../../packages/email
+      '@opusfinder/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
+    devDependencies:
+      '@cloudflare/workers-types':
+        specifier: ^4
+        version: 4.20260617.1
+      '@opusfinder/llm':
+        specifier: workspace:*
+        version: link:../../packages/llm
+      wrangler:
+        specifier: ^4
+        version: 4.101.0(@cloudflare/workers-types@4.20260617.1)
+
   apps/scrapers:
     dependencies:
       '@opusfinder/control':

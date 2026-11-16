@@ -45,7 +45,7 @@ export const DEFAULT_BINDINGS: Record<string, string> = {
     [AGENT_CLIENT_ID]: { role: "agent", name: AGENT_NAME },
     [OTHER_AGENT_CLIENT_ID]: { role: "agent", name: "other-agent" },
     [RUNTIME_CLIENT_ID]: { role: "runtime", name: RUNTIME_NAME },
-    [OTHER_RUNTIME_CLIENT_ID]: { role: "runtime", name: "inngest:opusfinder" },
+    [OTHER_RUNTIME_CLIENT_ID]: { role: "runtime", name: "cf:opusfinder-digest" },
   }),
 };
 
