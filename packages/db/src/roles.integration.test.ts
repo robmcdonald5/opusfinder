@@ -5,7 +5,13 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { setUpRole } from "@test/db/role";
 import { createTestDb } from "@test/db/pglite";
 
-import { DATA_FIXER, SCRAPERS_WORKER, USER_BACKUP, type LimitedRole } from "./roles";
+import {
+  DATA_FIXER,
+  DIGEST_WORKER,
+  SCRAPERS_WORKER,
+  USER_BACKUP,
+  type LimitedRole,
+} from "./roles";
 
 // Each limited role's setup SQL under REAL Postgres semantics: it confines the role to exactly its grants,
 // converges on re-run, and aborts rather than leave a table privilege it didn't grant. What each role can
@@ -25,7 +31,7 @@ const PRIVILEGES = [
   "MAINTAIN",
 ];
 
-describe.each([DATA_FIXER, SCRAPERS_WORKER, USER_BACKUP])(
+describe.each([DATA_FIXER, SCRAPERS_WORKER, USER_BACKUP, DIGEST_WORKER])(
   "$name role setup (integration: real PGlite semantics)",
   (role: LimitedRole) => {
     let pg: PGlite;

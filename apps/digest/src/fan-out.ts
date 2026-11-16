@@ -35,6 +35,8 @@ export function tickDate(scheduledTimeMs: number): string {
   return new Date(scheduledTimeMs).toISOString().slice(0, 10);
 }
 
+const TICK_LENGTH = "YYYY-MM-DD".length;
+
 /** The per-user run's instance id (47 characters; Workflows allows 100 of [a-zA-Z0-9_-]). */
 export function userRunId(userId: string, tick: string): string {
   return `${userId}_${tick}`;
@@ -71,9 +73,11 @@ async function statusOf(binding: UserRunBinding, id: string): Promise<string | n
 
 /**
  * Start the per-user runs for `events` on tick `tick`, at most `maxUsers` of them (runs this tick already
- * started count toward it); a user over the limit stays due and is picked up by a later tick. One user's
- * failure doesn't stop the others; it is thrown after the loop, so the step is retried and the retry finds
- * the started runs already there.
+ * started count toward it). The limit is a runaway guard, not a schedule: a user over it stays due and is
+ * counted, and users are taken longest-waiting first (never started, then by the tick their last run was
+ * started on), so a user left out today is ahead of everyone started today and none is starved, even by
+ * users whose runs fail every day. One user's failure doesn't stop the others; it is thrown after the loop,
+ * so the step is retried and the retry finds the started runs already there.
  */
 export async function startUserRuns(
   store: InstanceStore,
@@ -84,31 +88,44 @@ export async function startUserRuns(
 ): Promise<FanOutResult> {
   const result: FanOutResult = { started: 0, inFlight: 0, alreadyStarted: 0, overLimit: 0 };
   const failures: string[] = [];
+  const fail = (err: unknown) =>
+    failures.push(err instanceof Error ? `${err.name}: ${err.message}` : String(err));
   const last = await store.last(events.map((event) => event.data.userId));
-  for (const { data } of events) {
+
+  // First, who can be started at all: not a user with an unfinished run, not one this tick already
+  // started (those count toward the limit before anyone new does).
+  const startable: UserRequestedEvent[] = [];
+  for (const event of events) {
+    const { userId } = event.data;
+    const id = userRunId(userId, tick);
+    try {
+      const previous = last.get(userId);
+      const previousStatus =
+        previous !== undefined && previous !== id ? await statusOf(binding, previous) : null;
+      if (previousStatus !== null && !FINISHED.has(previousStatus)) result.inFlight++;
+      else if ((await statusOf(binding, id)) !== null) result.alreadyStarted++;
+      else startable.push(event);
+    } catch (err) {
+      fail(err);
+    }
+  }
+
+  // Then start them, longest-waiting first, up to the limit. A run id ends in its tick's date, which
+  // sorts as text; a user with no run yet sorts first. The sort is stable, so ties keep the sweep's order.
+  const lastTick = (userId: string) => last.get(userId)?.slice(-TICK_LENGTH) ?? "";
+  startable.sort((a, b) => lastTick(a.data.userId).localeCompare(lastTick(b.data.userId)));
+  for (const { data } of startable) {
+    if (result.started + result.alreadyStarted >= maxUsers) {
+      result.overLimit++;
+      continue;
+    }
     const id = userRunId(data.userId, tick);
     try {
-      const previous = last.get(data.userId);
-      if (previous !== undefined && previous !== id) {
-        const status = await statusOf(binding, previous);
-        if (status !== null && !FINISHED.has(status)) {
-          result.inFlight++;
-          continue;
-        }
-      }
-      if ((await statusOf(binding, id)) !== null) {
-        result.alreadyStarted++;
-        continue;
-      }
-      if (result.started + result.alreadyStarted >= maxUsers) {
-        result.overLimit++;
-        continue;
-      }
       await store.record(data.userId, id);
       await binding.create({ id, params: data });
       result.started++;
     } catch (err) {
-      failures.push(err instanceof Error ? `${err.name}: ${err.message}` : String(err));
+      fail(err);
     }
   }
   console.log(

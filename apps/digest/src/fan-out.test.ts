@@ -233,6 +233,41 @@ describe("startUserRuns", () => {
     expect(await startUserRuns(store, binding, due(CAROL), TUE, 2)).toMatchObject({ started: 1 });
   });
 
+  it("the limit starves nobody: users whose runs fail every day don't keep the others out", async () => {
+    const { instances, binding } = engine();
+    const { store } = memoryStore();
+    const startedOn = async (tick: string) => {
+      const before = new Set(instances.keys());
+      const result = await startUserRuns(store, binding, due(ALICE, BOB, CAROL), tick, 1);
+      expect(result).toMatchObject({ started: 1, overLimit: 2 });
+      const [id] = [...instances.keys()].filter((key) => !before.has(key));
+      // The run fails without stamping its user, so all three are due again at the next tick.
+      instances.set(id!, "errored");
+      return id!.slice(0, ALICE.length);
+    };
+
+    // One slot a tick, every user due on every tick: each gets a turn before anyone gets a second.
+    expect(await startedOn(MON)).toBe(ALICE);
+    expect(await startedOn(TUE)).toBe(BOB);
+    expect(await startedOn(WED)).toBe(CAROL);
+    expect(await startedOn("2026-11-19")).toBe(ALICE);
+    expect(await startedOn("2026-11-20")).toBe(BOB);
+  });
+
+  it("takes a user who has never had a run before one who has", async () => {
+    const { binding } = engine();
+    const { ids, store } = memoryStore();
+    ids.set(ALICE, `${ALICE}_2026-11-09`); // gone from the engine: finished long ago
+    ids.set(BOB, `${BOB}_2026-11-02`);
+
+    await startUserRuns(store, binding, due(ALICE, BOB, CAROL), MON, 2);
+
+    expect(vi.mocked(binding.create).mock.calls.map(([options]) => options.params.userId)).toEqual([
+      CAROL,
+      BOB,
+    ]);
+  });
+
   it("a limit of 0 starts nothing", async () => {
     const { binding } = engine();
     const { store } = memoryStore();

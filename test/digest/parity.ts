@@ -147,7 +147,12 @@ export interface ParityImpl<Deps> {
   isNonRetriable: (err: unknown) => boolean;
   /** Wrap the recorder in an engine's step adapter (default: the stage code drives the recorder directly). */
   wrapStep?: (recorder: ParityStep) => ParityStep;
+  /** Runs around each stage call, after the scenario is seeded and before its rows are read (e.g. to
+   *  switch the connection to a limited database role and back). */
+  around?: { enter: () => Promise<void>; leave: () => Promise<void> };
 }
+
+type OrchestratorCall = { trigger: DigestTrigger; userId?: string };
 
 const TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/;
 
@@ -747,23 +752,25 @@ export async function recordParity<Deps>(
     const base = recorder(log, describe);
     const step = impl.wrapStep ? impl.wrapStep(base) : base;
     let outcome: ParityScenario["outcome"];
+    const digestRunId =
+      "perUser" in spec.call
+        ? (seeded?.digestRunId ?? (await startDigestRun(db, "cron")))
+        : undefined;
+    await impl.around?.enter();
     try {
       const returned =
-        "perUser" in spec.call
-          ? await impl.runPerUser(
+        digestRunId !== undefined
+          ? await impl.runPerUser(deps, { data: { userId: USER, digestRunId } }, step)
+          : await impl.runOrchestrator(
               deps,
-              {
-                data: {
-                  userId: USER,
-                  digestRunId: seeded?.digestRunId ?? (await startDigestRun(db, "cron")),
-                },
-              },
+              { data: (spec.call as { orchestrator: OrchestratorCall }).orchestrator },
               step,
-            )
-          : await impl.runOrchestrator(deps, { data: spec.call.orchestrator }, step);
+            );
       outcome = { returned: plain(returned) };
     } catch (err) {
       outcome = { threw: describe(err) };
+    } finally {
+      await impl.around?.leave();
     }
     record.push({ name: spec.name, log, outcome, rows: await readRows(db) });
   }

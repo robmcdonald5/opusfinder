@@ -5,13 +5,28 @@ import { PgSerial, type PgTable } from "drizzle-orm/pg-core";
 
 import { BACKUP_TABLES } from "./backup";
 import { PRUNE_FUNCTION } from "./repos/prune";
-import { companies, dataFixes, jobs, locationStrings, places, sourceRuns } from "./schema";
+import {
+  companies,
+  dataFixes,
+  digestItems,
+  digestRuns,
+  digests,
+  healthAlerts,
+  jobs,
+  locationStrings,
+  places,
+  sourceRuns,
+  user,
+  userPreferences,
+  userProfiles,
+} from "./schema";
 
 type TablePrivilege = "SELECT" | "INSERT" | "UPDATE" | "DELETE";
 
 /**
  * A limited Postgres login. It can use the tables in `grants` and nothing else: no DDL, no role memberships.
- * Only the backup role reads user tables, and none may write them. Its setup script creates it with
+ * Only the backup role and the digest Worker's read user tables, and only the digest Worker's writes one
+ * (`user_preferences`). Its setup script creates it with
  * plain SQL because a role made in the Neon Console, CLI or API joins `neon_superuser`
  * (https://neon.com/docs/manage/roles), which would grant pg_write_all_data and CREATEROLE.
  */
@@ -57,6 +72,28 @@ export const SCRAPERS_WORKER: LimitedRole = {
     { tables: [places], privileges: ["SELECT"] },
   ],
   functions: [PRUNE_FUNCTION],
+};
+
+/**
+ * The digest Worker's (apps/digest) DATABASE_URL (`digest-role:setup`): what the digest stages, the daily
+ * tick's fan-out and the health check touch. It reads the user tables the digest is built from and writes
+ * the digest's own tables. Of the user tables it can write only `user_preferences` (the cadence stamp, the
+ * last started run, a bounce's suppression), and of ingestion's only `jobs` (the pre-send probe's 410 close).
+ * Nothing on sessions, accounts, verifications, CV files or data fixes.
+ *
+ * Grants are per table, so two things are possible that the Worker's code never does: it could write
+ * `user_preferences.digest_approved_at` (the send permit) and any `jobs` column.
+ */
+export const DIGEST_WORKER: LimitedRole = {
+  name: "digest_worker",
+  grants: [
+    { tables: [user, userProfiles, companies, places, locationStrings, sourceRuns], privileges: ["SELECT"] },
+    { tables: [userPreferences, jobs], privileges: ["SELECT", "UPDATE"] },
+    { tables: [digestRuns], privileges: ["SELECT", "INSERT", "UPDATE"] },
+    { tables: [digests], privileges: ["SELECT", "INSERT", "UPDATE", "DELETE"] },
+    { tables: [digestItems], privileges: ["SELECT", "INSERT", "DELETE"] },
+    { tables: [healthAlerts], privileges: ["SELECT", "INSERT"] },
+  ],
 };
 
 /** The nightly backup's only credential (`backup:setup`, the `backup` GitHub Environment): reads the
