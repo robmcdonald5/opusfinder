@@ -184,8 +184,11 @@ export async function embedSlice(opts: EmbedRunOptions): Promise<EmbedRunResult>
     const vectors: number[][][] = new Array<number[][]>(batches.length);
     let next = 0;
 
+    // Set when a request fails for good: the other workers stop before sending (and paying for)
+    // more of a chunk that can't be saved.
+    let failed = false;
     const worker = async () => {
-      while (!capHit) {
+      while (!capHit && !failed) {
         const b = next++;
         const batch = batches[b];
         if (batch === undefined) return;
@@ -212,6 +215,9 @@ export async function embedSlice(opts: EmbedRunOptions): Promise<EmbedRunResult>
             );
           }
           vectors[b] = res.embeddings;
+        } catch (err) {
+          failed = true;
+          throw err;
         } finally {
           reserved -= estimate;
         }

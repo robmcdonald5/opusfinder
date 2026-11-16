@@ -187,6 +187,31 @@ describe("embedSlice", () => {
     expect(calls).toBe(1);
   });
 
+  it("stops sending the rest of a chunk once a request has failed for good", async () => {
+    // Twelve texts, one per request, one request at a time: the third is rejected.
+    writeJobsParts(
+      objectsDir,
+      "ats",
+      Array.from({ length: 12 }, (_x, i) => snapshotJob(i + 1)),
+    );
+    let calls = 0;
+    const model = fakeModel({
+      limits: { maxItems: 1, maxTokens: 1_000_000, charsPerToken: 1 },
+      embedBatch: async (texts) => {
+        if (++calls === 3) throw new EmbeddingRejectedError("400 Bad Request");
+        return { embeddings: texts.map(fakeVector), totalTokens: 10 };
+      },
+    });
+
+    await expect(
+      embedSlice({ objectsDir, workDir, slice: "ats", model, maxUsd: 1, concurrency: 1 }),
+    ).rejects.toThrow(/400 Bad Request/);
+
+    expect(calls).toBe(3);
+    // The two billed requests are on the record even though their chunk was never saved.
+    expect(readSpend(workDir)).toHaveLength(2);
+  });
+
   it("a chunk from a different set of jobs is not reused", async () => {
     writeJobsParts(objectsDir, "ats", [snapshotJob(1), snapshotJob(2)]);
     await embedSlice({ objectsDir, workDir, slice: "ats", model: fakeModel(), maxUsd: 1 });
