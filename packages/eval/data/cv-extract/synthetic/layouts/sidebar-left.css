@@ -8,7 +8,10 @@
 }
 body {
   margin: 0;
-  font: 9.5pt/1.4 "Helvetica Neue", Arial, sans-serif;
+  font:
+    9.5pt/1.4 "Helvetica Neue",
+    Arial,
+    sans-serif;
   color: #222;
 }
 .page {

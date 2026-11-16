@@ -12,7 +12,11 @@
         "status": "active"
       },
       {
-        "match": ["cp fs", "certified professional in food safety", "certified professional food safety"],
+        "match": [
+          "cp fs",
+          "certified professional in food safety",
+          "certified professional food safety"
+        ],
         "issuer": ["neha", "national environmental health"]
       },
       {

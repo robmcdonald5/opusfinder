@@ -8,7 +8,10 @@
 }
 body {
   margin: 0;
-  font: 10pt/1.4 Georgia, "Times New Roman", serif;
+  font:
+    10pt/1.4 Georgia,
+    "Times New Roman",
+    serif;
   color: #1a1a1a;
 }
 header {

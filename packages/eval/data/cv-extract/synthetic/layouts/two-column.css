@@ -8,7 +8,10 @@
 }
 body {
   margin: 0;
-  font: 9.5pt/1.38 Verdana, Geneva, sans-serif;
+  font:
+    9.5pt/1.38 Verdana,
+    Geneva,
+    sans-serif;
   color: #202020;
 }
 header {

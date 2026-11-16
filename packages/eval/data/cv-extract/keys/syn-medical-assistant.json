@@ -48,7 +48,10 @@
         "proficiency": ["conversational"]
       }
     ],
-    "workAuthorization": ["authorized to work in the united states", "authorized to work in the us"],
+    "workAuthorization": [
+      "authorized to work in the united states",
+      "authorized to work in the us"
+    ],
     "forbidden": ["2841937"]
   },
   "judgementCalls": [

@@ -10,7 +10,12 @@
     "targetRoles": ["physician assistant"],
     "credentials": [
       {
-        "match": ["pa c", "nccpa", "physician assistant certified", "certified physician assistant"],
+        "match": [
+          "pa c",
+          "nccpa",
+          "physician assistant certified",
+          "certified physician assistant"
+        ],
         "expires": "2027-12"
       },
       {

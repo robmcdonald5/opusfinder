@@ -301,8 +301,12 @@ function score(keys: CvKey[]): void {
     if (r.repeat) {
       const flips = Object.values(r.repeat.flipped).flat().length;
       const reworded = Object.values(r.repeat.reworded).flat().length;
-      console.log(`  two runs over ${r.repeat.cvs} CVs: ${pct(r.repeat.run1)} then ${pct(r.repeat.run2)}`);
-      console.log(`    ${flips} of ${r.repeat.run1.total} scored fields changed between right and wrong`);
+      console.log(
+        `  two runs over ${r.repeat.cvs} CVs: ${pct(r.repeat.run1)} then ${pct(r.repeat.run2)}`,
+      );
+      console.log(
+        `    ${flips} of ${r.repeat.run1.total} scored fields changed between right and wrong`,
+      );
       console.log(`    ${reworded} of ${r.repeat.factFields} facts fields were not identical`);
       for (const [id, fields] of Object.entries(r.repeat.flipped))
         console.log(`    ⇄ ${id}: ${fields.join(", ")}`);
@@ -376,7 +380,9 @@ function list(cvs: CvEntry[], keys: CvKey[]): void {
     const profile = JSON.parse(readFileSync(file, "utf8")) as StructuredProfile;
     return profileExtractVersion(profile) === PROFILE_SET_VERSION;
   };
-  console.log(`group                 CVs  dataset  synthetic  v${PROFILE_SET_VERSION}  keyed  held out`);
+  console.log(
+    `group                 CVs  dataset  synthetic  v${PROFILE_SET_VERSION}  keyed  held out`,
+  );
   for (const group of [...CV_GROUPS, "all"] as const) {
     const of = cvs.filter((cv) => group === "all" || cv.group === group);
     const keyed = keys.filter((key) => of.some((cv) => cv.id === key.id));
