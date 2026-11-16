@@ -19,5 +19,13 @@ export async function resolveEmbedder(
     const { openaiEmbedder, OPENAI_MODEL } = await import("./openai");
     return { embedder: openaiEmbedder, model: OPENAI_MODEL };
   }
-  throw new Error(`unknown embedder "${name}" (expected: voyage | openai).`);
+  const { asEmbedder, isSnapshotModelSlug, resolveSnapshotModel, SNAPSHOT_MODEL_SLUGS } =
+    await import("./snapshot-models");
+  if (isSnapshotModelSlug(name)) {
+    const model = await resolveSnapshotModel(name);
+    return { embedder: asEmbedder(model), model: model.id };
+  }
+  throw new Error(
+    `unknown embedder "${name}" (expected: voyage | openai | ${SNAPSHOT_MODEL_SLUGS.join(" | ")}).`,
+  );
 }

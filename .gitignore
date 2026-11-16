@@ -24,6 +24,10 @@ packages/eval/data/cvs/
 packages/eval/data/*.json
 packages/eval/data/reviews/
 packages/eval/reports/*.fixture.json
+# eval job snapshot: only data/snapshots/<id>/manifest.json is committed. The objects (job text and
+# vectors, rebuilt from the private bucket) and an embedding run's working files are not.
+packages/eval/data/snapshots/*/objects/
+packages/eval/data/snapshots/*/work/
 
 # generated render preview (pnpm email:preview output — a working artifact, never committed)
 packages/email/email-preview.html
