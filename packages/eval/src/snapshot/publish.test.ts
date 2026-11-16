@@ -149,7 +149,62 @@ describe("snapshot publish and rebuild", () => {
         sliceRecords: { ats: RECORD, public: RECORD },
         resolveModel,
       }),
-    ).rejects.toThrow(/fake-embed is incomplete: vectors\/fake-embed\/public-0000\.f32/);
+    ).rejects.toThrow(
+      /fake-embed has no finished embed run for the public slice as it is now \(no record\)/,
+    );
+  });
+
+  it("refuses vectors made from other jobs, even when the file sizes still fit", async () => {
+    // The slice is exported again with one job's text changed: same parts, same row counts.
+    writeJobsParts(
+      objectsDir,
+      "ats",
+      [
+        snapshotJob(1),
+        snapshotJob(2, { source: "lever", title: "d", descriptionText: "" }),
+        snapshotJob(3, { title: "A different role" }),
+      ],
+      2,
+    );
+    await expect(build()).rejects.toThrow(/its record names other jobs or another setup/);
+  });
+
+  it("refuses vectors made by the model on another host or with another presentation", async () => {
+    const moved = { ...model, host: "elsewhere.test" };
+    await expect(
+      buildManifest({
+        id: ID,
+        objectsDir,
+        workDir,
+        sliceRecords: { ats: RECORD },
+        resolveModel: async () => moved,
+      }),
+    ).rejects.toThrow(/fake-embed has no finished embed run for the ats slice as it is now/);
+  });
+
+  it("verification refuses job ids that go backwards from one part to the next", async () => {
+    const manifest = await build();
+    // Part 0 holds ids 1-2 and part 1 holds id 3; swap them under the same checksums.
+    const swapped = {
+      ...manifest,
+      objects: manifest.objects.map((o) => {
+        const other =
+          o.path === "jobs/ats-0000.jsonl.gz"
+            ? "jobs/ats-0001.jsonl.gz"
+            : o.path === "jobs/ats-0001.jsonl.gz"
+              ? "jobs/ats-0000.jsonl.gz"
+              : null;
+        const source = other ? manifest.objects.find((x) => x.path === other) : null;
+        return source ? { ...source, path: o.path } : o;
+      }),
+    };
+    const first = readObject(objectsDir, "jobs/ats-0000.jsonl.gz");
+    const second = readObject(objectsDir, "jobs/ats-0001.jsonl.gz");
+    writeObject(objectsDir, "jobs/ats-0000.jsonl.gz", second);
+    writeObject(objectsDir, "jobs/ats-0001.jsonl.gz", first);
+    expect(() => verifySnapshot(swapped, objectsDir)).toThrow(
+      /jobs\/ats-0001\.jsonl\.gz: job id 1 is out of order or repeated/,
+    );
   });
 
   it("refuses a slice with no record of how it was chosen", async () => {

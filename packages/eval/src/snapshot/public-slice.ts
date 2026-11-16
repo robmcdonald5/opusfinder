@@ -109,11 +109,12 @@ export async function buildPublicSlice(
   );
   await db.execute(sql.raw(`ALTER SEQUENCE jobs_id_seq RESTART WITH ${SYNTHETIC_ID_BASE + 1}`));
 
-  // One company per (feed, employer), in a stable order so ids don't depend on fetch order.
+  // One company per (feed, employer), in a stable order so ids don't depend on fetch order (or on
+  // the machine's locale: the comparison names its own).
   const sorted = [...postings].sort(
     (a, b) =>
-      a.source.localeCompare(b.source) ||
-      a.employer.localeCompare(b.employer) ||
+      a.source.localeCompare(b.source, "en") ||
+      a.employer.localeCompare(b.employer, "en") ||
       a.externalId.localeCompare(b.externalId, "en", { numeric: true }),
   );
   const byEmployer = new Map<string, PublicPosting[]>();

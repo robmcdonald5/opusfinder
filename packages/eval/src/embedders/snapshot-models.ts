@@ -63,6 +63,21 @@ export async function resolveSnapshotModel(slug: SnapshotModelSlug): Promise<Sna
   return (await import("./challengers")).challengerModel(slug);
 }
 
+/**
+ * Mark a failed request the host may still have billed: it timed out, or it answered and the answer
+ * couldn't be read or didn't pass the checks. A request the host refused with an error status, or
+ * that never reached it, is not marked. The spend guard records the estimate of a marked failure.
+ */
+export function possiblyBilled(err: unknown): Error {
+  const error = err instanceof Error ? err : new Error(String(err));
+  (error as { possiblyBilled?: true }).possiblyBilled = true;
+  return error;
+}
+
+export function isPossiblyBilled(err: unknown): boolean {
+  return err instanceof Error && (err as { possiblyBilled?: true }).possiblyBilled === true;
+}
+
 /** USD for `tokens` at the model's list price. */
 export function modelCostUsd(
   model: Pick<SnapshotModel, "pricePerMTokUsd">,

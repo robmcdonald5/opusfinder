@@ -1,10 +1,12 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { appendFileSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { EmbeddingRejectedError } from "@opusfinder/embeddings";
+
+import { possiblyBilled } from "../embedders/snapshot-models";
 
 import { fakeModel, fakeVector, snapshotJob, writeJobsParts } from "@test/eval/snapshot";
 
@@ -185,6 +187,88 @@ describe("embedSlice", () => {
       embedSlice({ objectsDir, workDir, slice: "ats", model, maxUsd: 1, sleep: noSleep }),
     ).rejects.toThrow(/400 Bad Request/);
     expect(calls).toBe(1);
+  });
+
+  it("records the estimate of a failed attempt the host may still have billed", async () => {
+    writeJobsParts(objectsDir, "ats", [snapshotJob(1)]);
+    const text = snapshotEmbedText(snapshotJob(1)).text;
+    let calls = 0;
+    const model = fakeModel({
+      embedBatch: async (texts) => {
+        // The first answer arrives but can't be read; the second is fine.
+        if (++calls === 1) throw possiblyBilled(new Error("unexpected end of JSON input"));
+        return { embeddings: texts.map(fakeVector), totalTokens: 100 };
+      },
+    });
+
+    const result = await embedSlice({
+      objectsDir,
+      workDir,
+      slice: "ats",
+      model,
+      maxUsd: 1,
+      sleep: noSleep,
+    });
+
+    // One token per character in the fake model's estimate; both attempts are on the record.
+    expect(readSpend(workDir).map((l) => [l.tokens, l.unconfirmed ?? false])).toEqual([
+      [text.length, true],
+      [100, false],
+    ]);
+    expect(result.tokens).toBe(text.length + 100);
+    expect(modelSpend(workDir, "fake-embed").usd).toBeCloseTo((text.length + 100) / 1_000_000, 12);
+  });
+
+  it("never counts a request below the list price, whatever cost the host reports", async () => {
+    writeJobsParts(objectsDir, "ats", [snapshotJob(1)]);
+    const model = fakeModel({
+      embedBatch: async (texts) => ({
+        embeddings: texts.map(fakeVector),
+        totalTokens: 1_000,
+        costUsd: 0,
+      }),
+    });
+
+    await embedSlice({ objectsDir, workDir, slice: "ats", model, maxUsd: 1 });
+
+    expect(readSpend(workDir).map((l) => l.usd)).toEqual([0.001]);
+  });
+
+  it("refuses to go on after a request billed above the list price, with the charge on the record", async () => {
+    writeJobsParts(objectsDir, "ats", [snapshotJob(1)]);
+    const model = fakeModel({
+      embedBatch: async (texts) => ({
+        embeddings: texts.map(fakeVector),
+        totalTokens: 1_000,
+        costUsd: 0.0015,
+      }),
+    });
+
+    await expect(
+      embedSlice({ objectsDir, workDir, slice: "ats", model, maxUsd: 1 }),
+    ).rejects.toThrow(/billed \$0\.001500 for 1000 tokens, above the list price/);
+    expect(readSpend(workDir).map((l) => l.usd)).toEqual([0.0015]);
+  });
+
+  it("sees spend another run records while this one is under way", async () => {
+    // Two chunks. After the first, another process records spend that uses up the allowance.
+    const jobs = Array.from({ length: 600 }, (_x, i) => snapshotJob(i + 1));
+    writeJobsParts(objectsDir, "ats", jobs, 300);
+    const model = fakeModel({ limits: { maxItems: 512, maxTokens: 10_000_000, charsPerToken: 1 } });
+    const inner = model.embedBatch;
+    model.embedBatch = async (texts, inputType) => {
+      const res = await inner(texts, inputType);
+      appendFileSync(
+        join(workDir, "spend.jsonl"),
+        `${JSON.stringify({ at: "x", model: "other", slice: "ats", tokens: 0, usd: 0.999 })}\n`,
+      );
+      return res;
+    };
+
+    const result = await embedSlice({ objectsDir, workDir, slice: "ats", model, maxUsd: 1 });
+
+    expect(result).toMatchObject({ status: "stopped_at_cap", chunksEmbedded: 1 });
+    expect(model.requests).toHaveLength(1);
   });
 
   it("stops sending the rest of a chunk once a request has failed for good", async () => {

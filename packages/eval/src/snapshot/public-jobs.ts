@@ -59,6 +59,22 @@ const US_TERRITORIES: Record<string, string> = {
   "Northern Mariana Islands": "MP",
 };
 
+/** Country names in the feed (2026-11-16) that the gazetteer lists under another name. */
+const USAJOBS_COUNTRY_NAMES: Record<string, string> = {
+  Burma: "MM",
+  "Cape Verde": "CV",
+  Congo: "CG",
+  "Congo (DRC)": "CD",
+  "Cote D'Ivoire": "CI",
+  "Czech Republic": "CZ",
+  "Gambia, The": "GM",
+  "Micronesia (FSM)": "FM",
+  Netherlands: "NL",
+  "Republic of Georgia": "GE",
+  "Timor-Leste": "TL",
+  "Vatican City": "VA",
+};
+
 const USAJOBS_REMOTE = /^Anywhere in the U\.S\./;
 
 /**
@@ -84,11 +100,15 @@ export function usajobsLocationAnswer(
     typeof location.CountrySubDivisionCode === "string"
       ? location.CountrySubDivisionCode.trim()
       : "";
-  // CityName repeats the state or country after the last comma ("Aberdeen, Maryland").
-  const cityField = typeof location.CityName === "string" ? location.CityName : raw;
-  const city = cityField.includes(",")
-    ? cityField.slice(0, cityField.lastIndexOf(",")).trim()
-    : cityField.trim();
+  // CityName repeats the state or country after the city ("Aberdeen, Maryland"; "Banjul, Gambia,
+  // The"). That exact suffix is cut; failing that, whatever follows the last comma.
+  const cityField = (typeof location.CityName === "string" ? location.CityName : raw).trim();
+  const suffix = [region, country].find((s) => s !== "" && cityField.endsWith(`, ${s}`));
+  const city = suffix
+    ? cityField.slice(0, -suffix.length - 2).trim()
+    : cityField.includes(",")
+      ? cityField.slice(0, cityField.lastIndexOf(",")).trim()
+      : cityField;
   if (city === "") return { raw, answer: NO_ANSWER };
   // The feed writes a missing point as 0, 0.
   const { Latitude: lat, Longitude: lng } = location;
@@ -117,7 +137,7 @@ export function usajobsLocationAnswer(
       ]),
     };
   }
-  const code = countryCodes.get(country.toLowerCase());
+  const code = USAJOBS_COUNTRY_NAMES[country] ?? countryCodes.get(country.toLowerCase());
   if (!code) return { raw, answer: NO_ANSWER };
   return {
     raw,

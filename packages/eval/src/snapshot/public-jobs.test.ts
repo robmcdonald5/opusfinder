@@ -66,6 +66,29 @@ describe("usajobsLocationAnswer", () => {
     });
   });
 
+  it("reads a country the feed writes with a comma, or under a name the gazetteer lacks", () => {
+    const inverted = {
+      LocationName: "Banjul, Gambia, The",
+      CountryCode: "Gambia, The",
+      CountrySubDivisionCode: null,
+      CityName: "Banjul, Gambia, The",
+      Longitude: -16.6,
+      Latitude: 13.5,
+    };
+    expect(usajobsLocationAnswer(inverted, COUNTRIES)?.answer?.places).toEqual([
+      { city: "Banjul", region: null, country: "GM", kind: "city" },
+    ]);
+    const renamed = {
+      ...inverted,
+      LocationName: "Rangoon, Burma",
+      CountryCode: "Burma",
+      CityName: "Rangoon, Burma",
+    };
+    expect(usajobsLocationAnswer(renamed, COUNTRIES)?.answer?.places).toEqual([
+      { city: "Rangoon", region: null, country: "MM", kind: "city" },
+    ]);
+  });
+
   it("reads the remote placeholder as remote across the United States, with no place", () => {
     const remote = {
       LocationName: "Anywhere in the U.S. (remote job), United States",

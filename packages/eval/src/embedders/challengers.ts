@@ -18,11 +18,12 @@ import { EmbeddingRejectedError, parseEmbeddingResponse } from "@opusfinder/embe
 import { isRecord } from "@opusfinder/shared";
 
 import { getDeepInfraApiKey, getOpenRouterApiKey } from "../snapshot/env";
-import type {
-  MeteredEmbeddings,
-  SnapshotInputType,
-  SnapshotModel,
-  SnapshotModelSlug,
+import {
+  possiblyBilled,
+  type MeteredEmbeddings,
+  type SnapshotInputType,
+  type SnapshotModel,
+  type SnapshotModelSlug,
 } from "./snapshot-models";
 
 // A 32-text request returns ~1.5 MB of JSON at 4096 dims; it normally answers in seconds.
@@ -122,15 +123,19 @@ export async function embedRequest(
   spec: ChallengerSpec,
   input: string[],
 ): Promise<MeteredEmbeddings> {
-  const res = await fetch(spec.url, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${spec.getApiKey()}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ ...spec.body, input, encoding_format: "float" }),
-    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-  });
+  const apiKey = spec.getApiKey();
+  let res: Response;
+  try {
+    res = await fetch(spec.url, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ ...spec.body, input, encoding_format: "float" }),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+  } catch (err) {
+    // A timeout may come after the host did the work; a connection that never opened did not.
+    throw err instanceof TypeError ? err : possiblyBilled(err);
+  }
 
   if (!res.ok) {
     // The body is read for a diagnostic snippet (error payloads don't echo the key) and to drain the
@@ -143,6 +148,19 @@ export async function embedRequest(
     throw rejected ? new EmbeddingRejectedError(message) : new Error(message);
   }
 
+  // The host answered 200, so the work was done and billed whatever happens to the answer from here.
+  try {
+    return await readAnswer(spec, res, input.length);
+  } catch (err) {
+    throw possiblyBilled(err);
+  }
+}
+
+async function readAnswer(
+  spec: ChallengerSpec,
+  res: Response,
+  expectedCount: number,
+): Promise<MeteredEmbeddings> {
   const body = (await res.json()) as unknown;
   if (spec.servedBy !== undefined) {
     const provider = isRecord(body) ? body.provider : undefined;
@@ -155,7 +173,7 @@ export async function embedRequest(
   const parsed = parseEmbeddingResponse(body, {
     provider: spec.host,
     expectedDimensions: spec.dimensions,
-    expectedCount: input.length,
+    expectedCount,
   });
   // The spend guard meters on this, so a response without usage can't pass as free.
   if (parsed.totalTokens <= 0) {

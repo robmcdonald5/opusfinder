@@ -1,7 +1,7 @@
 import { EMBED_DIMENSIONS, EMBED_MODEL } from "@opusfinder/embeddings";
 import { embed } from "@opusfinder/embeddings/node";
 
-import type { SnapshotModel } from "./snapshot-models";
+import { possiblyBilled, type SnapshotModel } from "./snapshot-models";
 
 /**
  * The snapshot's reference: production's own `embed()`, so a reference vector is what production
@@ -24,7 +24,15 @@ export const voyageReference: SnapshotModel = {
     query: 'input_type "query" (Voyage prepends its own query prompt)',
   },
   async embedBatch(texts, inputType) {
-    const res = await embed(texts, { inputType });
-    return { embeddings: res.embeddings, totalTokens: res.usage.totalTokens };
+    try {
+      const res = await embed(texts, { inputType });
+      return { embeddings: res.embeddings, totalTokens: res.usage.totalTokens };
+    } catch (err) {
+      // Voyage refusing with an error status, or a connection that never opened, bills nothing. A
+      // timeout or an answer that failed production's checks may have been billed.
+      const refused =
+        err instanceof Error && /^Voyage embeddings request failed: \d{3}/.test(err.message);
+      throw refused || err instanceof TypeError ? err : possiblyBilled(err);
+    }
   },
 };

@@ -7,8 +7,12 @@
  * --max-usd is required and has no default: it is the approved total, at list prices, across every
  * model and run recorded in this snapshot's work/spend.jsonl. The run stops before a request that
  * would pass it (exit code 2) and keeps what it finished; a re-run resumes. See src/snapshot/embed-run.ts.
- * Prints progress and spend, never job text.
+ * Prints progress and spend. It prints no job text of its own; a host's error message is shown as
+ * received (first 500 characters).
  */
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+
 import { runScript } from "@opusfinder/shared/script";
 
 import { getFlag } from "../src/cli";
@@ -46,6 +50,15 @@ async function main(): Promise<void> {
     (s) => (only === undefined || s === only) && listJobsParts(paths.objects, s).length > 0,
   );
   if (slices.length === 0) throw new Error(`snapshot ${id} has no jobs to embed; export it first.`);
+  // A slice's record is written last by its export or fetch: without it the jobs parts may be a run
+  // that died part-way, and paying to embed those would be for nothing.
+  for (const slice of slices) {
+    if (!existsSync(join(paths.work, `slice-${slice}.json`))) {
+      throw new Error(
+        `the ${slice} slice of snapshot ${id} isn't finished (no work/slice-${slice}.json).`,
+      );
+    }
+  }
 
   const model = await resolveSnapshotModel(slug);
   console.error(

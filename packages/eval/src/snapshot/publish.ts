@@ -5,6 +5,9 @@
  * A published object never changes. Publishing again (to add the public slice, or a model) uploads
  * only what the committed manifest doesn't list yet, and refuses if a listed object differs locally.
  */
+import { existsSync, readFileSync } from "node:fs";
+import { isDeepStrictEqual } from "node:util";
+
 import type { StorageClient } from "@opusfinder/storage";
 
 import {
@@ -12,7 +15,14 @@ import {
   isSnapshotModelSlug,
   type SnapshotModel,
 } from "../embedders/snapshot-models";
-import { modelSpend, planSlice } from "./embed-run";
+import {
+  embedRecordPath,
+  modelSetup,
+  modelSpend,
+  planSlice,
+  textsHash,
+  type EmbedRecord,
+} from "./embed-run";
 import {
   bucketPrefix,
   decodeJsonl,
@@ -61,16 +71,19 @@ export async function buildManifest(input: BuildManifestInput): Promise<Manifest
     objects.push({ path, bytes: bytes.byteLength, sha256: sha256Hex(bytes), rows });
 
   const slices: Partial<Record<SnapshotSlice, ManifestSlice>> = {};
+  const sliceTexts = new Map<SnapshotSlice, string>();
   for (const slice of SLICES) {
     const parts = listJobsParts(objectsDir, slice);
     if (parts.length === 0) continue;
     const record = input.sliceRecords[slice];
     if (!record)
       throw new Error(`no record of how the ${slice} slice was chosen (work/slice-${slice}.json).`);
+    const plan = planSlice(objectsDir, slice);
+    sliceTexts.set(slice, textsHash(plan));
     const def: ManifestSlice = {
       ...record,
       jobs: 0,
-      uniqueTexts: planSlice(objectsDir, slice).hashes.length,
+      uniqueTexts: plan.hashes.length,
       bySource: {},
       byFlag: Object.fromEntries(JOB_FLAGS.map((f) => [f, 0])),
     };
@@ -104,6 +117,20 @@ export async function buildManifest(input: BuildManifestInput): Promise<Manifest
   const models: ManifestModel[] = [];
   for (const slug of slugs.sort()) {
     const model = await resolveModel(slug);
+    // Its vectors must have been made from these jobs, by the model as it is set up now: a file of
+    // the right size left over from another export, host or presentation is refused.
+    for (const [slice, texts] of sliceTexts) {
+      const expected: EmbedRecord = { ...modelSetup(model), textsHash: texts };
+      const recordPath = embedRecordPath(workDir, slug, slice);
+      const made = existsSync(recordPath) ? readFileSync(recordPath, "utf8") : null;
+      if (made === null || !isDeepStrictEqual(JSON.parse(made), expected)) {
+        throw new Error(
+          `${slug} has no finished embed run for the ${slice} slice as it is now ` +
+            `(${made === null ? "no record" : "its record names other jobs or another setup"}). ` +
+            `Run snapshot:embed for it, or remove vectors/${slug}/ to publish without it.`,
+        );
+      }
+    }
     // A model is in the snapshot only whole: a vectors part for every jobs part, of the right size.
     for (const jobsPart of objects
       .filter((o) => o.path.startsWith("jobs/"))
@@ -248,7 +275,9 @@ export interface VerifiedSnapshot {
 export function verifySnapshot(manifest: Manifest, objectsDir: string): VerifiedSnapshot {
   const rowsOf = new Map<string, number>();
   const seen = new Set<number>();
-  for (const object of manifest.objects) {
+  const lastId = new Map<SnapshotSlice, number>();
+  // In path order, so a slice's jobs parts are read in part order.
+  for (const object of [...manifest.objects].sort((a, b) => (a.path < b.path ? -1 : 1))) {
     const size = objectSize(objectsDir, object.path);
     if (size === null) throw new Error(`${object.path} is missing locally; run snapshot:rebuild.`);
     const bytes = readObject(objectsDir, object.path);
@@ -258,7 +287,8 @@ export function verifySnapshot(manifest: Manifest, objectsDir: string): Verified
     if (object.path.startsWith("jobs/")) {
       const jobs = decodeJsonl(bytes, SnapshotJobSchema, object.path);
       const slice = sliceOfPart(object.path);
-      let last = -Infinity;
+      // Ascending across the slice's parts, not only within one.
+      let last = lastId.get(slice) ?? -Infinity;
       for (const job of jobs) {
         if (job.slice !== slice)
           throw new Error(`${object.path}: job ${job.id} says slice ${job.slice}.`);
@@ -268,6 +298,7 @@ export function verifySnapshot(manifest: Manifest, objectsDir: string): Verified
         last = job.id;
         seen.add(job.id);
       }
+      lastId.set(slice, last);
       rows = jobs.length;
     } else if (object.path.startsWith("vectors/")) {
       const model = manifest.models.find((m) => object.path.startsWith(`vectors/${m.slug}/`));

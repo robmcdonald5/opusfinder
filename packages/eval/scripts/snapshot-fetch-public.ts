@@ -101,9 +101,12 @@ async function main(): Promise<void> {
     );
     const slice = await buildPublicSlice(db, [...usajobs, ...nyc], fetchedAt);
 
-    // 4. The slice's objects. A run that died part-way is cleared first.
+    // 4. The slice's objects. What a run that died part-way wrote is cleared first: its jobs and
+    // table parts only. Vectors are left alone; publishing refuses any that don't match the jobs.
     for (const path of listObjects(paths.objects)) {
-      if (/\/public-\d{4}\./.test(path)) rmSync(join(paths.objects, path));
+      if (/^(jobs|companies|location-strings)\/public-\d{4}\./.test(path)) {
+        rmSync(join(paths.objects, path));
+      }
     }
     for (let part = 0; part * JOBS_PER_PART < slice.jobs.length; part++) {
       const page = slice.jobs.slice(part * JOBS_PER_PART, (part + 1) * JOBS_PER_PART);
