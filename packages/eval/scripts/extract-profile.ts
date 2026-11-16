@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 
 import { structureCv, transcribeCv } from "@opusfinder/llm/node";
-import { composeProfileText, MIN_TRANSCRIPT_CHARS, profileWarnings, scrubProfilePii } from "@opusfinder/shared";
+import { MIN_TRANSCRIPT_CHARS, profileEmbedText, profileWarnings, scrubProfilePii } from "@opusfinder/shared";
 import { runScript } from "@opusfinder/shared/script";
 
 import type { EvalProfile } from "../src/types";
@@ -42,7 +42,7 @@ async function main(): Promise<void> {
 
   // Empty-content gate (like ingestCv + the dataset validator) — fail at the source, not later at
   // build:dataset load time.
-  if (composeProfileText(profile).length === 0) {
+  if (profileEmbedText(profile).length === 0) {
     throw new Error("structured profile has no embeddable content (empty summary, skills, and target roles).");
   }
   // Surface partial extractions the way ingest-cv does, so a weak profile isn't pasted blindly.

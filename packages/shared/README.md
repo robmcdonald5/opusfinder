@@ -80,24 +80,35 @@ re-define it.
 `composeEmbeddingText(parts)` drops blank parts and joins the rest with a blank line.
 It is the single definition of how embedding input is composed and of what "no embeddable
 content" means (the result is `""` iff every part is blank). Shared by `jobEmbeddingText`
-(@opusfinder/db), `composeProfileText` (below), and the dataset validator, so the "empty"
+(@opusfinder/db), `profileEmbedText` (below), and the dataset validator, so the "empty"
 notion has one source of truth. Lives here (not in @opusfinder/embeddings) so the dataset
 loader can reuse it without pulling the embeddings/db stack onto the load path.
 
 `StructuredProfile` (`{ summary, skills[], targetRoles[] }`) is the semantic CV profile — the
 PII-free shape Phase 9 CV ingestion stores in `user_profiles.structured` and the **same** shape
-`EvalProfile` extends, so the eval and production profiles can't drift. `composeProfileText(profile)`
-composes its embedding "query" text (summary, then `Skills: …`, then `Target roles: …`, via
-`composeEmbeddingText`) — the single source of truth for the profile vector, mirroring
-`jobEmbeddingText` on the document side. Both the eval harness and the Phase-10 reranker
-(`@opusfinder/rerank`'s `buildRerankSystem`) call it directly, so the reranker reasons over the same
-profile representation retrieval uses.
+`EvalProfile` extends, so the eval and production profiles can't drift. Two texts are made from it,
+one per reader:
+
+- `profileEmbedText(profile)` is the embedding "query" text (summary, then `Skills: …`, then
+  `Target roles: …`, via `composeEmbeddingText`) — the single source of truth for the profile vector,
+  mirroring `jobEmbeddingText` on the document side. CV ingestion and the eval harness embed it.
+  Changing it changes every stored vector's input, so it needs every profile re-embedded.
+- `profileJudgeContext(profile)` is the profile as the prompts read it: the reranker
+  (`@opusfinder/rerank`'s `buildRerankSystem`), the digest notes (`@opusfinder/llm`'s
+  `buildDigestSystem`) and the eval's label judge put it in their system prompt. Changing it changes
+  those prompts and re-embeds nothing.
+
+The two return the same text today. They are separate functions that share no composition, so the
+judge can be shown more than is embedded without moving a vector, and the reverse.
+`profileJudgeContextHash(profile)` is the SHA-256 (hex) of the judge's text: a key for "this version
+of the profile, as a judge read it". Nothing stores it yet.
+
 Contact info / addresses are intentionally omitted (no job-alignment signal); `preferences` is not
 part of the vector (it comes from the Phase-12 form, feeds the deterministic filter).
 
 From extraction version 2 a profile also carries `facts` (`CvFacts`: licences and certifications,
 education, stated years of experience, languages, work authorisation) and `extractVersion`. Both are
-stored with the profile and **never embedded**: `composeProfileText` reads only the three fields above.
+stored with the profile and **never embedded**: `profileEmbedText` reads only the three fields above.
 `facts` holds only what the CV states; a field the CV is silent on stays empty or null.
 `profileExtractVersion(profile)` reads the version, and a profile stored before the tag existed is 1.
 

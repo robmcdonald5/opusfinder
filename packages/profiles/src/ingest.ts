@@ -7,8 +7,8 @@ import {
   upsertUserProfile,
 } from "@opusfinder/db/repos";
 import {
-  composeProfileText,
   MIN_TRANSCRIPT_CHARS,
+  profileEmbedText,
   profileWarnings,
   scrubProfilePii,
   type UserId,
@@ -95,7 +95,7 @@ export async function ingestCv(db: Db, opts: IngestCvOptions): Promise<IngestCvR
     // structural guarantee, not a seam contract — before anything is stored or embedded.
     const structured = scrubProfilePii(await structure(text));
     const warnings = profileWarnings(structured);
-    const embedText = composeProfileText(structured);
+    const embedText = profileEmbedText(structured);
     if (embedText.length === 0) {
       // Extraction succeeded (text cached) but the profile has no embeddable content — don't send an
       // empty string to the embedder (Voyage rejects it). Leave the file `extracted`, write no profile.

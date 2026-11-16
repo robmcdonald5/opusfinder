@@ -12,7 +12,7 @@
  * never showed the labeler). The arms:
  *   - voyage: the digest read path's SEMANTIC (active + 14d recency, cosine-nearest, signature
  *     collapse — retrieval.ts's predicates + post-processing) over a query-side embedding of
- *     composeProfileText, run as an EXACT scan like retrieval's, so the pool nominates at full
+ *     profileEmbedText, run as an EXACT scan like retrieval's, so the pool nominates at full
  *     retrieval recall. Geo/exclusion prefs deliberately neutral: the pool nominates broadly; the
  *     eval ranker doesn't filter either.
  *   - fts: Postgres full-text search over title+description with the profile's target roles and
@@ -42,7 +42,7 @@ import { createAuthDb, type AuthDb } from "@opusfinder/db/auth-client";
 import { getDatabaseUrl } from "@opusfinder/db/env";
 import { EMBEDDING_DIMENSIONS, jobs } from "@opusfinder/db/schema";
 import { embed } from "@opusfinder/embeddings/node";
-import { composeProfileText, isRecord } from "@opusfinder/shared";
+import { isRecord, profileEmbedText } from "@opusfinder/shared";
 import { runScript } from "@opusfinder/shared/script";
 
 import { getFlag } from "../src/cli";
@@ -194,7 +194,7 @@ async function buildPoolFor(db: AuthDb, profile: EvalProfile): Promise<PoolFile>
   // Arm 1 — voyage: query-side embedding (profiles/embed.ts's exact shape), exact nearest, then
   // retrieval.ts's post-processing semantic: distance||id tiebreak sort, signature collapse
   // (Pool.add — nearest member represents the group), trim to VOYAGE_K.
-  const { embeddings, model } = await embed([composeProfileText(profile)], { inputType: "query" });
+  const { embeddings, model } = await embed([profileEmbedText(profile)], { inputType: "query" });
   const queryVec = embeddings[0];
   if (!queryVec) throw new Error(`embed() returned no vector for profile ${profile.id}.`);
   const nearest = await exactNearest(db, vectorLiteral(queryVec), model);

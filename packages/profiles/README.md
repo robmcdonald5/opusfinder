@@ -12,7 +12,7 @@ years, languages, work authorisation) and the `extractVersion` that produced it;
 1. **Transcribe** (`transcribe`, Layer 1) — PDF bytes → clean text (vision).
 2. **Structure** (`structure`, Layer 2) — text → `StructuredProfile` (raw extraction). The pipeline
    then runs `scrubProfilePii` before persisting + embedding.
-3. **Embed** (`embed`) — `composeProfileText(structured)` → a Voyage `query` vector → `upsertUserProfile`.
+3. **Embed** (`embed`) — `profileEmbedText(structured)` → a Voyage `query` vector → `upsertUserProfile`.
 
 The cv_file row is inserted first with a provisional `failed` status; it flips to `extracted` once the
 transcript is cached. A transcript shorter than 50 chars (corrupt / encrypted / image-only PDF) is a

@@ -228,7 +228,7 @@ function renderReviewSheet(
   lines.push(`**Skills:** ${profile.skills.join(" · ")}`);
   lines.push("");
   lines.push(
-    "_The judge saw exactly the above (the same text the profile embedding is built from). It did " +
+    "_The judge saw exactly the above. It did " +
       "NOT see the locations shown below — the rubric forbids judging on location, remote, or " +
       "employer, so they are withheld from it and shown here only as context for you._",
   );

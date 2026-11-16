@@ -34,8 +34,9 @@ injection blueprint already used in `packages/eval`.
   `[0,1]` and non-finite scores are dropped (so a malformed call can't poison the sort or land junk in
   `digest_items.score`); ids not in the scored chunk are ignored (no hallucinated ids).
 - `buildRerankSystem(profile, prefs?: PromptPreferences)` — composes the cacheable `system`:
-  `RERANK_RUBRIC` + the candidate profile via the shared `composeProfileText` (the **same** text the
-  profile embedding is built from, so the reranker reasons over the representation retrieval uses) +,
+  `RERANK_RUBRIC` + the candidate profile via the shared `profileJudgeContext` (the judge's own text
+  of the profile, separate from the text the profile embedding is built from; the two are equal
+  today) +,
   when `prefs` is set, a `=== Candidate stated preferences ===` block from `composePromptPrefs`
   appended to the cached system. The candidate list is deliberately NOT here — it's the variable
   per-chunk tail the injected call renders, keeping this prefix stable and cacheable.

@@ -260,7 +260,7 @@ describe("restructureProfile — cached-transcript re-run seam: lookup, scrub, e
     await restructureProfile(db, { structure, embed, storage }, a);
 
     // Scrub PRECEDES embed, and the composed query text is pinned EXACTLY — hand-written (never
-    // computed via composeProfileText) so a composition regression can't rewrite the expectation
+    // computed via profileEmbedText) so a composition regression can't rewrite the expectation
     // with the behavior: summary AND skills AND target roles all participate, the NUL is still
     // present pre-persist (stripNul runs only at the jsonb write), inputType stays "query", and the
     // seam was hit exactly ONCE — a duplicated embed call would silently double Voyage spend.
@@ -297,7 +297,7 @@ describe("restructureProfile — cached-transcript re-run seam: lookup, scrub, e
     expect(before).toHaveLength(1);
 
     const { storage } = fakeStorage(transcriptMap({ "cv/text/a.txt": "transcript body" }));
-    // Genuinely blank/whitespace fields: scrub trims all three to empty → composeProfileText === "".
+    // Genuinely blank/whitespace fields: scrub trims all three to empty → profileEmbedText === "".
     // (An email-only summary would NOT work here — it scrubs to '[redacted]', which is non-empty.)
     const structure = stubStructure({ summary: "   ", skills: [], targetRoles: ["  "] });
     const embed = stubEmbed();

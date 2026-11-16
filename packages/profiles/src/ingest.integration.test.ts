@@ -64,7 +64,7 @@ const FULL_PROFILE: StructuredProfile = {
   },
   extractVersion: 2,
 };
-// Hardcoded (NOT computed via composeProfileText) so a composition regression cannot rewrite the
+// Hardcoded (NOT computed via profileEmbedText) so a composition regression cannot rewrite the
 // expectation along with the behavior.
 const FULL_PROFILE_EMBED_TEXT =
   "Senior backend engineer building high-throughput payment systems.\n\n" +
@@ -325,7 +325,7 @@ describe("ingestCv — CV → profile pipeline (stub seams, real PGlite persiste
     expect(text).not.toBeNull();
     expect(orig![1]).toBe(text![1]);
 
-    // The embed input pins composeProfileText's composition (summary, labeled skills, labeled roles,
+    // The embed input pins profileEmbedText's composition (summary, labeled skills, labeled roles,
     // blank-line joins) and the single-element/query-side call shape.
     expect(embed).toHaveBeenCalledExactlyOnceWith([FULL_PROFILE_EMBED_TEXT], {
       inputType: "query",

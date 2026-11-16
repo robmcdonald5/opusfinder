@@ -1,3 +1,5 @@
+import { sha256Hex } from "./hash";
+
 export { normalizePlaceName } from "./places";
 export type { LocationConfidence, PlaceKind, PlaceSource, UnmatchedPlace } from "./places";
 
@@ -283,7 +285,7 @@ export interface StructuredProfile {
   skills: string[];
   /** Roles the person is targeting (e.g. "Senior Backend Engineer"). */
   targetRoles: string[];
-  /** What the CV states beyond the embedded subset. Stored, never embedded ({@link composeProfileText}
+  /** What the CV states beyond the embedded subset. Stored, never embedded ({@link profileEmbedText}
    *  does not read it). Absent on profiles extracted before version 2. */
   facts?: CvFacts;
   /** The extraction version that produced this profile; read it with {@link profileExtractVersion}. */
@@ -344,18 +346,44 @@ export interface CvFacts {
 }
 
 /**
- * Compose the text embedded for a profile — the "query" side of retrieval — from a
+ * The text embedded for a profile — the "query" side of retrieval — from a
  * {@link StructuredProfile}. The SINGLE source of truth for what goes in the profile vector
  * (mirrors `jobEmbeddingText`, the "document" side in @opusfinder/db): the summary carries the most
  * signal; skills and target roles are appended as compact, labeled context. Empty iff every field is
- * blank (per {@link composeEmbeddingText}).
+ * blank (per {@link composeEmbeddingText}). A change here changes the input of every stored profile
+ * vector, so it needs every profile re-embedded. What the prompts read is {@link profileJudgeContext},
+ * a separate text.
  */
-export function composeProfileText(profile: StructuredProfile): string {
+export function profileEmbedText(profile: StructuredProfile): string {
   return composeEmbeddingText([
     profile.summary,
     profile.skills.length > 0 ? `Skills: ${profile.skills.join(", ")}` : "",
     profile.targetRoles.length > 0 ? `Target roles: ${profile.targetRoles.join(", ")}` : "",
   ]);
+}
+
+/**
+ * The profile as the prompts read it: the rerank judge, the digest notes and the eval's label judge
+ * each put this text in their system prompt. Kept apart from {@link profileEmbedText} so the judge can
+ * be shown more than is embedded without moving any vector. The two return the same text today, and
+ * neither calls the other or shares its composition, so each can change alone. A change here changes
+ * those prompts (and their cache prefix) and {@link profileJudgeContextHash}; it re-embeds nothing.
+ */
+export function profileJudgeContext(profile: StructuredProfile): string {
+  const blocks = [
+    profile.summary,
+    profile.skills.length > 0 ? `Skills: ${profile.skills.join(", ")}` : "",
+    profile.targetRoles.length > 0 ? `Target roles: ${profile.targetRoles.join(", ")}` : "",
+  ];
+  return blocks.filter((block) => block.trim().length > 0).join("\n\n");
+}
+
+/**
+ * SHA-256 (hex) of {@link profileJudgeContext}: the version of a profile as a judge read it. Profiles
+ * a judge would read identically share a hash; any change to what it reads gives a new one.
+ */
+export async function profileJudgeContextHash(profile: StructuredProfile): Promise<string> {
+  return sha256Hex(profileJudgeContext(profile));
 }
 
 /**
@@ -375,7 +403,7 @@ export type PromptPreferences = Pick<
  * Render the judgment-context preferences ({@link PromptPreferences}) into a compact labeled block
  * for the rerank + synthesis system prompt. Returns `""` when nothing is set, so an un-answered user
  * yields a byte-identical empty system prefix — their per-user prompt-cache prefix does not bust on
- * deploy. NEVER fed into the embedding (that is {@link composeProfileText}, which must stay
+ * deploy. NEVER fed into the embedding (that is {@link profileEmbedText}, which must stay
  * prefs-free). Both nullable bounds independent: only-min, only-max, and both each render gracefully.
  * `locationMode` is intentionally absent — it is a hard filter, scored by neither prompt.
  */

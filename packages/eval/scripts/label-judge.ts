@@ -23,7 +23,7 @@
 import { z } from "zod";
 
 import { generateObject, type ModelAlias } from "@opusfinder/llm/node";
-import { composeProfileText } from "@opusfinder/shared";
+import { profileJudgeContext } from "@opusfinder/shared";
 
 import type { EvalProfile } from "../src/types";
 import type { PoolCandidate } from "./pooling";
@@ -95,14 +95,14 @@ One sentence naming the DECIDING factor — the specific thing that made this go
 
 /**
  * The per-profile system string: the stable rubric, then the candidate via the shared
- * {@link composeProfileText} — the SAME text the profile embedding is built from, so the judge
- * reasons over the representation retrieval used, exactly as the production reranker does.
+ * {@link profileJudgeContext} — the text of the profile the production reranker reads, so the label
+ * judge sees the candidate exactly as it does.
  *
  * The JOB is deliberately not here: it is the per-call user message, so this prefix stays identical
  * across a profile's whole pool and a caching call can reuse it.
  */
 export function buildJudgeSystem(profile: EvalProfile): string {
-  return `${LABEL_JUDGE_RUBRIC}\n\n=== Candidate profile ===\n${composeProfileText(profile)}`;
+  return `${LABEL_JUDGE_RUBRIC}\n\n=== Candidate profile ===\n${profileJudgeContext(profile)}`;
 }
 
 /** The job as the judge sees it. Location/remote are deliberately WITHHELD — the rubric forbids

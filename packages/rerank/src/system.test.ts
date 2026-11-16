@@ -49,6 +49,50 @@ describe("buildRerankSystem — cacheable prefix shape", () => {
   });
 });
 
+describe("buildRerankSystem — the rendered prompt for a fixed profile", () => {
+  // Hand-written, never computed through the shared composer, so a change to what the judge reads
+  // cannot rewrite the expectation along with the behaviour. The whole string is the prompt-cache key.
+  const V2_PROFILE: StructuredProfile = {
+    summary: "Registered nurse with 8 years in acute medical-surgical care.",
+    skills: ["Patient assessment", "IV therapy", "Epic"],
+    targetRoles: ["Charge Nurse", "Clinical Nurse Educator"],
+    facts: {
+      credentials: [
+        {
+          name: "Registered Nurse",
+          issuer: "Texas Board of Nursing",
+          status: "active",
+          expires: "2027-03",
+        },
+      ],
+      education: [{ level: "bachelor", field: "Nursing", completed: true }],
+      yearsExperience: { total: 8, byRoleFamily: [{ roleFamily: "Nursing", years: 8 }] },
+      languages: [{ language: "Spanish", proficiency: "conversational" }],
+      workAuthorization: "Authorized to work in the US",
+    },
+    extractVersion: 2,
+  };
+  const PROFILE_BLOCK =
+    "=== Candidate profile ===\n" +
+    "Registered nurse with 8 years in acute medical-surgical care.\n\n" +
+    "Skills: Patient assessment, IV therapy, Epic\n\n" +
+    "Target roles: Charge Nurse, Clinical Nurse Educator";
+
+  it("is the rubric, then the profile block", () => {
+    expect(buildRerankSystem(V2_PROFILE)).toBe(`${RERANK_RUBRIC}\n\n${PROFILE_BLOCK}`);
+  });
+
+  it("is the rubric, the profile block, then the preferences block", () => {
+    expect(buildRerankSystem(V2_PROFILE, JUNIOR_PREFS)).toBe(
+      `${RERANK_RUBRIC}\n\n${PROFILE_BLOCK}\n\n` +
+        "=== Candidate stated preferences ===\n" +
+        "Target years of experience: 0-2\n" +
+        "Salary preference: from 120000\n" +
+        "Dealbreakers (avoid): crypto",
+    );
+  });
+});
+
 describe("buildRerankSystem — appended prefs block", () => {
   const noPrefs = buildRerankSystem(PROFILE);
   const withPrefs = buildRerankSystem(PROFILE, JUNIOR_PREFS);
