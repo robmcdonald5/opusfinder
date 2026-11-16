@@ -50,7 +50,7 @@ export interface LocationStringRow {
 }
 
 /**
- * Pairs to (re)resolve, most-listed first. `missing` = no row yet (the digest's daily path). `stale` also
+ * Pairs to (re)resolve, most-listed first. `missing` = no row yet (the daily path). `stale` also
  * takes rows from another prompt version and rows the model gave no answer for (confidence NULL): the
  * backfill's set. `exclude` leaves out pairs the caller already tried in this run.
  */
@@ -93,6 +93,17 @@ export async function listPendingPairs(
       jobs: Number(r.jobs),
     };
   });
+}
+
+/** How many active pairs have no row yet: what the daily path has left to ask. */
+export async function countMissingPairs(db: Db): Promise<number> {
+  const result = await db.execute(sql`
+    SELECT count(*)::int AS n
+    FROM (${activePairsSql()}) a
+    LEFT JOIN ${locationStrings} s ON s.company_id = a.company_id AND s.raw = a.raw
+    WHERE s.company_id IS NULL
+  `);
+  return Number((resultRows(result)[0] as Record<string, unknown> | undefined)?.n ?? 0);
 }
 
 /** Each company's active location strings, most-listed first, at most `perCompany` each. The normalizer

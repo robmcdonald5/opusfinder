@@ -5,7 +5,7 @@ import { PgSerial, type PgTable } from "drizzle-orm/pg-core";
 
 import { BACKUP_TABLES } from "./backup";
 import { PRUNE_FUNCTION } from "./repos/prune";
-import { companies, dataFixes, jobs, sourceRuns } from "./schema";
+import { companies, dataFixes, jobs, locationStrings, places, sourceRuns } from "./schema";
 
 type TablePrivilege = "SELECT" | "INSERT" | "UPDATE" | "DELETE";
 
@@ -45,11 +45,17 @@ export const DATA_FIXER: LimitedRole = {
   ],
 };
 
-/** The ingest Worker's (apps/scrapers) DATABASE_URL (`worker-role:setup`): what runIngestion and runDiscovery
- *  touch. No DELETE: the weekly prune deletes through `prune_closed_jobs`, whose rule it can't change. */
+/** The ingest Worker's (apps/scrapers) DATABASE_URL (`worker-role:setup`): what runIngestion, runDiscovery and
+ *  the location run touch. The location run stores its answers in `location_strings` and checks them against
+ *  `places`, which it only reads. No DELETE: the weekly prune deletes through `prune_closed_jobs`, whose rule
+ *  it can't change. */
 export const SCRAPERS_WORKER: LimitedRole = {
   name: "scrapers_worker",
-  grants: [{ tables: [companies, jobs, sourceRuns], privileges: ["SELECT", "INSERT", "UPDATE"] }],
+  grants: [
+    { tables: [companies, jobs, sourceRuns], privileges: ["SELECT", "INSERT", "UPDATE"] },
+    { tables: [locationStrings], privileges: ["SELECT", "INSERT", "UPDATE"] },
+    { tables: [places], privileges: ["SELECT"] },
+  ],
   functions: [PRUNE_FUNCTION],
 };
 

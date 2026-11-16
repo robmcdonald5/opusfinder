@@ -54,6 +54,8 @@ export const UNIT_IDS = [
   "ingest.boards_failed", // boards whose final outcome was an error
   "ingest.boards_rate_limited", // boards skipped while their ATS was cooling down from a 429
   "ingest.jobs_changed", // postings inserted or updated
+  "locations.strings", // location strings sent to the model
+  "locations.strings_failed", // strings whose request failed, left for a later run to ask again
 ] as const;
 export type UnitId = (typeof UNIT_IDS)[number];
 
@@ -185,7 +187,7 @@ export const globalSwitch: GlobalDef = {
 
 // Crons, platform ids and knob values here copy their runtimes, which this pure package can't import. Sync
 // tests in those sources (control-registry.test.ts) pin SOME of them, so a change on one side fails there:
-//   - apps/scrapers: the ingest and discover crons (through the Worker's own dispatch),
+//   - apps/scrapers: the ingest, discover and locations crons (through the Worker's own dispatch),
 //     ingest.boardsPerTick's default, min and max, the discover knobs' defaults, and (against
 //     wrangler.toml's vars) the close / stale_sweep / prune initial modes and stale_sweep.ttlDays's default;
 //   - packages/inngest: each Inngest stage's platformId and the cron its served function registers;
@@ -259,6 +261,30 @@ export const stages = {
       },
     },
     expect: { everyMin: 7 * 24 * 60, graceMin: 6 * 60 },
+  },
+  locations: {
+    // New location strings to places (packages/locations), a bounded number per run.
+    label: "Resolve job locations",
+    runtime: "cf:opusfinder-scrapers",
+    trigger: { cron: "10 */2 * * *" }, // 10 min after each ingest tick starts, while Neon is awake
+    modes: ["off", "shadow", "on"],
+    shadowMeans: "count the location strings waiting; no model calls, nothing stored",
+    initial: "off",
+    gate: "shadow",
+    units: [
+      "cf.wall_ms",
+      "cf.subrequests",
+      "neon.awake_s",
+      "anthropic.haiku.in",
+      "anthropic.haiku.out",
+      "anthropic.haiku.cache_write",
+      "anthropic.haiku.cache_read",
+      "locations.strings",
+      "locations.strings_failed",
+    ],
+    // ~140 new strings a day at ~$0.0005 each; the runaway is the Worker's bound (300 a run, 12 runs a day).
+    budget: { targetUsdPerMonth: 3, runaway: { unit: "usd", perDay: 2 } },
+    expect: { everyMin: 120, graceMin: 60 }, // the ingest tick's period and grace, which it rides
   },
   embed: {
     label: "Embed new and changed jobs",

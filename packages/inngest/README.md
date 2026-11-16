@@ -39,19 +39,17 @@ integration (email ships in Phase 11 on the local dev runtime — locked at Phas
   AND by the 12a cadence cron, which carries `trigger:'cron'`; optional `userId` scopes it to one user)
   and `digest/user.requested` (one per recipient, fanned out by the orchestrator).
 - `src/digest.ts` — `createDigestFunctions(deps)` → `[orchestrator, perUser, cadence]`, plus the `DigestDeps`
-  injection seam (`db` + a `rerank` closure + the `batch` submit/poll/collect lifecycle + the location
-  normalizer's model (`@opusfinder/locations`) + the Phase-11 `email` send/lastEvent pair) so the pipeline is
+  injection seam (`db` + a `rerank` closure + the `batch` submit/poll/collect lifecycle + the Phase-11
+  `email` send/lastEvent pair) so the pipeline is
   stub-testable and the heavy `@opusfinder/llm` wiring stays out of the function bodies.
   - **Orchestrator** (`digest-orchestrator`): opens a `digest_run`, resolves recipients (single user
     when `event.data.userId` is set — runtime-validated as a uuid, since the event schema is
     compile-time only — else every eligible user keyset-swept, with `cadenceDue` passed through as
     `event.data.trigger === 'cron'` so a cron run filters to cadence-due users while a manual `--all`
-    sweep does not), resolves the active location strings no `location_strings` row covers yet when any
-    recipient has a home place (`resolve-locations-<i>` steps, `SYNC_CHUNK` pairs each, until none are left;
-    a deterministic no-answer is stored as unresolved, a transient failure stores nothing and is skipped by
-    the later steps, and only a step whose every request (three or more) failed transiently fails the run;
-    more than 50 chunks means run `pnpm locations:backfill`), fans out one `digest/user.requested`
-    each via `step.sendEvent`, and finalizes the run to the dispatch count (plus the location counts). Fan-out is fire-and-forget,
+    sweep does not), fans out one `digest/user.requested`
+    each via `step.sendEvent`, and finalizes the run to the dispatch count. It resolves no location
+    strings: the scrapers Worker does, on its own cron (apps/scrapers), and until a job's strings are
+    resolved the location rule holds it back from users with a home place. Fan-out is fire-and-forget,
     so the run row records **dispatch**, not per-user completion (those land on `digests`). A step that
     exhausts its retries is caught and terminalized onto the run row (`status: 'error'` +
     `error_sample`) before the failure is rethrown.

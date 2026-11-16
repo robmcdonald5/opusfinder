@@ -43,7 +43,6 @@ export {
   getOrCreatePreferences,
   updatePreferences,
   setDigestApproval,
-  anyHasHomePlace,
 } from "./preferences";
 export type { UserPreferencesRow, CreatePreferencesInput } from "./preferences";
 // Digest retrieval — the deterministic filter + location rule + cosine ranking over a profile vector.
@@ -69,6 +68,7 @@ export {
 export type { Place, CityMatch, HomeCandidate, HomePlaceLookup } from "./places";
 export {
   listPendingPairs,
+  countMissingPairs,
   listCompanyStrings,
   upsertLocationStrings,
   activePairsSql,

@@ -20,7 +20,7 @@ import {
 } from "@opusfinder/llm";
 import { sleep } from "@opusfinder/shared/async";
 
-import type { LocationAnswer, LocationModel, LocationRequest } from "./model";
+import type { LocationAnswer, LocationModel, LocationRequest, LocationSpend } from "./model";
 
 /** One daily request's deadline, the transport's retries included. */
 const GENERATE_DEADLINE_MS = 60_000;
@@ -40,13 +40,13 @@ export function createLocationModel(config: LlmConfig = {}): LocationModel {
   return {
     async generate(request) {
       try {
-        const { object } = await generateObject({
+        const result = await generateObject({
           ...config,
           ...callOptions(request),
           schema: request.schema,
           signal: AbortSignal.timeout(GENERATE_DEADLINE_MS),
         });
-        return { status: "answered", text: JSON.stringify(object) };
+        return { status: "answered", text: JSON.stringify(result.object), spend: toSpend(result) };
       } catch (err) {
         return failedAnswer(err);
       }
@@ -94,7 +94,9 @@ function callOptions(request: LocationRequest): CallOptions {
  * Reasons carry the error's status and type, never a message a provider wrote.
  */
 export function failedAnswer(err: unknown): LocationAnswer {
-  if (err instanceof ObjectGenerationError) return { status: "no-answer", reason: err.message };
+  if (err instanceof ObjectGenerationError) {
+    return { status: "no-answer", reason: err.message, spend: toSpend(err.spent) };
+  }
   if (err instanceof OpenRouterError) {
     const reason = `OpenRouter ${err.status} ${err.type}`;
     return REJECTED_STATUSES.has(err.status)
@@ -105,6 +107,17 @@ export function failedAnswer(err: unknown): LocationAnswer {
     return { status: "failed", reason: err instanceof Error ? err.name : "network error" };
   }
   throw err;
+}
+
+/** A call's usage as the normalizer counts it. An unusable reply was still paid for. */
+function toSpend(spent: ObjectGenerationError["spent"]): LocationSpend {
+  return {
+    inputTokens: spent.usage.inputTokens,
+    outputTokens: spent.usage.outputTokens,
+    cacheReadTokens: spent.cache.readInputTokens,
+    cacheCreationTokens: spent.cache.creationInputTokens,
+    costUsd: spent.usage.costUsd,
+  };
 }
 
 /** The deadline firing (TimeoutError) or a cancelled fetch (AbortError). */

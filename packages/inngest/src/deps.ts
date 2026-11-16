@@ -10,7 +10,6 @@ import {
   renderRerankCandidates,
   submitBatch,
 } from "@opusfinder/llm/node";
-import { createLocationModel } from "@opusfinder/locations/node";
 import { rerankCandidates, type RerankCall, type RerankCandidate } from "@opusfinder/rerank";
 import { parseEnforceFlag } from "@opusfinder/shared";
 import type { PromptPreferences, StructuredProfile } from "@opusfinder/shared";
@@ -21,7 +20,7 @@ import { probeLiveness } from "./probe";
 /**
  * Build the production digest deps: a neon-http db + the real synchronous Haiku rerank (the shared
  * `@opusfinder/rerank` core wired to `generateObject`) + the OpenRouter Batch API primitives for
- * synthesis + the location normalizer's model + the Resend email send/last_event pair. NODE/server-only —
+ * synthesis + the Resend email send/last_event pair. NODE/server-only —
  * it loads env via the packages' `/node` and `/env`
  * entries; the serve + CLI scripts call it. Never reached from a Worker (`guard:worker` keeps
  * `@opusfinder/inngest` out of the scraper bundle). Importing `@opusfinder/email/node` here pulls only its
@@ -42,7 +41,6 @@ export function buildDigestDeps(): DigestDeps {
       send: (payload) => sendDigestEmail(payload),
       lastEvent: (emailId) => getEmailLastEvent(emailId),
     },
-    locations: createLocationModel(),
     probe: probeLiveness,
     // Lifecycle-close enforcement — reads LIFECYCLE_CLOSE_ENFORCE from process.env (Node-hosted), the same switch the
     // Worker reads. Default false = shadow.

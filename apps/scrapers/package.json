@@ -14,6 +14,7 @@
     "@opusfinder/control": "workspace:*",
     "@opusfinder/db": "workspace:*",
     "@opusfinder/discovery": "workspace:*",
+    "@opusfinder/locations": "workspace:*",
     "@opusfinder/shared": "workspace:*",
     "@opusfinder/sources": "workspace:*"
   },

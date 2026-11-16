@@ -249,9 +249,16 @@ export type RunStatus = "running" | "ok" | "error";
 
 /** Which pipeline a run belongs to: `discovery`, `ingestion` (the cron), `ingestion-cli` (a manual
  * `pnpm ingest` / `ingest:all` run — kept apart so health reads only the cron's runs), `prune` (the
- * Worker's weekly job prune, after discovery), or `backup` (the nightly user-table backup, recorded once
- * finished: see backup.ts). */
-export type RunPipeline = "discovery" | "ingestion" | "ingestion-cli" | "prune" | "backup";
+ * Worker's weekly job prune, after discovery), `locations` (the Worker's location-string run, 10 minutes
+ * into each ingest tick), or `backup` (the nightly user-table backup, recorded once finished: see
+ * backup.ts). */
+export type RunPipeline =
+  | "discovery"
+  | "ingestion"
+  | "ingestion-cli"
+  | "prune"
+  | "locations"
+  | "backup";
 
 /** Open metric bag for a run, keyed by count name. Discovery and ingestion tally different
  * things (candidates/probed/inserted vs boards/changed/…), so it stays a free-form jsonb map

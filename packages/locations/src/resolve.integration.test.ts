@@ -8,12 +8,14 @@ import { companySlug, jobId } from "@opusfinder/shared";
 import { createTestDb } from "@test/db/pglite";
 import { P, seedPlaces } from "@test/db/places";
 import { truncate } from "@test/db/truncate";
+import { rejectionOf } from "@test/rejection";
 
 import type { LocationAnswer, LocationModel, LocationRequest } from "./model";
 import { PROMPT_VERSION } from "./prompt";
 import {
   backfillLocationStrings,
   collectLocationBatch,
+  LocationModelUnavailableError,
   requestId,
   syncLocationStrings,
 } from "./resolve";
@@ -66,12 +68,21 @@ function rawOf(request: LocationRequest): string {
   return JSON.parse(line.slice("Location text: ".length)) as string;
 }
 
+/** What every reply that came back cost, the unusable ones included. */
+const SPEND = {
+  inputTokens: 300,
+  outputTokens: 40,
+  cacheReadTokens: 3000,
+  cacheCreationTokens: 0,
+  costUsd: 0.25,
+};
+
 function answerFor(request: LocationRequest): LocationAnswer {
   const a = ANSWERS[rawOf(request)];
   if (a === undefined) throw new Error(`no stub answer for ${rawOf(request)}`);
-  if (a === "refuse") return { status: "no-answer", reason: "refusal" };
-  if (a === "garbage") return { status: "answered", text: "{not json" };
-  return { status: "answered", text: JSON.stringify(a) };
+  if (a === "refuse") return { status: "no-answer", reason: "refusal", spend: SPEND };
+  if (a === "garbage") return { status: "answered", text: "{not json", spend: SPEND };
+  return { status: "answered", text: JSON.stringify(a), spend: SPEND };
 }
 
 const TRANSIENT: LocationAnswer = { status: "failed", reason: "OpenRouter 503 error" };
@@ -155,6 +166,14 @@ describe("resolving location strings (integration: real PGlite, stub model)", ()
       unmatchedPlaces: 1,
       more: true,
       failedPairs: [],
+      // Four replies, each paid for, the garbled one too.
+      spend: {
+        inputTokens: 1200,
+        outputTokens: 160,
+        cacheReadTokens: 12_000,
+        cacheCreationTokens: 0,
+        costUsd: 1,
+      },
     });
     const second = await syncLocationStrings(db, model, { limit: 4 });
     // Most-listed first, then by text: the second chunk is "Refused" and "Remote - USA".
@@ -236,9 +255,13 @@ describe("resolving location strings (integration: real PGlite, stub model)", ()
     const model = stubModel();
     model.generate = vi.fn(async () => TRANSIENT);
 
-    await expect(syncLocationStrings(db, model, { limit: 3 })).rejects.toThrow(
+    const error = await rejectionOf(syncLocationStrings(db, model, { limit: 3 }));
+    expect(error).toBeInstanceOf(LocationModelUnavailableError);
+    expect((error as Error).message).toMatch(
       /unavailable: all 3 requests failed \(OpenRouter 503 error\)/,
     );
+    // The pairs it asked ride on the error, for a caller that wants its next run to ask them last.
+    expect((error as LocationModelUnavailableError).failedPairs).toHaveLength(3);
     expect((await stored()).size).toBe(0);
   });
 

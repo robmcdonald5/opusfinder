@@ -84,6 +84,7 @@ describe("registry: modes", () => {
       global: "on",
       ingest: "on",
       discover: "on",
+      locations: "off",
       embed: "off",
       alerts: "off",
       digest: "off",

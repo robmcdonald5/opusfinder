@@ -31,7 +31,6 @@ const repos = vi.hoisted(() => ({
   // orchestrator
   startDigestRun: vi.fn(),
   listDigestRecipients: vi.fn(),
-  anyHasHomePlace: vi.fn(),
   finishDigestRun: vi.fn(),
 }));
 vi.mock("@opusfinder/db/repos", () => repos);
@@ -42,9 +41,6 @@ const llm = vi.hoisted(() => ({
   BatchEndedError: class BatchEndedError extends Error {},
 }));
 vi.mock("@opusfinder/llm", () => llm);
-
-const locations = vi.hoisted(() => ({ syncLocationStrings: vi.fn(), SYNC_CHUNK: 30 }));
-vi.mock("@opusfinder/locations", () => locations);
 
 const probeMod = vi.hoisted(() => ({ probeDigestLiveness: vi.fn() }));
 vi.mock("./probe", () => probeMod);
@@ -73,7 +69,6 @@ function makeDeps(enforceLifecycle = false): DigestDeps {
     rerank,
     batch: { submit: batchSubmit, poll: batchPoll, collect: batchCollect },
     email,
-    locations: { generate: vi.fn(), submitBatch: vi.fn(), collectBatch: vi.fn() },
     probe,
     enforceLifecycle,
   };
@@ -159,25 +154,7 @@ beforeEach(() => {
   repos.startDigestRun.mockResolvedValue(42);
   repos.finishDigestRun.mockResolvedValue(undefined);
   repos.listDigestRecipients.mockResolvedValue([]);
-  locations.syncLocationStrings.mockResolvedValue(NOTHING_TO_RESOLVE);
-  repos.anyHasHomePlace.mockResolvedValue(true);
 });
-
-const NOTHING_TO_RESOLVE = {
-  resolved: 0,
-  unanswered: 0,
-  failed: 0,
-  unmatchedPlaces: 0,
-  more: false,
-  failedPairs: [],
-};
-/** finish-run's counts when the resolve step had nothing to do. */
-const NO_LOCATION_COUNTS = {
-  locationsResolved: 0,
-  locationsUnanswered: 0,
-  locationsFailed: 0,
-  locationsUnmatchedPlaces: 0,
-};
 
 // ════════════════════════════════════════ runOrchestrator ══════════════════════════════════════════
 describe("runOrchestrator", () => {
@@ -204,16 +181,11 @@ describe("runOrchestrator", () => {
     ]);
     expect(repos.finishDigestRun).toHaveBeenCalledWith(expect.anything(), 42, {
       status: "ok",
-      counts: { recipients: 1, dispatched: 1, ...NO_LOCATION_COUNTS },
+      counts: { recipients: 1, dispatched: 1 },
     });
     expect(out).toEqual({ runId: 42, recipients: 1 });
-    expect(runs).toEqual([
-      "start-run",
-      "fetch-recipients",
-      "check-home-places",
-      "resolve-locations-0",
-      "finish-run",
-    ]);
+    // Straight from the recipients to the fan-out: the orchestrator resolves no location strings.
+    expect(runs).toEqual(["start-run", "fetch-recipients", "finish-run"]);
   });
 
   it("lowercases an uppercase single-user UUID, so the per-user singleton key matches the cron's", async () => {
@@ -285,10 +257,9 @@ describe("runOrchestrator", () => {
     expect(sentEvents).toEqual([]);
     expect(repos.finishDigestRun).toHaveBeenCalledWith(expect.anything(), 42, {
       status: "ok",
-      counts: { recipients: 0, dispatched: 0, ...NO_LOCATION_COUNTS },
+      counts: { recipients: 0, dispatched: 0 },
     });
     expect(out).toEqual({ runId: 42, recipients: 0 });
-    expect(locations.syncLocationStrings).not.toHaveBeenCalled(); // no recipients, no model spend
   });
 
   it("keyset-sweeps across pages until a short page, fanning out every recipient", async () => {
@@ -308,93 +279,6 @@ describe("runOrchestrator", () => {
     );
     expect(out.recipients).toBe(201);
     expect((sentEvents[0]!.events as unknown[]).length).toBe(201);
-  });
-
-  it("resolves new location strings a chunk per step until none are left, before the fan-out", async () => {
-    const flaky = { companyId: 7, raw: "Atlantis" };
-    locations.syncLocationStrings
-      .mockResolvedValueOnce({
-        resolved: 26,
-        unanswered: 2,
-        failed: 2,
-        unmatchedPlaces: 3,
-        more: true,
-        failedPairs: [flaky, { companyId: 7, raw: "Lemuria" }],
-      })
-      .mockResolvedValueOnce({ ...NOTHING_TO_RESOLVE, resolved: 5 });
-    const { runs, tools } = recordingStep();
-
-    await runOrchestrator(makeDeps(), event({ trigger: "manual", userId: UUID }), tools);
-
-    expect(runs).toEqual([
-      "start-run",
-      "fetch-recipients",
-      "check-home-places",
-      "resolve-locations-0",
-      "resolve-locations-1",
-      "finish-run",
-    ]);
-    expect(repos.finishDigestRun).toHaveBeenCalledWith(expect.anything(), 42, {
-      status: "ok",
-      counts: {
-        recipients: 1,
-        dispatched: 1,
-        locationsResolved: 31,
-        locationsUnanswered: 2,
-        locationsFailed: 2,
-        locationsUnmatchedPlaces: 3,
-      },
-    });
-    // A later step skips the pairs that already failed transiently in this run.
-    expect(locations.syncLocationStrings.mock.calls[1]![2]).toEqual({
-      limit: 30,
-      exclude: [flaky, { companyId: 7, raw: "Lemuria" }],
-    });
-  });
-
-  it("skips resolving locations when no recipient has a home place", async () => {
-    repos.anyHasHomePlace.mockResolvedValue(false);
-    const { runs, sentEvents, tools } = recordingStep();
-
-    await runOrchestrator(makeDeps(), event({ trigger: "manual", userId: UUID }), tools);
-
-    expect(runs).toEqual(["start-run", "fetch-recipients", "check-home-places", "finish-run"]);
-    expect(locations.syncLocationStrings).not.toHaveBeenCalled();
-    expect(sentEvents).toHaveLength(1);
-  });
-
-  it("fails the run without fanning out when the location model keeps failing", async () => {
-    locations.syncLocationStrings.mockRejectedValue(new Error("model unavailable"));
-    const { runs, sentEvents, tools } = recordingStep();
-
-    await expect(
-      runOrchestrator(makeDeps(), event({ trigger: "manual", userId: UUID }), tools),
-    ).rejects.toThrow(/model unavailable/);
-
-    expect(sentEvents).toEqual([]);
-    expect(runs).toEqual([
-      "start-run",
-      "fetch-recipients",
-      "check-home-places",
-      "resolve-locations-0",
-      "fail-run",
-    ]);
-  });
-
-  it("refuses to run the daily path over more strings than its step cap", async () => {
-    locations.syncLocationStrings.mockResolvedValue({
-      ...NOTHING_TO_RESOLVE,
-      resolved: 30,
-      more: true,
-    });
-    const { sentEvents, tools } = recordingStep();
-
-    await expect(
-      runOrchestrator(makeDeps(), event({ trigger: "manual", userId: UUID }), tools),
-    ).rejects.toThrow(/locations:backfill/);
-
-    expect(locations.syncLocationStrings).toHaveBeenCalledTimes(50);
-    expect(sentEvents).toEqual([]);
   });
 
   it("terminalizes a swept-step failure onto the run row with a sliced error sample, then rethrows", async () => {
@@ -508,7 +392,6 @@ describe("runPerUser", () => {
       rerank,
       batch: { submit: batchSubmit, poll: batchPoll, collect: batchCollect },
       email,
-      locations: { generate: vi.fn(), submitBatch: vi.fn(), collectBatch: vi.fn() },
       probe,
     };
     const { tools } = recordingStep();

@@ -2,7 +2,7 @@
  * Resolve (company, raw) location pairs into `location_strings` rows: build the requests, ask the model,
  * check its answers against GeoNames, store them. Two entry points over the same request builder and the
  * same answer handling: {@link syncLocationStrings}, the daily path (pairs with no row yet, a few
- * requests at a time, run by the digest before its fan-out and by `locations:sync`), and
+ * requests at a time, run by the scrapers Worker's location run in ./run and by `locations:sync`), and
  * {@link backfillLocationStrings}, provider batches over every missing, stale or unanswered pair
  * (`locations:backfill`), with {@link collectLocationBatch} to store a batch submitted by an earlier run.
  *
@@ -28,12 +28,13 @@ import {
   type LocationAnswer,
   type LocationModel,
   type LocationRequest,
+  type LocationSpend,
 } from "./model";
 import { PROMPT_VERSION, SIBLING_CONTEXT, type PromptPair } from "./prompt";
 import { LocationAnswerSchema, type LocationAnswerValue } from "./schema";
 
-/** Pairs resolved per daily-path call. A digest step must finish inside the 300 s function limit: with
- *  SYNC_CONCURRENCY requests in flight and the transport's ~60 s deadline on each, 30 take at most ~3 min. */
+/** Pairs resolved per daily-path call: with SYNC_CONCURRENCY requests in flight and the transport's ~60 s
+ *  deadline on each, 30 take at most ~3 min. */
 export const SYNC_CHUNK = 30;
 const SYNC_CONCURRENCY = 10;
 /** A call where every request failed transiently means the provider is down, but only past a few
@@ -56,6 +57,19 @@ export interface SyncResult extends ResolveCounts {
   more: boolean;
   /** The pairs that failed transiently, for the caller's later calls in the same run to skip. */
   failedPairs: LocationPairKey[];
+  /** What the call's requests used and cost, the unusable replies included. */
+  spend: LocationSpend;
+}
+
+/** Every request of a daily-path call failed transiently: the provider is down, or turning the key away. */
+export class LocationModelUnavailableError extends Error {
+  /** The pairs the call asked. */
+  readonly failedPairs: LocationPairKey[];
+  constructor(message: string, failedPairs: LocationPairKey[]) {
+    super(message);
+    this.name = "LocationModelUnavailableError";
+    this.failedPairs = failedPairs;
+  }
 }
 
 /** One pair's outcome, for the CLIs' failure listings. */
@@ -78,8 +92,9 @@ export interface BatchOutcome {
  * The daily path: resolve up to `limit` active pairs that have no row yet, most-listed first, skipping
  * `exclude` (the pairs that already failed earlier in the same run). Each answer is stored as soon as it
  * comes back, so a call cut off by its time limit and retried doesn't pay for those pairs again. Throws
- * only when the provider is clearly down (every request of the call failed transiently); a transient
- * failure otherwise stores nothing and is counted, for the next run to ask again.
+ * {@link LocationModelUnavailableError} only when the provider is clearly down (every request of the call
+ * failed transiently); a transient failure otherwise stores nothing and is counted, for the next run to ask
+ * again.
  */
 export async function syncLocationStrings(
   db: Db,
@@ -93,26 +108,28 @@ export async function syncLocationStrings(
     limit,
     exclude: opts.exclude,
   });
-  if (pairs.length === 0) return { ...countOutcomes([]), more: false, failedPairs: [] };
+  const spend = noSpend();
+  if (pairs.length === 0) return { ...countOutcomes([]), more: false, failedPairs: [], spend };
   const gazetteer = opts.gazetteer ?? (await loadGazetteer(db));
   const requests = await buildRequests(db, pairs);
   const outcomes = await mapConcurrent(
     pairs.map((pair, i) => ({ pair, request: requests[i]! })),
     SYNC_CONCURRENCY,
-    async ({ pair, request }) =>
-      (await storeAnswers(db, gazetteer, [pair], [await model.generate(request)]))[0]!,
+    async ({ pair, request }) => {
+      const answer = await model.generate(request);
+      addSpend(spend, answer.spend);
+      return (await storeAnswers(db, gazetteer, [pair], [answer]))[0]!;
+    },
   );
   const failed = outcomes.filter((o) => !o.row);
+  const failedPairs = failed.map(({ pair }) => ({ companyId: pair.companyId, raw: pair.raw }));
   if (failed.length === outcomes.length && outcomes.length >= OUTAGE_MIN_REQUESTS) {
-    throw new Error(
+    throw new LocationModelUnavailableError(
       `The location model is unavailable: all ${outcomes.length} requests failed (${failed[0]!.problem}).`,
+      failedPairs,
     );
   }
-  return {
-    ...countOutcomes(outcomes),
-    more: pairs.length === limit,
-    failedPairs: failed.map(({ pair }) => ({ companyId: pair.companyId, raw: pair.raw })),
-  };
+  return { ...countOutcomes(outcomes), more: pairs.length === limit, failedPairs, spend };
 }
 
 /**
@@ -328,6 +345,26 @@ function countOutcomes(outcomes: PairOutcome[]): ResolveCounts {
     counts.unmatchedPlaces += o.row?.unmatched.length ?? 0;
   }
   return counts;
+}
+
+export function noSpend(): LocationSpend {
+  return {
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheReadTokens: 0,
+    cacheCreationTokens: 0,
+    costUsd: 0,
+  };
+}
+
+/** Add one request's (or one call's) spend into running totals. */
+export function addSpend(into: LocationSpend, from: LocationSpend | undefined): void {
+  if (!from) return;
+  into.inputTokens += from.inputTokens;
+  into.outputTokens += from.outputTokens;
+  into.cacheReadTokens += from.cacheReadTokens;
+  into.cacheCreationTokens += from.cacheCreationTokens;
+  into.costUsd += from.costUsd;
 }
 
 /** An error's class and message, capped: the transport's errors carry no request or response body. */

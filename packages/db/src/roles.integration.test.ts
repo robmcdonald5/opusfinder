@@ -10,7 +10,8 @@ import { DATA_FIXER, SCRAPERS_WORKER, USER_BACKUP, type LimitedRole } from "./ro
 // Each limited role's setup SQL under REAL Postgres semantics: it confines the role to exactly its grants,
 // converges on re-run, and aborts rather than leave a table privilege it didn't grant. What each role can
 // actually RUN is its user's suite: fixes.integration.test.ts (data_fixer),
-// packages/discovery/src/worker-role.integration.test.ts (scrapers_worker) and backup.integration.test.ts
+// packages/discovery/src/worker-role.integration.test.ts and
+// packages/locations/src/run.integration.test.ts (scrapers_worker) and backup.integration.test.ts
 // (user_backup). No role is ever granted `session`, so the cases below use it as the table a role must not reach.
 
 const PRIVILEGES = [
