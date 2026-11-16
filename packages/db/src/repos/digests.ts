@@ -5,7 +5,7 @@
  */
 import { and, desc, eq, gt, inArray, isNotNull, isNull, sql, type SQL } from "drizzle-orm";
 
-import type { DigestTrigger, UserId } from "@opusfinder/shared";
+import type { DigestDelivery, DigestTrigger, UserId } from "@opusfinder/shared";
 
 import type { Db } from "../client";
 import {
@@ -96,6 +96,53 @@ export function listDigestRecipients(
     .where(and(...conditions))
     .orderBy(user.id)
     .limit(opts.limit);
+}
+
+/** What the daily tick's fan-out knows about a due user before it starts their run. */
+export interface DigestFanOutState {
+  /** The Workflow instance last started for the user (`digest_instance_id`); null = none yet. */
+  instanceId: string | null;
+  /** Since when the user has been due, in epoch ms: the end of their cadence window after the last stamp,
+   *  or for a user never stamped, when they got the send permit (failing that, when the row was made). */
+  dueSince: number;
+}
+
+/**
+ * For each of these users, the instance last started for them and since when they have been due. The tick
+ * reads the first to skip a user whose previous run hasn't finished, and the second to take the
+ * longest-waiting users first when it can't start everyone. The windows are {@link cadenceDuePredicate}'s:
+ * a user that predicate calls due has a `dueSince` in the past (digests.integration.test.ts holds the two
+ * together). A user with no preferences row is absent.
+ */
+export async function getDigestFanOutState(
+  db: Db,
+  userIds: UserId[],
+): Promise<Map<UserId, DigestFanOutState>> {
+  if (userIds.length === 0) return new Map();
+  const sent = userPreferences.lastDigestSentAt;
+  const cadence = userPreferences.digestCadence;
+  const rows = await db
+    .select({
+      userId: userPreferences.userId,
+      instanceId: userPreferences.digestInstanceId,
+      dueSince: sql<number>`(extract(epoch FROM COALESCE(
+        ${sent} + CASE ${cadence}
+          WHEN 'daily' THEN interval '20 hours'
+          WHEN 'weekly' THEN interval '6 days 20 hours'
+          WHEN 'monthly' THEN interval '28 days 20 hours'
+        END,
+        ${userPreferences.digestApprovedAt},
+        ${userPreferences.createdAt}
+      )) * 1000)::float8`,
+    })
+    .from(userPreferences)
+    .where(inArray(userPreferences.userId, userIds));
+  return new Map(
+    rows.map((row) => [
+      row.userId,
+      { instanceId: row.instanceId, dueSince: Number(row.dueSince) },
+    ]),
+  );
 }
 
 /**
@@ -563,6 +610,21 @@ export async function getDigestEmailPayload(
 }
 
 /**
+ * The delivery setting of the account a digest belongs to (`user_preferences.digest_delivery`), read at the
+ * send boundary: only `email` is sent. Null when the digest or its preferences row is gone, which the
+ * caller treats like `logs` (no send).
+ */
+export async function getDigestDelivery(db: Db, digestId: number): Promise<DigestDelivery | null> {
+  const rows = await db
+    .select({ delivery: userPreferences.digestDelivery })
+    .from(digests)
+    .innerJoin(userPreferences, eq(userPreferences.userId, digests.userId))
+    .where(eq(digests.id, digestId))
+    .limit(1);
+  return rows[0]?.delivery ?? null;
+}
+
+/**
  * Send accepted by Resend: `digests.email_id` + `delivery_status='sent'` + `sent_at=now()`, THEN the
  * user-level `last_digest_sent_at`/`last_digest_email_id`. Two writes, digests first — neon-http is
  * non-transactional, but both are idempotent, so a crash between them is healed by the Inngest step
@@ -589,7 +651,7 @@ export async function recordDigestSent(db: Db, digestId: number, emailId: string
 /**
  * Cadence backoff: stamp `last_digest_sent_at` (the run's start) WITHOUT an email id, for a user a cadence run
  * CONSIDERED but did not email (no candidates / nothing above the score floor / all apply-URLs dead / the
- * send permit was revoked mid-run). This backs the user off until their next cadence period, so the daily
+ * send permit was revoked mid-run / the digest is logs-only). This backs the user off until their next cadence period, so the daily
  * cadence cron does NOT re-run the full (paid) pipeline for a perpetually-thin or just-un-approved user
  * every tick. Deliberately NOT called on ERROR paths (those throw and SHOULD retry next tick), and it
  * NULLs `last_digest_email_id` (no email was sent this consideration) so the row unambiguously reads

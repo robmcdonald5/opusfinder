@@ -82,6 +82,34 @@ importers:
         specifier: ^4
         version: 4.101.0(@cloudflare/workers-types@4.20260617.1)
 
+  apps/digest:
+    dependencies:
+      '@opusfinder/control':
+        specifier: workspace:*
+        version: link:../../packages/control
+      '@opusfinder/db':
+        specifier: workspace:*
+        version: link:../../packages/db
+      '@opusfinder/digest':
+        specifier: workspace:*
+        version: link:../../packages/digest
+      '@opusfinder/email':
+        specifier: workspace:*
+        version: link:../../packages/email
+      '@opusfinder/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
+    devDependencies:
+      '@cloudflare/workers-types':
+        specifier: ^4
+        version: 4.20260617.1
+      '@opusfinder/llm':
+        specifier: workspace:*
+        version: link:../../packages/llm
+      wrangler:
+        specifier: ^4
+        version: 4.101.0(@cloudflare/workers-types@4.20260617.1)
+
   apps/scrapers:
     dependencies:
       '@opusfinder/control':
@@ -200,6 +228,31 @@ importers:
         specifier: ^4
         version: 4.22.3
 
+  packages/digest:
+    dependencies:
+      '@opusfinder/db':
+        specifier: workspace:*
+        version: link:../db
+      '@opusfinder/email':
+        specifier: workspace:*
+        version: link:../email
+      '@opusfinder/llm':
+        specifier: workspace:*
+        version: link:../llm
+      '@opusfinder/rerank':
+        specifier: workspace:*
+        version: link:../rerank
+      '@opusfinder/shared':
+        specifier: workspace:*
+        version: link:../shared
+    devDependencies:
+      '@opusfinder/locations':
+        specifier: workspace:*
+        version: link:../locations
+      tsx:
+        specifier: ^4
+        version: 4.22.3
+
   packages/discovery:
     dependencies:
       '@opusfinder/db':
@@ -287,6 +340,9 @@ importers:
       '@opusfinder/db':
         specifier: workspace:*
         version: link:../db
+      '@opusfinder/digest':
+        specifier: workspace:*
+        version: link:../digest
       '@opusfinder/email':
         specifier: workspace:*
         version: link:../email
@@ -306,9 +362,6 @@ importers:
         specifier: ^3.54.2
         version: 3.54.2(@opentelemetry/core@2.7.1(@opentelemetry/api@1.9.0))(@sveltejs/kit@2.65.1(@opentelemetry/api@1.9.0)(@sveltejs/vite-plugin-svelte@7.1.2(svelte@5.56.3(@typescript-eslint/types@8.59.4))(vite@8.0.16(@types/node@25.9.3)(esbuild@0.28.1)(tsx@4.22.3)(yaml@2.9.0)))(svelte@5.56.3(@typescript-eslint/types@8.59.4))(typescript@6.0.3)(vite@8.0.16(@types/node@25.9.3)(esbuild@0.28.1)(tsx@4.22.3)(yaml@2.9.0)))(typescript@6.0.3)(zod@4.4.3)
     devDependencies:
-      '@opusfinder/locations':
-        specifier: workspace:*
-        version: link:../locations
       tsx:
         specifier: ^4
         version: 4.22.3

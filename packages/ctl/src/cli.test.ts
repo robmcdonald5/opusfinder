@@ -314,7 +314,7 @@ describe("set", () => {
     ]);
     expect(await h.run(["set", "close", "enforce", "--reason", "x"])).toBe(EXIT.ok);
     expect(h.stdout()).toBe(
-      "no change: close is already enforce — not enforced yet (ingest, discover: logs only; digest: not wired)",
+      "no change: close is already enforce — not enforced yet (ingest, discover: logs only)",
     );
   });
 

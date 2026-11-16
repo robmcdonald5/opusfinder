@@ -9,6 +9,7 @@ import {
   dropDigestItemsAndRecount,
   getDigestApplyTargets,
   getDigestEmailPayload,
+  getDigestFanOutState,
   getJobSnapshots,
   getLatestDigestForUser,
   hasSentDigestForRun,
@@ -308,6 +309,38 @@ describe("digests repo — recipient gates, shown-history anti-joins, persist/re
         { userId: w1 },
         { userId: m1 },
       ]);
+    });
+
+    it("getDigestFanOutState's dueSince uses the same windows: in the past exactly for the users the cron calls due", async () => {
+      const approved = daysAgo(90);
+      const seeds: [DigestCadence, Date | null][] = [
+        ["daily", hoursAgo(25)], // due
+        ["daily", hoursAgo(1)],
+        ["weekly", daysAgo(7)], // due
+        ["weekly", hoursAgo(6 * 24 + 1)],
+        ["monthly", daysAgo(29)], // due
+        ["monthly", hoursAgo(28 * 24 + 1)],
+        ["weekly", null], // never sent: due since the permit
+      ];
+      const ids: UserId[] = [];
+      for (const [i, [digestCadence, lastDigestSentAt]] of seeds.entries()) {
+        ids.push(
+          await seedRecipient(i + 1, { digestCadence, lastDigestSentAt, digestApprovedAt: approved }),
+        );
+      }
+
+      const due = (await listDigestRecipients(db, { limit: 20, cadenceDue: true })).map(
+        (r) => r.userId,
+      );
+      const state = await getDigestFanOutState(db, ids);
+
+      expect(ids.filter((id) => state.get(id)!.dueSince <= Date.now())).toEqual(due);
+      // A sent user is due from the end of their window; a never-sent one from the permit.
+      const [daily, , weekly] = ids.map((id) => state.get(id)!.dueSince);
+      expect(daily! - seeds[0]![1]!.getTime()).toBe(20 * 3_600_000);
+      expect(weekly! - seeds[2]![1]!.getTime()).toBe((6 * 24 + 20) * 3_600_000);
+      expect(state.get(ids[6]!)).toEqual({ instanceId: null, dueSince: approved.getTime() });
+      expect(await getDigestFanOutState(db, [])).toEqual(new Map());
     });
 
     it("cadenceDue omitted applies NO cadence filter — a just-sent user is still returned (the manual --all sweep)", async () => {

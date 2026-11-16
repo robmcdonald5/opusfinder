@@ -1,5 +1,3 @@
-import { BlockList, isIP } from "node:net";
-
 import type { Db } from "@opusfinder/db";
 import {
   closeJobsByIds,
@@ -65,21 +63,71 @@ function emptyProbeCounts(): ProbeCounts {
 
 const PROBE_TIMEOUT_MS = 5000;
 
-/** Literal addresses the probe never fetches: the apply URL comes from the board's data, and the probe runs
- *  inside our runtime's network. A public name that resolves or redirects inward still gets through, but
- *  the probe only ever reads a status. Covers IPv4-mapped IPv6 too (BlockList matches those). */
-const INTERNAL_ADDRESSES = new BlockList();
-INTERNAL_ADDRESSES.addSubnet("0.0.0.0", 8);
-INTERNAL_ADDRESSES.addSubnet("10.0.0.0", 8);
-INTERNAL_ADDRESSES.addSubnet("100.64.0.0", 10);
-INTERNAL_ADDRESSES.addSubnet("127.0.0.0", 8);
-INTERNAL_ADDRESSES.addSubnet("169.254.0.0", 16);
-INTERNAL_ADDRESSES.addSubnet("172.16.0.0", 12);
-INTERNAL_ADDRESSES.addSubnet("192.168.0.0", 16);
-INTERNAL_ADDRESSES.addAddress("::", "ipv6");
-INTERNAL_ADDRESSES.addAddress("::1", "ipv6");
-INTERNAL_ADDRESSES.addSubnet("fc00::", 7, "ipv6");
-INTERNAL_ADDRESSES.addSubnet("fe80::", 10, "ipv6");
+/** IPv4 ranges the probe never fetches, as [first address, prefix length]: this network, private,
+ *  carrier NAT, loopback and link-local. */
+const INTERNAL_IPV4: readonly (readonly [number, number])[] = [
+  [ipv4(0, 0, 0, 0), 8],
+  [ipv4(10, 0, 0, 0), 8],
+  [ipv4(100, 64, 0, 0), 10],
+  [ipv4(127, 0, 0, 0), 8],
+  [ipv4(169, 254, 0, 0), 16],
+  [ipv4(172, 16, 0, 0), 12],
+  [ipv4(192, 168, 0, 0), 16],
+];
+
+function ipv4(a: number, b: number, c: number, d: number): number {
+  return ((a << 24) | (b << 16) | (c << 8) | d) >>> 0;
+}
+
+function isInternalIpv4(address: number): boolean {
+  return INTERNAL_IPV4.some(([first, bits]) => address >>> (32 - bits) === first >>> (32 - bits));
+}
+
+/** A URL hostname's IPv6 address as its eight groups, or null when it isn't one. The URL parser has
+ *  already validated and normalized it: lowercase hex groups, at most one `::`, no dotted tail. */
+function ipv6Groups(host: string): number[] | null {
+  if (!host.includes(":")) return null;
+  const [head = "", tail] = host.split("::");
+  const parse = (part: string) => (part === "" ? [] : part.split(":").map((g) => parseInt(g, 16)));
+  const left = parse(head);
+  const right = tail === undefined ? [] : parse(tail);
+  const groups =
+    tail === undefined
+      ? left
+      : [...left, ...new Array<number>(8 - left.length - right.length).fill(0), ...right];
+  return groups.length === 8 && groups.every((g) => Number.isInteger(g)) ? groups : null;
+}
+
+/**
+ * Literal addresses the probe never fetches: the apply URL comes from the board's data, and the probe runs
+ * inside our runtime's network. A public name that resolves or redirects inward still gets through, but
+ * the probe only ever reads a status. `host` is a URL's hostname, brackets removed, so an IPv4 address in
+ * any spelling is already dotted decimal. An IPv4-mapped IPv6 address is judged as its IPv4 address.
+ */
+function isInternalAddress(host: string): boolean {
+  const dotted = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
+  if (dotted) {
+    return isInternalIpv4(
+      ipv4(Number(dotted[1]), Number(dotted[2]), Number(dotted[3]), Number(dotted[4])),
+    );
+  }
+  const groups = ipv6Groups(host);
+  if (!groups) return false; // a name
+  const [g0, g1, g2, g3, g4, g5, g6, g7] = groups as [
+    number,
+    number,
+    number,
+    number,
+    number,
+    number,
+    number,
+    number,
+  ];
+  const leadingZeros = (g0 | g1 | g2 | g3 | g4) === 0;
+  if (leadingZeros && g5 === 0xffff) return isInternalIpv4(((g6 << 16) | g7) >>> 0);
+  if (leadingZeros && g5 === 0 && g6 === 0 && g7 <= 1) return true; // :: and ::1
+  return (g0 & 0xfe00) === 0xfc00 || (g0 & 0xffc0) === 0xfe80; // fc00::/7, fe80::/10
+}
 
 /** An http(s) URL whose host isn't localhost or a literal internal address. Any other URL isn't fetched
  *  and reads `error` (kept, never closed). */
@@ -93,8 +141,7 @@ function isProbeable(url: string): boolean {
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
   const host = parsed.hostname.replace(/^\[|\]$/g, "");
   if (host === "localhost" || host.endsWith(".localhost")) return false;
-  const family = isIP(host);
-  return family === 0 || !INTERNAL_ADDRESSES.check(host, family === 4 ? "ipv4" : "ipv6");
+  return !isInternalAddress(host);
 }
 
 /** The real probe: HEAD (falling back to GET when an ATS rejects HEAD with 405/501), a short per-request

@@ -23,6 +23,7 @@ async function main(): Promise<void> {
       bounce: userPreferences.digestBounceStatus,
       cadence: userPreferences.digestCadence,
       enabled: userPreferences.digestEnabled,
+      delivery: userPreferences.digestDelivery,
       profileId: userProfiles.id,
     })
     .from(user)
@@ -39,7 +40,8 @@ async function main(): Promise<void> {
     console.log(
       `  ${maskEmail(row.email)}  verified=${row.verified}  approved=${row.approvedAt !== null}  ` +
         `suppressed=${row.suppressedAt !== null}  bounce=${row.bounce ?? "—"}  ` +
-        `cadence=${row.cadence ?? "—"}  enabled=${row.enabled ?? "—"}  profile=${row.profileId !== null}  id=${row.id}`,
+        `cadence=${row.cadence ?? "—"}  enabled=${row.enabled ?? "—"}  delivery=${row.delivery ?? "—"}  ` +
+        `profile=${row.profileId !== null}  id=${row.id}`,
     );
   }
 }

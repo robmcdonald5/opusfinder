@@ -459,7 +459,7 @@ describe("runs", () => {
     await recordRun({ stage: "ingest", outcome: "error", startedAt: hoursAgo(1), detail: "boom" });
     await recordRun({ stage: "ingest", outcome: "ok", startedAt: hoursAgo(2), gateMode: "off" });
     await recordRun(
-      { stage: "embed", outcome: "ok", startedAt: hoursAgo(3), gateMode: "shadow" },
+      { stage: "digest", outcome: "ok", startedAt: hoursAgo(3), gateMode: "shadow" },
       "other-runtime",
     );
     const html = await page("/runs");

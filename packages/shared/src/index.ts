@@ -78,6 +78,13 @@ export type UserId = Brand<string, "UserId">;
 export type DigestCadence = "daily" | "weekly" | "monthly";
 
 /**
+ * What happens to an account's finished digest: `email` sends it; `logs` stores it in full and sends
+ * nothing (a synthetic test account, read through the logs and the dev panel). A TS union on a plain text
+ * column (no pgEnum, same rule as {@link DigestCadence}).
+ */
+export type DigestDelivery = "email" | "logs";
+
+/**
  * How a digest run was started — a manual CLI/trigger vs the scheduled cadence cron. A TS union on a
  * plain text column (no pgEnum, same idempotent-migration rule as {@link DigestCadence}). Lives here
  * so the db schema (`digest_runs.trigger`) and the trigger CLI agree.
@@ -141,6 +148,8 @@ export interface UserPreferences {
   digestCadence: DigestCadence;
   /** Master on/off for digest delivery. */
   digestEnabled: boolean;
+  /** Whether a finished digest is emailed or only stored. */
+  digestDelivery: DigestDelivery;
 }
 
 /**

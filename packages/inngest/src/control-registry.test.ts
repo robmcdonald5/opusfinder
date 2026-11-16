@@ -2,10 +2,10 @@ import { describe, expect, it } from "vitest";
 
 import { STAGE_IDS, stageDef } from "@opusfinder/control";
 
+import type { DigestDeps, HealthCheckDeps } from "@opusfinder/digest";
+
 import type { BackfillDeps } from "./backfill";
-import type { DigestDeps } from "./digest";
 import { createAllFunctions } from "./functions";
-import type { HealthCheckDeps } from "./health-check";
 
 // The control registry's Inngest stages name their platform function (`platformId`) and copy its cron, but
 // the pure registry can't import this package. So the sync lives here and reads the cron ACTUALLY
@@ -40,12 +40,19 @@ describe("control registry ⇄ Inngest functions", () => {
     }
   });
 
-  it("every cron-triggered function is some Inngest stage's platform function", () => {
+  // The digest and the health check now run on the digest Worker (apps/digest), which their stages name.
+  // Their Inngest functions stay served, paused, until this package is deleted.
+  const MOVED = ["digest-cadence", "health-check-alert"];
+
+  it("every cron-triggered function is some Inngest stage's platform function, or has moved to the digest Worker", () => {
     expect(
       served
-        .filter((f) => hasCron(f.triggers))
+        .filter((f) => hasCron(f.triggers) && !MOVED.includes(f.id))
         .map((f) => f.id)
         .sort(),
     ).toEqual(inngestStages.map((id) => stageDef(id).platformId).sort());
+    for (const stage of ["digest", "alerts"] as const) {
+      expect(stageDef(stage).runtime).toBe("cf:opusfinder-digest");
+    }
   });
 });

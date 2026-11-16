@@ -16,13 +16,13 @@ import { formatMetric, thresholdSuffix } from "../src/health-alert-helpers.ts";
  * (shadow + enforce + ok) and the cost rollup, and — if any ENFORCE-mode check is firing — pages the
  * operator via the SHARED `alertOnHealth` path. Shadow firings are printed but never page.
  *
- * The alert send is the SAME deduped path the scheduled Inngest fn uses (`../src/health-alert`), so manual
+ * The alert send is the SAME deduped path the scheduled check uses (`../src/health-alert`), so manual
  * and scheduled runs page-once-per-`HEALTH_ALERT_COOLDOWN_H` consistently and BOTH populate the
  * `health_alerts` history. So `pnpm health` is no longer purely read-only: an enforce-firing check that
  * clears the cooldown WRITES one `health_alerts` row + sends one email. Exit is non-zero whenever the
  * report is unhealthy, even if the email was cooldown-suppressed.
  *
- * Lives in @opusfinder/inngest (not @opusfinder/db) because it both READS (db) and SENDS (email). Needs
+ * Lives in @opusfinder/digest (not @opusfinder/db) because it both READS (db) and SENDS (email). Needs
  * DATABASE_URL; thresholds/modes come from HEALTH_* env (see healthOptionsFromEnv), the
  * cooldown from HEALTH_ALERT_COOLDOWN_H. A real alert send additionally needs ALERT_TO + RESEND_API_KEY +
  * EMAIL_FROM (packages/email/.env) — fail-LOUD: if a page is due and those are unset, sendHealthAlert throws

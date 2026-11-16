@@ -23,9 +23,9 @@ import { getDatabaseUrl } from "@opusfinder/db/env";
 import { getLatestDigestForUser, listDigestRecipients, type DigestView } from "@opusfinder/db/repos";
 import { sleep } from "@opusfinder/shared/async";
 import { runScript } from "@opusfinder/shared/script";
+import { UUID_PATTERN } from "@opusfinder/digest";
 import type { UserId } from "@opusfinder/shared";
 
-import { UUID_PATTERN } from "../src/digest.ts";
 import { inngest } from "../src/index.ts";
 
 const USAGE = "Usage: pnpm digest [--all | --user <uuid>] [--timeout-ms <n>] [--poll-ms <n>]";

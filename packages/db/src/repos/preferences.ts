@@ -111,6 +111,22 @@ export async function setDigestApproval(
 }
 
 /**
+ * Record the Workflow instance about to be started for a user's digest. Written BEFORE the start, so a
+ * started instance is never unrecorded; a start that then fails leaves an id that names no instance, which
+ * reads as "nothing running". Pipeline state, like the cadence stamp: `updated_at` is left alone.
+ */
+export async function setDigestInstance(
+  db: Db,
+  userId: UserId,
+  instanceId: string,
+): Promise<void> {
+  await db
+    .update(userPreferences)
+    .set({ digestInstanceId: instanceId })
+    .where(eq(userPreferences.userId, userId));
+}
+
+/**
  * Map the shared `UserPreferences` (settable subset, camelCase) onto the table's insert/update
  * columns, DROPPING `undefined` keys so column defaults (on create) / existing values (on update) are
  * preserved. `minSalary: null` is kept (an explicit "no floor"); only `undefined` means "leave alone".
@@ -130,5 +146,6 @@ function toRow(prefs?: Partial<UserPreferences>): Partial<typeof userPreferences
   if (prefs.dealbreakers !== undefined) row.dealbreakers = prefs.dealbreakers;
   if (prefs.digestCadence !== undefined) row.digestCadence = prefs.digestCadence;
   if (prefs.digestEnabled !== undefined) row.digestEnabled = prefs.digestEnabled;
+  if (prefs.digestDelivery !== undefined) row.digestDelivery = prefs.digestDelivery;
   return row;
 }

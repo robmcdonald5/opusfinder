@@ -37,6 +37,7 @@
     "fixes:check": "tsx scripts/check-fixes.ts",
     "data-fixer:setup": "tsx scripts/data-fixer-setup.ts",
     "worker-role:setup": "tsx scripts/worker-role-setup.ts",
+    "digest-role:setup": "tsx scripts/digest-role-setup.ts",
     "backup:setup": "tsx scripts/backup-setup.ts",
     "backup:run": "tsx scripts/backup-run.ts",
     "backup:restore": "tsx scripts/backup-restore.ts",
