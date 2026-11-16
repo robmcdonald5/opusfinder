@@ -170,6 +170,36 @@ profile, and writes `reports/llm-rerank-stub.dataset.json`. The stub proves the 
 merging, backfill) and the wiring only; its scores are random-equivalent, not rerank quality. The real
 Haiku call has never been scored here.
 
+## Calling any model
+
+`callModel` (`src/model-caller.ts`) sends one structured-output request to any OpenRouter model, for
+head-to-heads between models `@opusfinder/llm` doesn't call. The route names the model, the hosts it may
+run on and, optionally, the quantisation:
+
+```ts
+const { object, usage, host, servedModel } = await callModel({
+  route: { model: "deepseek/deepseek-v4.1-flash", hosts: ["deepinfra/fp8"], quantizations: ["fp8"] },
+  schema: MyZodSchema,
+  system,
+  messages: [{ role: "user", content }],
+  reasoningEffort: "low",
+});
+```
+
+- The request runs only on the named hosts, only on a host that honours every parameter sent, and never
+  on one that trains on its inputs. None of the three can be switched off.
+- The reply says which host served it; one from any other host throws.
+- A reply that can't be used (truncated, refused, off-schema, wrong host) throws `ModelReplyError` with
+  the reason and what the reply cost, and is not re-sent. Network failures, timeouts, 429s and 5xx are
+  retried; what's left throws `OpenRouterError`.
+- `modelRerankCall(route)` (`src/rankers/model-rerank.ts`) is the digest's rerank request on this caller:
+  pass it to `llmRerankRanker(call)`. The ranker's default is still the stub.
+
+`rerank:parity` checks the caller against production: it reranks the 2 legacy examples several times
+through `@opusfinder/llm` and through this caller with the same model, and passes when the paths differ by
+no more than one path differs from itself run to run (`src/score-parity.ts`). The live suite
+(`MODEL_CALLER_LIVE_TEST=1 pnpm test:live`) makes one real call to a non-Anthropic model on a pinned host.
+
 ## Keys
 
 - `OPENAI_API_KEY` → `packages/eval/.env` (this package; for the comparison).
