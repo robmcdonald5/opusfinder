@@ -29,7 +29,10 @@ const ask = (route: ModelRoute) =>
     route,
     schema: Fit,
     schemaName: "fit",
-    system: "You judge whether a job suits a candidate. Answer with the JSON object only.",
+    // The scale is stated here, not left to the schema: not every host shows the model the schema's text.
+    system:
+      "You judge whether a job suits a candidate. Answer with a JSON object: `fit` is good or bad, " +
+      "`score` is the relevance from 0.0 to 1.0.",
     messages: [
       {
         role: "user",
@@ -51,7 +54,7 @@ describe.skipIf(!LIVE)("callModel (live: real OpenRouter)", () => {
 
     expect(result.object.fit).toBe("good");
     expect(result.host).toBe("DeepInfra");
-    expect(result.servedModel).toContain("deepseek");
+    expect(result.servedModel).toMatch(/^deepseek\/deepseek-v4\.1-flash-\d{8}$/);
     expect(result.usage.inputTokens).toBeGreaterThan(0);
     expect(result.usage.outputTokens).toBeGreaterThan(0);
     expect(result.usage.costUsd).toBeGreaterThan(0);
@@ -62,7 +65,7 @@ describe.skipIf(!LIVE)("callModel (live: real OpenRouter)", () => {
 
     expect(result.object.fit).toBe("good");
     expect(result.host).toBe("Anthropic");
-    expect(result.servedModel).toContain("claude-haiku-5.5");
+    expect(result.servedModel).toMatch(/^anthropic\/claude-haiku-5\.5-\d{8}$/);
   });
 
   it("fails rather than run on another host when the pinned one doesn't serve the model", async () => {

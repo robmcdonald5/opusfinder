@@ -97,7 +97,8 @@ export interface ModelCallResult<T> {
   usage: ModelCallUsage;
   /** The pinned host that served the reply, as OpenRouter names it. */
   host: string;
-  /** The model build that served it, e.g. `anthropic/claude-haiku-5.5-20261007` (null if unreported). */
+  /** The model build that served it, e.g. `anthropic/claude-haiku-5.5-20261007` (null if the reply names
+   *  none). */
   servedModel: string | null;
 }
 
@@ -182,7 +183,7 @@ export async function callModel<T>(params: ModelCallParams<T>): Promise<ModelCal
   );
 
   const spent = readUsage(reply.usage);
-  const served: Served = { host: servedHost(reply), model: text(reply.model) };
+  const served = readServed(reply);
   const fail = (reason: ReplyFailure, message: string, options?: ErrorOptions) =>
     new ModelReplyError(
       reason,
@@ -239,8 +240,9 @@ function systemMessage(system: string, cache: boolean | undefined) {
 
 /** The fields this module reads off a chat-completions reply. */
 interface ChatReply {
+  /** The model slug as requested. */
   model?: unknown;
-  /** Not in OpenRouter's schema, but sent: the serving host's name. */
+  /** Not in OpenRouter's published schema, but sent: the serving host's name. */
   provider?: unknown;
   choices?: {
     finish_reason?: unknown;
@@ -256,7 +258,7 @@ interface ChatReply {
   };
   /** Present because the request opts in (`X-OpenRouter-Metadata`). */
   openrouter_metadata?: {
-    endpoints?: { available?: { provider?: unknown; selected?: unknown }[] };
+    endpoints?: { available?: { provider?: unknown; model?: unknown; selected?: unknown }[] };
   };
   error?: ErrorBody;
 }
@@ -331,13 +333,16 @@ async function postChat(
   }
 }
 
-/** The host that served a reply: the endpoint the routing metadata marks selected, else the reply's own
- *  `provider`. Null when the reply names neither. */
-function servedHost(reply: ChatReply): string | null {
+/** Who served a reply: the endpoint the routing metadata marks selected, which names the host and the
+ *  dated model build; else the reply's own `provider` and `model` (the slug as requested, undated). */
+function readServed(reply: ChatReply): Served {
   const selected = reply.openrouter_metadata?.endpoints?.available?.find(
     (e) => e.selected === true,
   );
-  return text(selected?.provider) ?? text(reply.provider);
+  return {
+    host: text(selected?.provider) ?? text(reply.provider),
+    model: text(selected?.model) ?? text(reply.model),
+  };
 }
 
 function readUsage(u: ChatReply["usage"]): ModelCallUsage {

@@ -5,8 +5,9 @@ import { RerankScoresSchema } from "@opusfinder/llm";
 
 import { toStrictJsonSchema } from "./strict-schema";
 
-// The JSON schema the eval's caller sends. Pins which constraints go out as constraints (so a host's
-// decoding enforces them) and which are only described (so no host rejects the request over them).
+// The JSON schema the eval's caller sends. Pins that shapes go out as constraints and that a bound goes
+// out both as its keyword (for a host that decodes against it) and in the description (for one that
+// drops the keyword but shows the model the text).
 describe("toStrictJsonSchema", () => {
   it("keeps object shapes, enums, constants and unions as constraints, and closes every object", () => {
     const schema = z.object({
@@ -43,7 +44,7 @@ describe("toStrictJsonSchema", () => {
     });
   });
 
-  it("moves the bounds a strict mode may reject into the description", () => {
+  it("sends each bound as its keyword and in the description", () => {
     const schema = z.object({
       score: z.number().min(0).max(1).describe("Relevance."),
       reason: z.string().min(1).max(200),
@@ -51,11 +52,23 @@ describe("toStrictJsonSchema", () => {
     });
 
     expect(toStrictJsonSchema(schema).properties).toEqual({
-      score: { type: "number", description: "Relevance.\n\n{minimum: 0, maximum: 1}" },
-      reason: { type: "string", description: "{minLength: 1, maxLength: 200}" },
+      score: {
+        type: "number",
+        minimum: 0,
+        maximum: 1,
+        description: "Relevance.\n\n{minimum: 0, maximum: 1}",
+      },
+      reason: {
+        type: "string",
+        minLength: 1,
+        maxLength: 200,
+        description: "{minLength: 1, maxLength: 200}",
+      },
       picks: {
         type: "array",
         items: { type: "string" },
+        minItems: 1,
+        maxItems: 3,
         description: "{minItems: 1, maxItems: 3}",
       },
     });
@@ -77,6 +90,8 @@ describe("toStrictJsonSchema", () => {
               },
               score: {
                 type: "number",
+                minimum: 0,
+                maximum: 1,
                 description:
                   "Relevance from 0.0 to 1.0 (higher = better), per the system rubric.\n\n{minimum: 0, maximum: 1}",
               },

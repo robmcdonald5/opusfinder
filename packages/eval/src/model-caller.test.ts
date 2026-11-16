@@ -55,7 +55,7 @@ function chatReply(
   const host = over.host === undefined ? "DeepInfra" : over.host;
   return {
     id: "gen-test",
-    model: "deepseek/deepseek-v4.1-flash-20260910",
+    model: "deepseek/deepseek-v4.1-flash",
     choices: [
       {
         index: 0,
@@ -75,8 +75,12 @@ function chatReply(
             endpoints: {
               total: 2,
               available: [
-                { provider: "Novita", model: "deepseek/deepseek-v4.1-flash", selected: false },
-                { provider: host, model: "deepseek/deepseek-v4.1-flash", selected: true },
+                {
+                  provider: "Novita",
+                  model: "deepseek/deepseek-v4.1-flash-20260910",
+                  selected: false,
+                },
+                { provider: host, model: "deepseek/deepseek-v4.1-flash-20260910", selected: true },
               ],
             },
           },
@@ -211,10 +215,13 @@ describe("callModel", () => {
     });
   });
 
-  it("reads the host from the reply's own provider field when there is no routing metadata", async () => {
+  it("falls back to the reply's own provider and model when there is no routing metadata", async () => {
     stubOpenRouter(() => json({ ...chatReply({ host: null }), provider: "DeepInfra" }));
 
-    expect((await call()).host).toBe("DeepInfra");
+    expect(await call()).toMatchObject({
+      host: "DeepInfra",
+      servedModel: "deepseek/deepseek-v4.1-flash",
+    });
   });
 
   it("matches a host by OpenRouter's name for its slug, not by spelling", async () => {
