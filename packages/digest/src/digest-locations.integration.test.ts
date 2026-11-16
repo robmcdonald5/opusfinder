@@ -32,7 +32,7 @@ import { createTestDb } from "@test/db/pglite";
 import { P, seedPlaces } from "@test/db/places";
 import { truncate } from "@test/db/truncate";
 import { oneHot, TEST_MODEL } from "@test/db/vectors";
-import { recordingStep } from "@test/inngest/stubs";
+import { recordingStep } from "@test/digest/stubs";
 
 import { runOrchestrator, runPerUser, type DigestDeps } from "./digest";
 

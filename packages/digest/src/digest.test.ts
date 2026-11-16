@@ -6,12 +6,11 @@
  * skip-reason matrix, fan-out, and the invariant throws — from their internals (covered in probe/delivery).
  */
 import { DrizzleQueryError } from "drizzle-orm";
-import { NonRetriableError, serializeError, StepError } from "inngest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { DigestTrigger } from "@opusfinder/shared";
 
-import { recordingStep } from "@test/inngest/stubs";
+import { recordingStep } from "@test/digest/stubs";
 import { rejectionOf } from "@test/rejection";
 
 const repos = vi.hoisted(() => ({
@@ -49,6 +48,7 @@ const deliveryMod = vi.hoisted(() => ({ deliverDigestEmail: vi.fn() }));
 vi.mock("./delivery", () => deliveryMod);
 
 import { runOrchestrator, runPerUser, type DigestDeps } from "./digest";
+import { NonRetriableError } from "./errors";
 
 // ── Shared deps (the injected seams; per-user sub-functions are module-mocked above) ────────────────
 const rerank = vi.fn();
@@ -296,16 +296,16 @@ describe("runOrchestrator", () => {
     expect(runs).toContain("fail-run");
   });
 
-  it("records a failed query's Postgres reason, never its params line, when it arrives as a StepError", async () => {
-    // As production sees it: the step's DrizzleQueryError, serialized by Inngest once its retries ran out and
-    // re-thrown as a StepError — drizzle's message and the cause's message survive; the class, `query` and the
-    // cause's fields (this `code`) do not, so the sample carries no `[code=…]`.
+  it("records a failed query's Postgres reason, never its params line, when it arrives through a step engine", async () => {
+    // As an engine hands it back once the step's retries ran out: serialized and re-thrown — drizzle's
+    // message and the cause's message survive; the class, `query` and the cause's fields (this `code`) do
+    // not, so the sample carries no `[code=…]`.
     const cause = Object.assign(new Error("canceling statement due to statement timeout"), {
       code: "57014",
     });
     const query = 'select "user_id" from "user_preferences"';
     const failed = new DrizzleQueryError(query, ["secret-user-data"], cause);
-    const stepError = new StepError("fetch-recipients", serializeError(failed));
+    const stepError = new Error(failed.message, { cause: new Error(cause.message) });
     repos.listDigestRecipients.mockRejectedValue(stepError);
     const { tools } = recordingStep();
 

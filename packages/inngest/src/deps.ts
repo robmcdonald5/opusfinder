@@ -1,96 +1,20 @@
-import { createDb } from "@opusfinder/db";
-import { getDatabaseUrl } from "@opusfinder/db/env";
-import { getEmailLastEvent, sendDigestEmail } from "@opusfinder/email/node";
-import {
-  collectBatchResults,
-  generateObject,
-  ObjectGenerationError,
-  pollBatch,
-  RerankScoresSchema,
-  renderRerankCandidates,
-  submitBatch,
-} from "@opusfinder/llm/node";
-import { rerankCandidates, type RerankCall, type RerankCandidate } from "@opusfinder/rerank";
-import { parseEnforceFlag } from "@opusfinder/shared";
-import type { PromptPreferences, StructuredProfile } from "@opusfinder/shared";
+// The /node entries load packages/llm/.env and packages/email/.env; the keys themselves are read when a
+// call is made.
+import "@opusfinder/email/node";
+import "@opusfinder/llm/node";
 
-import type { DigestDeps, RerankOutcome } from "./digest";
-import { probeLiveness } from "./probe";
+import { getDatabaseUrl } from "@opusfinder/db/env";
+import { buildDigestDeps as buildDeps, type DigestDeps } from "@opusfinder/digest";
+import { parseEnforceFlag } from "@opusfinder/shared";
 
 /**
- * Build the production digest deps: a neon-http db + the real synchronous Haiku rerank (the shared
- * `@opusfinder/rerank` core wired to `generateObject`) + the OpenRouter Batch API primitives for
- * synthesis + the Resend email send/last_event pair. NODE/server-only —
- * it loads env via the packages' `/node` and `/env`
- * entries; the serve + CLI scripts call it. Never reached from a Worker (`guard:worker` keeps
- * `@opusfinder/inngest` out of the scraper bundle). Importing `@opusfinder/email/node` here pulls only its
- * `loadPackageEnv` side effect — the Resend getters throw at CALL time, so the serve process still boots
- * without email creds (an unconfigured send then terminalizes to `delivery_status='failed'`).
+ * The digest deps for the Node-hosted Inngest functions: @opusfinder/digest's production deps, with the
+ * database URL, the API keys and LIFECYCLE_CLOSE_ENFORCE taken from the environment. NODE/server-only; the
+ * serve route and the CLI scripts call it.
  */
 export function buildDigestDeps(): DigestDeps {
-  const db = createDb(getDatabaseUrl());
-  return {
-    db,
-    rerank: buildRerank(),
-    batch: {
-      submit: (requests) => submitBatch(requests),
-      poll: (batchId) => pollBatch(batchId),
-      collect: (batchId) => collectBatchResults(batchId),
-    },
-    email: {
-      send: (payload) => sendDigestEmail(payload),
-      lastEvent: (emailId) => getEmailLastEvent(emailId),
-    },
-    probe: probeLiveness,
-    // Lifecycle-close enforcement — reads LIFECYCLE_CLOSE_ENFORCE from process.env (Node-hosted), the same switch the
-    // Worker reads. Default false = shadow.
+  return buildDeps({
+    databaseUrl: getDatabaseUrl(),
     enforceLifecycle: parseEnforceFlag(process.env.LIFECYCLE_CLOSE_ENFORCE),
-  };
-}
-
-/** The real rerank seam: run the shared core, scoring each chunk with a cached Haiku `generateObject`
- *  and aggregating the token, cost and prompt-cache counters across chunks (surfaced for the "cache hit >0"
- *  gate). A chunk whose reply is unusable (truncated, refused, off-schema) is left unscored rather than
- *  failing the rerank: those candidates fall below the score floor, and every chunk paid for counts,
- *  unscored ones included. Provider errors still throw. */
-function buildRerank(): DigestDeps["rerank"] {
-  return async (
-    profile: StructuredProfile,
-    candidates: RerankCandidate[],
-    prefs?: PromptPreferences,
-  ): Promise<RerankOutcome> => {
-    const usage = { inputTokens: 0, outputTokens: 0, costUsd: 0 };
-    const cache = { creationInputTokens: 0, readInputTokens: 0 };
-    const count = (spent: Pick<RerankOutcome, "usage" | "cache">) => {
-      usage.inputTokens += spent.usage.inputTokens;
-      usage.outputTokens += spent.usage.outputTokens;
-      usage.costUsd += spent.usage.costUsd;
-      cache.creationInputTokens += spent.cache.creationInputTokens;
-      cache.readInputTokens += spent.cache.readInputTokens;
-    };
-    const call: RerankCall = async (system, chunk) => {
-      try {
-        const result = await generateObject({
-          model: "haiku",
-          system,
-          cacheSystem: true,
-          schema: RerankScoresSchema,
-          messages: [{ role: "user", content: renderRerankCandidates(chunk) }],
-          effort: "low",
-          maxOutputTokens: 4096,
-        });
-        count(result);
-        return result.object.scores;
-      } catch (err) {
-        if (!(err instanceof ObjectGenerationError)) throw err;
-        count(err.spent);
-        console.warn(
-          `rerank: chunk left unscored (jobs ${chunk.map((c) => c.id).join(",")}): ${err.message}`,
-        );
-        return [];
-      }
-    };
-    const { orderedIds, scores } = await rerankCandidates(profile, candidates, call, { prefs });
-    return { orderedIds, scores, usage, cache };
-  };
+  });
 }

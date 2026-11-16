@@ -7,6 +7,5 @@ export { inngest } from "./inngest";
 export type { DigestEvents } from "./inngest";
 export { createAllFunctions } from "./functions";
 export type { AllFunctionDeps } from "./functions";
-export type { DigestDeps, RerankOutcome } from "./digest";
+export type { DigestDeps, HealthCheckDeps, RerankOutcome } from "@opusfinder/digest";
 export type { BackfillDeps } from "./backfill";
-export type { HealthCheckDeps } from "./health-check";

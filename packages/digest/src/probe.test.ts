@@ -8,7 +8,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { DigestApplyTarget } from "@opusfinder/db/repos";
-import { recordingStep, stubDb } from "@test/inngest/stubs";
+import { recordingStep, stubDb } from "@test/digest/stubs";
 
 import { probeDigestLiveness, type LivenessOutcome, type LivenessProbe } from "./probe";
 

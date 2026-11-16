@@ -2,10 +2,10 @@ import { describe, expect, it } from "vitest";
 
 import { STAGE_IDS, stageDef } from "@opusfinder/control";
 
+import type { DigestDeps, HealthCheckDeps } from "@opusfinder/digest";
+
 import type { BackfillDeps } from "./backfill";
-import type { DigestDeps } from "./digest";
 import { createAllFunctions } from "./functions";
-import type { HealthCheckDeps } from "./health-check";
 
 // The control registry's Inngest stages name their platform function (`platformId`) and copy its cron, but
 // the pure registry can't import this package. So the sync lives here and reads the cron ACTUALLY

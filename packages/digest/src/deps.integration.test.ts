@@ -5,12 +5,19 @@
  * requests); the neon-http db is built but never queried.
  */
 import { http, HttpResponse } from "msw";
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import { messagesReply, OPENROUTER_MESSAGES_URL } from "@test/msw/fixtures/openrouter";
 import { server } from "@test/msw/server";
 
-import { buildDigestDeps } from "./deps";
+import { buildDigestDeps as buildDeps } from "./deps";
+
+/** The deps as a Worker builds them: every key passed in, nothing read from the environment. */
+const buildDigestDeps = () =>
+  buildDeps({
+    databaseUrl: "postgresql://user:pass@db.test/opusfinder",
+    llm: { apiKey: "sk-or-test" },
+  });
 
 const PROFILE = { summary: "Backend engineer.", skills: ["Go"], targetRoles: ["Backend Engineer"] };
 // 14 candidates → two chunks at the core's default chunk size of 13.
@@ -30,12 +37,6 @@ function replyInOrder(...replies: object[]): () => number {
 }
 
 describe("buildDigestDeps().rerank — real generateObject over MSW", () => {
-  beforeAll(() => {
-    vi.stubEnv("OPENROUTER_API_KEY", "sk-or-test");
-    vi.stubEnv("DATABASE_URL", "postgresql://user:pass@db.test/opusfinder");
-  });
-  afterAll(() => vi.unstubAllEnvs());
-
   it("leaves a chunk with an unusable reply unscored, keeps the scored chunks, and counts every call", async () => {
     const offSchema = messagesReply({ text: "I can't score these postings." });
     const calls = replyInOrder(

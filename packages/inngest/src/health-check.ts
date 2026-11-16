@@ -1,71 +1,27 @@
 /**
- * The scheduled, UNATTENDED content health checker, as an Inngest cron function. Runs `checkHealth` on a
- * schedule, dedups via `health_alerts`, and emails the operator a NAMED-subsystem alert ("Ingestion
- * staleness: 4.2h since last ok") — the rich complement to the Worker's content-free liveness watchdog. The
- * 2026-06-19 outage motivated it: "DOWN" with no cause.
- *
- * Runs on the same runtime (Inngest Cloud + Vercel) as the digest cadence cron and the embed-backlog drain —
- * served from `apps/web/api/inngest`, durable retry + observability for free. NEVER reaches the scraper
- * Worker (`@opusfinder/inngest` is on `guard:worker`'s deny list, and this pulls in the Node-only email send
- * via injected deps). Mirrors `createBackfillFunctions` (./backfill).
+ * The health check as an Inngest cron function: a thin adapter over @opusfinder/digest's `runHealthCheck`,
+ * which the digest Worker (apps/digest) runs on the same schedule. Kept, paused, until the Worker has run
+ * in production; then this package is deleted.
  */
-import type { Db } from "@opusfinder/db";
-import { checkHealth, type HealthOptions } from "@opusfinder/db/health";
+import { HEALTH_CHECK_CRON, runHealthCheck, type HealthCheckDeps } from "@opusfinder/digest";
 
-import { alertOnHealth, type AlertSend } from "./health-alert";
 import { inngest } from "./inngest";
 
-/** Injected seams — wired by `buildHealthDeps()` (./health-deps). Mirrors `BackfillDeps`/`DigestDeps`. */
-export interface HealthCheckDeps {
-  db: Db;
-  /** Thresholds + per-check `off|shadow|enforce` modes (from `healthOptionsFromEnv` in the deps builder). */
-  healthOptions: HealthOptions;
-  /** The operator email seam — `sendHealthAlert` from `@opusfinder/email`. */
-  send: AlertSend;
-  /** Re-page cooldown (hours) — `HEALTH_ALERT_COOLDOWN_H`, parsed in the deps builder. */
-  cooldownH: number;
-}
-
 /**
- * The cron: every 2 h at :10 — 10 min after each ingestion tick starts (`0 *\/2 * * *`, the scrapers
- * Worker), so its Neon reads land while the tick has Neon awake. A check on its own schedule (it was every
- * 30 min) woke Neon by itself, each wake billing a fixed 5-min autosuspend tail. 2 h is ample for a
- * monitor whose ingestion staleness threshold is 5 h and whose re-page cooldown is 24 h. Its latest-run
- * checks read the latest FINISHED ingestion run, so a tick still in flight at :10 isn't misread.
- */
-export const HEALTH_CHECK_CRON = "10 */2 * * *";
-
-/**
- * health-check-alert — every 2 h (HEALTH_CHECK_CRON), recompute the verdict and page the operator for any
- * ENFORCE-mode firing check not already paged inside the cooldown. The full check+dedup+send+record runs in
- * ONE `step.run`, so a transient failure (e.g. the send) retries the whole unit — NOT transactionally: a retry after a successful
- * send may re-page once, so the cooldown ROW is the cross-run dedup, not within-run atomicity. A
- * healthy/cooled-down report is a no-op. `singleton skip` (keyless ⇒ one global flight) drops a tick that
- * fires while the previous run is still in flight.
+ * health-check-alert — every 2 h (HEALTH_CHECK_CRON). The full check+dedup+send+record runs in ONE
+ * `step.run`, so a transient failure (e.g. the send) retries the whole unit. `singleton skip` (keyless ⇒
+ * one global flight) drops a tick that fires while the previous run is still in flight.
  */
 function makeHealthCheck(deps: HealthCheckDeps) {
   return inngest.createFunction(
     { id: "health-check-alert", singleton: { mode: "skip" } },
     { cron: HEALTH_CHECK_CRON },
-    async ({ step }) =>
-      step.run("check-and-alert", async () => {
-        const report = await checkHealth(deps.db, deps.healthOptions);
-        const outcome = await alertOnHealth(deps.db, report, deps.send, deps.cooldownH);
-        // Shape-only, JSON-safe — surfaces in the Inngest run output for at-a-glance observability.
-        return {
-          unhealthy: report.unhealthy,
-          firing: outcome.firing.map((c) => c.id),
-          notified: outcome.notified.map((c) => c.id),
-          suppressed: outcome.suppressed.map((c) => c.id),
-          emailId: outcome.emailId ?? null,
-        };
-      }),
+    async ({ step }) => step.run("check-and-alert", () => runHealthCheck(deps)),
   );
 }
 
 /** The health functions, built with injected deps — concatenated alongside the digest + backfill functions
- *  by `createAllFunctions` (./functions), the list the serve routes register. Mirrors
- *  `createBackfillFunctions`. */
+ *  by `createAllFunctions` (./functions), the list the serve routes register. */
 export function createHealthFunctions(deps: HealthCheckDeps) {
   return [makeHealthCheck(deps)];
 }

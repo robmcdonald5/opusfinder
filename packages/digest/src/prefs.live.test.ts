@@ -42,7 +42,10 @@ describe.skipIf(GATED)("preferences rerank (live: real Neon + Haiku)", () => {
     expect(pool.length).toBeGreaterThan(0);
     const poolIds = new Set(pool.map((c) => c.id));
 
-    const deps = buildDigestDeps();
+    const deps = buildDigestDeps({
+      databaseUrl: getDatabaseUrl(),
+      llm: { apiKey: process.env.OPENROUTER_API_KEY },
+    });
     const lowYoe: PromptPreferences = {
       yoeMin: 0,
       yoeMax: 2,

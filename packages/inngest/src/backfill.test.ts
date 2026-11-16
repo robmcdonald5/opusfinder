@@ -11,7 +11,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { EmbedCountMismatchError } from "@opusfinder/db/repos";
 
-import { recordingStep } from "@test/inngest/stubs";
+import { recordingStep } from "@test/digest/stubs";
 import { rejectionOf, rejectionReasonOf } from "@test/rejection";
 
 const repos = vi.hoisted(() => ({ embedNextPage: vi.fn() }));

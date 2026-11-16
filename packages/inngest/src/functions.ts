@@ -1,6 +1,8 @@
+import type { DigestDeps, HealthCheckDeps } from "@opusfinder/digest";
+
 import { createBackfillFunctions, type BackfillDeps } from "./backfill";
-import { createDigestFunctions, type DigestDeps } from "./digest";
-import { createHealthFunctions, type HealthCheckDeps } from "./health-check";
+import { createDigestFunctions } from "./digest";
+import { createHealthFunctions } from "./health-check";
 
 /** The deps of each function group: `buildDigestDeps()`, `buildBackfillDeps()`, `buildHealthDeps()`. */
 export interface AllFunctionDeps {

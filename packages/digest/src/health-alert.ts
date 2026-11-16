@@ -1,9 +1,8 @@
 /**
  * The shared health-ALERT orchestration: turn a {@link HealthReport} into at most ONE shape-only operator
- * email, deduped so a persistently-firing check pages once per cooldown, not every run. Lives in
- * `@opusfinder/inngest` (which already depends on both `@opusfinder/db` and the Node-only `@opusfinder/email`)
- * so the manual `pnpm health` CLI and the scheduled fn run the SAME logic — they cannot drift on which checks
- * page, how the body reads, or when the cooldown suppresses.
+ * email, deduped so a persistently-firing check pages once per cooldown, not every run. The manual
+ * `pnpm health` CLI and the scheduled check (./health-check) run the SAME logic — they cannot drift on which
+ * checks page, how the body reads, or when the cooldown suppresses.
  *
  * The email SEND is injected (`AlertSend`) rather than imported, so this module stays send-agnostic and
  * unit-testable, and the CLI vs scheduled-fn each pass their own `sendHealthAlert`-shaped seam. The DB dedup

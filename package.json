@@ -33,7 +33,7 @@
     "db:ping": "pnpm --filter @opusfinder/db ping",
     "db:digest-costs": "pnpm --filter @opusfinder/db digest-costs",
     "runs": "pnpm --filter @opusfinder/db runs",
-    "health": "pnpm --filter @opusfinder/inngest health",
+    "health": "pnpm --filter @opusfinder/digest health",
     "ingest": "pnpm --filter @opusfinder/sources ingest",
     "ingest:all": "pnpm --filter @opusfinder/sources ingest:all",
     "discover": "pnpm --filter @opusfinder/discovery discover",

@@ -1,14 +1,13 @@
 /**
- * Records and checks the digest's parity record (test/digest/parity.ts): every step's output, every seam
- * call and the rows left behind, for fixed inputs on PGlite. The committed fixture is what this stage code
- * produces; a port to another engine must reproduce it.
+ * Checks the digest's parity record (test/digest/parity.ts): every step's output, every seam call and the
+ * rows left behind, for fixed inputs on PGlite. The committed fixture was recorded from the stage code as
+ * it ran on Inngest, before it moved here; this code has to reproduce it.
  *
  * Re-record (only when the stages are meant to change): RECORD_DIGEST_PARITY=1 vitest run <this file>.
  */
 import { readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-import { NonRetriableError } from "inngest";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import type { Db } from "@opusfinder/db";
@@ -18,6 +17,7 @@ import { createTestDb } from "@test/db/pglite";
 import { recordParity, type ParityScenario } from "@test/digest/parity";
 
 import { runOrchestrator, runPerUser, type DigestDeps } from "./digest";
+import { NonRetriableError } from "./errors";
 
 const FIXTURE = fileURLToPath(new URL("../../../test/digest/parity.fixture.json", import.meta.url));
 

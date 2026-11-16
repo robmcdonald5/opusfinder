@@ -9,7 +9,7 @@ import { describe, expect, it } from "vitest";
 
 import type { DigestEmailPayload } from "@opusfinder/db/repos";
 import type { UserId } from "@opusfinder/shared";
-import { recordingStep, stubDb } from "@test/inngest/stubs";
+import { recordingStep, stubDb } from "@test/digest/stubs";
 
 import { deliverDigestEmail, isTerminalEvent, mapDeliveryEvent } from "./delivery";
 

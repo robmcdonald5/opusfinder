@@ -1,7 +1,14 @@
 import { describe, expect, it } from "vitest";
 
-import { createDigestFunctions, DIGEST_CADENCE_CRON, type DigestDeps } from "./digest";
-import { createHealthFunctions, HEALTH_CHECK_CRON, type HealthCheckDeps } from "./health-check";
+import {
+  DIGEST_CADENCE_CRON,
+  HEALTH_CHECK_CRON,
+  type DigestDeps,
+  type HealthCheckDeps,
+} from "@opusfinder/digest";
+
+import { createDigestFunctions } from "./digest";
+import { createHealthFunctions } from "./health-check";
 
 // Leaf pure-unit: the Inngest crons are timed to ride the scrapers Worker's ingestion ticks (`0 */2 * * *`,
 // apps/scrapers/wrangler.toml), so their Neon reads land while a tick already has Neon awake instead of each
