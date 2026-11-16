@@ -6,7 +6,7 @@
  * here. `unsubscribeToken` is generated ONCE by the caller (generateUnsubscribeToken) at creation and
  * never rotated by these functions.
  */
-import { eq, sql } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, sql } from "drizzle-orm";
 
 import type { UserId, UserPreferences } from "@opusfinder/shared";
 
@@ -111,6 +111,42 @@ export async function setDigestApproval(
 }
 
 /**
+ * The Workflow instance last started for each of these users' digests (`digest_instance_id`); users with
+ * none are absent. The daily tick reads it to skip a user whose previous run hasn't finished.
+ */
+export async function getDigestInstances(
+  db: Db,
+  userIds: UserId[],
+): Promise<Map<UserId, string>> {
+  if (userIds.length === 0) return new Map();
+  const rows = await db
+    .select({ userId: userPreferences.userId, instanceId: userPreferences.digestInstanceId })
+    .from(userPreferences)
+    .where(
+      and(inArray(userPreferences.userId, userIds), isNotNull(userPreferences.digestInstanceId)),
+    );
+  const instances = new Map<UserId, string>();
+  for (const row of rows) if (row.instanceId) instances.set(row.userId, row.instanceId);
+  return instances;
+}
+
+/**
+ * Record the Workflow instance about to be started for a user's digest. Written BEFORE the start, so a
+ * started instance is never unrecorded; a start that then fails leaves an id that names no instance, which
+ * reads as "nothing running". Pipeline state, like the cadence stamp: `updated_at` is left alone.
+ */
+export async function setDigestInstance(
+  db: Db,
+  userId: UserId,
+  instanceId: string,
+): Promise<void> {
+  await db
+    .update(userPreferences)
+    .set({ digestInstanceId: instanceId })
+    .where(eq(userPreferences.userId, userId));
+}
+
+/**
  * Map the shared `UserPreferences` (settable subset, camelCase) onto the table's insert/update
  * columns, DROPPING `undefined` keys so column defaults (on create) / existing values (on update) are
  * preserved. `minSalary: null` is kept (an explicit "no floor"); only `undefined` means "leave alone".
@@ -130,5 +166,6 @@ function toRow(prefs?: Partial<UserPreferences>): Partial<typeof userPreferences
   if (prefs.dealbreakers !== undefined) row.dealbreakers = prefs.dealbreakers;
   if (prefs.digestCadence !== undefined) row.digestCadence = prefs.digestCadence;
   if (prefs.digestEnabled !== undefined) row.digestEnabled = prefs.digestEnabled;
+  if (prefs.digestDelivery !== undefined) row.digestDelivery = prefs.digestDelivery;
   return row;
 }

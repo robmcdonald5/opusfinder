@@ -12,7 +12,8 @@ const USAGE =
   "Usage: pnpm user:set-prefs --email <email> [--location-mode any|remote_only|onsite_only] " +
   "[--home 'City, Region' | <geonames id> | none] [--radius-miles 50] " +
   "[--min-salary N|clear] [--max-salary N|clear] [--min-yoe N|clear] [--max-yoe N|clear] " +
-  "[--dealbreakers a,b] [--exclusions a,b] [--recency-days 14] [--cadence daily|weekly|monthly] [--enabled true|false]";
+  "[--dealbreakers a,b] [--exclusions a,b] [--recency-days 14] [--cadence daily|weekly|monthly] [--enabled true|false] " +
+  "[--delivery email|logs]";
 
 async function main(): Promise<void> {
   const { values } = parseArgs({
@@ -31,6 +32,7 @@ async function main(): Promise<void> {
       "recency-days": { type: "string" },
       cadence: { type: "string" },
       enabled: { type: "string" },
+      delivery: { type: "string" },
     },
   });
 
@@ -87,7 +89,7 @@ async function main(): Promise<void> {
       `salary=[${row.minSalary ?? "—"}..${row.maxSalary ?? "—"}] yoe=[${row.yoeMin ?? "—"}..${row.yoeMax ?? "—"}] ` +
       `recency_days=${row.recencyDays} ` +
       `dealbreakers=${row.dealbreakers.length} exclusions=${row.exclusions.length} ` +
-      `cadence=${row.digestCadence} enabled=${row.digestEnabled}`,
+      `cadence=${row.digestCadence} enabled=${row.digestEnabled} delivery=${row.digestDelivery}`,
   );
 }
 

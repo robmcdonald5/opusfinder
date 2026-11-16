@@ -5,7 +5,7 @@
  * SEQUENCES (the load-bearing invariant). Render determinism/escaping + the idempotency-key shape are NOT
  * re-homed here — @opusfinder/email owns them (render.test.ts + transport.integration.test.ts).
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import type { DigestEmailPayload } from "@opusfinder/db/repos";
 import type { UserId } from "@opusfinder/shared";
@@ -44,6 +44,10 @@ const FIXTURE: DigestEmailPayload = {
     },
   ],
 };
+
+/** The delivery-setting read (getDigestDelivery) the send step makes once the other gates pass. */
+const EMAIL_ACCOUNT = [{ delivery: "email" }];
+const LOGS_ACCOUNT = [{ delivery: "logs" }];
 
 /** Rows shaped like getDigestEmailPayload's joined projection (2 items); `states` drives each item's
  *  `lifecycleState` so the stub's REAL `.filter` exercises the app-side render-time lifecycle filter. */
@@ -121,6 +125,29 @@ describe("isTerminalEvent", () => {
 });
 
 describe("deliverDigestEmail", () => {
+  it.each([
+    ["the account is set to logs", LOGS_ACCOUNT, undefined],
+    ["the account's setting can't be found", [], undefined],
+    ["the stage is in logs-only mode", EMAIL_ACCOUNT, async () => true],
+  ])("stores without sending when %s — one step, no poll", async (_why, account, logsOnly) => {
+    const { runs, sleeps, tools } = recordingStep();
+    const db = stubDb([joinedPayloadRows(), account]);
+    const send = vi.fn();
+
+    const result = await deliverDigestEmail(
+      tools,
+      db,
+      { send, lastEvent: async () => "delivered" },
+      7,
+      logsOnly,
+    );
+
+    expect(result).toBe("skipped-logs-only");
+    expect(send).not.toHaveBeenCalled();
+    expect(runs).toEqual(["send-email"]);
+    expect(sleeps).toEqual([]);
+  });
+
   it("skips an un-approved recipient without sending — one step, no poll", async () => {
     const { runs, sleeps, tools } = recordingStep();
     const db = stubDb([joinedPayloadRows(undefined, false)]); // ONLY the payload read; approvedAt = null
@@ -171,7 +198,7 @@ describe("deliverDigestEmail", () => {
 
   it("terminalizes a thrown send: record-send-failure runs, original error rethrown", async () => {
     const { runs, sleeps, tools } = recordingStep();
-    const db = stubDb([joinedPayloadRows(), []]); // payload read, then the failure write
+    const db = stubDb([joinedPayloadRows(), EMAIL_ACCOUNT, []]); // the two reads, then the failure write
 
     await expect(
       deliverDigestEmail(
@@ -211,6 +238,7 @@ describe("deliverDigestEmail", () => {
     const { runs, sleeps, tools } = recordingStep();
     const db = stubDb([
       joinedPayloadRows(), // payload read
+      EMAIL_ACCOUNT,
       [{ userId: FIXTURE.userId }], // recordDigestSent: digests update RETURNING
       [], // recordDigestSent: user_preferences update
       [{ userId: FIXTURE.userId }], // recordDigestDeliveryOutcome: digests update RETURNING
@@ -230,7 +258,7 @@ describe("deliverDigestEmail", () => {
 
   it("a failed record-sent after an accepted send never records a send failure", async () => {
     const { runs, sleeps, tools } = recordingStep();
-    const db = stubDb([joinedPayloadRows()]); // payload read only — recordDigestSent's write then rejects
+    const db = stubDb([joinedPayloadRows(), EMAIL_ACCOUNT]); // the reads only — recordDigestSent's write then rejects
     let sends = 0;
 
     await expect(
@@ -258,6 +286,7 @@ describe("deliverDigestEmail", () => {
     const events = ["sent", "bounced"];
     const db = stubDb([
       joinedPayloadRows(), // payload read
+      EMAIL_ACCOUNT,
       [{ userId: FIXTURE.userId }], // recordDigestSent: digests RETURNING
       [], // recordDigestSent: user_preferences update
       [{ userId: FIXTURE.userId }], // recordDigestDeliveryOutcome: digests RETURNING
@@ -310,6 +339,7 @@ describe("deliverDigestEmail", () => {
     const { runs, sleeps, tools } = recordingStep();
     const db = stubDb([
       joinedPayloadRows(["active", "closed"]), // payload read (rank 1 active, rank 2 closed)
+      EMAIL_ACCOUNT,
       [{ userId: FIXTURE.userId }], // recordDigestSent: digests RETURNING
       [], // recordDigestSent: user_preferences update
       [{ userId: FIXTURE.userId }], // recordDigestDeliveryOutcome: digests RETURNING

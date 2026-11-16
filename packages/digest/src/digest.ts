@@ -107,6 +107,10 @@ export interface DigestDeps {
    *  the explicit-410 soft-CLOSE is suppressed and tallied. buildDigestDeps sets this from
    *  `parseEnforceFlag(process.env.LIFECYCLE_CLOSE_ENFORCE)` — shared with the Worker so they flip together. */
   enforceLifecycle?: boolean;
+  /** Whether the digest stage is in logs-only mode: every digest is built and stored, none is sent,
+   *  whatever the account's delivery setting. Asked at the send boundary. Absent = the stage is on and the
+   *  account's setting decides. Throw when the mode can't be read: the send step is retried. */
+  logsOnly?: () => Promise<boolean>;
 }
 
 /** What starts the orchestrator: the daily tick (`trigger: 'cron'`) or a manual run. `userId` scopes a
@@ -648,7 +652,13 @@ export async function runPerUser(deps: DigestDeps, event: PerUserEvent, step: Pe
   // 8. Email delivery: send (Idempotency-Key digest/<digestId>) → bounded delivery poll → record.
   //    The step block lives in ./delivery so it can be driven with a fake step; `step` (run + sleep)
   //    satisfies its DeliveryStepTools directly.
-  const delivery = await deliverDigestEmail(step, deps.db, deps.email, persisted.digestId);
+  const delivery = await deliverDigestEmail(
+    step,
+    deps.db,
+    deps.email,
+    persisted.digestId,
+    deps.logsOnly,
+  );
   // Unapproved skip = the send-boundary permit re-read found digest_approved_at NULL (a revoke that
   // landed during the synthesis wait — listDigestRecipients + the load gate already exclude un-approved
   // users, so this is near-dead). The send step never stamped last_digest_sent_at, so back them off the
@@ -665,6 +675,13 @@ export async function runPerUser(deps: DigestDeps, event: PerUserEvent, step: Pe
     // sent_at) so the daily cron doesn't re-run the paid pipeline for them next tick. The 0-item digest
     // row stays as audit.
     await step.run("mark-considered-all-closed", () =>
+      markDigestConsidered(deps.db, userId, digestRunId),
+    );
+  } else if (delivery === "skipped-logs-only") {
+    // A logs-only digest is complete: stored in full, never sent (delivery_status stays 'none', sent_at
+    // NULL). It takes the user's slot for the period like a sent one, so the daily cron doesn't rebuild it
+    // tomorrow. Because it was never sent, its jobs don't count as shown and may be picked again.
+    await step.run("mark-considered-logs-only", () =>
       markDigestConsidered(deps.db, userId, digestRunId),
     );
   }

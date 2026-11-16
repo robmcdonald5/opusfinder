@@ -1,5 +1,6 @@
 import type { Db } from "@opusfinder/db";
 import {
+  getDigestDelivery,
   getDigestEmailPayload,
   recordDigestDeliveryOutcome,
   recordDigestSendFailure,
@@ -106,8 +107,16 @@ export async function deliverDigestEmail(
   db: Db,
   email: EmailSeam,
   digestId: number,
-): Promise<DigestDeliveryStatus | "skipped-unapproved" | "skipped-ineligible" | "skipped-empty"> {
-  let sent: SendDigestResult | { skipped: "empty" | "unapproved" | "ineligible" };
+  /** Whether the digest stage is in logs-only mode (`DigestDeps.logsOnly`). Absent = it isn't. */
+  logsOnly?: () => Promise<boolean>,
+): Promise<
+  | DigestDeliveryStatus
+  | "skipped-unapproved"
+  | "skipped-ineligible"
+  | "skipped-empty"
+  | "skipped-logs-only"
+> {
+  let sent: SendDigestResult | { skipped: "empty" | "unapproved" | "ineligible" | "logs-only" };
   try {
     sent = await step.run("send-email", async () => {
       const payload = await getDigestEmailPayload(db, digestId);
@@ -133,6 +142,13 @@ export async function deliverDigestEmail(
       if (!payload.approvedAt) {
         console.log(`digest: recipient not approved — skipping send for digest ${digestId}`);
         return { skipped: "unapproved" as const };
+      }
+      // Logs only: the digest stays stored in full and nothing is sent. The account's own setting first
+      // (only `email` is ever sent), then the stage's mode, which overrides an `email` account. Both are
+      // read here, at the send boundary, so a change made during the synthesis wait counts.
+      if ((await getDigestDelivery(db, digestId)) !== "email" || (await logsOnly?.())) {
+        console.log(`digest: logs only — not sending digest ${digestId}`);
+        return { skipped: "logs-only" as const };
       }
       return email.send(payload);
     });

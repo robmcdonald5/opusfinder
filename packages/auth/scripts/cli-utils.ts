@@ -1,7 +1,12 @@
 // Small argv-parsing helpers shared by the user-management CLIs (user-create / user-set-prefs).
 // Flag values arrive as strings (node:util parseArgs); these validate + coerce them, throwing an
 // actionable error (no secrets) on bad input, and build the shared UserPreferences patch.
-import type { DigestCadence, LocationMode, UserPreferences } from "@opusfinder/shared";
+import type {
+  DigestCadence,
+  DigestDelivery,
+  LocationMode,
+  UserPreferences,
+} from "@opusfinder/shared";
 
 export function parseBool(value: string, flag: string): boolean {
   if (value === "true") return true;
@@ -27,6 +32,12 @@ const CADENCES: readonly DigestCadence[] = ["daily", "weekly", "monthly"];
 export function parseCadence(value: string): DigestCadence {
   if ((CADENCES as readonly string[]).includes(value)) return value as DigestCadence;
   throw new Error(`--cadence must be one of ${CADENCES.join("|")} (got ${JSON.stringify(value)})`);
+}
+
+const DELIVERIES: readonly DigestDelivery[] = ["email", "logs"];
+export function parseDelivery(value: string): DigestDelivery {
+  if ((DELIVERIES as readonly string[]).includes(value)) return value as DigestDelivery;
+  throw new Error(`--delivery must be one of ${DELIVERIES.join("|")} (got ${JSON.stringify(value)})`);
 }
 
 const LOCATION_MODES: readonly LocationMode[] = ["any", "remote_only", "onsite_only"];
@@ -90,6 +101,7 @@ export function prefsFromFlags(
   if (values.dealbreakers !== undefined) prefs.dealbreakers = parseList(values.dealbreakers);
   if (values.cadence !== undefined) prefs.digestCadence = parseCadence(values.cadence);
   if (values.enabled !== undefined) prefs.digestEnabled = parseBool(values.enabled, "enabled");
+  if (values.delivery !== undefined) prefs.digestDelivery = parseDelivery(values.delivery);
   // Partial cross-field guard (min must not exceed max). Only catches BOTH bounds passed in THIS
   // invocation — it cannot see a bound already stored from a prior call; full validation is the form's job.
   assertOrdered(prefs.minSalary, prefs.maxSalary, "min-salary", "max-salary");

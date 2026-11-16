@@ -36,6 +36,7 @@ import {
   companySlug,
   jobId,
   type DigestCadence,
+  type DigestDelivery,
   type DigestTrigger,
   type PromptPreferences,
   type StructuredProfile,
@@ -179,6 +180,8 @@ interface UserSeed {
   embedding?: number[] | null;
   dealbreakers?: string[];
   yoeMin?: number | null;
+  /** Default `email`: when the record was made there was no setting, and a permitted account was emailed. */
+  digestDelivery?: DigestDelivery;
 }
 
 async function seedUser(db: Db, seed: UserSeed = {}): Promise<UserId> {
@@ -215,6 +218,7 @@ async function seedUser(db: Db, seed: UserSeed = {}): Promise<UserId> {
     unsubscribeToken: `tok-${n}`,
     digestEnabled: seed.digestEnabled ?? true,
     digestCadence: seed.digestCadence ?? "weekly",
+    digestDelivery: seed.digestDelivery ?? "email",
     digestApprovedAt: seed.approved === false ? null : new Date("2026-06-20T00:00:00Z"),
     lastDigestSentAt: seed.lastDigestSentAt ?? null,
     dealbreakers: seed.dealbreakers ?? [],
@@ -473,7 +477,7 @@ function plainStepResult(value: unknown): unknown {
 
 // ── Scenarios ───────────────────────────────────────────────────────────────────────────────────────
 
-interface ScenarioSpec {
+export interface ScenarioSpec {
   name: string;
   script?: Script;
   /** May return the run the per-user call belongs to (default: a run opened after seeding). */
@@ -698,12 +702,25 @@ const SCENARIOS: ScenarioSpec[] = [
 ];
 
 /**
- * Run every scenario against `impl` on `db` (emptied before each) and return the record. Compare it with
- * `parity.fixture.json`.
+ * The main path for an account with the given delivery setting. Not part of the parity record (the setting
+ * is newer than it): the logs-only suite runs it and reads the log and the rows.
+ */
+export function deliveryScenario(digestDelivery: DigestDelivery): ScenarioSpec {
+  return {
+    name: `per-user: account delivery is ${digestDelivery}`,
+    seed: (db) => userAndJobs(db, { digestDelivery }),
+    call: { perUser: true },
+  };
+}
+
+/**
+ * Run every scenario against `impl` on `db` (emptied before each) and return the record. With the default
+ * scenarios, compare it with `parity.fixture.json`.
  */
 export async function recordParity<Deps>(
   db: Db,
   impl: ParityImpl<Deps>,
+  scenarios: ScenarioSpec[] = SCENARIOS,
 ): Promise<ParityScenario[]> {
   const describe = (err: unknown): ParityError => ({
     name: err instanceof Error ? err.name : typeof err,
@@ -711,7 +728,7 @@ export async function recordParity<Deps>(
     nonRetriable: impl.isNonRetriable(err),
   });
   const record: ParityScenario[] = [];
-  for (const spec of SCENARIOS) {
+  for (const spec of scenarios) {
     await truncate(
       db,
       digestItems,

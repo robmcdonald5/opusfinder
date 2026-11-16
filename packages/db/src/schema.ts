@@ -30,6 +30,7 @@ import {
 import type {
   CompanySlug,
   DigestCadence,
+  DigestDelivery,
   DigestFeedback,
   DigestTrigger,
   JobId,
@@ -620,6 +621,14 @@ export const userPreferences = pgTable(
     // --- delivery prefs + state ---
     digestCadence: text("digest_cadence").$type<DigestCadence>().notNull().default("weekly"),
     digestEnabled: boolean("digest_enabled").notNull().default(true),
+    // Whether the account's finished digest is emailed or only stored. Defaults to `logs`, so an account
+    // is never emailed until someone sets `email` (fail-closed, like the send permit below). The digest
+    // stage's own logs-only mode overrides `email`; nothing overrides `logs`.
+    digestDelivery: text("digest_delivery").$type<DigestDelivery>().notNull().default("logs"),
+    // The Workflow instance last started for this user's digest (apps/digest), written by the daily
+    // tick before it starts the instance. The next tick reads it to skip a user whose run hasn't
+    // finished. PIPELINE STATE: never user-settable. NULL = no run started yet.
+    digestInstanceId: text("digest_instance_id"),
     digestSuppressedAt: timestamp("digest_suppressed_at", { withTimezone: true }),
     // The operator SEND PERMIT — the POSITIVE mirror of digest_suppressed_at above: NULL = NOT approved
     // = no send (fail-closed); a non-NULL timestamp = an operator granted the permit, and the stamp

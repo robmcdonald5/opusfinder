@@ -369,6 +369,7 @@ describe("runPerUser", () => {
       expect.anything(),
       expect.anything(),
       500,
+      undefined, // no stage mode wired: the account's setting decides
     );
   });
 
@@ -708,6 +709,18 @@ describe("runPerUser", () => {
       delivery: "skipped-unapproved",
     });
     expect(runs).toContain("mark-considered-unapproved");
+  });
+
+  it("delivery skipped-logs-only → takes the user's cadence slot; the stage's mode reaches the send step", async () => {
+    deliveryMod.deliverDigestEmail.mockResolvedValue("skipped-logs-only");
+    const logsOnly = async () => true;
+    const { runs, tools } = recordingStep();
+
+    const out = await runPerUser({ ...makeDeps(), logsOnly }, event(), tools);
+
+    expect(out).toMatchObject({ digestId: 500, itemCount: 2, delivery: "skipped-logs-only" });
+    expect(runs.at(-1)).toBe("mark-considered-logs-only");
+    expect(deliveryMod.deliverDigestEmail.mock.calls[0]?.[4]).toBe(logsOnly);
   });
 
   it("delivery skipped-empty → marks considered-all-closed", async () => {

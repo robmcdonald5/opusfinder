@@ -13,7 +13,7 @@ const USAGE =
   "Usage: pnpm user:create --email <email> --password <pw> [--name <name>] " +
   "[--location-mode any|remote_only|onsite_only] [--min-salary N] [--max-salary N] " +
   "[--min-yoe N] [--max-yoe N] [--dealbreakers a,b] [--exclusions a,b] " +
-  "[--recency-days 14] [--cadence daily|weekly|monthly] [--enabled true|false]";
+  "[--recency-days 14] [--cadence daily|weekly|monthly] [--enabled true|false] [--delivery email|logs]";
 
 async function main(): Promise<void> {
   const { values } = parseArgs({
@@ -32,6 +32,7 @@ async function main(): Promise<void> {
       "recency-days": { type: "string" },
       cadence: { type: "string" },
       enabled: { type: "string" },
+      delivery: { type: "string" },
     },
   });
 

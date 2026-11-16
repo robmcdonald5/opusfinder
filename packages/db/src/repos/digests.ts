@@ -5,7 +5,7 @@
  */
 import { and, desc, eq, gt, inArray, isNotNull, isNull, sql, type SQL } from "drizzle-orm";
 
-import type { DigestTrigger, UserId } from "@opusfinder/shared";
+import type { DigestDelivery, DigestTrigger, UserId } from "@opusfinder/shared";
 
 import type { Db } from "../client";
 import {
@@ -563,6 +563,21 @@ export async function getDigestEmailPayload(
 }
 
 /**
+ * The delivery setting of the account a digest belongs to (`user_preferences.digest_delivery`), read at the
+ * send boundary: only `email` is sent. Null when the digest or its preferences row is gone, which the
+ * caller treats like `logs` (no send).
+ */
+export async function getDigestDelivery(db: Db, digestId: number): Promise<DigestDelivery | null> {
+  const rows = await db
+    .select({ delivery: userPreferences.digestDelivery })
+    .from(digests)
+    .innerJoin(userPreferences, eq(userPreferences.userId, digests.userId))
+    .where(eq(digests.id, digestId))
+    .limit(1);
+  return rows[0]?.delivery ?? null;
+}
+
+/**
  * Send accepted by Resend: `digests.email_id` + `delivery_status='sent'` + `sent_at=now()`, THEN the
  * user-level `last_digest_sent_at`/`last_digest_email_id`. Two writes, digests first — neon-http is
  * non-transactional, but both are idempotent, so a crash between them is healed by the Inngest step
@@ -589,7 +604,7 @@ export async function recordDigestSent(db: Db, digestId: number, emailId: string
 /**
  * Cadence backoff: stamp `last_digest_sent_at` (the run's start) WITHOUT an email id, for a user a cadence run
  * CONSIDERED but did not email (no candidates / nothing above the score floor / all apply-URLs dead / the
- * send permit was revoked mid-run). This backs the user off until their next cadence period, so the daily
+ * send permit was revoked mid-run / the digest is logs-only). This backs the user off until their next cadence period, so the daily
  * cadence cron does NOT re-run the full (paid) pipeline for a perpetually-thin or just-un-approved user
  * every tick. Deliberately NOT called on ERROR paths (those throw and SHOULD retry next tick), and it
  * NULLs `last_digest_email_id` (no email was sent this consideration) so the row unambiguously reads

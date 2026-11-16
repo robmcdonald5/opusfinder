@@ -16,6 +16,16 @@ describe("prefsFromFlags — location-mode", () => {
   });
 });
 
+describe("prefsFromFlags — delivery", () => {
+  it.each(["email", "logs"] as const)("%s parses through", (delivery) => {
+    expect(prefsFromFlags({ delivery }).digestDelivery).toBe(delivery);
+  });
+
+  it("anything else throws, so a typo can't leave an account emailed", () => {
+    expect(() => prefsFromFlags({ delivery: "none" })).toThrow();
+  });
+});
+
 describe("prefsFromFlags — nullable-int clear sentinel", () => {
   it.each<[string, number | null]>([
     ["clear", null],
