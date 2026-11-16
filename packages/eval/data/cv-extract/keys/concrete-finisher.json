@@ -1,0 +1,34 @@
+{
+  "id": "concrete-finisher",
+  "heldOut": true,
+  "expected": {
+    "summary": [["concrete", "construction", "laborer"]],
+    "skills": [
+      ["concrete"],
+      [
+        "forklift",
+        "forklifts",
+        "rebar",
+        "power tools",
+        "jackhammer",
+        "crane",
+        "equipment operation",
+        "heavy equipment"
+      ]
+    ],
+    "targetRoles": ["concrete", "laborer", "labourer", "finisher", "construction"],
+    "credentials": [],
+    "education": [
+      {
+        "level": ["high_school"]
+      }
+    ],
+    "years": [],
+    "languages": [],
+    "workAuthorization": null
+  },
+  "judgementCalls": [
+    "'Many years history of construction experience' is not a stated figure, so no years are keyed.",
+    "'Forklift Operation' is a skill; the CV states no forklift or crane certification, so none is allowed."
+  ]
+}

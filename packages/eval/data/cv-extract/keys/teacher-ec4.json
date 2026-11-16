@@ -1,12 +1,5 @@
 {
   "id": "teacher-ec4",
-  "group": "healthcare-licensed",
-  "source": {
-    "dataset": "opensporks/resumes",
-    "revision": "ed4cb5f3fd1ce7e0a0e74e1a09c1a3b702c2c2eb",
-    "path": "data/data/TEACHER/28013287.pdf",
-    "sha256": "f2d000cfa1d640ab984e40c01546b0a9551b197c968e86529c2d4eed7426a2ae"
-  },
   "expected": {
     "summary": [["teacher", "teaching", "educator"]],
     "skills": [

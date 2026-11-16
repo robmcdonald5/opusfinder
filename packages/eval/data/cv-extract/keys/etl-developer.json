@@ -1,12 +1,5 @@
 {
   "id": "etl-developer",
-  "group": "tech",
-  "source": {
-    "dataset": "opensporks/resumes",
-    "revision": "ed4cb5f3fd1ce7e0a0e74e1a09c1a3b702c2c2eb",
-    "path": "data/data/AUTOMOBILE/28790806.pdf",
-    "sha256": "1137acbb6d4156dd5fff5c75332700b4731aff1b9cde3653bfd31d802cbd3319"
-  },
   "expected": {
     "summary": [["etl", "data warehouse", "data warehousing", "datastage"]],
     "skills": [

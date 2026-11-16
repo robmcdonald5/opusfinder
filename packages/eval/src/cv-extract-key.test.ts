@@ -13,6 +13,7 @@ import {
   type CvKey,
   type ScoredField,
 } from "./cv-extract-key";
+import { loadCvRegistry } from "./profile-set";
 import { PKG_ROOT } from "./runner";
 
 const KEY: CvKey = {
@@ -202,6 +203,12 @@ describe("summarize", () => {
     expect(summary.overall).toEqual({ correct: 4, total: 9 });
     expect(summary.sharedFields).toEqual({ correct: 4, total: 4 });
     expect(summary.factFields).toEqual({ correct: 0, total: 5 });
+    expect(summary.tuned).toEqual({ correct: 4, total: 9 });
+    expect(summary.heldOut).toEqual({ correct: 0, total: 0 });
+    const heldOut = { ...KEY, heldOut: true as const };
+    expect(
+      summarize([{ key: heldOut, profile: v1, results: scoreProfile(v1, heldOut) }]).heldOut,
+    ).toEqual({ correct: 4, total: 9 });
     expect(summary.byGroup["healthcare-licensed"]).toEqual({ correct: 4, total: 9 });
     expect(summary.byGroup.tech).toEqual({ correct: 0, total: 0 });
     // "Registered nurse" in the summary and "BLS" in the skills; the optional CNA is not counted.
@@ -210,10 +217,16 @@ describe("summarize", () => {
 });
 
 describe("the committed keys", () => {
-  const keys = loadCvKeys(join(PKG_ROOT, "data", "cv-extract", "keys"));
+  const keys = loadCvKeys(join(PKG_ROOT, "data", "cv-extract", "keys"), loadCvRegistry());
 
   it("all parse, and cover every group", () => {
     expect(keys.length).toBeGreaterThanOrEqual(20);
     for (const group of CV_GROUPS) expect(keys.some((key) => key.group === group)).toBe(true);
+  });
+
+  it("include held-out CVs in every group but tech", () => {
+    const heldOut = keys.filter((key) => key.heldOut);
+    for (const group of CV_GROUPS.filter((g) => g !== "tech"))
+      expect(heldOut.some((key) => key.group === group)).toBe(true);
   });
 });

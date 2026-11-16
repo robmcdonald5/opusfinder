@@ -1,12 +1,5 @@
 {
   "id": "sales-associate-retail",
-  "group": "hourly-shift",
-  "source": {
-    "dataset": "opensporks/resumes",
-    "revision": "ed4cb5f3fd1ce7e0a0e74e1a09c1a3b702c2c2eb",
-    "path": "data/data/SALES/33236701.pdf",
-    "sha256": "64691bae27e6b80ce99f3cca49816d8c40d6a7744f6318d249d135e8fef9403a"
-  },
   "expected": {
     "summary": [["retail", "sales associate"]],
     "skills": [

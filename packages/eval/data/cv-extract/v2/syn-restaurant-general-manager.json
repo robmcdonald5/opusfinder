@@ -1,0 +1,83 @@
+{
+  "summary": "Restaurant general manager with 12 years in restaurants, including 7 in management, running high-volume fast-casual and full-service operations doing $3M or more annually. Owns P&L, labor and food cost control, scheduling and inventory, and leads teams of roughly 38 to 45 across multiple dayparts. Experienced in hiring, coaching and promoting shift leaders, digital ordering, and passing third-party food safety audits. Background includes line cook and shift supervisor work, supporting strong grasp of kitchen operations.",
+  "skills": [
+    "P&L management",
+    "food cost control",
+    "labor cost control",
+    "labor forecasting",
+    "staff scheduling",
+    "hiring",
+    "staff coaching",
+    "staff development",
+    "inventory management",
+    "ordering",
+    "waste reduction",
+    "vendor invoice management",
+    "food safety audits",
+    "guest service recovery",
+    "new store openings",
+    "POS operation",
+    "Toast",
+    "Olo",
+    "7shifts",
+    "Crunchtime",
+    "R365",
+    "Google Workspace",
+    "grill operation",
+    "line cook",
+    "allergen awareness",
+    "cash office management"
+  ],
+  "targetRoles": [
+    "Restaurant General Manager",
+    "Fast-Casual Restaurant Manager",
+    "Assistant Restaurant Manager"
+  ],
+  "facts": {
+    "credentials": [
+      {
+        "name": "ServSafe Manager",
+        "issuer": "National Restaurant Association",
+        "status": null,
+        "expires": "2029-05"
+      }
+    ],
+    "education": [
+      {
+        "level": "associate",
+        "field": "Culinary Arts",
+        "completed": true
+      },
+      {
+        "level": "bachelor",
+        "field": "Hospitality Management",
+        "completed": false
+      }
+    ],
+    "yearsExperience": {
+      "total": 12,
+      "byRoleFamily": [
+        {
+          "roleFamily": "management",
+          "years": 7
+        }
+      ]
+    },
+    "languages": [
+      {
+        "language": "English",
+        "proficiency": null
+      },
+      {
+        "language": "Polish",
+        "proficiency": "spoken at home"
+      },
+      {
+        "language": "Spanish",
+        "proficiency": "kitchen level"
+      }
+    ],
+    "workAuthorization": null
+  },
+  "extractVersion": 2
+}

@@ -1,0 +1,75 @@
+{
+  "summary": "Journeyman electrician with 9 years of industrial and commercial experience. Installs, maintains and troubleshoots motor control centers, VFDs, generators, automatic transfer switches and low- and medium-voltage distribution in a 24-hour manufacturing plant and commercial settings. Works from blueprints and one-line diagrams to the National Electrical Code, with conduit and cable tray installation, PLC I/O troubleshooting, and lockout/tagout practice. Comfortable on any shift, including overtime and weekends.",
+  "skills": [
+    "Motor control centers",
+    "Variable frequency drives (VFD)",
+    "Generators",
+    "Automatic transfer switches",
+    "3-phase power distribution",
+    "Medium-voltage cable termination",
+    "Conduit bending",
+    "Cable tray installation",
+    "Blueprint reading",
+    "Electrical schematics",
+    "One-line diagrams",
+    "PLC I/O troubleshooting",
+    "Control circuit troubleshooting",
+    "Grounding and bonding",
+    "Lightning protection systems",
+    "Lockout/tagout",
+    "NFPA 70E arc flash safety",
+    "National Electrical Code"
+  ],
+  "targetRoles": [
+    "Industrial Electrician",
+    "Journeyman Electrician",
+    "Maintenance Electrician"
+  ],
+  "facts": {
+    "credentials": [
+      {
+        "name": "Journeyman Electrician",
+        "issuer": "Texas Department of Licensing and Regulation",
+        "status": null,
+        "expires": "2027-09"
+      },
+      {
+        "name": "OSHA 30-Hour, Construction",
+        "issuer": null,
+        "status": null,
+        "expires": null
+      },
+      {
+        "name": "NFPA 70E arc flash qualified person",
+        "issuer": null,
+        "status": null,
+        "expires": null
+      },
+      {
+        "name": "Texas driver license, Class C",
+        "issuer": null,
+        "status": null,
+        "expires": null
+      }
+    ],
+    "education": [
+      {
+        "level": "certificate",
+        "field": "Electrical Apprenticeship",
+        "completed": true
+      },
+      {
+        "level": "associate",
+        "field": "Electrical Technology",
+        "completed": true
+      }
+    ],
+    "yearsExperience": {
+      "total": 9,
+      "byRoleFamily": []
+    },
+    "languages": [],
+    "workAuthorization": "Authorized to work in the US"
+  },
+  "extractVersion": 2
+}

@@ -1,0 +1,104 @@
+{
+  "summary": "Board-certified physician assistant with 9 years of clinical practice across urgent care, family medicine and telemedicine, including 4 years providing virtual urgent care. Evaluates and treats adult and pediatric acute complaints by video, phone and secure message, with fluent clinical Spanish for bilingual panels. Performs minor procedures such as laceration repair, incision and drainage and splinting, and reads X-rays and EKGs with specialist over-reads. Manages high-volume evening and weekend shifts with remote physician backup, handles red-flag triage and antibiotic stewardship, and mentors newer providers through chart review.",
+  "skills": [
+    "Telemedicine triage",
+    "Virtual examination",
+    "Urgent care",
+    "Laceration repair",
+    "Incision and drainage",
+    "Suturing",
+    "Splinting",
+    "Foreign body removal",
+    "X-ray interpretation",
+    "EKG interpretation",
+    "Chronic disease management",
+    "E-prescribing",
+    "Controlled substance monitoring",
+    "PDMP",
+    "Epic",
+    "athenahealth",
+    "Doxy.me",
+    "Chart review",
+    "Antibiotic stewardship",
+    "Clinical peer feedback",
+    "Spanish medical interpreting"
+  ],
+  "targetRoles": [
+    "Physician Assistant",
+    "Telemedicine Physician Assistant",
+    "Urgent Care Physician Assistant"
+  ],
+  "facts": {
+    "credentials": [
+      {
+        "name": "Physician Assistant-Certified (PA-C)",
+        "issuer": "National Commission on Certification of Physician Assistants (NCCPA)",
+        "status": null,
+        "expires": "2027-12"
+      },
+      {
+        "name": "Physician Assistant license, Florida",
+        "issuer": null,
+        "status": "active",
+        "expires": "2027-01"
+      },
+      {
+        "name": "Physician Assistant license, Georgia",
+        "issuer": null,
+        "status": "active",
+        "expires": "2026-06"
+      },
+      {
+        "name": "DEA Registration",
+        "issuer": null,
+        "status": "active",
+        "expires": null
+      },
+      {
+        "name": "Advanced Cardiac Life Support (ACLS)",
+        "issuer": "American Heart Association",
+        "status": null,
+        "expires": null
+      },
+      {
+        "name": "Basic Life Support (BLS)",
+        "issuer": "American Heart Association",
+        "status": null,
+        "expires": null
+      }
+    ],
+    "education": [
+      {
+        "level": "master",
+        "field": "Master of Physician Assistant Studies",
+        "completed": true
+      },
+      {
+        "level": "bachelor",
+        "field": "Biology",
+        "completed": true
+      }
+    ],
+    "yearsExperience": {
+      "total": 9,
+      "byRoleFamily": [
+        {
+          "roleFamily": "telemedicine",
+          "years": 4
+        }
+      ]
+    },
+    "languages": [
+      {
+        "language": "English",
+        "proficiency": "native"
+      },
+      {
+        "language": "Spanish",
+        "proficiency": "fluent, clinical"
+      }
+    ],
+    "workAuthorization": null
+  },
+  "extractVersion": 2
+}

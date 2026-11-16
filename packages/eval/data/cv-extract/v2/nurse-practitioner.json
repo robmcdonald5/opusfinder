@@ -1,0 +1,103 @@
+{
+  "summary": "Family Nurse Practitioner with a master's degree and roughly 15 years of nursing experience spanning medical-surgical, geriatric, telemetry, oncology and emergency care. Has practiced in family practice, primary care, pediatrics, women's health and urgent care settings, with emergency department and charge nurse exposure. Skilled in physical assessment, differential diagnosis, chemotherapy administration, medication management and patient education, with leadership experience coordinating staff on a large geriatric unit and contributing to hospital-wide fall-reduction efforts.",
+  "skills": [
+    "physical assessment",
+    "differential diagnosis",
+    "plan of care development",
+    "patient education",
+    "medication management",
+    "medication administration",
+    "wound care",
+    "telemetry monitoring",
+    "chemotherapy administration",
+    "IV therapy",
+    "emergency nursing",
+    "trauma nursing",
+    "pediatric care",
+    "women's health",
+    "urgent care",
+    "primary care",
+    "geriatric care",
+    "staff supervision",
+    "fall prevention",
+    "evidence-based practice",
+    "pain management",
+    "clinical research",
+    "interprofessional collaboration"
+  ],
+  "targetRoles": [
+    "Family Nurse Practitioner",
+    "Nurse Practitioner",
+    "Emergency Department Charge Nurse",
+    "Registered Nurse Clinician"
+  ],
+  "facts": {
+    "credentials": [
+      {
+        "name": "Registered Nurse (RN)",
+        "issuer": null,
+        "status": null,
+        "expires": null
+      },
+      {
+        "name": "Certified Emergency Nurse (CEN)",
+        "issuer": null,
+        "status": null,
+        "expires": null
+      },
+      {
+        "name": "Trauma Nurse Specialist (TNS)",
+        "issuer": null,
+        "status": null,
+        "expires": null
+      },
+      {
+        "name": "Basic Life Support (BLS)",
+        "issuer": null,
+        "status": null,
+        "expires": null
+      },
+      {
+        "name": "Advanced Cardiac Life Support (ACLS)",
+        "issuer": null,
+        "status": null,
+        "expires": null
+      },
+      {
+        "name": "Pediatric Advanced Life Support (PALS)",
+        "issuer": null,
+        "status": null,
+        "expires": null
+      }
+    ],
+    "education": [
+      {
+        "level": "master",
+        "field": "Nursing, Family Nurse Practitioner",
+        "completed": true
+      },
+      {
+        "level": "bachelor",
+        "field": "Nursing",
+        "completed": true
+      },
+      {
+        "level": "associate",
+        "field": "Nursing, Registered Nurse",
+        "completed": true
+      },
+      {
+        "level": "certificate",
+        "field": "Practical Nursing, Licensed Practical Nurse",
+        "completed": true
+      }
+    ],
+    "yearsExperience": {
+      "total": null,
+      "byRoleFamily": []
+    },
+    "languages": [],
+    "workAuthorization": null
+  },
+  "extractVersion": 2
+}

@@ -1,0 +1,85 @@
+{
+  "summary": "Executive administrator and office manager with experience supporting senior executives in higher education, public relations, and healthcare settings. Manages executive calendars, travel, itineraries, expense reporting, and event planning, and has created office procedures, handbooks, and templates. Has also worked in transfer student recruiting and admissions, developing community college partnerships and securing student enrollment. Earlier career includes municipal law enforcement patrol and a hospital switchboard and reception role, which add communication and public-facing service strengths.",
+  "skills": [
+    "Executive calendar management",
+    "Travel coordination",
+    "Itinerary preparation",
+    "Expense reporting",
+    "Event planning",
+    "Office management",
+    "Procedure and handbook development",
+    "Template development",
+    "Microsoft Office Suite",
+    "Desktop publishing",
+    "Email management",
+    "Correspondence drafting",
+    "Invoicing",
+    "Payroll administration",
+    "Human resources records management",
+    "Confidential data handling",
+    "Public relations copywriting",
+    "Direct mail copywriting",
+    "Print advertising",
+    "Student recruitment",
+    "Transfer admissions",
+    "Community partnership development",
+    "Switchboard operation",
+    "Paging systems",
+    "Customer service",
+    "Research",
+    "Patrol operations",
+    "Dispatch operations",
+    "Arrest and citation procedures",
+    "Employee identification verification"
+  ],
+  "targetRoles": [
+    "Recruiter",
+    "Admissions Counselor",
+    "Executive Assistant",
+    "Office Manager"
+  ],
+  "facts": {
+    "credentials": [
+      {
+        "name": "Illinois State Peace Officer certification",
+        "issuer": null,
+        "status": null,
+        "expires": null
+      }
+    ],
+    "education": [
+      {
+        "level": "other",
+        "field": "Business Communications",
+        "completed": true
+      },
+      {
+        "level": "other",
+        "field": "Counseling and Pastoral Care",
+        "completed": true
+      },
+      {
+        "level": "certificate",
+        "field": "Peace officer training",
+        "completed": true
+      },
+      {
+        "level": "other",
+        "field": null,
+        "completed": true
+      },
+      {
+        "level": "high_school",
+        "field": null,
+        "completed": true
+      }
+    ],
+    "yearsExperience": {
+      "total": null,
+      "byRoleFamily": []
+    },
+    "languages": [],
+    "workAuthorization": null
+  },
+  "extractVersion": 2
+}

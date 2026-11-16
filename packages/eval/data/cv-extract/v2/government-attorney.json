@@ -1,0 +1,67 @@
+{
+  "summary": "Attorney with a decade-plus of combined experience in health law, educational law and public policy, spanning advocacy for military families with special needs children and federal foreign affairs work in human rights and religious freedom. Has represented families before school administrative hearings, negotiated individualized education plans and 504 documents, and advised on military health care navigation. Former U.S. Department of State staff with bureau-level coordination, classified document management, congressional liaison and intern supervision experience, and training delivered to professionals statewide.",
+  "skills": [
+    "Special education law",
+    "Individualized education plan (IEP) negotiation",
+    "504 plan advocacy",
+    "Health law",
+    "Military health care insurance navigation",
+    "Statutory and regulatory interpretation",
+    "Administrative hearing representation",
+    "Government relations",
+    "Legislative liaison",
+    "Public policy analysis",
+    "Human rights law",
+    "Religious freedom monitoring",
+    "Foreign affairs",
+    "Diplomacy",
+    "Congressional report drafting",
+    "Classified document handling",
+    "Briefing preparation",
+    "Project management",
+    "Intern supervision",
+    "Stakeholder engagement",
+    "Professional training delivery"
+  ],
+  "targetRoles": [
+    "Education Attorney",
+    "Health Law Attorney",
+    "Government Relations Specialist",
+    "Public Policy Analyst",
+    "Foreign Affairs Officer"
+  ],
+  "facts": {
+    "credentials": [
+      {
+        "name": "Member of Maryland Bar",
+        "issuer": null,
+        "status": null,
+        "expires": null
+      }
+    ],
+    "education": [
+      {
+        "level": "doctorate",
+        "field": "Law (Juris Doctor)",
+        "completed": true
+      },
+      {
+        "level": "bachelor",
+        "field": "Government and Communications",
+        "completed": true
+      }
+    ],
+    "yearsExperience": {
+      "total": null,
+      "byRoleFamily": []
+    },
+    "languages": [
+      {
+        "language": "German",
+        "proficiency": null
+      }
+    ],
+    "workAuthorization": null
+  },
+  "extractVersion": 2
+}

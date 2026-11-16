@@ -1,12 +1,5 @@
 {
   "id": "systems-eng-manager",
-  "group": "tech",
-  "source": {
-    "dataset": "opensporks/resumes",
-    "revision": "ed4cb5f3fd1ce7e0a0e74e1a09c1a3b702c2c2eb",
-    "path": "data/data/ENGINEERING/61579998.pdf",
-    "sha256": "9b46dbab5d6cbc0beb95f69b6cc90c2fb99745a08888677db89fb3e52ac732df"
-  },
   "expected": {
     "summary": [
       [

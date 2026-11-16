@@ -1,0 +1,78 @@
+{
+  "summary": "HR manager with roughly two decades of progressive human resources and administration experience, most recently leading HR as HR Manager and General Manager and HR Director in manufacturing settings including tooling, plastic injection, PVB film, and steel fabrication. Works across the full HR spectrum, including recruitment and selection, compensation and benefits, payroll administration, performance appraisal and management systems, training and development, employee relations, and labor law compliance. Has reported directly to CEOs, transformed HR into a strategic business partner, and oversaw purchasing and general administration alongside HR. Holds a master's degree in public administration and has ongoing training in HR certification, labor law, ISO quality standards, and balanced scorecard KPIs.",
+  "skills": [
+    "Human resources management",
+    "HR policy development",
+    "Recruitment and selection",
+    "Interviewing",
+    "Staffing",
+    "Compensation and benefits administration",
+    "Salary structure analysis",
+    "Payroll administration",
+    "Performance appraisal",
+    "Performance management",
+    "Training and development",
+    "Learning needs analysis",
+    "Employee relations",
+    "Grievance and disciplinary handling",
+    "Labor law compliance",
+    "Regulatory compliance",
+    "Statutory reporting",
+    "Employee orientation",
+    "Incentive program design",
+    "Exit interviews",
+    "Turnover analysis",
+    "Organizational design",
+    "Strategic planning",
+    "Purchasing",
+    "Procurement",
+    "Purchase order management",
+    "General administration",
+    "Balanced scorecard",
+    "KPI management",
+    "ISO/TS 16949",
+    "ISO 14001",
+    "Corrective and preventive action",
+    "8D problem solving",
+    "Root cause analysis",
+    "MS Office"
+  ],
+  "targetRoles": [
+    "Human Resources Manager",
+    "HR Generalist",
+    "Human Resources Director",
+    "HR & Administration Manager"
+  ],
+  "facts": {
+    "credentials": [],
+    "education": [
+      {
+        "level": "master",
+        "field": "Public Administration",
+        "completed": true
+      },
+      {
+        "level": "bachelor",
+        "field": "Education",
+        "completed": true
+      },
+      {
+        "level": "other",
+        "field": "Comprehensive English Course",
+        "completed": true
+      }
+    ],
+    "yearsExperience": {
+      "total": null,
+      "byRoleFamily": []
+    },
+    "languages": [
+      {
+        "language": "English",
+        "proficiency": null
+      }
+    ],
+    "workAuthorization": null
+  },
+  "extractVersion": 2
+}

@@ -1,0 +1,59 @@
+{
+  "summary": "Claims specialist with about 10 years in insurance, focused on automobile property and liability claims, including first and third-party auto liability, bodily injury, total loss and subrogation work. Experienced in evaluating evidence, interviewing claimants and witnesses, analyzing repair estimates, and negotiating settlements, and has testified at criminal proceedings. Also brings tax examination experience processing amended returns at high volume with near-perfect accuracy, plus small-business management with bookkeeping, reconciliation, inventory and customer account responsibilities. Proficient in Excel, Access and database tools, and has trained new claim staff.",
+  "skills": [
+    "property and liability claims adjusting",
+    "auto claims adjustment",
+    "bodily injury claims",
+    "total loss evaluation",
+    "subrogation",
+    "claim investigation",
+    "settlement negotiation",
+    "repair estimate analysis",
+    "policy interpretation",
+    "tax examination",
+    "amended return processing (Form 1040X)",
+    "IDRS",
+    "tax fraud detection",
+    "statute processing",
+    "accounts receivable",
+    "accounts payable",
+    "account reconciliation",
+    "month-end balance sheet review",
+    "inventory control",
+    "cash handling",
+    "cashiering",
+    "POS operation",
+    "Microsoft Excel",
+    "Microsoft Access",
+    "Microsoft Word",
+    "database management",
+    "ICD-9 coding",
+    "data entry",
+    "customer service",
+    "vendor relations",
+    "scheduling",
+    "records management"
+  ],
+  "targetRoles": [
+    "Claims Adjuster",
+    "Tax Examining Clerk",
+    "Claims Specialist"
+  ],
+  "facts": {
+    "credentials": [],
+    "education": [
+      {
+        "level": "bachelor",
+        "field": "Computer Science",
+        "completed": true
+      }
+    ],
+    "yearsExperience": {
+      "total": 10,
+      "byRoleFamily": []
+    },
+    "languages": [],
+    "workAuthorization": null
+  },
+  "extractVersion": 2
+}

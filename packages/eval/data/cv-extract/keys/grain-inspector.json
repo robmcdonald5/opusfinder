@@ -1,12 +1,5 @@
 {
   "id": "grain-inspector",
-  "group": "other-non-tech",
-  "source": {
-    "dataset": "opensporks/resumes",
-    "revision": "ed4cb5f3fd1ce7e0a0e74e1a09c1a3b702c2c2eb",
-    "path": "data/data/AGRICULTURE/16849128.pdf",
-    "sha256": "4f351e84259cd5383adace6faff8aa11eeeb65bbde58823bbc8beece03a8943c"
-  },
   "expected": {
     "summary": [["inspector", "inspection", "process operator", "electrician"]],
     "skills": [

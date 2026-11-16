@@ -1,0 +1,66 @@
+{
+  "summary": "Phlebotomist with roughly 15 years of experience in clinical laboratory specimen collection across outpatient, mobile, nursing home and donor collection settings. Performs aseptic venipuncture and capillary collection for patients from infants to geriatric, along with point-of-care microbiology screening and specimen receiving, storage and inventory. Experienced in lab equipment maintenance, result review and escalation of abnormal findings, and precepts new technicians. Works to CLIA, OSHA and HIPAA requirements and has prior administrative and healthcare billing-support background.",
+  "skills": [
+    "Venipuncture",
+    "Capillary blood collection",
+    "Phlebotomy",
+    "Specimen processing and handling",
+    "Specimen receiving and inventory",
+    "Point-of-care microbiology testing",
+    "Rapid strep testing",
+    "Laboratory equipment maintenance",
+    "Laboratory test result review",
+    "Quality control",
+    "Quality assurance",
+    "CLIA compliance",
+    "OSHA compliance",
+    "HIPAA compliance",
+    "Blood bank",
+    "Donor collection",
+    "MCS+ automated blood collection",
+    "Microplating",
+    "EHR patient registration",
+    "Electronic health records",
+    "Medical screening",
+    "Payroll processing",
+    "Loan application processing",
+    "Microsoft Excel",
+    "Microsoft Word",
+    "Microsoft Outlook",
+    "Microsoft PowerPoint",
+    "AS400",
+    "Customer service",
+    "Clerical support",
+    "Preceptor training"
+  ],
+  "targetRoles": [
+    "Phlebotomist",
+    "Phlebotomy Preceptor",
+    "Lab Specimen Processor",
+    "Donor Collection Technician"
+  ],
+  "facts": {
+    "credentials": [
+      {
+        "name": "Certified MCS+ Automated Blood Collection Technician",
+        "issuer": null,
+        "status": null,
+        "expires": null
+      }
+    ],
+    "education": [
+      {
+        "level": "master",
+        "field": "Healthcare Administration Management",
+        "completed": false
+      }
+    ],
+    "yearsExperience": {
+      "total": null,
+      "byRoleFamily": []
+    },
+    "languages": [],
+    "workAuthorization": null
+  },
+  "extractVersion": 2
+}

@@ -1,0 +1,60 @@
+{
+  "summary": "Claims and tax professional with about 10 years of experience in insurance claims adjusting, with an emphasis on first- and third-party automobile liability and property damage claims. Background includes claim investigation, evidence collection, repair estimate analysis, and negotiation of total loss and bodily injury settlements. Also worked as a tax examining clerk adjusting 1040X amended returns, researching tax data, and identifying indications of fraud, and previously ran a dairy distribution business handling accounts receivable, reconciliations, and inventory control. Proficient in Microsoft Excel, Access, and Word with strong analytical and customer communication skills.",
+  "skills": [
+    "Property and liability claims adjusting",
+    "Automobile claims adjusting",
+    "Claim investigation",
+    "Evidence collection",
+    "Repair estimate analysis",
+    "Subrogation",
+    "Settlement negotiation",
+    "Policy interpretation",
+    "Tax examination",
+    "Form 1040X processing",
+    "IDRS",
+    "Tax fraud detection",
+    "Statute of limitations review",
+    "Accounts receivable",
+    "Accounts payable",
+    "Reconciliation",
+    "Inventory control",
+    "Cash handling",
+    "Cashiering",
+    "Data entry",
+    "Microsoft Excel",
+    "Microsoft Access",
+    "Microsoft Word",
+    "Database management",
+    "ICD-9 coding",
+    "Customer service",
+    "Records management"
+  ],
+  "targetRoles": [
+    "Tax Examining Clerk",
+    "Claims Adjuster",
+    "Claim Specialist",
+    "Insurance Claims Representative"
+  ],
+  "facts": {
+    "credentials": [],
+    "education": [
+      {
+        "level": "bachelor",
+        "field": "Computer Science",
+        "completed": true
+      }
+    ],
+    "yearsExperience": {
+      "total": 10,
+      "byRoleFamily": [
+        {
+          "roleFamily": "insurance",
+          "years": 10
+        }
+      ]
+    },
+    "languages": [],
+    "workAuthorization": null
+  },
+  "extractVersion": 2
+}

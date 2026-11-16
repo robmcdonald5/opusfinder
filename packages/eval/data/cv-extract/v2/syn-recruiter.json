@@ -1,0 +1,67 @@
+{
+  "summary": "Full-cycle technical and go-to-market recruiter with about 8 years of experience, five of them hiring sales, account management and customer operations teams. Runs enterprise and contingent hiring for account executive, sales development and customer support roles, with 18 to 25 open requisitions at a time at the senior level. Builds passive candidate pipelines through direct outbound sourcing and partners closely with sales leaders on role scoping, interview loops and compensation. Brings a strong closing record on competitive candidates and an analytical approach to pipeline reporting.",
+  "skills": [
+    "Full-cycle recruiting",
+    "Passive sourcing",
+    "Boolean sourcing",
+    "LinkedIn Recruiter",
+    "Applicant tracking systems",
+    "Greenhouse",
+    "Lever",
+    "Gem",
+    "Hiring manager consultation",
+    "Interview coordination",
+    "Interview training",
+    "Offer negotiation",
+    "Compensation benchmarking",
+    "Pipeline reporting",
+    "Looker",
+    "Google Sheets",
+    "Contingent recruiting",
+    "Sales recruiting",
+    "Onboarding coordination"
+  ],
+  "targetRoles": [
+    "Senior Recruiter",
+    "Technical Recruiter",
+    "Sales Recruiter"
+  ],
+  "facts": {
+    "credentials": [
+      {
+        "name": "SHRM-CP",
+        "issuer": null,
+        "status": "in_progress",
+        "expires": null
+      }
+    ],
+    "education": [
+      {
+        "level": "bachelor",
+        "field": "Communication",
+        "completed": true
+      }
+    ],
+    "yearsExperience": {
+      "total": 8,
+      "byRoleFamily": [
+        {
+          "roleFamily": "recruiting",
+          "years": 8
+        }
+      ]
+    },
+    "languages": [
+      {
+        "language": "English",
+        "proficiency": "native"
+      },
+      {
+        "language": "Swedish",
+        "proficiency": "conversational"
+      }
+    ],
+    "workAuthorization": null
+  },
+  "extractVersion": 2
+}

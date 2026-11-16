@@ -1,0 +1,93 @@
+{
+  "summary": "Physician with a medical doctorate and internal medicine training, board certified in internal medicine and currently working as an emergency department physician. Completing endocrinology clinical and research training alongside a master's in clinical research, with experience in inpatient diabetes and endocrine consultation, insulin management for enteral feeding, and weight management and obesity medicine. Brings a background in nutrition science and clinical weight loss research, and has supervised residents and medical students in clinic and inpatient consultations. Well suited to inpatient or outpatient endocrinology practice.",
+  "skills": [
+    "emergency medicine",
+    "diabetes management",
+    "endocrine consultation",
+    "inpatient insulin management",
+    "enteral feeding glycemic management",
+    "hyperglycemia management",
+    "obesity medicine",
+    "weight management",
+    "clinical research",
+    "clinical trials",
+    "health services research",
+    "quality improvement",
+    "nutrition science",
+    "clinical supervision",
+    "medical education",
+    "case presentation"
+  ],
+  "targetRoles": [
+    "Emergency Medicine Physician",
+    "Endocrinologist",
+    "Internal Medicine Physician"
+  ],
+  "facts": {
+    "credentials": [
+      {
+        "name": "ABIM Board Certified in Internal Medicine",
+        "issuer": "American Board of Internal Medicine",
+        "status": null,
+        "expires": null
+      },
+      {
+        "name": "North Carolina State Medical License",
+        "issuer": null,
+        "status": "active",
+        "expires": null
+      },
+      {
+        "name": "Endocrinology Board Certification",
+        "issuer": null,
+        "status": "in_progress",
+        "expires": null
+      },
+      {
+        "name": "ECNU Certification",
+        "issuer": null,
+        "status": "in_progress",
+        "expires": null
+      }
+    ],
+    "education": [
+      {
+        "level": "other",
+        "field": "Endocrinology Clinical and Research Fellowship",
+        "completed": false
+      },
+      {
+        "level": "master",
+        "field": "Clinical Research",
+        "completed": false
+      },
+      {
+        "level": "other",
+        "field": "Internal Medicine Residency",
+        "completed": true
+      },
+      {
+        "level": "doctorate",
+        "field": "Medicine",
+        "completed": true
+      },
+      {
+        "level": "bachelor",
+        "field": "Biology",
+        "completed": true
+      },
+      {
+        "level": "bachelor",
+        "field": "Nutrition Science",
+        "completed": true
+      }
+    ],
+    "yearsExperience": {
+      "total": null,
+      "byRoleFamily": []
+    },
+    "languages": [],
+    "workAuthorization": null
+  },
+  "extractVersion": 2
+}

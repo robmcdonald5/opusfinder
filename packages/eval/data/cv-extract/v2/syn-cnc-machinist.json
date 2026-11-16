@@ -1,0 +1,75 @@
+{
+  "summary": "CNC machinist with about 8 years in machine tool work, progressing from machine operator to setup and second-shift CNC machinist on tight-tolerance aerospace components. Sets up and runs 3-, 4- and 5-axis mills and multi-axis lathes on Inconel, titanium, stainless and aluminum parts, reads GD&T from prints, edits G-code at the control, and performs first-article and in-process inspection to AS9100 documentation. Works across lot sizes from single prototypes to runs of 50.",
+  "skills": [
+    "CNC milling",
+    "CNC turning",
+    "5-axis machining",
+    "3-axis machining",
+    "Setup and tooling",
+    "G-code editing",
+    "M-code editing",
+    "Mastercam",
+    "Fixturing",
+    "Tool offset adjustment",
+    "GD&T interpretation",
+    "Blueprint reading",
+    "First-article inspection",
+    "In-process inspection",
+    "Micrometers",
+    "Calipers",
+    "Bore gauges",
+    "Height gauge",
+    "Live tooling",
+    "Fanuc controls",
+    "Haas controls",
+    "Inconel machining",
+    "Titanium machining",
+    "Stainless steel machining",
+    "Aluminum machining",
+    "Deburring",
+    "Surface grinding",
+    "Manual milling",
+    "Forklift operation",
+    "5S workplace organization"
+  ],
+  "targetRoles": [
+    "CNC Machinist",
+    "Setup Machinist",
+    "CNC Mill Operator"
+  ],
+  "facts": {
+    "credentials": [
+      {
+        "name": "NIMS Machining Level I: CNC Milling",
+        "issuer": "NIMS",
+        "status": null,
+        "expires": null
+      },
+      {
+        "name": "Forklift operator",
+        "issuer": null,
+        "status": null,
+        "expires": null
+      }
+    ],
+    "education": [
+      {
+        "level": "certificate",
+        "field": "Machine Tool Technology",
+        "completed": true
+      },
+      {
+        "level": "high_school",
+        "field": null,
+        "completed": true
+      }
+    ],
+    "yearsExperience": {
+      "total": null,
+      "byRoleFamily": []
+    },
+    "languages": [],
+    "workAuthorization": null
+  },
+  "extractVersion": 2
+}

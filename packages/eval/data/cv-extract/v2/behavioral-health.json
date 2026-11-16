@@ -1,0 +1,82 @@
+{
+  "summary": "Seasoned Licensed Clinical Social Worker with roughly three decades of experience across psychiatric crisis services, care coordination, clinical supervision, and psychotherapy. Leads a 24/7 psychiatric crisis call center and psychiatric emergency team, with interim oversight of utilization management and bed finding in a large care coordination center. Background includes telephonic biopsychosocial assessment, utilization and level-of-care decisions, field-based case management for adults with chronic mental illness, expert court testimony, and clinical education of medical residents. Strong in staff hiring and performance management, quality review and performance indicators, protocol and training development, and electronic health record documentation.",
+  "skills": [
+    "Psychiatric crisis intervention",
+    "Crisis call center operations",
+    "Clinical supervision",
+    "Staff hiring and performance management",
+    "Psychotherapy",
+    "Individual, couple and family therapy",
+    "Group therapy",
+    "Biopsychosocial assessment",
+    "Utilization management",
+    "Care coordination",
+    "Case management",
+    "Level-of-care determination",
+    "Discharge planning",
+    "Quality assurance review",
+    "Performance indicators",
+    "Protocol and policy development",
+    "Training curriculum development",
+    "Medical resident education",
+    "Documentation standards",
+    "Epic",
+    "Interqual",
+    "Microsoft Word",
+    "Microsoft Excel",
+    "Microsoft PowerPoint",
+    "Microsoft Visio",
+    "Conservatorship evaluation",
+    "Expert witness testimony",
+    "Substance abuse assessment",
+    "Frequent caller care planning",
+    "Payroll and scheduling administration",
+    "Sign language"
+  ],
+  "targetRoles": [
+    "Behavioral Health Clinical Supervisor",
+    "Licensed Clinical Social Worker",
+    "Care Coordination Manager",
+    "Psychiatric Crisis Supervisor",
+    "Utilization Review Specialist"
+  ],
+  "facts": {
+    "credentials": [
+      {
+        "name": "Licensed Clinical Social Worker (LCSW)",
+        "issuer": null,
+        "status": null,
+        "expires": null
+      }
+    ],
+    "education": [
+      {
+        "level": "master",
+        "field": "Social Work",
+        "completed": true
+      },
+      {
+        "level": "bachelor",
+        "field": "Psychology",
+        "completed": true
+      },
+      {
+        "level": "other",
+        "field": "Law",
+        "completed": true
+      }
+    ],
+    "yearsExperience": {
+      "total": null,
+      "byRoleFamily": []
+    },
+    "languages": [
+      {
+        "language": "Sign language",
+        "proficiency": null
+      }
+    ],
+    "workAuthorization": null
+  },
+  "extractVersion": 2
+}

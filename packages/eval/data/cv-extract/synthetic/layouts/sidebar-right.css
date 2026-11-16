@@ -1,0 +1,80 @@
+/* A full-width name banner, the career history on the left and a light boxed sidebar on the right. */
+@page {
+  size: Letter;
+  margin: 0;
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  font: 10pt/1.4 Georgia, "Times New Roman", serif;
+  color: #1a1a1a;
+}
+header {
+  padding: 0.45in 0.55in 0.25in;
+  border-bottom: 3px double #7a2e2e;
+}
+h1 {
+  margin: 0;
+  font-size: 22pt;
+  font-weight: normal;
+  letter-spacing: 0.04em;
+}
+.title {
+  margin: 3pt 0 0;
+  color: #7a2e2e;
+  font-size: 11pt;
+}
+.contact {
+  margin: 4pt 0 0;
+  font-size: 8.5pt;
+  color: #555;
+}
+.page {
+  display: flex;
+  gap: 0.3in;
+  padding: 0.25in 0.55in 0.5in;
+}
+.main {
+  flex: 1;
+}
+.side {
+  width: 2.35in;
+  padding: 0.15in 0.18in;
+  background: #f4efe9;
+  border: 1px solid #d8cdbf;
+  font-size: 9pt;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+h2 {
+  margin: 12pt 0 5pt;
+  color: #7a2e2e;
+  font-size: 10.5pt;
+  font-variant: small-caps;
+  letter-spacing: 0.06em;
+}
+.side h2:first-child,
+.main h2:first-child {
+  margin-top: 0;
+}
+h3 {
+  margin: 8pt 0 0;
+  font-size: 10pt;
+}
+.meta {
+  margin: 0 0 3pt;
+  color: #555;
+  font-size: 9pt;
+}
+p {
+  margin: 0 0 4pt;
+}
+ul {
+  margin: 0 0 4pt;
+  padding-left: 13pt;
+}
+.side ul {
+  padding-left: 11pt;
+}

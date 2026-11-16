@@ -1,0 +1,59 @@
+{
+  "summary": "Housekeeper with over a decade of residential cleaning across private homes, with recurring clients in South Florida, and prior experience as a breakfast chef and diner owner-operator. Skilled in kitchen and bathroom cleaning, laundry and linen care, bed making, furniture dusting, floor care, and organizing, with added experience in pet care, errands, and driving clients to appointments. Works independently with a flexible schedule and maintains long-term client trust through thorough, reliable service. Brings food service and kitchen management background including menu development, purchasing, and staff supervision.",
+  "skills": [
+    "residential cleaning",
+    "kitchen cleaning",
+    "bathroom cleaning",
+    "laundry",
+    "ironing",
+    "linen changing",
+    "bed making",
+    "dusting",
+    "furniture polishing",
+    "vacuuming",
+    "floor mopping",
+    "window washing",
+    "trash removal",
+    "recycling",
+    "organizing",
+    "refrigerator cleaning",
+    "oven cleaning",
+    "pet care",
+    "errand running",
+    "grocery shopping",
+    "client driving",
+    "breakfast cooking",
+    "menu development",
+    "food preparation",
+    "kitchen equipment maintenance",
+    "sanitation",
+    "purchasing",
+    "payroll",
+    "staff scheduling",
+    "hiring",
+    "time management"
+  ],
+  "targetRoles": [
+    "Housekeeper",
+    "Residential Cleaner",
+    "Private Household Caregiver",
+    "Breakfast Cook"
+  ],
+  "facts": {
+    "credentials": [],
+    "education": [
+      {
+        "level": "high_school",
+        "field": "Business",
+        "completed": true
+      }
+    ],
+    "yearsExperience": {
+      "total": null,
+      "byRoleFamily": []
+    },
+    "languages": [],
+    "workAuthorization": null
+  },
+  "extractVersion": 2
+}

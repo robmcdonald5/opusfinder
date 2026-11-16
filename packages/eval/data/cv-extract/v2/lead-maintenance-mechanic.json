@@ -1,0 +1,69 @@
+{
+  "summary": "Lead maintenance mechanic with over seven years of experience maintaining conveyor and sortation systems in distribution center settings. Skilled in mechanical and electrical repair of belt and live roller conveyors, AC motors, motor control components, and tilt tray sorters including Crisplant S2000 systems. Leads and trains maintenance teams across shifts, plans and runs preventative maintenance programs, manages spare parts procurement and vendor coordination, and supports facility maintenance and network connectivity. Reads electrical and mechanical drawings and operates powered industrial equipment.",
+  "skills": [
+    "Conveyor maintenance",
+    "Sortation system maintenance",
+    "Tilt tray sorter maintenance",
+    "Crisplant S2000",
+    "Belt conveyors",
+    "Live roller conveyors",
+    "AC motor replacement",
+    "Motor control troubleshooting",
+    "Variable frequency drives",
+    "VFD installation and configuration",
+    "Motor starters",
+    "Motor overloads",
+    "Proximity sensors",
+    "Photoelectric sensors",
+    "Encoders",
+    "Limit switches",
+    "Solenoids",
+    "Electrical troubleshooting",
+    "Mechanical repair",
+    "Gearbox replacement",
+    "Preventative maintenance programs",
+    "Spare parts inventory management",
+    "Spare parts procurement",
+    "Vendor coordination",
+    "Facility maintenance",
+    "Pallet racking assembly",
+    "Industrial battery maintenance",
+    "CCTV installation",
+    "IP CCTV configuration",
+    "Hikvision",
+    "Ethernet cabling",
+    "Ethernet networking",
+    "TCP/IP",
+    "Electrical and mechanical drawing interpretation",
+    "Forklift operation",
+    "Aerial work platform operation",
+    "Boom truck operation",
+    "Order picker operation",
+    "MS Office",
+    "RF handheld scanner operation",
+    "Order picking",
+    "Packing"
+  ],
+  "targetRoles": [
+    "Lead Maintenance Mechanic",
+    "Maintenance Mechanic",
+    "Conveyor Maintenance Technician"
+  ],
+  "facts": {
+    "credentials": [],
+    "education": [
+      {
+        "level": "high_school",
+        "field": null,
+        "completed": true
+      }
+    ],
+    "yearsExperience": {
+      "total": 7,
+      "byRoleFamily": []
+    },
+    "languages": [],
+    "workAuthorization": null
+  },
+  "extractVersion": 2
+}

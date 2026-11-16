@@ -1,0 +1,39 @@
+{
+  "id": "phlebotomist",
+  "heldOut": true,
+  "expected": {
+    "summary": [["phlebotomist", "phlebotomy"]],
+    "skills": [
+      ["phlebotomy", "venipuncture", "blood collection", "capillary collection"],
+      ["specimen", "specimens", "lab", "laboratory", "clia", "osha"]
+    ],
+    "targetRoles": ["phlebotomist", "phlebotomy"],
+    "credentials": [
+      {
+        "match": ["mcs", "automated blood collection", "blood collection"]
+      }
+    ],
+    "education": [
+      {
+        "level": ["master"],
+        "field": [
+          "healthcare administration",
+          "health care administration",
+          "healthcare management",
+          "healthcare"
+        ],
+        "completed": false
+      }
+    ],
+    "years": [],
+    "languages": [],
+    "workAuthorization": null
+  },
+  "judgementCalls": [
+    "'Certified MCS+ Automated Blood Collection Tech' (a bullet under the 2001-2005 donor-collection job) is required as a credential, with no status.",
+    "No phlebotomy certification is stated, only the job titles; a phlebotomist certification entry is not allowed.",
+    "'Trained in HIPPA compliance' and 'CLIA & OSHA compliance' are not credentials.",
+    "The MBA is dated 'Current', which is keyed as not completed.",
+    "No bachelor's degree is listed, so one implied by the MBA is not allowed."
+  ]
+}

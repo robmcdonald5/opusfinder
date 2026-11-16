@@ -1,12 +1,5 @@
 {
   "id": "food-server",
-  "group": "hourly-shift",
-  "source": {
-    "dataset": "opensporks/resumes",
-    "revision": "ed4cb5f3fd1ce7e0a0e74e1a09c1a3b702c2c2eb",
-    "path": "data/data/CHEF/28176889.pdf",
-    "sha256": "f9e9c6f67c3886945d6b691d0ea60f046f538f0833188460cdc558a94c03d9e4"
-  },
   "expected": {
     "summary": [["food service", "food server", "server", "cafeteria"]],
     "skills": [["food prep", "food preparation", "food service", "food serving", "meal service"]],

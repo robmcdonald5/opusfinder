@@ -1,0 +1,77 @@
+{
+  "summary": "Mechanical and product design engineer with roughly 4-5 years of engineering experience, taking products from laboratory prototype to mass manufacturing. Works in hardware design, 3D modeling and CAD, structural and stress analysis, and manufacturing process redesign, including satellite communication hardware and automotive-related projects. Has led team process redesign work and contributed to multiple new product developments. Holds a master's degree in progress in mechanical engineering with a robotics and manufacturing focus, alongside a bachelor's in mechanical engineering.",
+  "skills": [
+    "CAD",
+    "SolidWorks",
+    "AutoCAD",
+    "3D modeling",
+    "Prototyping",
+    "Mechanical design",
+    "Finite element analysis (FEA)",
+    "Stress analysis",
+    "MATLAB",
+    "MATLAB Simulink",
+    "Statistical analysis",
+    "Data analysis",
+    "Python",
+    "Fortran",
+    "C",
+    "Linux",
+    "Maple",
+    "Computer-aided manufacturing (CAM)",
+    "Manufacturing systems integration",
+    "Engine components",
+    "Fuel systems",
+    "Pumps",
+    "Vehicle dynamics",
+    "Powertrain systems",
+    "Welding",
+    "Lathe operation",
+    "Mill operation",
+    "Electrical wiring",
+    "Reading electrical diagrams",
+    "Simulation",
+    "Team leadership",
+    "Technical direction",
+    "Product strategy",
+    "Design for manufacturability",
+    "Smartdraw",
+    "3D printing"
+  ],
+  "targetRoles": [
+    "Product Designer",
+    "Mechanical Design Engineer",
+    "Manufacturing Engineer"
+  ],
+  "facts": {
+    "credentials": [],
+    "education": [
+      {
+        "level": "master",
+        "field": "Mechanical Engineering (Robotics and Manufacturing)",
+        "completed": false
+      },
+      {
+        "level": "bachelor",
+        "field": "Mechanical Engineering",
+        "completed": true
+      }
+    ],
+    "yearsExperience": {
+      "total": 4.5,
+      "byRoleFamily": []
+    },
+    "languages": [
+      {
+        "language": "English",
+        "proficiency": null
+      },
+      {
+        "language": "Chinese",
+        "proficiency": null
+      }
+    ],
+    "workAuthorization": null
+  },
+  "extractVersion": 2
+}

@@ -1,0 +1,64 @@
+{
+  "summary": "Phlebotomist with roughly 20 years of experience across outpatient, mobile, nursing home, and donor collection settings, including preceptor responsibilities for new technicians. Performs aseptic venipuncture and capillary collection, specimen receiving, processing, and chronological prioritization, plus point-of-care microbiology screening such as rapid strep, HCG, RSV, and mono tests. Experienced in laboratory instrument maintenance, reviewing results and escalating abnormal findings, and maintaining CLIA, OSHA, and HIPAA compliance. Brings administrative and healthcare registration background, including EHR patient registration and clerical support.",
+  "skills": [
+    "Phlebotomy",
+    "Venipuncture",
+    "Capillary blood collection",
+    "Specimen processing",
+    "Specimen receiving and inventory",
+    "Point-of-care testing",
+    "Rapid strep testing",
+    "HCG testing",
+    "RSV testing",
+    "Mononucleosis screening",
+    "Microbiology",
+    "Blood bank",
+    "Lab equipment maintenance",
+    "Laboratory test reporting",
+    "Quality control",
+    "Quality assurance",
+    "CLIA compliance",
+    "OSHA compliance",
+    "HIPAA compliance",
+    "Data analysis",
+    "EHR patient registration",
+    "Customer service",
+    "Clerical support",
+    "Microsoft Excel",
+    "Microsoft Word",
+    "Microsoft Outlook",
+    "Microsoft PowerPoint",
+    "AS400",
+    "Payroll processing",
+    "Loan processing"
+  ],
+  "targetRoles": [
+    "Phlebotomist",
+    "Phlebotomy Technician",
+    "Lab Assistant"
+  ],
+  "facts": {
+    "credentials": [
+      {
+        "name": "Certified MCS+ Automated Blood Collection Tech",
+        "issuer": null,
+        "status": null,
+        "expires": null
+      }
+    ],
+    "education": [
+      {
+        "level": "master",
+        "field": "Healthcare Administration Management",
+        "completed": false
+      }
+    ],
+    "yearsExperience": {
+      "total": null,
+      "byRoleFamily": []
+    },
+    "languages": [],
+    "workAuthorization": null
+  },
+  "extractVersion": 2
+}

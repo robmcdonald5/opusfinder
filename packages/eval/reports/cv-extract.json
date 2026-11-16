@@ -1,9 +1,10 @@
 {
-  "cvs": 27,
+  "cvs": 39,
+  "heldOut": 12,
   "groups": {
-    "healthcare-licensed": 9,
-    "hourly-shift": 8,
-    "other-non-tech": 6,
+    "healthcare-licensed": 13,
+    "hourly-shift": 12,
+    "other-non-tech": 10,
     "tech": 4
   },
   "versions": {
@@ -80,6 +81,14 @@
       "credentialsMentioned": {
         "correct": 40,
         "total": 49
+      },
+      "tuned": {
+        "correct": 151,
+        "total": 223
+      },
+      "heldOut": {
+        "correct": 0,
+        "total": 0
       },
       "wrong": {
         "aviation-mechanic": {
@@ -413,31 +422,31 @@
       }
     },
     "v2": {
-      "cvs": 27,
+      "cvs": 39,
       "overall": {
-        "correct": 216,
-        "total": 223
+        "correct": 313,
+        "total": 324
       },
       "sharedFields": {
-        "correct": 88,
-        "total": 88
+        "correct": 129,
+        "total": 129
       },
       "factFields": {
-        "correct": 128,
-        "total": 135
+        "correct": 184,
+        "total": 195
       },
       "byGroup": {
         "healthcare-licensed": {
-          "correct": 72,
-          "total": 74
+          "correct": 104,
+          "total": 108
         },
         "hourly-shift": {
-          "correct": 65,
-          "total": 66
+          "correct": 98,
+          "total": 100
         },
         "other-non-tech": {
-          "correct": 47,
-          "total": 50
+          "correct": 79,
+          "total": 83
         },
         "tech": {
           "correct": 32,
@@ -446,45 +455,53 @@
       },
       "byField": {
         "summary": {
-          "correct": 27,
-          "total": 27
+          "correct": 39,
+          "total": 39
         },
         "skills": {
-          "correct": 27,
-          "total": 27
+          "correct": 39,
+          "total": 39
         },
         "targetRoles": {
-          "correct": 27,
-          "total": 27
+          "correct": 39,
+          "total": 39
         },
         "credentials": {
-          "correct": 24,
-          "total": 27
+          "correct": 35,
+          "total": 39
         },
         "education": {
-          "correct": 25,
-          "total": 27
+          "correct": 37,
+          "total": 39
         },
         "yearsExperience": {
-          "correct": 26,
-          "total": 27
+          "correct": 36,
+          "total": 39
         },
         "languages": {
-          "correct": 27,
-          "total": 27
+          "correct": 39,
+          "total": 39
         },
         "workAuthorization": {
-          "correct": 26,
-          "total": 27
+          "correct": 37,
+          "total": 39
         },
         "protected": {
-          "correct": 7,
-          "total": 7
+          "correct": 12,
+          "total": 12
         }
       },
       "credentialsMentioned": {
-        "correct": 34,
-        "total": 49
+        "correct": 47,
+        "total": 69
+      },
+      "tuned": {
+        "correct": 216,
+        "total": 223
+      },
+      "heldOut": {
+        "correct": 97,
+        "total": 101
       },
       "wrong": {
         "finance-manager": {
@@ -509,6 +526,26 @@
             "Geriatric Resource Nurse (GRN) certification: status inactive ≠ null"
           ]
         },
+        "syn-barista": {
+          "yearsExperience": [
+            "missing: 4 (either)"
+          ]
+        },
+        "syn-medical-assistant": {
+          "credentials": [
+            "Certified Phlebotomy Technician (CPT): issuer National Healthcare Association ≠ national healthcareer"
+          ]
+        },
+        "syn-physician-assistant": {
+          "workAuthorization": [
+            "missing: u s citizen"
+          ]
+        },
+        "tax-examining-clerk": {
+          "yearsExperience": [
+            "unexpected: 10 (insurance)"
+          ]
+        },
         "teacher-ec4": {
           "education": [
             "unexpected: certificate Cooperative Teacher program, A Child's Learning Place"
@@ -519,6 +556,74 @@
             "unexpected: 8 (personal training)"
           ]
         }
+      },
+      "repeat": {
+        "cvs": 12,
+        "run1": {
+          "correct": 97,
+          "total": 101
+        },
+        "run2": {
+          "correct": 99,
+          "total": 101
+        },
+        "flipped": {
+          "staff-pharmacist": [
+            "education"
+          ],
+          "syn-barista": [
+            "yearsExperience"
+          ],
+          "syn-medical-assistant": [
+            "credentials"
+          ],
+          "tax-examining-clerk": [
+            "yearsExperience"
+          ]
+        },
+        "wrong": {
+          "staff-pharmacist": {
+            "education": [
+              "unexpected: certificate Pharmacy Technician"
+            ]
+          },
+          "syn-physician-assistant": {
+            "workAuthorization": [
+              "missing: u s citizen"
+            ]
+          }
+        },
+        "reworded": {
+          "admissions-counselor": [
+            "education"
+          ],
+          "phlebotomist": [
+            "credentials"
+          ],
+          "staff-pharmacist": [
+            "credentials",
+            "education"
+          ],
+          "syn-barista": [
+            "credentials",
+            "yearsExperience"
+          ],
+          "syn-food-safety-manager": [
+            "yearsExperience"
+          ],
+          "syn-medical-assistant": [
+            "credentials"
+          ],
+          "syn-physician-assistant": [
+            "credentials",
+            "education",
+            "languages"
+          ],
+          "tax-examining-clerk": [
+            "yearsExperience"
+          ]
+        },
+        "factFields": 60
       }
     }
   }

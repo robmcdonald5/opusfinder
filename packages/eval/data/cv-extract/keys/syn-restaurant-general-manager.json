@@ -1,0 +1,58 @@
+{
+  "id": "syn-restaurant-general-manager",
+  "heldOut": true,
+  "expected": {
+    "summary": [["general manager", "restaurant manager"]],
+    "skills": [
+      ["p l", "profit and loss", "labor cost", "food cost"],
+      ["inventory", "ordering"]
+    ],
+    "targetRoles": ["general manager", "restaurant manager"],
+    "credentials": [
+      {
+        "match": ["servsafe"],
+        "issuer": ["national restaurant association"],
+        "expires": "2029-05"
+      }
+    ],
+    "education": [
+      {
+        "level": ["associate"],
+        "field": ["culinary"]
+      },
+      {
+        "level": ["bachelor"],
+        "field": ["hospitality"],
+        "completed": false
+      }
+    ],
+    "years": [
+      {
+        "years": 12,
+        "slot": "total"
+      },
+      {
+        "years": 7,
+        "slot": "family"
+      }
+    ],
+    "languages": [
+      {
+        "match": ["english"]
+      },
+      {
+        "match": ["polish"]
+      },
+      {
+        "match": ["spanish"]
+      }
+    ],
+    "workAuthorization": null
+  },
+  "judgementCalls": [
+    "Synthetic CV, sidebar-right layout: the certification and the languages are in the sidebar.",
+    "The Bachelor of Science is marked 'not completed'.",
+    "The Emerging Leaders program and the allergen awareness training are not credentials.",
+    "All three languages are listed, English included; their proficiency wording is informal and unchecked."
+  ]
+}

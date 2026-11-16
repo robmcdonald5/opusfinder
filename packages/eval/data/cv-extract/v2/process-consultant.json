@@ -1,0 +1,51 @@
+{
+  "summary": "Operations and process consultant with roughly 20 years of experience spanning entrepreneurship and management consulting for small and medium-sized businesses. Founded and led a corporate housing services company to about $4.5 million in annual revenue, managing multi-market expansion, procurement, and high-volume apartment inventory. Later served as Director of Operations and independent Process Consultant, converting management to data-driven decision making, streamlining accounting systems, and delivering measurable cost reductions. Strong in negotiation, procurement optimization, process development, and employee hiring and training.",
+  "skills": [
+    "Operations analysis",
+    "Process development",
+    "Procurement optimization",
+    "Negotiation",
+    "Project management",
+    "Business metrics analysis",
+    "Financial analysis",
+    "Cost reduction",
+    "Accounting systems",
+    "Cash flow management",
+    "Vendor management",
+    "Employee training",
+    "Hiring and staffing",
+    "Strategic planning",
+    "Cloud-based IT management",
+    "Market expansion",
+    "Inventory management",
+    "Lease negotiation"
+  ],
+  "targetRoles": [
+    "Operations Manager",
+    "Process Consultant",
+    "Business Operations Director",
+    "Procurement Manager"
+  ],
+  "facts": {
+    "credentials": [],
+    "education": [
+      {
+        "level": "bachelor",
+        "field": null,
+        "completed": true
+      }
+    ],
+    "yearsExperience": {
+      "total": null,
+      "byRoleFamily": []
+    },
+    "languages": [
+      {
+        "language": "German",
+        "proficiency": "Professional working proficiency"
+      }
+    ],
+    "workAuthorization": null
+  },
+  "extractVersion": 2
+}

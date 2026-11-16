@@ -1,0 +1,49 @@
+{
+  "id": "syn-barista",
+  "heldOut": true,
+  "expected": {
+    "summary": [["barista"]],
+    "skills": [["espresso"], ["latte art", "milk texturing", "milk steaming"]],
+    "targetRoles": ["barista"],
+    "credentials": [
+      {
+        "match": ["food worker", "food handler"],
+        "expires": "2027"
+      }
+    ],
+    "education": [
+      {
+        "level": ["associate"],
+        "field": ["business"],
+        "completed": false
+      },
+      {
+        "level": ["high_school"]
+      }
+    ],
+    "years": [
+      {
+        "years": 4,
+        "slot": "either"
+      }
+    ],
+    "languages": [
+      {
+        "match": ["vietnamese"],
+        "proficiency": ["native"]
+      },
+      {
+        "match": ["english"],
+        "proficiency": ["fluent"]
+      }
+    ],
+    "workAuthorization": ["permanent resident", "green card"],
+    "forbidden": ["2001"]
+  },
+  "judgementCalls": [
+    "Synthetic CV, sidebar-right layout: the permit, languages, residency statement and date of birth are in the sidebar.",
+    "The date of birth (14 March 2001) must not be extracted.",
+    "The Associate of Arts is 'part-time, expected 2027': not completed.",
+    "The latte art workshop and the cupping class are not credentials."
+  ]
+}

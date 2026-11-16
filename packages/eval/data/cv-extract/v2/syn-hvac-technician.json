@@ -1,0 +1,93 @@
+{
+  "summary": "HVAC technician with about seven years of experience on commercial and industrial systems, including chillers, air handling units, cleanroom HEPA filtration and building automation controls. Maintains large central plant equipment and cleanroom air systems in a semiconductor packaging facility, with a background in rooftop, split-system and refrigeration service across contract commercial sites. Holds EPA Section 608 Universal certification and works across shifts with on-call availability.",
+  "skills": [
+    "HVAC maintenance",
+    "chillers",
+    "air handling units",
+    "cooling towers",
+    "HEPA filtration",
+    "cleanroom pressurization",
+    "building automation systems",
+    "Siemens building automation",
+    "Johnson Controls",
+    "differential pressure monitoring",
+    "refrigerant recovery",
+    "refrigerant charging",
+    "brazing",
+    "compressor diagnostics",
+    "variable frequency drives",
+    "pump repair",
+    "pneumatic actuators",
+    "electrical troubleshooting",
+    "480V systems",
+    "rooftop unit service",
+    "split system service",
+    "walk-in cooler service",
+    "preventive maintenance",
+    "CMMS",
+    "Maximo",
+    "EPA Section 608",
+    "OSHA 10"
+  ],
+  "targetRoles": [
+    "HVAC Technician",
+    "Industrial HVAC Technician",
+    "Facilities Maintenance Technician",
+    "HVAC Service Technician"
+  ],
+  "facts": {
+    "credentials": [
+      {
+        "name": "EPA Section 608 Universal",
+        "issuer": null,
+        "status": null,
+        "expires": null
+      },
+      {
+        "name": "Texas ACR Registered Technician",
+        "issuer": "TDLR",
+        "status": null,
+        "expires": null
+      },
+      {
+        "name": "NATE Commercial Refrigeration",
+        "issuer": null,
+        "status": "in_progress",
+        "expires": null
+      },
+      {
+        "name": "OSHA 10 General Industry",
+        "issuer": null,
+        "status": null,
+        "expires": null
+      }
+    ],
+    "education": [
+      {
+        "level": "associate",
+        "field": "HVAC Technology",
+        "completed": true
+      }
+    ],
+    "yearsExperience": {
+      "total": 7,
+      "byRoleFamily": []
+    },
+    "languages": [
+      {
+        "language": "English",
+        "proficiency": null
+      },
+      {
+        "language": "Spanish",
+        "proficiency": null
+      },
+      {
+        "language": "Tamil",
+        "proficiency": null
+      }
+    ],
+    "workAuthorization": null
+  },
+  "extractVersion": 2
+}

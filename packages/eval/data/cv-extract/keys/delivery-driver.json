@@ -1,12 +1,5 @@
 {
   "id": "delivery-driver",
-  "group": "hourly-shift",
-  "source": {
-    "dataset": "opensporks/resumes",
-    "revision": "ed4cb5f3fd1ce7e0a0e74e1a09c1a3b702c2c2eb",
-    "path": "data/data/CONSTRUCTION/22894544.pdf",
-    "sha256": "34de183ba952bcb74175558047e26d05bb474c8ffdc411245aba520211bb49c7"
-  },
   "expected": {
     "summary": [["delivery", "driver", "customer service"]],
     "skills": [

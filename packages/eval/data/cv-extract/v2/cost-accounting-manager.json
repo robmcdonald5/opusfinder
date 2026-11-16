@@ -1,0 +1,72 @@
+{
+  "summary": "Finance manager with over a decade of progressive accounting and financial management experience, moving from cost accounting and controllership into multi-plant finance leadership in manufacturing. Strong in month-end and year-end close, budgeting and forecasting, internal controls and Sarbanes-Oxley compliance, intercompany reconciliation, and SAP implementation. Has led accounting teams of up to six, overseen financial reporting for three plants with roughly $80 million in combined annual sales, and extended responsibility into purchasing, supply chain and payroll.",
+  "skills": [
+    "Account reconciliation",
+    "Month-end close",
+    "Year-end close",
+    "Budgeting",
+    "Forecasting",
+    "Financial reporting",
+    "Financial analysis",
+    "Variance analysis",
+    "Internal controls",
+    "Sarbanes-Oxley compliance",
+    "SAP",
+    "Dynamics AX",
+    "AS400",
+    "JD Edwards",
+    "MAS90",
+    "Great Plains",
+    "QuickBooks",
+    "SBT",
+    "Access",
+    "SAS",
+    "SQL",
+    "Microsoft Excel",
+    "UltiPro",
+    "ADP",
+    "Payroll administration",
+    "Purchasing",
+    "Procurement",
+    "Inventory control",
+    "Supply chain management",
+    "Vendor contract management",
+    "Lean manufacturing",
+    "Accounts receivable",
+    "Trend and balance sheet analysis",
+    "Process improvement",
+    "IFRS",
+    "GAAP",
+    "Audit preparation",
+    "Cost accounting",
+    "Job costing"
+  ],
+  "targetRoles": [
+    "Finance Manager",
+    "Accounting Manager",
+    "Corporate Controller",
+    "Cost Accountant"
+  ],
+  "facts": {
+    "credentials": [],
+    "education": [
+      {
+        "level": "bachelor",
+        "field": "Accounting",
+        "completed": true
+      },
+      {
+        "level": "master",
+        "field": "Business Administration",
+        "completed": true
+      }
+    ],
+    "yearsExperience": {
+      "total": null,
+      "byRoleFamily": []
+    },
+    "languages": [],
+    "workAuthorization": null
+  },
+  "extractVersion": 2
+}
