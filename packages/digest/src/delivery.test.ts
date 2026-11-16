@@ -8,6 +8,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { DigestEmailPayload } from "@opusfinder/db/repos";
+import { sendDigestEmail } from "@opusfinder/email";
 import type { UserId } from "@opusfinder/shared";
 import { recordingStep, stubDb } from "@test/digest/stubs";
 
@@ -254,6 +255,56 @@ describe("deliverDigestEmail", () => {
     expect(result).toBe("delivered");
     expect(runs).toEqual(["send-email", "record-sent", "delivery-poll-0", "record-delivery"]);
     expect(sleeps).toEqual(["delivery-wait-0"]);
+  });
+
+  it("a retried send step can't email twice: the retry sends the same bytes under the same idempotency key", async () => {
+    // Resend, as far as this matters: a repeated Idempotency-Key with the same body returns the first
+    // email's id and sends nothing; with a different body it answers 409.
+    const accepted = new Map<string, string>();
+    const requests: { key: string | null; body: string }[] = [];
+    vi.stubGlobal("fetch", async (_url: string, init: RequestInit & { headers: Headers }) => {
+      const key = new Headers(init.headers).get("idempotency-key");
+      const body = String(init.body);
+      requests.push({ key, body });
+      const first = accepted.get(key ?? "");
+      if (first !== undefined && first !== body) return Response.json({}, { status: 409 });
+      if (key) accepted.set(key, body);
+      return Response.json({ id: "re_only_one" });
+    });
+    const email = { apiKey: "re_send_test", apiKeyFull: "re_full_test", from: "d@send.test" };
+    const { tools } = recordingStep();
+    // The engine runs the send step's body twice: the first attempt's result was lost after Resend had
+    // accepted the email (a timeout, a crash before the result was stored).
+    const atLeastOnce = {
+      ...tools,
+      run: async <T>(id: string, fn: () => Promise<T>): Promise<T> => {
+        if (id === "send-email") await fn();
+        return tools.run(id, fn);
+      },
+    };
+    const db = stubDb([
+      joinedPayloadRows(), // first attempt: the payload read and the delivery setting
+      EMAIL_ACCOUNT,
+      joinedPayloadRows(), // the retry reads both again
+      EMAIL_ACCOUNT,
+      [{ userId: FIXTURE.userId }], // recordDigestSent: digests update RETURNING
+      [], // recordDigestSent: user_preferences update
+      [{ userId: FIXTURE.userId }], // recordDigestDeliveryOutcome: digests update RETURNING
+    ]);
+
+    const result = await deliverDigestEmail(
+      atLeastOnce,
+      db,
+      { send: (payload) => sendDigestEmail(payload, email), lastEvent: async () => "delivered" },
+      7,
+    );
+    vi.unstubAllGlobals();
+
+    expect(result).toBe("delivered");
+    expect(requests).toHaveLength(2);
+    expect(requests.map((r) => r.key)).toEqual(["digest/7", "digest/7"]);
+    expect(requests[1]!.body).toBe(requests[0]!.body);
+    expect(accepted.size).toBe(1); // one email
   });
 
   it("a failed record-sent after an accepted send never records a send failure", async () => {
