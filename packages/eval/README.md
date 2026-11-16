@@ -192,6 +192,10 @@ const { object, usage, host, servedModel } = await callModel({
 - A reply that can't be used (truncated, refused, off-schema, wrong host) throws `ModelReplyError` with
   the reason and what the reply cost, and is not re-sent. Network failures, timeouts, 429s and 5xx are
   retried; what's left throws `OpenRouterError`.
+- State the output contract (scales, allowed values, length limits) in the prompt, not only in the
+  schema's `.describe()` text. Hosts differ: DeepInfra decodes against the schema but shows the model
+  none of its text, while Anthropic reads the descriptions but doesn't enforce number or length bounds
+  (`src/strict-schema.ts`). `servedModel` is the dated build, so a report can say exactly what ran.
 - `modelRerankCall(route)` (`src/rankers/model-rerank.ts`) is the digest's rerank request on this caller:
   pass it to `llmRerankRanker(call)`. The ranker's default is still the stub.
 
