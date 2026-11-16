@@ -142,6 +142,11 @@ pnpm --filter @opusfinder/eval run cv-extract score     # score every version, w
 pnpm --filter @opusfinder/eval run cv-extract review    # the key as a review sheet (data/reviews/)
 ```
 
+**The keys are drafted and not yet owner-checked**, so the committed report's numbers are provisional.
+Each key's `judgementCalls` lists where another reading of the CV is defensible; check those, and the
+rules behind them (a licence used as a job title counts, trainings are not credentials, years are
+stated-only, no status is inferred), before relying on the numbers or seeding anything from `facts`.
+
 A field is right only when everything the key requires is there and nothing it does not allow is, so
 one extra or missing licence fails the whole `credentials` field for that CV. A version-1 profile has
 no `facts` and is scored as stating none.
