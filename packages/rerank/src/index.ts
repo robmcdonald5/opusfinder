@@ -7,8 +7,8 @@
  * `cacheSystem`) and in eval (a deterministic stub), so eval scores exactly what production runs.
  */
 import {
-  composeProfileText,
   composePromptPrefs,
+  profileJudgeContext,
   type PromptPreferences,
   type StructuredProfile,
 } from "@opusfinder/shared";
@@ -146,17 +146,17 @@ RULES (must follow)
 
 /**
  * Compose the cacheable `system` string: the stable rubric, then the candidate's profile via the shared
- * {@link composeProfileText} (the SAME text the profile embedding is built from, so the reranker reasons
- * over the representation retrieval used). The candidate LIST is deliberately NOT here — it is the
- * variable per-chunk tail the injected call adds, keeping this prefix stable and cacheable.
+ * {@link profileJudgeContext} (the judge's own text of the profile, separate from the text the profile
+ * embedding is built from). The candidate LIST is deliberately NOT here — it is the variable per-chunk
+ * tail the injected call adds, keeping this prefix stable and cacheable.
  */
 export function buildRerankSystem(profile: StructuredProfile, prefs?: PromptPreferences): string {
-  const base = `${RERANK_RUBRIC}\n\n=== Candidate profile ===\n${composeProfileText(profile)}`;
+  const base = `${RERANK_RUBRIC}\n\n=== Candidate profile ===\n${profileJudgeContext(profile)}`;
   // The judgment-context preferences (YoE band / salary range / dealbreakers) ride a labeled block AFTER
   // the profile, inside the SAME cached system string. composePromptPrefs returns "" for an unset/all-empty
   // PromptPreferences, so an un-answered user's prefix is byte-identical to the no-prefs path — no per-user
-  // prompt-cache bust on deploy. NEVER fed through composeProfileText (that is the embedding text, which
-  // must stay prefs-free).
+  // prompt-cache bust on deploy. NEVER fed through profileEmbedText (the embedding text, which must stay
+  // prefs-free).
   const prefsBlock = composePromptPrefs(prefs);
   return prefsBlock ? `${base}\n\n=== Candidate stated preferences ===\n${prefsBlock}` : base;
 }

@@ -1,6 +1,6 @@
 import {
-  composeProfileText,
   composePromptPrefs,
+  profileJudgeContext,
   type PromptPreferences,
   type StructuredProfile,
 } from "@opusfinder/shared";
@@ -33,14 +33,14 @@ Output ONLY the note text — no preamble, no heading, no quotation marks, no ma
 
 /**
  * Compose the cached synthesis `system`: the rubric, then the candidate's profile via the shared
- * {@link composeProfileText} (the same representation retrieval + rerank used). The job is NOT here —
+ * {@link profileJudgeContext} (the text of the profile the rerank judge read too). The job is NOT here —
  * it's the per-request variable tail ({@link renderDigestJob}). NOTE: Sonnet 5.5 caches a prefix from
  * 512 tokens, so this ~450-token rubric plus a profile usually pays the 1h-TTL cache write (2x base
  * input) while reads within a batch are best-effort; the `synthesisCache*` counters on `digests.counts`
  * show whether it pays. The batch discount is the load-bearing saving, not the cache.
  */
 export function buildDigestSystem(profile: StructuredProfile, prefs?: PromptPreferences): string {
-  const base = `${DIGEST_SYNTHESIS_SYSTEM}\n\n=== Candidate profile ===\n${composeProfileText(profile)}`;
+  const base = `${DIGEST_SYNTHESIS_SYSTEM}\n\n=== Candidate profile ===\n${profileJudgeContext(profile)}`;
   // Same prefs block as the rerank system so the note can ground level-fit honestly. The salary line,
   // if present, is INERT here — the system rule above forbids mentioning salary in the note; it rides
   // along only because composePromptPrefs is the one shared renderer. Empty/unset → "" → byte-identical

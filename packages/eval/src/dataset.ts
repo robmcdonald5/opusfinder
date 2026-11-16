@@ -9,7 +9,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 
-import { composeEmbeddingText, composeProfileText, isRecord } from "@opusfinder/shared";
+import { composeEmbeddingText, isRecord, profileEmbedText } from "@opusfinder/shared";
 
 import type { EvalExample, EvalJob, EvalProfile } from "./types";
 
@@ -114,10 +114,10 @@ function validateProfile(value: unknown, at: string): EvalProfile {
   };
 
   // Assert the ACTUAL composer's output is non-empty instead of re-deriving the "empty" rule:
-  // composeProfileText is the query text the embedder sees (the single source of truth shared with
+  // profileEmbedText is the query text the embedder sees (the single source of truth shared with
   // production ingest), and it 400s on "". Checking its output keeps this guard correct if the
   // composition (weighting, fields) ever changes.
-  if (composeProfileText(profile).trim() === "") {
+  if (profileEmbedText(profile).trim() === "") {
     throw new Error(
       `${at}: profile has no embeddable content (summary, skills, and targetRoles compose to "").`,
     );

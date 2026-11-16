@@ -1,7 +1,7 @@
 import type { Db } from "@opusfinder/db";
 import { getProfileTextKey, upsertUserProfile } from "@opusfinder/db/repos";
 import {
-  composeProfileText,
+  profileEmbedText,
   profileWarnings,
   scrubProfilePii,
   type UserId,
@@ -38,7 +38,7 @@ export async function restructureProfile(
 
   // structure() returns RAW extraction; the pipeline scrubs PII before persisting + embedding.
   const structured = scrubProfilePii(await deps.structure(text));
-  const embedText = composeProfileText(structured);
+  const embedText = profileEmbedText(structured);
   if (embedText.length === 0) {
     throw new Error("restructureProfile: re-structured profile had no embeddable content");
   }
