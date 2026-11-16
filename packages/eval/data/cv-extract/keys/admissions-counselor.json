@@ -83,7 +83,7 @@
     "'Business Communications - Area of Study' and 'Counseling & Pastoral Care - Area of Study' name no degree: each is required as an education entry of unclear level (other / certificate / associate, not bachelor), completed or not.",
     "The Education section's text is run together, so which school goes with which programme is unclear; schools are not checked.",
     "The police training academy certification is allowed as an education entry (certificate or other) but not required.",
-    "The affiliations line names a Baptist church, a ministry and a missionary group, which state a religion; 'baptist', 'church', 'philathea' and 'missionary' must not appear in the profile.",
+    "The affiliations line names religious organisations, which state a religion; none of the forbidden terms may appear in the profile.",
     "The CV mixes admissions, executive-assistant and 'Executive Administration and Operations Manager' framings, so a wide set of first target roles is accepted."
   ]
 }
