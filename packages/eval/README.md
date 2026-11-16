@@ -275,3 +275,78 @@ no more than one path differs from itself run to run (`src/score-parity.ts`). Th
 - `OPENAI_API_KEY` → `packages/eval/.env` (this package; for the comparison).
 - `VOYAGE_API_KEY` / `DATABASE_URL` are read from the embeddings/db packages (Phase 4/0).
 - `OPENROUTER_API_KEY` → `packages/llm/.env` (for `draft-labels` and `extract-profile`).
+
+## Job snapshot
+
+One frozen set of jobs that every eval arm runs on, so a result can't be an effect of the job pool
+having changed. A snapshot holds, for every job in it, the text, what a harness needs to apply a
+user's preferences, and one vector from each snapshot model, each text embedded once.
+
+**What is in it** (`src/snapshot/format.ts` is the format's definition):
+
+- **Jobs, in two slices.** `ats`: every job that was `active` in production at the export, whatever
+  its age and whether or not production had embedded it. `public`: a one-off fetch of US
+  public-sector postings (USAJOBS postings open to the public, and NYC Jobs; terms in
+  `src/snapshot/public-fetch.ts`). Public jobs and employers have ids from 1,000,000,001 up.
+- **Junk postings are kept and flagged, never dropped:** `blank_description`, `short_description`,
+  `short_title`, `capped`. Flagged jobs are embedded like any other; a harness decides what to do
+  with them. A job with no text at all would get an all-zero vector.
+- **The tables production's location rule reads:** the jobs' companies, the resolved location
+  strings and the places. A public posting's locations are placed by the production GeoNames check
+  from the feed's own city/state fields; a name that isn't a gazetteer city (a military base, a
+  county) is placed at the nearest city to the feed's coordinates, within 15 miles, and says so in
+  its `reason`.
+- **Vectors from three models,** at each model's full width, as float32:
+
+  | model (`slug`) | role | host | width |
+  |---|---|---|---|
+  | `voyage-4-large` | reference: what production runs, never a contender | Voyage | 1024 |
+  | `qwen3-embedding-8b` | challenger: the cheapest credible open model | OpenRouter, pinned to DeepInfra | 4096 |
+  | `nemotron-3-embed-8b` | challenger: the best measured model | DeepInfra | 4096 |
+
+  Every model embeds the same text (production's title + description, cut at one shared cap), as a
+  document in that model's documented way. `src/embedders/challengers.ts` holds each challenger's
+  host pin and its query/document presentation (Qwen's task instruction, Nemotron's prefixes): a pool
+  builder embedding profiles must use the same module with `"query"`, or the two sides of a
+  comparison won't match. Jobs carrying identical text share one vector. A narrower width is cut from
+  the stored one (`truncateVector`), with no second paid run.
+
+**Where it lives.** The objects are in the private R2 bucket `opusfinder-eval` under
+`jobs/<snapshot id>/` (`profiles/` in the same bucket is left for private test profiles). Only
+`data/snapshots/<id>/manifest.json` is in git: it states how each slice was chosen, the counts per
+source and flag, each model's id, host, width and measured spend, and every object's size and
+SHA-256. Job text is never committed.
+
+**Rebuild it** (needs the `EVAL_R2_*` settings below):
+
+```bash
+pnpm --filter @opusfinder/eval snapshot:rebuild -- --id 2026-11-16
+```
+
+It downloads every object the manifest lists into `data/snapshots/<id>/objects/` (gitignored),
+checks each one's size and SHA-256, then loads them all and checks they line up (every row valid,
+one vector per job per model). Any difference stops it with the object's name. `--offline` verifies
+the local files without the bucket.
+
+**Use it.** `openSnapshot(id)` (`src/snapshot/read.ts`) gives the jobs, the tables and each model's
+vectors (optionally cut to a width); `loadSnapshotIntoDb` puts the jobs and tables into a local
+database with production's schema, where production's location rule runs unchanged. A snapshot is
+one moment: compare a job's dates against its slice's `takenAt` in the manifest, never `now()`.
+
+**How one is made** (each step prints counts, never job text):
+
+1. `snapshot:export`: the owner, once, during an ingest tick. Read-only: one REPEATABLE READ,
+   READ ONLY transaction against production. See the header of `scripts/snapshot-export.ts`.
+2. `snapshot:fetch-public -- --id <id>`: the public slice. A one-off, not an ingest adapter.
+3. `snapshot:probe -- --model <slug>`: a few short texts through a challenger's pinned host.
+4. `snapshot:embed -- --id <id> --model <slug> --max-usd <approved total>`: paid, one model per run.
+   Resumable, and it stops before a request that would pass `--max-usd`, counted at list prices
+   across every model in the snapshot (`work/spend.jsonl`).
+5. `snapshot:publish -- --id <id>`: uploads the objects and writes the manifest to commit. Running
+   it again uploads only what is new; a published object is never replaced.
+
+**Settings** (`packages/eval/.env`, never committed): `EVAL_R2_ACCOUNT_ID`, `EVAL_R2_BUCKET`,
+`EVAL_R2_ACCESS_KEY_ID`, `EVAL_R2_SECRET_ACCESS_KEY` (a token scoped to the eval bucket);
+`DEEPINFRA_API_KEY`; `USAJOBS_API_KEY` and `USAJOBS_USER_AGENT` (only to fetch a public slice).
+Qwen uses `OPENROUTER_API_KEY` from `packages/llm/.env`; the reference uses `VOYAGE_API_KEY` from
+`packages/embeddings/.env`.

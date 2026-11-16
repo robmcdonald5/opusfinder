@@ -19,7 +19,13 @@
     "typecheck": "tsc --noEmit",
     "eval:locations": "tsx scripts/locations.ts",
     "locations:review": "tsx scripts/locations-review.ts",
-    "locations:label": "tsx scripts/locations-label.ts"
+    "locations:label": "tsx scripts/locations-label.ts",
+    "snapshot:export": "tsx scripts/snapshot-export.ts",
+    "snapshot:fetch-public": "tsx scripts/snapshot-fetch-public.ts",
+    "snapshot:probe": "tsx scripts/snapshot-probe.ts",
+    "snapshot:embed": "tsx scripts/snapshot-embed.ts",
+    "snapshot:publish": "tsx scripts/snapshot-publish.ts",
+    "snapshot:rebuild": "tsx scripts/snapshot-rebuild.ts"
   },
   "dependencies": {
     "@electric-sql/pglite": "0.5.3",
@@ -30,6 +36,7 @@
     "@opusfinder/locations": "workspace:*",
     "@opusfinder/rerank": "workspace:*",
     "@opusfinder/shared": "workspace:*",
+    "@opusfinder/storage": "workspace:*",
     "drizzle-orm": "^0.45.2",
     "zod": "^4"
   },

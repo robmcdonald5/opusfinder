@@ -1,0 +1,322 @@
+import { appendFileSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+
+import { EmbeddingRejectedError } from "@opusfinder/embeddings";
+
+import { possiblyBilled } from "../embedders/snapshot-models";
+
+import { fakeModel, fakeVector, snapshotJob, writeJobsParts } from "@test/eval/snapshot";
+
+import { embedSlice, modelSpend, planSlice, readSpend } from "./embed-run";
+import { decodeVectors, snapshotEmbedText } from "./format";
+import { readObject } from "./store";
+
+// The embedding run over a local snapshot folder with an offline model: one vector per distinct text,
+// resume from finished chunks, and the spend cap.
+
+describe("embedSlice", () => {
+  let root: string;
+  let objectsDir: string;
+  let workDir: string;
+  const noSleep = () => Promise.resolve();
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), "snapshot-embed-"));
+    objectsDir = join(root, "objects");
+    workDir = join(root, "work");
+  });
+  afterEach(() => rmSync(root, { recursive: true, force: true }));
+
+  const vectorsOf = (path: string, dimensions = 4) =>
+    Array.from(decodeVectors(readObject(objectsDir, path), dimensions, path));
+  const float32 = (v: number[]) => Array.from(new Float32Array(v));
+
+  it("embeds each distinct text once and writes a vectors part aligned to each jobs part", async () => {
+    const twin = { title: "Nurse", descriptionText: "Same posting on two boards. ".repeat(10) };
+    const jobs = [snapshotJob(1), snapshotJob(2, twin), snapshotJob(3), snapshotJob(4, twin)];
+    writeJobsParts(objectsDir, "ats", jobs, 2);
+    const model = fakeModel();
+
+    const result = await embedSlice({ objectsDir, workDir, slice: "ats", model, maxUsd: 1 });
+
+    expect(result).toMatchObject({
+      status: "complete",
+      jobs: 4,
+      uniqueTexts: 3,
+      chunksEmbedded: 1,
+    });
+    // Three texts went out, the cross-post only once.
+    expect(model.requests.flat()).toHaveLength(3);
+    const text = (i: number) => snapshotEmbedText(jobs[i]!).text;
+    expect(vectorsOf("vectors/fake-embed/ats-0000.f32")).toEqual(
+      float32([...fakeVector(text(0)), ...fakeVector(text(1))]),
+    );
+    // Job 4 carries job 2's text, so it carries job 2's vector.
+    expect(vectorsOf("vectors/fake-embed/ats-0001.f32")).toEqual(
+      float32([...fakeVector(text(2)), ...fakeVector(text(1))]),
+    );
+    // Spend is what the provider reported, at the list price.
+    const tokens = [0, 1, 2].reduce((sum, i) => sum + text(i).length, 0);
+    expect(modelSpend(workDir, "fake-embed")).toEqual({ tokens, usd: tokens / 1_000_000 });
+    expect(result.tokens).toBe(tokens);
+  });
+
+  it("gives a job with no text an all-zero vector and embeds nothing for it", async () => {
+    writeJobsParts(objectsDir, "ats", [
+      snapshotJob(1, { title: " ", descriptionText: "" }),
+      snapshotJob(2),
+    ]);
+    const model = fakeModel();
+
+    await embedSlice({ objectsDir, workDir, slice: "ats", model, maxUsd: 1 });
+
+    expect(model.requests.flat()).toHaveLength(1);
+    expect(vectorsOf("vectors/fake-embed/ats-0000.f32").slice(0, 4)).toEqual([0, 0, 0, 0]);
+  });
+
+  it("re-running a finished slice sends nothing and spends nothing", async () => {
+    writeJobsParts(objectsDir, "ats", [snapshotJob(1), snapshotJob(2), snapshotJob(3)]);
+    await embedSlice({ objectsDir, workDir, slice: "ats", model: fakeModel(), maxUsd: 1 });
+    const spent = readSpend(workDir).length;
+
+    const again = fakeModel();
+    const result = await embedSlice({ objectsDir, workDir, slice: "ats", model: again, maxUsd: 1 });
+
+    expect(again.requests).toEqual([]);
+    expect(result).toMatchObject({
+      status: "complete",
+      chunksReused: 1,
+      chunksEmbedded: 0,
+      tokens: 0,
+    });
+    expect(readSpend(workDir)).toHaveLength(spent);
+  });
+
+  it("stops before the request that would pass the cap, then resumes under a higher one", async () => {
+    // 600 distinct texts = two chunks (512 + 88). One token per character at $1/1M tokens.
+    const jobs = Array.from({ length: 600 }, (_x, i) => snapshotJob(i + 1));
+    writeJobsParts(objectsDir, "ats", jobs, 300);
+    const chars = (from: number, to: number) =>
+      jobs.slice(from, to).reduce((sum, j) => sum + snapshotEmbedText(j).text.length, 0);
+    const firstChunkUsd = chars(0, 512) / 1_000_000;
+    const capped = fakeModel({ limits: { maxItems: 64, maxTokens: 1_000_000, charsPerToken: 1 } });
+
+    const stopped = await embedSlice({
+      objectsDir,
+      workDir,
+      slice: "ats",
+      model: capped,
+      // Room for the first chunk and part of the second.
+      maxUsd: firstChunkUsd + chars(512, 550) / 1_000_000,
+      concurrency: 1,
+    });
+
+    expect(stopped.status).toBe("stopped_at_cap");
+    expect(stopped.chunksEmbedded).toBe(1);
+    // Never past the cap, and every billed request is on the record.
+    const recorded = readSpend(workDir).reduce((sum, l) => sum + l.usd, 0);
+    expect(recorded).toBeLessThanOrEqual(firstChunkUsd + chars(512, 550) / 1_000_000);
+    expect(recorded).toBeCloseTo(stopped.usd, 12);
+    // No vectors part is written for a slice that isn't whole.
+    expect(() => readObject(objectsDir, "vectors/fake-embed/ats-0000.f32")).toThrow();
+
+    const resumed = fakeModel({ limits: capped.limits });
+    const done = await embedSlice({ objectsDir, workDir, slice: "ats", model: resumed, maxUsd: 1 });
+
+    expect(done).toMatchObject({ status: "complete", chunksReused: 1, chunksEmbedded: 1 });
+    // Only the second chunk's texts were sent again.
+    expect(resumed.requests.flat()).toHaveLength(88);
+    expect(vectorsOf("vectors/fake-embed/ats-0001.f32")).toHaveLength(300 * 4);
+  });
+
+  it("counts other models' recorded spend against the same cap", async () => {
+    writeJobsParts(objectsDir, "ats", [snapshotJob(1), snapshotJob(2)]);
+    const first = await embedSlice({
+      objectsDir,
+      workDir,
+      slice: "ats",
+      model: fakeModel(),
+      maxUsd: 1,
+    });
+
+    const other = fakeModel({ slug: "other-embed" });
+    const result = await embedSlice({
+      objectsDir,
+      workDir,
+      slice: "ats",
+      model: other,
+      // The first model used the whole allowance.
+      maxUsd: first.usd,
+    });
+
+    expect(result.status).toBe("stopped_at_cap");
+    expect(other.requests).toEqual([]);
+  });
+
+  it("retries a request the provider didn't reject and records only the billed attempt", async () => {
+    writeJobsParts(objectsDir, "ats", [snapshotJob(1)]);
+    const model = fakeModel({ failures: 2 });
+
+    const result = await embedSlice({
+      objectsDir,
+      workDir,
+      slice: "ats",
+      model,
+      maxUsd: 1,
+      sleep: noSleep,
+    });
+
+    expect(result.status).toBe("complete");
+    expect(readSpend(workDir)).toHaveLength(1);
+  });
+
+  it("does not retry a rejected request", async () => {
+    writeJobsParts(objectsDir, "ats", [snapshotJob(1)]);
+    let calls = 0;
+    const model = fakeModel({
+      embedBatch: async () => {
+        calls++;
+        throw new EmbeddingRejectedError("400 Bad Request");
+      },
+    });
+
+    await expect(
+      embedSlice({ objectsDir, workDir, slice: "ats", model, maxUsd: 1, sleep: noSleep }),
+    ).rejects.toThrow(/400 Bad Request/);
+    expect(calls).toBe(1);
+  });
+
+  it("records the estimate of a failed attempt the host may still have billed", async () => {
+    writeJobsParts(objectsDir, "ats", [snapshotJob(1)]);
+    const text = snapshotEmbedText(snapshotJob(1)).text;
+    let calls = 0;
+    const model = fakeModel({
+      embedBatch: async (texts) => {
+        // The first answer arrives but can't be read; the second is fine.
+        if (++calls === 1) throw possiblyBilled(new Error("unexpected end of JSON input"));
+        return { embeddings: texts.map(fakeVector), totalTokens: 100 };
+      },
+    });
+
+    const result = await embedSlice({
+      objectsDir,
+      workDir,
+      slice: "ats",
+      model,
+      maxUsd: 1,
+      sleep: noSleep,
+    });
+
+    // One token per character in the fake model's estimate; both attempts are on the record.
+    expect(readSpend(workDir).map((l) => [l.tokens, l.unconfirmed ?? false])).toEqual([
+      [text.length, true],
+      [100, false],
+    ]);
+    expect(result.tokens).toBe(text.length + 100);
+    expect(modelSpend(workDir, "fake-embed").usd).toBeCloseTo((text.length + 100) / 1_000_000, 12);
+  });
+
+  it("never counts a request below the list price, whatever cost the host reports", async () => {
+    writeJobsParts(objectsDir, "ats", [snapshotJob(1)]);
+    const model = fakeModel({
+      embedBatch: async (texts) => ({
+        embeddings: texts.map(fakeVector),
+        totalTokens: 1_000,
+        costUsd: 0,
+      }),
+    });
+
+    await embedSlice({ objectsDir, workDir, slice: "ats", model, maxUsd: 1 });
+
+    expect(readSpend(workDir).map((l) => l.usd)).toEqual([0.001]);
+  });
+
+  it("refuses to go on after a request billed above the list price, with the charge on the record", async () => {
+    writeJobsParts(objectsDir, "ats", [snapshotJob(1)]);
+    const model = fakeModel({
+      embedBatch: async (texts) => ({
+        embeddings: texts.map(fakeVector),
+        totalTokens: 1_000,
+        costUsd: 0.0015,
+      }),
+    });
+
+    await expect(
+      embedSlice({ objectsDir, workDir, slice: "ats", model, maxUsd: 1 }),
+    ).rejects.toThrow(/billed \$0\.001500 for 1000 tokens, above the list price/);
+    expect(readSpend(workDir).map((l) => l.usd)).toEqual([0.0015]);
+  });
+
+  it("sees spend another run records while this one is under way", async () => {
+    // Two chunks. After the first, another process records spend that uses up the allowance.
+    const jobs = Array.from({ length: 600 }, (_x, i) => snapshotJob(i + 1));
+    writeJobsParts(objectsDir, "ats", jobs, 300);
+    const model = fakeModel({ limits: { maxItems: 512, maxTokens: 10_000_000, charsPerToken: 1 } });
+    const inner = model.embedBatch;
+    model.embedBatch = async (texts, inputType) => {
+      const res = await inner(texts, inputType);
+      appendFileSync(
+        join(workDir, "spend.jsonl"),
+        `${JSON.stringify({ at: "x", model: "other", slice: "ats", tokens: 0, usd: 0.999 })}\n`,
+      );
+      return res;
+    };
+
+    const result = await embedSlice({ objectsDir, workDir, slice: "ats", model, maxUsd: 1 });
+
+    expect(result).toMatchObject({ status: "stopped_at_cap", chunksEmbedded: 1 });
+    expect(model.requests).toHaveLength(1);
+  });
+
+  it("stops sending the rest of a chunk once a request has failed for good", async () => {
+    // Twelve texts, one per request, one request at a time: the third is rejected.
+    writeJobsParts(
+      objectsDir,
+      "ats",
+      Array.from({ length: 12 }, (_x, i) => snapshotJob(i + 1)),
+    );
+    let calls = 0;
+    const model = fakeModel({
+      limits: { maxItems: 1, maxTokens: 1_000_000, charsPerToken: 1 },
+      embedBatch: async (texts) => {
+        if (++calls === 3) throw new EmbeddingRejectedError("400 Bad Request");
+        return { embeddings: texts.map(fakeVector), totalTokens: 10 };
+      },
+    });
+
+    await expect(
+      embedSlice({ objectsDir, workDir, slice: "ats", model, maxUsd: 1, concurrency: 1 }),
+    ).rejects.toThrow(/400 Bad Request/);
+
+    expect(calls).toBe(3);
+    // The two billed requests are on the record even though their chunk was never saved.
+    expect(readSpend(workDir)).toHaveLength(2);
+  });
+
+  it("a chunk from a different set of jobs is not reused", async () => {
+    writeJobsParts(objectsDir, "ats", [snapshotJob(1), snapshotJob(2)]);
+    await embedSlice({ objectsDir, workDir, slice: "ats", model: fakeModel(), maxUsd: 1 });
+
+    // The slice changes underneath the finished chunk.
+    writeJobsParts(objectsDir, "ats", [snapshotJob(1), snapshotJob(9)]);
+    const model = fakeModel();
+    const result = await embedSlice({ objectsDir, workDir, slice: "ats", model, maxUsd: 1 });
+
+    expect(result).toMatchObject({ chunksReused: 0, chunksEmbedded: 1 });
+    expect(model.requests.flat()).toHaveLength(2);
+  });
+});
+
+describe("planSlice", () => {
+  it("fails when the slice has no jobs", () => {
+    const empty = mkdtempSync(join(tmpdir(), "snapshot-plan-"));
+    try {
+      expect(() => planSlice(empty, "ats")).toThrow(/no ats jobs/);
+    } finally {
+      rmSync(empty, { recursive: true, force: true });
+    }
+  });
+});
