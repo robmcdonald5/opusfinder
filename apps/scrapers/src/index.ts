@@ -116,10 +116,12 @@ interface Env {
 // re-fetched nearly as often as the old hourly × 150 — wrangler.toml has the sizing arithmetic.
 const INGEST_CRON = "0 */2 * * *";
 const DISCOVERY_CRON = "0 3 * * SUN";
-// Location resolving, its own invocation 10 min after each ingestion tick starts. A tick runs 7–10 min and
-// Neon suspends about 5 min after it ends, so at :10 the strings the tick brought in are there and the
-// database is still awake: the run rides that wake instead of paying for one of its own. A tick still
-// running at :10 leaves its last boards' strings for the next run.
+// Location resolving, its own invocation 10 min after each ingestion tick starts. A tick stops starting
+// boards at 10 min (MAX_RUN_MS) and Neon suspends about 5 min after its last query, so at :10 the strings
+// the tick brought in are there, bar its last board or two, and the database is usually still awake: the
+// run rides that wake instead of paying for one of its own. Measured over a week of ticks (2026-11): median
+// 6.5 min, 28% ran to the 10-min stop (their last boards' strings wait for the next run), and 27% ended
+// before :05, where the run wakes Neon itself.
 const LOCATIONS_CRON = "10 */2 * * *";
 
 // Matches wrangler.toml's INGEST_LIMIT (the fallback when the var is unset or invalid); sized there.
@@ -166,8 +168,9 @@ const DISCOVERY_REPROBE_LIMIT = 500;
 // The most location strings one run sends to the model; the rest wait for the next run, so a backlog drains
 // at up to 3,600 a day. At about $0.0005 a string uncached that is at most $0.15 a run, $1.80 a day.
 const LOCATIONS_MAX_PAIRS = 300;
-// No chunk of strings starts past this. One in flight ends within ~3 min (30 requests, 10 at a time, 60 s
-// each at worst), so a run ends within ~7 min, well under Cloudflare's 15-min limit.
+// No chunk of strings starts past this. One in flight ends within ~4.5 min at worst (30 requests, 10 at a
+// time, each up to its 60 s deadline plus a rate-limit wait), so a run ends within ~9 min, under
+// Cloudflare's 15-min limit.
 const LOCATIONS_MAX_RUN_MS = 4 * 60_000;
 // The strings whose requests failed in the last run, kept in the cursor's KV namespace so the next run asks
 // every other string first. Only an ordering hint: lost or unreadable, the next run starts from the top.
@@ -418,7 +421,7 @@ function locationsMode(flag: string | undefined): "off" | "shadow" | "on" {
  *
  * The strings whose requests failed are remembered in KV and asked last by the next run, so strings that
  * keep failing can't hold the head of the queue. The memory is best-effort: a failed read or write is logged
- * and the run goes on.
+ * and the run goes on, and a run that throws drops it.
  */
 async function runLocationsTick(db: Db, env: Env, apply: boolean): Promise<LocationRunResult> {
   if (apply && !env.OPENROUTER_API_KEY) {
@@ -438,18 +441,28 @@ async function runLocationsTick(db: Db, env: Env, apply: boolean): Promise<Locat
       `locations: ask-last read failed (${err instanceof Error ? err.name : "non-Error throw"})`,
     );
   }
-  const result = await runLocationResolve(db, model, { ...opts, askLast });
-  const next = result.failedPairs.slice(0, LOCATIONS_ASK_LAST_MAX);
-  if (next.length > 0 || askLast.length > 0) {
-    try {
-      await env.INGEST_CURSOR.put(LOCATIONS_ASK_LAST_KEY, JSON.stringify(next));
-    } catch (err) {
-      console.warn(
-        `locations: ask-last write failed (${err instanceof Error ? err.name : "non-Error throw"})`,
-      );
-    }
+  let result: LocationRunResult;
+  try {
+    result = await runLocationResolve(db, model, { ...opts, askLast });
+  } catch (err) {
+    // The list goes into the run's queries, so a value that reads fine here could still be what broke the
+    // run. Dropping it costs one run's ordering; keeping a bad one would fail every run.
+    if (askLast.length > 0) await saveAskLast(env, []);
+    throw err;
   }
+  const next = result.failedPairs.slice(0, LOCATIONS_ASK_LAST_MAX);
+  if (next.length > 0 || askLast.length > 0) await saveAskLast(env, next);
   return result;
+}
+
+async function saveAskLast(env: Env, pairs: LocationPairKey[]): Promise<void> {
+  try {
+    await env.INGEST_CURSOR.put(LOCATIONS_ASK_LAST_KEY, JSON.stringify(pairs));
+  } catch (err) {
+    console.warn(
+      `locations: ask-last write failed (${err instanceof Error ? err.name : "non-Error throw"})`,
+    );
+  }
 }
 
 /** The stored ask-last list, or none when the key is unset or isn't a list of (company id, text) pairs. */
@@ -460,7 +473,11 @@ function parseAskLast(raw: string | null): LocationPairKey[] {
     if (!Array.isArray(list)) return [];
     return list.flatMap((item: unknown) => {
       const { companyId, raw: text } = (item ?? {}) as Record<string, unknown>;
-      return Number.isInteger(companyId) && typeof text === "string"
+      // A company id is a Postgres serial: anything else can't be one, and would fail the query it goes into.
+      return Number.isInteger(companyId) &&
+        (companyId as number) > 0 &&
+        (companyId as number) <= 2_147_483_647 &&
+        typeof text === "string"
         ? [{ companyId: companyId as number, raw: text }]
         : [];
     });

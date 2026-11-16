@@ -282,7 +282,8 @@ export const stages = {
       "locations.strings",
       "locations.strings_failed",
     ],
-    budget: { targetUsdPerMonth: 2 },
+    // ~140 new strings a day at ~$0.0005 each; the runaway is the Worker's bound (300 a run, 12 runs a day).
+    budget: { targetUsdPerMonth: 3, runaway: { unit: "usd", perDay: 2 } },
     expect: { everyMin: 120, graceMin: 60 }, // the ingest tick's period and grace, which it rides
   },
   embed: {

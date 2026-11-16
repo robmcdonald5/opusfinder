@@ -6,8 +6,8 @@ import { runScript } from "@opusfinder/shared/script";
 import { createLocationModel, loadGazetteer, syncLocationStrings } from "../src/node";
 
 /**
- * The digest's daily location step, by hand: resolve every active (company, raw) pair that has no row
- * yet, a chunk at a time, until none are left. A pair whose request fails is skipped for the rest of the
+ * The scrapers Worker's location run, by hand and unbounded: resolve every active (company, raw) pair
+ * that has no row yet, a chunk at a time, until none are left. A pair whose request fails is skipped for the rest of the
  * run and asked again next time.
  *
  *   pnpm locations:sync

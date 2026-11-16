@@ -32,8 +32,9 @@ and the library it calls owns its own `source_runs` row (`startRun`/`finishRun`)
 > `location_strings`, and reads `places`: never a user, auth or digest table. `pnpm guard:worker`
 > (`scripts/check-worker-isolation.mjs`) asserts it (source scan + dependency scan) and fails CI on a leak.
 > As of **Phase 10** the deny list also covers the digest pipeline's server-only stack —
-> `@opusfinder/inngest` / `inngest` / `@opusfinder/llm` / `@opusfinder/rerank` / `@anthropic-ai/sdk` —
-> keeping the Inngest-hosted digest generation out of this bundle. **Phase 11** adds `@opusfinder/email`
+> `@opusfinder/inngest` / `inngest` / `@opusfinder/rerank` / the `@anthropic-ai/sdk` client —
+> keeping the Inngest-hosted digest generation out of this bundle. (`@opusfinder/llm` and
+> `@opusfinder/locations` are in it: the location run's model transport, with the key passed in.) **Phase 11** adds `@opusfinder/email`
 >
 > - the `resend` SDK (email delivery is a trusted Node/server-runtime concern — like Better Auth and
 >   Inngest before it — never in the Worker).
@@ -142,7 +143,7 @@ wrangler tail opusfinder-scrapers             # stream live cron invocations
   (SELECT/INSERT/UPDATE on `companies`, `jobs`, `source_runs` and `location_strings`, SELECT on `places`,
   plus EXECUTE on the prune function: `packages/db/src/roles.ts`) or rotates
   its password, then pipes its connection string into this Worker's `DATABASE_URL` on stdin; it applies at
-  once. Run it while no tick is running (not the first ~15 min of an even UTC hour, nor Sunday 03:00 UTC):
+  once. Run it while no tick is running (not the first ~20 min of an even UTC hour, nor Sunday 03:00 UTC):
   the old password stops working immediately. Never run two at once: the role could keep one run's password
   while the secret gets the other's. To go back to your owner login, with it exported:
   `printf %s "$DATABASE_URL" | pnpm --filter @opusfinder/scrapers exec wrangler secret put DATABASE_URL`,

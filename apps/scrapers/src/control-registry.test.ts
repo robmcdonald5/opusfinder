@@ -140,7 +140,7 @@ describe("control registry ⇄ scrapers Worker", () => {
       );
       const gate = async () => ({ mode, cappedBy: null, knobs: {}, by: null, because: null });
       await tick(stages.locations.trigger.cron, { ...env, CONTROL: { gate, recordRun } });
-      expect(stages.locations.modes).toContain(mode);
+      // A gate mode the stage didn't declare would be read as unreadable and recorded as null.
       expect(recordRun.mock.calls.map(([run]) => run)).toMatchObject([
         { stage: "locations", outcome, gateMode: mode },
       ]);

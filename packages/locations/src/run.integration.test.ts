@@ -224,6 +224,38 @@ describe("the location run as scrapers_worker (integration: real PGlite, stub mo
     expect(result).toMatchObject({ stopped: "pair-bound", failedPairs: [flaky] });
   });
 
+  it("keeps the failed strings it didn't get to when a bound stops it part-way through them", async () => {
+    await seedJobs([["New A"], ["New B"], ["Old 1"], ["Old 2"], ["Old 3"]]);
+    const askLast = ["Old 1", "Old 2", "Old 3"].map((raw) => ({ companyId: acme, raw }));
+    const { model, asked } = stubModel();
+
+    // Room for the two new strings and one of last run's three.
+    const result = await run(model, { maxPairs: 3, askLast });
+
+    expect(asked).toEqual(["New A", "New B", "Old 1"]);
+    expect(result.stopped).toBe("pair-bound");
+    // "Old 1" resolved, so it is no longer waiting and its place on the list is harmless.
+    expect(result.failedPairs).toEqual(askLast);
+  });
+
+  it("doesn't read last run's failures failing again as an outage, however many they are", async () => {
+    await seedJobs([["Old 1"], ["Old 2"], ["Old 3"], ["Old 4"]]);
+    const askLast = ["Old 1", "Old 2", "Old 3", "Old 4"].map((raw) => ({ companyId: acme, raw }));
+    const { model, asked } = stubModel(() => true);
+
+    // Nothing new is waiting, so the run is these four alone, and all four fail again.
+    const result = await run(model, { askLast });
+
+    expect(asked).toHaveLength(4);
+    expect(result).toMatchObject({
+      stopped: "model-unavailable",
+      counts: { asked: 4, resolved: 0, failed: 4 },
+    });
+    expect(result.unavailable).toBeUndefined();
+    expect(result.failedPairs).toEqual(askLast);
+    expect(await runRows()).toMatchObject([{ pipeline: "locations", status: "ok" }]);
+  });
+
   it("drops the memory once nothing is waiting", async () => {
     const { model } = stubModel();
     const result = await run(model, { askLast: [{ companyId: acme, raw: "Gone" }] });

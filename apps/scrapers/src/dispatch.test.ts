@@ -690,8 +690,10 @@ describe("location resolving on its own cron", () => {
   );
 
   it("reads the mode whatever its case or padding", async () => {
-    await runLocationsTick({ LOCATIONS: " On ", OPENROUTER_API_KEY: "sk-or-stub" });
-    expect(mocks.runLocationResolve).toHaveBeenCalledTimes(1);
+    const on = await runLocationsTick({ LOCATIONS: " On ", OPENROUTER_API_KEY: "sk-or-stub" });
+    expect(on.opts).toMatchObject({ apply: true });
+    const shadow = await runLocationsTick({ LOCATIONS: "SHADOW" });
+    expect(shadow.opts).toMatchObject({ apply: false });
   });
 
   it("LOCATIONS=shadow: counts the strings waiting, with no key, no model spend and no memory", async () => {
@@ -787,9 +789,57 @@ describe("location resolving on its own cron", () => {
     ["not JSON", "{oops"],
     ["not a list", '{"companyId":7,"raw":"x"}'],
     ["a list of other things", '[1, null, {"companyId":"7","raw":"x"}, {"companyId":7}]'],
+    [
+      "pairs whose company id no company could have",
+      '[{"companyId":10000000000,"raw":"x"}, {"companyId":0,"raw":"x"}, {"companyId":1.5,"raw":"x"}]',
+    ],
   ])("reads a stored memory that is %s as none", async (_label, stored) => {
     const { opts } = await runLocationsTick(LOCATIONS_ON, stored);
     expect(opts).toMatchObject({ askLast: [] });
+  });
+
+  it("a run that throws is a failed tick, and drops the memory it was given rather than fail on it again", async () => {
+    const denied = new Error("permission denied for table location_strings");
+    mocks.runLocationResolve.mockRejectedValue(denied);
+    const control = makeControl(async () => ({ mode: "on", cappedBy: null, knobs: {} }));
+    const fetchSpy = vi.fn(async () => new Response("OK"));
+    vi.stubGlobal("fetch", fetchSpy);
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const env = { ...LOCATIONS_ON, CONTROL: control, HEALTH_PING_URL: "https://hc.example/abc" };
+
+    // With no memory, KV is left alone.
+    const kv = makeKv(null);
+    const ctx = makeCtx();
+    await expect(
+      scheduled(
+        { cron: LOCATIONS_CRON },
+        { DATABASE_URL: "postgres://stub", INGEST_CURSOR: kv, ...env },
+        ctx,
+      ),
+    ).rejects.toBe(denied);
+    await settle(ctx);
+    expect(kv.put).not.toHaveBeenCalled();
+    expect(recorded(control)).toMatchObject([
+      {
+        stage: "locations",
+        outcome: "error",
+        detail: "Error: permission denied for table location_strings",
+      },
+    ]);
+    expect(fetchSpy.mock.calls.map((call) => String((call as unknown[])[0]))).toEqual([
+      "https://hc.example/abc/fail",
+    ]);
+
+    // With one, it is emptied.
+    const stored = makeKv('[{"companyId":7,"raw":"Atlantis"}]');
+    await expect(
+      scheduled(
+        { cron: LOCATIONS_CRON },
+        { DATABASE_URL: "postgres://stub", INGEST_CURSOR: stored, ...env },
+        makeCtx(),
+      ),
+    ).rejects.toBe(denied);
+    expect(stored.put).toHaveBeenCalledWith("locationsAskLast", "[]");
   });
 
   it("runs without the memory when KV fails, and never fails the tick over it", async () => {

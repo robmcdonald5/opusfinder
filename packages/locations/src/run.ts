@@ -53,11 +53,11 @@ export interface LocationRunResult {
    * request of a chunk failed, so the run stopped asking.
    */
   stopped: "counted" | "drained" | "pair-bound" | "time-bound" | "model-unavailable";
-  /** The pairs for the next run to ask last: this run's transient failures, and the `askLast` pairs it
-   *  never reached. */
+  /** The pairs for the next run to ask last: this run's transient failures and, when it stopped early, the
+   *  `askLast` pairs it was given. */
   failedPairs: LocationPairKey[];
-  /** Set when the model failed every request and the run stored nothing: it reads as a provider outage,
-   *  and the run's row is an `error`. */
+  /** Set when the model failed every request of a chunk before the run had stored anything (last run's
+   *  failures failing again don't count): it reads as a provider outage, and the run's row is an `error`. */
   unavailable?: string;
 }
 
@@ -90,7 +90,9 @@ export async function runLocationResolve(
 
     const failedPairs: LocationPairKey[] = [];
     // With nothing waiting, last run's failures are no longer waiting either.
-    let held = counts.pending > 0 ? (opts.askLast ?? []) : [];
+    const askLast = counts.pending > 0 ? (opts.askLast ?? []) : [];
+    /** True once every other waiting pair has been asked and the run is on last run's failures. */
+    let retrying = false;
     let stopped: LocationRunResult["stopped"] = "drained";
     let unavailable: string | undefined;
     const gazetteer = counts.pending > 0 ? await loadGazetteer(db) : undefined;
@@ -107,7 +109,7 @@ export async function runLocationResolve(
         const chunk = await syncLocationStrings(db, model, {
           limit: Math.min(SYNC_CHUNK, opts.maxPairs - counts.asked),
           gazetteer,
-          exclude: [...held, ...failedPairs],
+          exclude: retrying ? failedPairs : [...askLast, ...failedPairs],
         });
         counts.asked += chunk.resolved + chunk.unanswered + chunk.failed;
         counts.resolved += chunk.resolved;
@@ -118,15 +120,16 @@ export async function runLocationResolve(
         failedPairs.push(...chunk.failedPairs);
         if (chunk.more) continue;
         // Nothing else is waiting: now the pairs that failed last run, if any.
-        if (held.length === 0) break;
-        held = [];
+        if (retrying || askLast.length === 0) break;
+        retrying = true;
       } catch (err) {
         if (!(err instanceof LocationModelUnavailableError)) throw err;
         counts.asked += err.failedPairs.length;
         counts.failed += err.failedPairs.length;
         failedPairs.push(...err.failedPairs);
         stopped = "model-unavailable";
-        if (counts.resolved + counts.unanswered === 0) unavailable = err.message;
+        // Last run's failures failing again says nothing about the provider: those pairs may never answer.
+        if (!retrying && counts.resolved + counts.unanswered === 0) unavailable = err.message;
         break;
       }
     }
@@ -138,11 +141,24 @@ export async function runLocationResolve(
         ? { status: "error", counts, errorSample: unavailable.slice(0, 500) }
         : { status: "ok", counts },
     );
-    return { counts, stopped, failedPairs: [...failedPairs, ...held], unavailable };
+    // A run that stopped early may not have reached all of last run's failures: they stay on the list. One
+    // it did resolve is harmless there, since only waiting pairs are ever asked.
+    const carried = stopped === "drained" ? [] : askLast;
+    return { counts, stopped, failedPairs: uniquePairs([...failedPairs, ...carried]), unavailable };
   } catch (err) {
     // describeDbError: a failed query's Postgres reason, redacted, never its params.
     const errorSample = describeDbError(err).slice(0, 500);
     await finishRun(db, runId, { status: "error", counts, errorSample }).catch(() => {});
     throw err;
   }
+}
+
+function uniquePairs(pairs: LocationPairKey[]): LocationPairKey[] {
+  const seen = new Set<string>();
+  return pairs.filter((pair) => {
+    const key = `${pair.companyId}\n${pair.raw}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
