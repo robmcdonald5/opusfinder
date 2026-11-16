@@ -1,7 +1,12 @@
 import { createDb, type Db } from "@opusfinder/db";
 import { describeDbError } from "@opusfinder/db/errors";
-import { DEFAULT_STALE_TTL_DAYS, runPrune } from "@opusfinder/db/repos";
+import { DEFAULT_STALE_TTL_DAYS, runPrune, type LocationPairKey } from "@opusfinder/db/repos";
 import { runDiscovery } from "@opusfinder/discovery";
+import {
+  createLocationModel,
+  runLocationResolve,
+  type LocationRunResult,
+} from "@opusfinder/locations";
 import { parseEnforceFlag } from "@opusfinder/shared";
 import { sleep } from "@opusfinder/shared/async";
 import { runIngestion, type IngestionCounts } from "@opusfinder/sources";
@@ -12,19 +17,23 @@ import {
   firstLine,
   ingestRun,
   ingestSummary,
+  locationsRun,
+  locationsSummary,
   noBoardIngested,
   recordRun,
   shadowGate,
+  skippedRun,
   type ControlBinding,
   type ScrapersStage,
   type TickStart,
 } from "./control";
 
 /**
- * The opusfinder scrapers Worker: two scheduled (cron) handlers — ingestion (every 2 h) and discovery
- * (weekly) — dispatched on `controller.cron`. Each builds the neon-http client with
- * `createDb(env.DATABASE_URL)` (fetch-only, no `process.env`) and calls an already-Worker-forward
- * library (`runIngestion` / `runDiscovery`) that owns its own `source_runs` row.
+ * The opusfinder scrapers Worker: three scheduled (cron) handlers — ingestion (every 2 h), location
+ * resolving (10 min after each ingestion tick starts) and discovery (weekly) — dispatched on
+ * `controller.cron`. Each builds the neon-http client with `createDb(env.DATABASE_URL)` (fetch-only, no
+ * `process.env`) and calls an already-Worker-forward library (`runIngestion` / `runLocationResolve` /
+ * `runDiscovery`) that owns its own `source_runs` row.
  *
  * The Worker imports ONLY fetch-based libraries — no Node-targeted package enters the bundle — so it
  * needs no `nodejs_compat`. Inline embedding is intentionally NOT wired here: the embeddings package
@@ -88,6 +97,12 @@ interface Env {
   /** The weekly job prune after discovery — see {@link prunePass}. Unset / "shadow" = count-only;
    *  "enforce" (what wrangler.toml ships) deletes up to PRUNE_MAX_ROWS jobs closed for 30+ days that no digest showed. */
   PRUNE?: string;
+  /** Location resolving on its own cron — see {@link locationsMode}. A wrangler `[vars]` value: "off" (what
+   *  wrangler.toml ships, and how anything unrecognised reads) fires and does nothing; "shadow" counts the
+   *  strings waiting; "on" asks the model for up to LOCATIONS_MAX_PAIRS of them a run. */
+  LOCATIONS?: string;
+  /** The location model's OpenRouter key (a `wrangler secret`), read only when LOCATIONS is "on". */
+  OPENROUTER_API_KEY?: string;
   /** The control plane: a service binding to the `opusfinder-control` Worker's `ControlRpc` entrypoint
    *  (wrangler.toml [[services]]). Read in SHADOW — see ./control.ts. OPTIONAL: unbound (e.g. `wrangler dev`
    *  without it) ⇒ every gate logs as unreadable and no run is recorded; the ticks run regardless. */
@@ -95,12 +110,17 @@ interface Env {
 }
 
 // Must equal the wrangler.toml cron strings exactly (esp. the weekday — "SUN", not "0"); dispatch.test.ts
-// pins all three (toml, these constants, the routing) together.
+// pins all of them (toml, these constants, the routing) together.
 // Ingestion every 2 h (at :00 of even UTC hours): Neon wakes 12×/day instead of 24, and each wake costs the
 // tick PLUS a fixed 5-min autosuspend tail. A bigger chunk per tick (INGEST_LIMIT) keeps each board
 // re-fetched nearly as often as the old hourly × 150 — wrangler.toml has the sizing arithmetic.
 const INGEST_CRON = "0 */2 * * *";
 const DISCOVERY_CRON = "0 3 * * SUN";
+// Location resolving, its own invocation 10 min after each ingestion tick starts. A tick runs 7–10 min and
+// Neon suspends about 5 min after it ends, so at :10 the strings the tick brought in are there and the
+// database is still awake: the run rides that wake instead of paying for one of its own. A tick still
+// running at :10 leaves its last boards' strings for the next run.
+const LOCATIONS_CRON = "10 */2 * * *";
 
 // Matches wrangler.toml's INGEST_LIMIT (the fallback when the var is unset or invalid); sized there.
 const DEFAULT_INGEST_LIMIT = 250;
@@ -143,6 +163,16 @@ const MIN_STALE_TTL_DAYS = 7;
 const KV_KEY_WRITE_GAP_MS = 1_100;
 const DISCOVERY_LIMIT = 400;
 const DISCOVERY_REPROBE_LIMIT = 500;
+// The most location strings one run sends to the model; the rest wait for the next run, so a backlog drains
+// at up to 3,600 a day. At about $0.0005 a string uncached that is at most $0.15 a run, $1.80 a day.
+const LOCATIONS_MAX_PAIRS = 300;
+// No chunk of strings starts past this. One in flight ends within ~3 min (30 requests, 10 at a time, 60 s
+// each at worst), so a run ends within ~7 min, well under Cloudflare's 15-min limit.
+const LOCATIONS_MAX_RUN_MS = 4 * 60_000;
+// The strings whose requests failed in the last run, kept in the cursor's KV namespace so the next run asks
+// every other string first. Only an ordering hint: lost or unreadable, the next run starts from the top.
+const LOCATIONS_ASK_LAST_KEY = "locationsAskLast";
+const LOCATIONS_ASK_LAST_MAX = 500;
 
 export default {
   async scheduled(controller, env, ctx): Promise<void> {
@@ -185,6 +215,25 @@ export default {
             pingWatchdog(env.HEALTH_PING_URL, ctx);
           }
           recordRun(env.CONTROL, ctx, (end) => ingestRun(tick, end, counts));
+          break;
+        }
+        case LOCATIONS_CRON: {
+          stage = "locations";
+          const mode = locationsMode(env.LOCATIONS);
+          tick.gateMode = await shadowGate(env.CONTROL, stage, {});
+          if (mode === "off") {
+            // Off touches neither the database nor the model: the log line and the ledger row are all it does.
+            console.log("Locations: off (LOCATIONS), nothing read or asked.");
+            recordRun(env.CONTROL, ctx, (end) =>
+              skippedRun("locations", tick, end, "off (LOCATIONS)"),
+            );
+            break;
+          }
+          const result = await runLocationsTick(db, env, mode === "on");
+          console.log(`Locations: ${locationsSummary(result)}`);
+          // The model answered nothing all run: a failed tick, like any other (the catch below records it).
+          if (result.unavailable) throw new Error(result.unavailable);
+          recordRun(env.CONTROL, ctx, (end) => locationsRun(tick, end, result));
           break;
         }
         case DISCOVERY_CRON: {
@@ -237,6 +286,7 @@ export default {
       // IMMEDIATELY (no grace wait). It fires solely when this catch runs, so a dead cron / cold-start kill
       // (no invocation reaching our code) stays detected by ping ABSENCE via {@link pingWatchdog}.
       // Discovery reports to its own check when it has one; otherwise to the ingest check, its only alert.
+      // The location run has no check of its own, so its failures go to the ingest check too.
       const pingUrl =
         stage === "discover"
           ? env.HEALTH_PING_URL_DISCOVER || env.HEALTH_PING_URL
@@ -352,6 +402,71 @@ function staleTtlDays(env: Env): number | undefined {
 /** A close switch's mode as the control registry names it (`close` / `stale_sweep`: shadow | enforce). */
 function policyMode(flag: string | undefined): "shadow" | "enforce" {
   return parseEnforceFlag(flag) ? "enforce" : "shadow";
+}
+
+/** LOCATIONS as a mode. Anything but "shadow" or "on" is off, so a typo can't start spending. */
+function locationsMode(flag: string | undefined): "off" | "shadow" | "on" {
+  const mode = flag?.trim().toLowerCase();
+  return mode === "on" || mode === "shadow" ? mode : "off";
+}
+
+/**
+ * One location run: resolve the active location strings that have no `location_strings` row yet, inside
+ * LOCATIONS_MAX_PAIRS and LOCATIONS_MAX_RUN_MS; whatever is left waits for the next run. `apply: false`
+ * (LOCATIONS = "shadow") only counts the strings waiting. Either way the run records its own `locations`
+ * source_runs row.
+ *
+ * The strings whose requests failed are remembered in KV and asked last by the next run, so strings that
+ * keep failing can't hold the head of the queue. The memory is best-effort: a failed read or write is logged
+ * and the run goes on.
+ */
+async function runLocationsTick(db: Db, env: Env, apply: boolean): Promise<LocationRunResult> {
+  if (apply && !env.OPENROUTER_API_KEY) {
+    throw new Error(
+      "OPENROUTER_API_KEY is not set — run `wrangler secret put OPENROUTER_API_KEY` in apps/scrapers.",
+    );
+  }
+  const model = createLocationModel({ apiKey: env.OPENROUTER_API_KEY });
+  const opts = { apply, maxPairs: LOCATIONS_MAX_PAIRS, maxRunMs: LOCATIONS_MAX_RUN_MS };
+  if (!apply) return runLocationResolve(db, model, opts);
+
+  let askLast: LocationPairKey[] = [];
+  try {
+    askLast = parseAskLast(await env.INGEST_CURSOR.get(LOCATIONS_ASK_LAST_KEY));
+  } catch (err) {
+    console.warn(
+      `locations: ask-last read failed (${err instanceof Error ? err.name : "non-Error throw"})`,
+    );
+  }
+  const result = await runLocationResolve(db, model, { ...opts, askLast });
+  const next = result.failedPairs.slice(0, LOCATIONS_ASK_LAST_MAX);
+  if (next.length > 0 || askLast.length > 0) {
+    try {
+      await env.INGEST_CURSOR.put(LOCATIONS_ASK_LAST_KEY, JSON.stringify(next));
+    } catch (err) {
+      console.warn(
+        `locations: ask-last write failed (${err instanceof Error ? err.name : "non-Error throw"})`,
+      );
+    }
+  }
+  return result;
+}
+
+/** The stored ask-last list, or none when the key is unset or isn't a list of (company id, text) pairs. */
+function parseAskLast(raw: string | null): LocationPairKey[] {
+  if (raw === null) return [];
+  try {
+    const list: unknown = JSON.parse(raw);
+    if (!Array.isArray(list)) return [];
+    return list.flatMap((item: unknown) => {
+      const { companyId, raw: text } = (item ?? {}) as Record<string, unknown>;
+      return Number.isInteger(companyId) && typeof text === "string"
+        ? [{ companyId: companyId as number, raw: text }]
+        : [];
+    });
+  } catch {
+    return [];
+  }
 }
 
 /**

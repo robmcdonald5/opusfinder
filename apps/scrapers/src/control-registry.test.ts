@@ -12,11 +12,19 @@ import { STAGE_IDS, gateView, stageDef, stages, type StageId } from "@opusfinder
 // dispatch.test.ts separately pins wrangler.toml's crons to the same `case` labels.
 // Pipelines are stubbed; no DB or network is touched.
 
-const mocks = vi.hoisted(() => ({ runIngestion: vi.fn(), runDiscovery: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+  runIngestion: vi.fn(),
+  runDiscovery: vi.fn(),
+  runLocationResolve: vi.fn(),
+}));
 
 vi.mock("@opusfinder/db", () => ({ createDb: () => ({ __db: "stub" }) }));
 vi.mock("@opusfinder/sources", () => ({ runIngestion: mocks.runIngestion }));
 vi.mock("@opusfinder/discovery", () => ({ runDiscovery: mocks.runDiscovery }));
+vi.mock("@opusfinder/locations", () => ({
+  runLocationResolve: mocks.runLocationResolve,
+  createLocationModel: () => ({ __model: "stub" }),
+}));
 
 import wranglerToml from "../wrangler.toml?raw";
 import worker from "./index";
@@ -49,6 +57,25 @@ const INGEST_COUNTS = {
   changed: 0,
 };
 const DISCOVERY_COUNTS = { candidates: 0, probed: 0, upserted: 0, reprobed: 0, deactivated: 0 };
+const LOCATION_RESULT = {
+  stopped: "drained",
+  failedPairs: [],
+  counts: {
+    pending: 1,
+    asked: 1,
+    resolved: 1,
+    unanswered: 0,
+    failed: 0,
+    unmatchedPlaces: 0,
+    inputTokens: 300,
+    outputTokens: 40,
+    cacheReadTokens: 3000,
+    cacheCreationTokens: 0,
+    costUsd: 0.0001,
+  },
+};
+// The location lane runs only when its switch says so (wrangler.toml ships it off).
+const LOCATIONS_ON = { LOCATIONS: "on", OPENROUTER_API_KEY: "sk-or-stub" };
 
 const argsOf = (fn: typeof mocks.runIngestion) =>
   fn.mock.calls.at(-1)?.[1] as Record<string, unknown> | undefined;
@@ -70,6 +97,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.runIngestion.mockResolvedValue({ processed: 0, companies: 0, lastId: 0 });
   mocks.runDiscovery.mockResolvedValue(undefined);
+  mocks.runLocationResolve.mockResolvedValue(LOCATION_RESULT);
   // Every tick logs its control gate; keep the output quiet.
   vi.spyOn(console, "log").mockImplementation(() => undefined);
   vi.spyOn(console, "warn").mockImplementation(() => undefined);
@@ -80,12 +108,44 @@ afterEach(() => {
 });
 
 describe("control registry ⇄ scrapers Worker", () => {
-  it("declares exactly the two lanes this Worker runs", () => {
+  it("declares exactly the three lanes this Worker runs", () => {
     expect(STAGE_IDS.filter((id) => stageDef(id).runtime === "cf:opusfinder-scrapers")).toEqual([
       "ingest",
       "discover",
+      "locations",
     ]);
   });
+
+  it("locations' cron is the one the Worker dispatches to the location run", async () => {
+    await tick(stages.locations.trigger.cron, LOCATIONS_ON);
+    expect(mocks.runLocationResolve).toHaveBeenCalledTimes(1);
+    expect(mocks.runIngestion).not.toHaveBeenCalled();
+    expect(mocks.runDiscovery).not.toHaveBeenCalled();
+  });
+
+  it("locations starts off in the registry and in the var wrangler.toml ships", () => {
+    expect(stages.locations.initial).toBe("off");
+    expect(/^LOCATIONS = "([^"]*)"$/m.exec(wranglerToml)?.[1]).toBe(stages.locations.initial);
+  });
+
+  it.each([
+    ["off", {}, "skipped"],
+    ["shadow", { LOCATIONS: "shadow" }, "ok"],
+    ["on", LOCATIONS_ON, "ok"],
+  ])(
+    "a locations run under LOCATIONS=%s records a gate mode its stage has",
+    async (mode, env, outcome) => {
+      const recordRun = vi.fn(
+        async (_run: Record<string, unknown>): Promise<unknown> => ({ id: 1 }),
+      );
+      const gate = async () => ({ mode, cappedBy: null, knobs: {}, by: null, because: null });
+      await tick(stages.locations.trigger.cron, { ...env, CONTROL: { gate, recordRun } });
+      expect(stages.locations.modes).toContain(mode);
+      expect(recordRun.mock.calls.map(([run]) => run)).toMatchObject([
+        { stage: "locations", outcome, gateMode: mode },
+      ]);
+    },
+  );
 
   it("ingest's cron is the one the Worker dispatches to ingestion", async () => {
     await tick(stages.ingest.trigger.cron);
@@ -133,9 +193,10 @@ describe("control registry ⇄ scrapers Worker", () => {
     mocks.runDiscovery.mockResolvedValue(DISCOVERY_COUNTS);
     await tick(stages.ingest.trigger.cron, { CONTROL: { gate, recordRun } });
     await tick(stages.discover.trigger.cron, { CONTROL: { gate, recordRun } });
+    await tick(stages.locations.trigger.cron, { ...LOCATIONS_ON, CONTROL: { gate, recordRun } });
 
     const runs = recordRun.mock.calls.map(([run]) => run);
-    expect(runs.map((run) => run.stage)).toEqual(["ingest", "discover"]);
+    expect(runs.map((run) => run.stage)).toEqual(["ingest", "discover", "locations"]);
     for (const run of runs) {
       const declared: readonly string[] = stageDef(run.stage).units;
       expect(Object.keys(run.units).sort()).toEqual(

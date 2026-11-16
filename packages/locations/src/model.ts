@@ -47,17 +47,29 @@ export interface LocationRequest {
   thinking: "off";
 }
 
+/** What one request used: its tokens and what the provider charged for it. */
+export interface LocationSpend {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+  costUsd: number;
+}
+
 /**
  * What came back for one request. `answered` carries the model's text (JSON, per `schema`). `no-answer` is a
  * DETERMINISTIC outcome with nothing usable in it (a refusal, output cut off at the token cap, a reply off
  * the schema, the provider rejecting this request's content); the pair is stored as unresolved, and asking
  * again tomorrow would get the same. `failed` is TRANSIENT (a timeout, rate limit, server or network
  * error, a batch request that errored); the pair is left without a row, so a later run asks again.
+ * `spend` is set when the transport reports it per request (a single call does; a batch reports its cost
+ * for the whole batch only).
  */
-export type LocationAnswer =
+export type LocationAnswer = (
   | { status: "answered"; text: string }
   | { status: "no-answer"; reason: string }
-  | { status: "failed"; reason: string };
+  | { status: "failed"; reason: string }
+) & { spend?: LocationSpend };
 
 export interface LocationModel {
   /** One request, answered within the transport's deadline (about a minute). Never throws for anything

@@ -15,7 +15,7 @@ import {
 } from "../src/roles";
 import { isDryRun, setUpRole } from "./lib/role-setup";
 
-// OWNER, once, then again after any migration that adds a table or sequence the Worker uses (or to rotate the
+// OWNER, once, then again after any change that adds a table or sequence the Worker uses (or to rotate the
 // password), from a normal terminal with wrangler logged in:
 //   pnpm --filter @opusfinder/db run worker-role:setup            (add -- --dry-run to only print the SQL)
 // 1. Checks wrangler can reach the scrapers Worker, before anything changes.

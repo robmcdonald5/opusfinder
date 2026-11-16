@@ -95,7 +95,17 @@ describe("the shared packages in workerd", () => {
       value: {
         // sha256("Columbus, OH"), first 32 hex.
         id: `v${PROMPT_VERSION}-7-217ee5381a68c1156f31622b21385ee6`,
-        answer: { status: "answered", text: JSON.stringify(LOCATION_ANSWER) },
+        answer: {
+          status: "answered",
+          text: JSON.stringify(LOCATION_ANSWER),
+          spend: {
+            inputTokens: 1,
+            outputTokens: 1,
+            cacheReadTokens: 0,
+            cacheCreationTokens: 0,
+            costUsd: 0,
+          },
+        },
       },
     });
     expect(last().auth).toBe(`Bearer ${KEYS.OPENROUTER_API_KEY}`);

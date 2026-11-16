@@ -3,6 +3,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import type { Db } from "@opusfinder/db";
 import {
+  countMissingPairs,
   coverageBySource,
   listCompanyStrings,
   listPendingPairs,
@@ -107,6 +108,8 @@ describe("location_strings repos (integration: real PGlite)", () => {
       ["globex", "Low Guess", 1],
     ]);
     expect(pending[0]).toMatchObject({ companyId: acme, companySource: "greenhouse" });
+    // The count is of the same set.
+    expect(await countMissingPairs(db)).toBe(4);
   });
 
   it("leaves out the pairs a caller excludes", async () => {
@@ -154,6 +157,7 @@ describe("location_strings repos (integration: real PGlite)", () => {
     const pending = await listPendingPairs(db, { scope: "stale", promptVersion: "1" });
     expect(pending.map((p) => p.raw)).toEqual(["Columbus, OH", "Remote"]);
     expect(await listPendingPairs(db, { scope: "missing", promptVersion: "1" })).toEqual([]);
+    expect(await countMissingPairs(db)).toBe(0);
   });
 
   it("upserting replaces a row in place", async () => {

@@ -252,7 +252,7 @@ pnpm exec wrangler d1 migrations apply opusfinder-control --remote
 pnpm exec wrangler d1 execute opusfinder-control --remote --command "SELECT key, value FROM state ORDER BY key"
 ```
 
-Expect 21 rows: global/ingest/discover/cv_ingest `on`, embed/alerts/digest/live_integration/backup `off`,
+Expect 22 rows: global/ingest/discover/cv_ingest `on`, locations/embed/alerts/digest/live_integration/backup `off`,
 close, stale_sweep and prune `enforce`, the 9 `health.*` `shadow`.
 
 **2. Deploy**

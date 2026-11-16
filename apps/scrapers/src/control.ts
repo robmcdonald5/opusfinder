@@ -1,5 +1,6 @@
 import { stages, type GateAnswer, type RunOutcome, type StageMode } from "@opusfinder/control";
 import type { DiscoveryCounts } from "@opusfinder/discovery";
+import type { LocationRunResult } from "@opusfinder/locations";
 import type { IngestionCounts } from "@opusfinder/sources";
 
 /**
@@ -14,7 +15,7 @@ import type { IngestionCounts } from "@opusfinder/sources";
  */
 
 /** The stages this Worker runs. */
-export type ScrapersStage = "ingest" | "discover";
+export type ScrapersStage = "ingest" | "discover" | "locations";
 
 /** One ledger row, as the control Worker's recordRun() validates it: units must be ones the stage declares. */
 export interface RunRecord<S extends ScrapersStage = ScrapersStage> {
@@ -250,6 +251,69 @@ export function discoverRun(
         ? [`failed lane${failedLanes.length > 1 ? "s" : ""}: ${failedLanes.join(", ")}`]
         : []),
     ].join(" · "),
+  };
+}
+
+/** The location run in one line: its log line and the ledger row's detail. */
+export function locationsSummary({ counts, stopped }: LocationRunResult): string {
+  if (stopped === "counted") return `logs only · ${n(counts.pending)} waiting`;
+  const why = {
+    drained: [],
+    "pair-bound": ["stopped at its string limit"],
+    "time-bound": ["stopped at its time limit"],
+    "model-unavailable": ["model unavailable"],
+  }[stopped];
+  return [
+    `${n(counts.pending)} waiting`,
+    `${n(counts.resolved)} resolved`,
+    `${n(counts.unanswered)} unanswered`,
+    `${n(counts.failed)} failed`,
+    `${n(counts.unmatchedPlaces)} unmatched places`,
+    `$${counts.costUsd.toFixed(4)}`,
+    ...why,
+  ].join(" · ");
+}
+
+/** `partial` when the run stopped with strings still waiting: at a bound, or because the model failed a
+ *  whole chunk (the rest carries to the next run). */
+export function locationsRun(
+  tick: TickStart,
+  finishedMs: number,
+  result: LocationRunResult,
+): RunRecord<"locations"> {
+  const { counts, stopped } = result;
+  const time = timing(tick, finishedMs);
+  return {
+    stage: "locations",
+    outcome: stopped === "counted" || stopped === "drained" ? "ok" : "partial",
+    ...time,
+    units: {
+      "cf.wall_ms": time.durationMs,
+      "anthropic.haiku.in": counts.inputTokens,
+      "anthropic.haiku.out": counts.outputTokens,
+      "anthropic.haiku.cache_write": counts.cacheCreationTokens,
+      "anthropic.haiku.cache_read": counts.cacheReadTokens,
+      "locations.strings": counts.asked,
+      "locations.strings_failed": counts.failed,
+    },
+    detail: locationsSummary(result),
+  };
+}
+
+/** A tick its switch turned off: nothing ran. */
+export function skippedRun(
+  stage: ScrapersStage,
+  tick: TickStart,
+  finishedMs: number,
+  why: string,
+): RunRecord {
+  const time = timing(tick, finishedMs);
+  return {
+    stage,
+    outcome: "skipped",
+    ...time,
+    units: { "cf.wall_ms": time.durationMs },
+    detail: firstLine(why, 300),
   };
 }
 

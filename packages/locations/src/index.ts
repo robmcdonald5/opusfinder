@@ -1,5 +1,5 @@
 export { BATCH_SIZE, buildLocationRequest, outputBudget } from "./model";
-export type { LocationAnswer, LocationModel, LocationRequest } from "./model";
+export type { LocationAnswer, LocationModel, LocationRequest, LocationSpend } from "./model";
 export { createLocationModel } from "./transport";
 export { AREA_NAMES, AREAS, areaCountries, readArea } from "./areas";
 export type { AreaName } from "./areas";
@@ -18,11 +18,14 @@ export type { CheckedAnswer, Gazetteer } from "./check";
 export {
   backfillLocationStrings,
   collectLocationBatch,
+  LocationModelUnavailableError,
   parseAnswer,
   requestId,
   syncLocationStrings,
   SYNC_CHUNK,
 } from "./resolve";
 export type { BatchOutcome, PairOutcome, ResolveCounts, SyncResult } from "./resolve";
+export { runLocationResolve } from "./run";
+export type { LocationRunCounts, LocationRunResult } from "./run";
 export { recheckLocationStrings } from "./recheck";
 export type { RecheckResult } from "./recheck";

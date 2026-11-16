@@ -3,7 +3,6 @@ import { describeDbError } from "@opusfinder/db/errors";
 import {
   alreadyShownJobIds,
   alreadyShownSignatures,
-  anyHasHomePlace,
   countLocalStrings,
   deleteUserDigestForRun,
   finishDigestRun,
@@ -17,12 +16,10 @@ import {
   markDigestConsidered,
   retrieveCandidatesForProfile,
   startDigestRun,
-  type LocationPairKey,
   type UserPreferencesRow,
 } from "@opusfinder/db/repos";
 import { BatchEndedError, buildDigestSystem, renderDigestJob } from "@opusfinder/llm";
 import type { BatchCollection, BatchPoll, BatchRequest, BatchResult } from "@opusfinder/llm";
-import { SYNC_CHUNK, syncLocationStrings, type LocationModel } from "@opusfinder/locations";
 import type { RerankCandidate } from "@opusfinder/rerank";
 import type {
   LocationMode,
@@ -64,9 +61,6 @@ const SYNTH_SLOW_INTERVAL = "10m";
 const SYNTH_MAX_POLLS = SYNTH_FAST_POLLS + SYNTH_SLOW_POLLS;
 /** Consecutive failed polls (each after its own step retries) before the run gives up on the batch. */
 const SYNTH_MAX_FAILED_POLLS = 6;
-/** Location-resolve steps per run, SYNC_CHUNK pairs each (~1,500 pairs): far above a day's new strings. A
- *  run that needs more throws; `pnpm locations:backfill` is the path for a large set. */
-const RESOLVE_MAX_STEPS = 50;
 
 /** Shared with the CLI's gate — the event schema is compile-time only, so the orchestrator re-checks at
  *  runtime (an empty string is falsy-shaped junk that must not widen into an all-recipients run). */
@@ -106,9 +100,6 @@ export interface DigestDeps {
     collect: (batchId: string) => Promise<BatchCollection>;
   };
   email: EmailSeam;
-  /** The location normalizer's model (@opusfinder/locations): resolves new location strings before the
-   *  fan-out. */
-  locations: LocationModel;
   /** The pre-send apply-URL liveness probe (one URL → verdict); the per-digest fan-out lives in
    *  `probeDigestLiveness`. Injected so the tests drive it with a fake. */
   probe: LivenessProbe;
@@ -255,39 +246,6 @@ export async function runOrchestrator(
       return ids;
     });
 
-    // Resolve the location strings no row covers yet, before any user's retrieval reads them: SYNC_CHUNK pairs
-    // per step (each step well inside the function's time limit), until none are left. Only a user with a home
-    // place reads them, so a run with none skips this (and its model spend). A pair whose request failed
-    // transiently is skipped by the later steps (the next run asks again); a step where every request failed
-    // transiently throws, so a provider outage fails the run visibly instead of filtering on strings nobody
-    // resolved.
-    const resolved = { resolved: 0, unanswered: 0, failed: 0, unmatchedPlaces: 0 };
-    const failedPairs: LocationPairKey[] = [];
-    const needsLocations =
-      recipients.length > 0 &&
-      (await step.run("check-home-places", () => anyHasHomePlace(deps.db, recipients as UserId[])));
-    if (needsLocations) {
-      for (let i = 0; ; i++) {
-        if (i === RESOLVE_MAX_STEPS) {
-          throw new NonRetriableError(
-            `digest: more than ${RESOLVE_MAX_STEPS * SYNC_CHUNK} new location strings; run \`pnpm locations:backfill\`.`,
-          );
-        }
-        const chunk = await step.run(`resolve-locations-${i}`, () =>
-          syncLocationStrings(deps.db, deps.locations, {
-            limit: SYNC_CHUNK,
-            exclude: failedPairs,
-          }),
-        );
-        resolved.resolved += chunk.resolved;
-        resolved.unanswered += chunk.unanswered;
-        resolved.failed += chunk.failed;
-        resolved.unmatchedPlaces += chunk.unmatchedPlaces;
-        failedPairs.push(...chunk.failedPairs);
-        if (!chunk.more) break;
-      }
-    }
-
     if (recipients.length > 0) {
       // One atomic fan-out (payload < 512 KB at this scale; paginate step.sendEvent beyond ~2.5k users).
       await step.sendEvent(
@@ -302,14 +260,7 @@ export async function runOrchestrator(
     await step.run("finish-run", () =>
       finishDigestRun(deps.db, runId, {
         status: "ok",
-        counts: {
-          recipients: recipients.length,
-          dispatched: recipients.length,
-          locationsResolved: resolved.resolved,
-          locationsUnanswered: resolved.unanswered,
-          locationsFailed: resolved.failed,
-          locationsUnmatchedPlaces: resolved.unmatchedPlaces,
-        },
+        counts: { recipients: recipients.length, dispatched: recipients.length },
       }),
     );
     return { runId, recipients: recipients.length };

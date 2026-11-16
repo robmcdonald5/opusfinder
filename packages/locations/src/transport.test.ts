@@ -1,7 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const llm = vi.hoisted(() => {
-  class ObjectGenerationError extends Error {}
+  class ObjectGenerationError extends Error {
+    // What the attempts that produced no usable object still cost.
+    readonly spent = {
+      usage: { inputTokens: 900, outputTokens: 256, costUsd: 0.0002 },
+      cache: { creationInputTokens: 0, readInputTokens: 3200 },
+    };
+  }
   class OpenRouterError extends Error {
     constructor(
       readonly status: number,
@@ -32,12 +38,26 @@ beforeEach(() => vi.resetAllMocks());
 
 describe("createLocationModel", () => {
   it("sends one cached, schema-constrained Haiku call at low effort with thinking off, under a deadline", async () => {
-    llm.generateObject.mockResolvedValue({ object: ANSWER });
+    llm.generateObject.mockResolvedValue({
+      object: ANSWER,
+      usage: { inputTokens: 310, outputTokens: 42, costUsd: 0.00009 },
+      cache: { creationInputTokens: 3200, readInputTokens: 0 },
+    });
     const request = buildLocationRequest("p0", { raw: "Remote - USA" });
 
     const answer = await createLocationModel().generate(request);
 
-    expect(answer).toEqual({ status: "answered", text: JSON.stringify(ANSWER) });
+    expect(answer).toEqual({
+      status: "answered",
+      text: JSON.stringify(ANSWER),
+      spend: {
+        inputTokens: 310,
+        outputTokens: 42,
+        cacheReadTokens: 0,
+        cacheCreationTokens: 3200,
+        costUsd: 0.00009,
+      },
+    });
     expect(llm.generateObject).toHaveBeenCalledWith({
       model: "haiku",
       system: request.system,
@@ -83,10 +103,20 @@ describe("createLocationModel", () => {
     ["a network failure", new TypeError("fetch failed"), "failed", "TypeError"],
   ])("reads %s as %s", async (_, error, status, reason) => {
     llm.generateObject.mockRejectedValue(error);
-    expect(await createLocationModel().generate(buildLocationRequest("p0", { raw: "x" }))).toEqual({
-      status,
-      reason,
-    });
+    const answer = await createLocationModel().generate(buildLocationRequest("p0", { raw: "x" }));
+    expect(answer).toMatchObject({ status, reason });
+    // Only a reply that came back (and was paid for) carries spend.
+    expect(answer.spend).toEqual(
+      error instanceof llm.ObjectGenerationError
+        ? {
+            inputTokens: 900,
+            outputTokens: 256,
+            cacheReadTokens: 3200,
+            cacheCreationTokens: 0,
+            costUsd: 0.0002,
+          }
+        : undefined,
+    );
   });
 
   it("still throws what isn't the provider's doing", async () => {

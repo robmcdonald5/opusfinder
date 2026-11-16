@@ -31,7 +31,7 @@ describe("buildRoleSetupSql", () => {
     ]);
   });
 
-  it("scrapers_worker: read/insert/update on the ingestion tables, no DELETE, EXECUTE on the prune only", () => {
+  it("scrapers_worker: read/insert/update on the ingestion tables and location_strings, read on places, no DELETE, EXECUTE on the prune only", () => {
     const sql = buildRoleSetupSql(SCRAPERS_WORKER);
     expect(sql).toContain("CREATE ROLE scrapers_worker WITH LOGIN PASSWORD %L");
     expect(sql).toContain("REVOKE ALL ON ALL TABLES IN SCHEMA public FROM scrapers_worker;");
@@ -39,6 +39,8 @@ describe("buildRoleSetupSql", () => {
     expect(sql.match(/^GRANT .*$/gm)).toEqual([
       "GRANT USAGE ON SCHEMA public TO scrapers_worker;",
       "GRANT SELECT, INSERT, UPDATE ON public.companies, public.jobs, public.source_runs TO scrapers_worker;",
+      "GRANT SELECT, INSERT, UPDATE ON public.location_strings TO scrapers_worker;",
+      "GRANT SELECT ON public.places TO scrapers_worker;",
       "GRANT USAGE ON SEQUENCE public.companies_id_seq, public.jobs_id_seq, public.source_runs_id_seq TO scrapers_worker;",
       `GRANT EXECUTE ON FUNCTION ${PRUNE_FUNCTION} TO scrapers_worker;`,
     ]);

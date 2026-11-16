@@ -18,11 +18,17 @@ const mocks = vi.hoisted(() => ({
   runIngestion: vi.fn(),
   runDiscovery: vi.fn(),
   runPrune: vi.fn(),
+  runLocationResolve: vi.fn(),
+  createLocationModel: vi.fn(),
 }));
 
 vi.mock("@opusfinder/db", () => ({ createDb: mocks.createDb }));
 vi.mock("@opusfinder/sources", () => ({ runIngestion: mocks.runIngestion }));
 vi.mock("@opusfinder/discovery", () => ({ runDiscovery: mocks.runDiscovery }));
+vi.mock("@opusfinder/locations", () => ({
+  runLocationResolve: mocks.runLocationResolve,
+  createLocationModel: mocks.createLocationModel,
+}));
 vi.mock("@opusfinder/db/repos", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@opusfinder/db/repos")>()),
   runPrune: mocks.runPrune,
@@ -42,6 +48,7 @@ import worker from "./index";
 // "wrangler.toml ↔ src/index.ts cron sync" suite below pins all three together: the toml's crons ARE
 // these strings, and each routes to its lane (so src/index.ts's constants equal them too).
 const INGEST_CRON = "0 */2 * * *";
+const LOCATIONS_CRON = "10 */2 * * *";
 const DISCOVERY_CRON = "0 3 * * SUN";
 
 // Production constants the cursor/limit math is pinned against (src/index.ts).
@@ -606,6 +613,274 @@ const DISCOVERY_COUNTS = {
   deactivated: 2,
 };
 
+/** A location run's result as runLocationResolve returns it. */
+function locationResult(over: Record<string, unknown> = {}, counts: Record<string, number> = {}) {
+  return {
+    stopped: "drained",
+    failedPairs: [],
+    ...over,
+    counts: {
+      pending: 0,
+      asked: 0,
+      resolved: 0,
+      unanswered: 0,
+      failed: 0,
+      unmatchedPlaces: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheCreationTokens: 0,
+      costUsd: 0,
+      ...counts,
+    },
+  };
+}
+
+/** Drive one location tick; returns the options handed to runLocationResolve, the KV and the ctx. */
+async function runLocationsTick(
+  env: Record<string, unknown> = {},
+  cursorRaw: string | null = null,
+) {
+  const kv = makeKv(cursorRaw);
+  const ctx = makeCtx();
+  await scheduled(
+    { cron: LOCATIONS_CRON },
+    { DATABASE_URL: "postgres://stub", INGEST_CURSOR: kv, ...env },
+    ctx,
+  );
+  const opts = mocks.runLocationResolve.mock.calls.at(-1)?.[2] as
+    | Record<string, unknown>
+    | undefined;
+  return { opts, kv, ctx };
+}
+
+const LOCATIONS_ON = { LOCATIONS: "on", OPENROUTER_API_KEY: "sk-or-stub" };
+
+describe("location resolving on its own cron", () => {
+  beforeEach(() => {
+    mocks.runLocationResolve.mockResolvedValue(locationResult());
+    mocks.createLocationModel.mockReturnValue({ __model: "stub" });
+  });
+
+  // Only "shadow" and "on" turn it on: the other switches' affirmatives ("enforce", "true") read as off.
+  it.each([undefined, "off", "", "enforce", "true"])(
+    "LOCATIONS=%j: does nothing but log that it is off and record a skipped run",
+    async (flag) => {
+      const control = makeControl(async () => ({ mode: "off", cappedBy: null, knobs: {} }));
+      const fetchSpy = vi.fn();
+      vi.stubGlobal("fetch", fetchSpy);
+      const env = flag === undefined ? {} : { LOCATIONS: flag };
+
+      const { kv, ctx } = await runLocationsTick({ ...env, CONTROL: control });
+      await settle(ctx);
+
+      expect(mocks.runLocationResolve).not.toHaveBeenCalled();
+      expect(mocks.runIngestion).not.toHaveBeenCalled();
+      expect(mocks.runDiscovery).not.toHaveBeenCalled();
+      expect(kv.get).not.toHaveBeenCalled();
+      expect(kv.put).not.toHaveBeenCalled();
+      expect(fetchSpy).not.toHaveBeenCalled();
+      expect(console.log).toHaveBeenCalledWith(
+        "Locations: off (LOCATIONS), nothing read or asked.",
+      );
+      expect(recorded(control)).toMatchObject([
+        { stage: "locations", outcome: "skipped", gateMode: "off", detail: "off (LOCATIONS)" },
+      ]);
+    },
+  );
+
+  it("reads the mode whatever its case or padding", async () => {
+    await runLocationsTick({ LOCATIONS: " On ", OPENROUTER_API_KEY: "sk-or-stub" });
+    expect(mocks.runLocationResolve).toHaveBeenCalledTimes(1);
+  });
+
+  it("LOCATIONS=shadow: counts the strings waiting, with no key, no model spend and no memory", async () => {
+    mocks.runLocationResolve.mockResolvedValue(
+      locationResult({ stopped: "counted" }, { pending: 412 }),
+    );
+    const control = makeControl(async () => ({ mode: "shadow", cappedBy: null, knobs: {} }));
+
+    const { opts, kv, ctx } = await runLocationsTick({ LOCATIONS: "shadow", CONTROL: control });
+    await settle(ctx);
+
+    expect(mocks.runLocationResolve.mock.calls[0]![0]).toBe(DB);
+    expect(opts).toEqual({ apply: false, maxPairs: 300, maxRunMs: 240_000 });
+    expect(kv.get).not.toHaveBeenCalled();
+    expect(kv.put).not.toHaveBeenCalled();
+    expect(console.log).toHaveBeenCalledWith("Locations: logs only · 412 waiting");
+    expect(recorded(control)).toMatchObject([
+      { stage: "locations", outcome: "ok", gateMode: "shadow", detail: "logs only · 412 waiting" },
+    ]);
+  });
+
+  it("LOCATIONS=on: resolves inside its bounds with the key from its secret, asking last run's failures last", async () => {
+    const failedLastRun = [{ companyId: 7, raw: "Atlantis" }];
+    const failedNow = [{ companyId: 9, raw: "Lemuria" }];
+    mocks.runLocationResolve.mockResolvedValue(
+      locationResult(
+        { stopped: "pair-bound", failedPairs: failedNow },
+        {
+          pending: 2000,
+          asked: 300,
+          resolved: 290,
+          unanswered: 6,
+          failed: 4,
+          unmatchedPlaces: 11,
+          inputTokens: 90_000,
+          outputTokens: 12_000,
+          cacheReadTokens: 900_000,
+          cacheCreationTokens: 3200,
+          costUsd: 0.0431,
+        },
+      ),
+    );
+    const control = makeControl(async () => ({ mode: "on", cappedBy: null, knobs: {} }));
+
+    const { opts, kv, ctx } = await runLocationsTick(
+      { ...LOCATIONS_ON, CONTROL: control },
+      JSON.stringify(failedLastRun),
+    );
+    await settle(ctx);
+
+    expect(mocks.createLocationModel).toHaveBeenCalledWith({ apiKey: "sk-or-stub" });
+    expect(mocks.runLocationResolve.mock.calls[0]![1]).toEqual({ __model: "stub" });
+    expect(opts).toEqual({
+      apply: true,
+      maxPairs: 300,
+      maxRunMs: 240_000,
+      askLast: failedLastRun,
+    });
+    expect(kv.get).toHaveBeenCalledWith("locationsAskLast");
+    expect(kv.put).toHaveBeenCalledWith("locationsAskLast", JSON.stringify(failedNow));
+    const summary =
+      "2,000 waiting · 290 resolved · 6 unanswered · 4 failed · 11 unmatched places · $0.0431 · " +
+      "stopped at its string limit";
+    expect(console.log).toHaveBeenCalledWith(`Locations: ${summary}`);
+    expect(recorded(control)).toMatchObject([
+      {
+        stage: "locations",
+        outcome: "partial",
+        gateMode: "on",
+        units: {
+          "anthropic.haiku.in": 90_000,
+          "anthropic.haiku.out": 12_000,
+          "anthropic.haiku.cache_read": 900_000,
+          "anthropic.haiku.cache_write": 3200,
+          "locations.strings": 300,
+          "locations.strings_failed": 4,
+        },
+        detail: summary,
+      },
+    ]);
+    expect(mocks.runIngestion).not.toHaveBeenCalled();
+  });
+
+  it("leaves KV alone when nothing failed last run or this one, and clears it once the failures are gone", async () => {
+    const quiet = await runLocationsTick(LOCATIONS_ON);
+    expect(quiet.kv.put).not.toHaveBeenCalled();
+
+    const cleared = await runLocationsTick(LOCATIONS_ON, '[{"companyId":7,"raw":"Atlantis"}]');
+    expect(cleared.kv.put).toHaveBeenCalledWith("locationsAskLast", "[]");
+  });
+
+  it.each([
+    ["not JSON", "{oops"],
+    ["not a list", '{"companyId":7,"raw":"x"}'],
+    ["a list of other things", '[1, null, {"companyId":"7","raw":"x"}, {"companyId":7}]'],
+  ])("reads a stored memory that is %s as none", async (_label, stored) => {
+    const { opts } = await runLocationsTick(LOCATIONS_ON, stored);
+    expect(opts).toMatchObject({ askLast: [] });
+  });
+
+  it("runs without the memory when KV fails, and never fails the tick over it", async () => {
+    const kv = {
+      get: vi.fn(async () => Promise.reject(new Error("KV GET failed"))),
+      put: vi.fn(async () => Promise.reject(new Error("KV PUT failed"))),
+    };
+    mocks.runLocationResolve.mockResolvedValue(
+      locationResult({ failedPairs: [{ companyId: 9, raw: "Lemuria" }] }),
+    );
+
+    await scheduled(
+      { cron: LOCATIONS_CRON },
+      { DATABASE_URL: "postgres://stub", INGEST_CURSOR: kv, ...LOCATIONS_ON },
+      makeCtx(),
+    );
+
+    expect(mocks.runLocationResolve.mock.calls[0]![2]).toMatchObject({ askLast: [] });
+    expect(console.warn).toHaveBeenCalledWith("locations: ask-last read failed (Error)");
+    expect(console.warn).toHaveBeenCalledWith("locations: ask-last write failed (Error)");
+  });
+
+  it("keeps at most 500 failed strings in the memory", async () => {
+    const many = Array.from({ length: 600 }, (_, i) => ({ companyId: 1, raw: `Office ${i}` }));
+    mocks.runLocationResolve.mockResolvedValue(locationResult({ failedPairs: many }));
+    const { kv } = await runLocationsTick(LOCATIONS_ON);
+    expect(JSON.parse(kv.put.mock.calls[0]![1])).toHaveLength(500);
+  });
+
+  it("LOCATIONS=on without the key secret: fails before any run starts, naming the fix", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    await expect(runLocationsTick({ LOCATIONS: "on" })).rejects.toThrow(
+      /OPENROUTER_API_KEY is not set/,
+    );
+    expect(mocks.runLocationResolve).not.toHaveBeenCalled();
+  });
+
+  it("a run in which the model answered nothing is a failed tick: memory saved, error recorded, failure pinged", async () => {
+    const failed = [{ companyId: 7, raw: "Atlantis" }];
+    const unavailable =
+      "The location model is unavailable: all 30 requests failed (OpenRouter 402 error).";
+    mocks.runLocationResolve.mockResolvedValue(
+      locationResult(
+        { stopped: "model-unavailable", failedPairs: failed, unavailable },
+        { pending: 40, asked: 30, failed: 30 },
+      ),
+    );
+    const control = makeControl(async () => ({ mode: "on", cappedBy: null, knobs: {} }));
+    const fetchSpy = vi.fn(async () => new Response("OK"));
+    vi.stubGlobal("fetch", fetchSpy);
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const kv = makeKv(null);
+    const ctx = makeCtx();
+
+    await expect(
+      scheduled(
+        { cron: LOCATIONS_CRON },
+        {
+          DATABASE_URL: "postgres://stub",
+          INGEST_CURSOR: kv,
+          ...LOCATIONS_ON,
+          CONTROL: control,
+          HEALTH_PING_URL: "https://hc.example/abc",
+        },
+        ctx,
+      ),
+    ).rejects.toThrow(unavailable);
+    await settle(ctx);
+
+    expect(kv.put).toHaveBeenCalledWith("locationsAskLast", JSON.stringify(failed));
+    expect(recorded(control)).toMatchObject([
+      { stage: "locations", outcome: "error", detail: `Error: ${unavailable}` },
+    ]);
+    // Its only alert is the ingest check: the failure ping, never a heartbeat.
+    expect(fetchSpy.mock.calls.map((call) => String((call as unknown[])[0]))).toEqual([
+      "https://hc.example/abc/fail",
+    ]);
+  });
+
+  it("a healthy location run sends no heartbeat: the ingest check's period is the ingest tick's", async () => {
+    const fetchSpy = vi.fn(async () => new Response("OK"));
+    vi.stubGlobal("fetch", fetchSpy);
+    const { ctx } = await runLocationsTick({
+      ...LOCATIONS_ON,
+      HEALTH_PING_URL: "https://hc.example/abc",
+    });
+    await settle(ctx);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+});
+
 describe("control plane, in shadow — the gate is logged, never obeyed", () => {
   it("reads the ingest gate before the tick, logs it, and runs the tick", async () => {
     const control = makeControl();
@@ -1038,25 +1313,41 @@ describe("wrangler.toml ↔ src/index.ts cron sync (a drift silently skips a lan
   it("registers exactly the mirrored constants whenever crons are registered (`crons = []` = paused, valid)", () => {
     const crons = tomlCrons();
     // Paused is a documented state (README "Pause / resume"); otherwise the set must match the constants.
-    expect(crons.length === 0 ? [INGEST_CRON, DISCOVERY_CRON] : crons).toEqual([
+    expect(crons.length === 0 ? [INGEST_CRON, LOCATIONS_CRON, DISCOVERY_CRON] : crons).toEqual([
       INGEST_CRON,
+      LOCATIONS_CRON,
       DISCOVERY_CRON,
     ]);
+  });
+
+  it("ships location resolving off, so the first deploy of its cron spends and reads nothing", () => {
+    expect(/^LOCATIONS = "([^"]*)"$/m.exec(wranglerToml)?.[1]).toBe("off");
   });
 
   it("routes EVERY cron wrangler.toml registers to a handler case — none hits the Unhandled-cron throw", async () => {
     mocks.runDiscovery.mockResolvedValue(undefined);
     mocks.runIngestion.mockResolvedValue({ processed: 0, companies: 0, lastId: 0 });
+    mocks.runLocationResolve.mockResolvedValue(locationResult());
     const crons = tomlCrons();
     for (const cron of crons) {
       await scheduled(
         { cron },
-        { DATABASE_URL: "postgres://stub", INGEST_CURSOR: makeKv(null) },
+        // LOCATIONS on, so its cron reaches its lane instead of stopping at the switch.
+        {
+          DATABASE_URL: "postgres://stub",
+          INGEST_CURSOR: makeKv(null),
+          LOCATIONS: "on",
+          OPENROUTER_API_KEY: "sk-or-stub",
+        },
         makeCtx(),
       );
     }
     // One lane call per registered cron (vacuous when paused).
-    expect(mocks.runIngestion.mock.calls.length + mocks.runDiscovery.mock.calls.length).toBe(crons.length);
+    expect(
+      mocks.runIngestion.mock.calls.length +
+        mocks.runLocationResolve.mock.calls.length +
+        mocks.runDiscovery.mock.calls.length,
+    ).toBe(crons.length);
   });
 
   it("raises [limits] subrequests far above a worst-case tick (the Workers Paid default is only 10,000)", () => {

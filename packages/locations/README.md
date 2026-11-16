@@ -51,7 +51,7 @@ fails transiently is skipped for the rest of the run; a call fails only when eve
 
 | Command                                          | Does                                                                                                                  |
 | ------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------- |
-| `pnpm locations:sync`                            | The digest's daily step by hand: resolve every active pair with no row, a few requests at a time                      |
+| `pnpm locations:sync`                            | The Worker's location run by hand, unbounded: resolve every active pair with no row, a few requests at a time         |
 | `pnpm locations:backfill [-- --dry-run]`         | Provider batches over every pair with no row, a row from another prompt version, or no answer                         |
 | `pnpm locations:recheck [-- --dry-run]`          | Re-run the check over the current prompt version's failed places, without the model (a check-only change)             |
 | `pnpm locations:backfill -- --collect <id>`      | Store a batch an earlier backfill submitted (its id is printed at submit), without sending anything                   |
@@ -59,8 +59,10 @@ fails transiently is skipped for the rest of the run; a call fails only when eve
 | `pnpm locations:explain -- --email … --job <id>` | Each of the job's strings: places, confidence, reason, version, miles from home; the rule case + verdict; cosine rank |
 | `pnpm locations:explain -- --email …`            | The user's top candidates after the location filter, with place + distance (`--all`: every approved user)             |
 
-The digest orchestrator runs the daily step itself before its fan-out (see `@opusfinder/inngest`). All of
-them need `DATABASE_URL`; sync and backfill also need `OPENROUTER_API_KEY` (`packages/llm/.env`) and write
+The scrapers Worker runs the daily step on its own cron, 10 minutes into each ingestion tick
+(`runLocationResolve` in `src/run.ts`; switch, bound and record in `apps/scrapers/README.md`). The digest
+resolves nothing: its location rule holds a job back from a user with a home place until the job's strings
+are resolved. All of the commands need `DATABASE_URL`; sync and backfill also need `OPENROUTER_API_KEY` (`packages/llm/.env`) and write
 `location_strings` (owner-run). The backfill submits batches of up to 1,500 requests at once and stores
 each as it ends (minutes to hours); a batch that fails to submit or to end costs only its own pairs, and
 one whose wait failed can be stored later with `--collect`. `--recency-days N` on explain overrides the

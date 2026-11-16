@@ -1,17 +1,19 @@
 # @opusfinder/scrapers
 
-The Cloudflare **Workers** scraper runtime (Phase 8). Two cron-scheduled handlers run against Neon —
-**ingestion** (frequent) and **discovery** (weekly) — instead of the dev machine. The Worker is a thin
-dispatch shell; the real work lives in the already-Worker-forward libraries it calls.
+The Cloudflare **Workers** scraper runtime (Phase 8). Three cron-scheduled handlers run against Neon —
+**ingestion** (frequent), **location resolving** (10 minutes into each ingestion tick) and **discovery**
+(weekly) — instead of the dev machine. The Worker is a thin dispatch shell; the real work lives in the
+already-Worker-forward libraries it calls.
 
 ## How it works
 
 `src/index.ts` exports a `scheduled(controller, env, ctx)` handler that switches on `controller.cron`:
 
-| Cron (UTC)    | Handler   | Calls                                              |
-| ------------- | --------- | -------------------------------------------------- |
-| `0 */2 * * *` | ingestion | `runIngestion(db, …)` from `@opusfinder/sources`   |
-| `0 3 * * SUN` | discovery | `runDiscovery(db, …)` from `@opusfinder/discovery` |
+| Cron (UTC)     | Handler   | Calls                                                    |
+| -------------- | --------- | -------------------------------------------------------- |
+| `0 */2 * * *`  | ingestion | `runIngestion(db, …)` from `@opusfinder/sources`         |
+| `10 */2 * * *` | locations | `runLocationResolve(db, …)` from `@opusfinder/locations` |
+| `0 3 * * SUN`  | discovery | `runDiscovery(db, …)` from `@opusfinder/discovery`       |
 
 > **Ingestion runs every 2 hours** (`0 */2 * * *`, 250 boards per tick) — the liveness driver for the
 > health checker + watchdog heartbeat. It was `*/30`, then hourly × 150 boards (Phase F6); 2-hourly × 250
@@ -26,8 +28,8 @@ and the library it calls owns its own `source_runs` row (`startRun`/`finishRun`)
 
 > **Worker-isolation invariant (Phase 9.5 + 10 + 11).** `@opusfinder/auth` (Better Auth) and the neon-serverless
 > `createAuthDb` (`@opusfinder/db/auth-client`) crash at import under `nodejs_compat` (#6665) and must
-> **never** enter this bundle — the Worker reads and writes only `companies`, `jobs` and `source_runs`,
-> never a user, auth or digest table. `pnpm guard:worker`
+> **never** enter this bundle — the Worker reads and writes only `companies`, `jobs`, `source_runs` and
+> `location_strings`, and reads `places`: never a user, auth or digest table. `pnpm guard:worker`
 > (`scripts/check-worker-isolation.mjs`) asserts it (source scan + dependency scan) and fails CI on a leak.
 > As of **Phase 10** the deny list also covers the digest pipeline's server-only stack —
 > `@opusfinder/inngest` / `inngest` / `@opusfinder/llm` / `@opusfinder/rerank` / `@anthropic-ai/sdk` —
@@ -57,6 +59,23 @@ and the library it calls owns its own `source_runs` row (`startRun`/`finishRun`)
   for 30+ days that no digest showed and, with `PRUNE = "enforce"`, deletes up to 20,000 of them through
   the `prune_closed_jobs` SQL function. It writes its own `prune` row to `source_runs`; a failure is logged
   there and never fails discovery. `wrangler.toml` ships `PRUNE = "enforce"`; `"shadow"` only counts.
+- **Location resolving** is its own invocation, 10 minutes after each ingestion tick starts: the tick's new
+  strings are in and Neon is still awake. `runLocationResolve` sends the active location strings that have
+  no `location_strings` row yet to the model (Claude Haiku through OpenRouter) and stores the checked
+  answers, which the digest's location rule reads. The digest resolves none itself: until a string is
+  resolved, its jobs are held back from users with a home place.
+  - **Switch:** the `LOCATIONS` var. `"off"` (what `wrangler.toml` ships) fires, logs that it is off and
+    records a skipped run in the control plane: no database query, no model call. `"shadow"` counts the
+    strings waiting and records it. `"on"` resolves them.
+  - **Bound:** at most 300 strings a run, and no chunk of 30 starts after 4 minutes; the rest wait for the
+    next run. So a backlog drains at up to 3,600 strings a day, and a run costs at most about $0.15.
+  - **Failures:** a string whose request failed is skipped for the rest of the run and asked last by the
+    next one (the list is kept in the `INGEST_CURSOR` KV namespace under `locationsAskLast`), so strings
+    that keep failing can't block the rest. A run in which the model answered nothing fails the tick: an
+    `error` row, an errored invocation and the ingest check's failure ping.
+  - **Record:** a `locations` row in `source_runs` (`pnpm runs`) with `pending` (strings waiting when the
+    run started), `asked`, `resolved`, `unanswered`, `failed`, `unmatchedPlaces`, the token counts and
+    `costUsd`.
 
 > **Health & liveness (Phase F6).** On each successful ingestion tick the Worker fires a content-free
 > heartbeat to an external watchdog (`env.HEALTH_PING_URL`, an optional `wrangler secret`); the watchdog
@@ -89,6 +108,7 @@ pnpm --filter @opusfinder/scrapers exec wrangler deploy --dry-run --outdir dist 
 pnpm --filter @opusfinder/scrapers dev
 # In another terminal, trigger a cron via the canonical local endpoint (spaces -> + in the query):
 curl "http://localhost:8787/cdn-cgi/handler/scheduled?cron=0+*/2+*+*+*"  # ingestion (every 2 h)
+curl "http://localhost:8787/cdn-cgi/handler/scheduled?cron=10+*/2+*+*+*" # locations (off unless LOCATIONS says so)
 curl "http://localhost:8787/cdn-cgi/handler/scheduled?cron=0+3+*+*+SUN"    # discovery
 ```
 
@@ -110,6 +130,8 @@ These require the Cloudflare account / real secrets / billing:
 wrangler login
 wrangler secret put HEALTH_PING_URL           # Phase F6 liveness heartbeat — the watchdog ping URL (optional)
 wrangler secret put HEALTH_PING_URL_DISCOVER  # discovery's own weekly check: period 7 d, grace ~6 h (optional)
+wrangler secret put OPENROUTER_API_KEY        # the location model's key, read only when LOCATIONS = "on": a key
+                                              # of its own with a spend limit, not the digest's
 pnpm --filter @opusfinder/scrapers run deploy # registers/updates the Worker + applies the current [triggers]
 pnpm --filter @opusfinder/db run worker-role:setup  # once: DATABASE_URL, the Worker's own database login (below)
 wrangler tail opusfinder-scrapers             # stream live cron invocations
@@ -117,8 +139,8 @@ wrangler tail opusfinder-scrapers             # stream live cron invocations
 
 - **The Worker's `DATABASE_URL` is its own limited login, not yours.** With your owner `DATABASE_URL`
   exported (`packages/db/README.md` "Environment"), `worker-role:setup` creates the `scrapers_worker` role
-  (SELECT/INSERT/UPDATE on `companies`, `jobs` and `source_runs`, plus EXECUTE on the prune function:
-  `packages/db/src/roles.ts`) or rotates
+  (SELECT/INSERT/UPDATE on `companies`, `jobs`, `source_runs` and `location_strings`, SELECT on `places`,
+  plus EXECUTE on the prune function: `packages/db/src/roles.ts`) or rotates
   its password, then pipes its connection string into this Worker's `DATABASE_URL` on stdin; it applies at
   once. Run it while no tick is running (not the first ~15 min of an even UTC hour, nor Sunday 03:00 UTC):
   the old password stops working immediately. Never run two at once: the role could keep one run's password

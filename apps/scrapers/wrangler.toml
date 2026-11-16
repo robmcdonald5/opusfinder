@@ -2,7 +2,8 @@ name = "opusfinder-scrapers"
 main = "src/index.ts"
 compatibility_date = "2026-06-03"
 # No compatibility_flags: the Worker imports only fetch-based libraries (neon-http, the ATS adapters,
-# discovery) — no Node-targeted package enters the bundle, so nodejs_compat is not needed.
+# discovery, the location normalizer and its model transport) — no Node-targeted package enters the bundle,
+# so nodejs_compat is not needed.
 
 # Cron-only (no fetch handler), so no public hostname: a request to one could only throw. Crons and the
 # outbound CONTROL binding need none, and local `wrangler dev` triggers are unaffected.
@@ -57,6 +58,7 @@ subrequests = 100000
 # period to 2 h — an hourly-period check would page on every healthy gap.)
 crons = [
   "0 */2 * * *", # ingestion — every 2 h, at :00 of even UTC hours
+  "10 */2 * * *", # location strings — 10 min into each ingestion tick, while Neon is awake (LOCATIONS below)
   "0 3 * * SUN", # discovery — Sunday 03:00 (Workers Paid; F5f resumed) — workerSafe lanes via workerOnly:true
 ]
 
@@ -135,6 +137,20 @@ STALE_SWEEP_TTL_DAYS = "21"
 # Rollback = "shadow" + redeploy.
 PRUNE = "enforce"
 
+# Location resolving, on its own cron 10 min into each ingestion tick: the active location strings with no
+# `location_strings` row yet go to the model, at most 300 a run (LOCATIONS_MAX_PAIRS), and the rest wait for
+# the next run. The digest's location rule reads those rows; it no longer resolves any itself.
+#   LOCATIONS = "off"    : the cron fires, logs that it is off and records a skipped run in the control
+#                          plane. No database query, no model call. Anything unrecognised reads as off.
+#   LOCATIONS = "shadow" : counts the strings waiting and records it (a `locations` source_runs row).
+#                          No model call, nothing stored.
+#   LOCATIONS = "on"     : resolves them. Needs the OPENROUTER_API_KEY secret
+#                          (`wrangler secret put OPENROUTER_API_KEY`): a key of its own with a spend limit.
+# Before "shadow" or "on", the Worker's database role needs the location tables:
+# `pnpm --filter @opusfinder/db run worker-role:setup`. The control plane's `locations` row moves with this
+# var (an apps/control migration, as for STALE_SWEEP and PRUNE).
+LOCATIONS = "off"
+
 # The control plane (apps/control, Worker `opusfinder-control`), read in SHADOW: each tick logs its stage's
 # gate and records one ledger row; behaviour still follows the vars above (src/control.ts). RPC to the
 # `ControlRpc` entrypoint over a service binding never touches the public hostname, so no Access token is
@@ -149,8 +165,9 @@ service = "opusfinder-control"
 entrypoint = "ControlRpc"
 props = { name = "cf:opusfinder-scrapers" }
 
-# Chunk-cursor store for the chunked ingestion tick. `wrangler dev` simulates it locally, so a local run
-# never moves the deployed cursor. The namespace exists; a new account creates its own with
+# Chunk-cursor store for the chunked ingestion tick (key `afterId`). The location run keeps one key here too
+# (`locationsAskLast`: the strings whose requests failed last run). `wrangler dev` simulates it locally, so a
+# local run never moves the deployed cursor. The namespace exists; a new account creates its own with
 # `wrangler kv namespace create INGEST_CURSOR` and replaces the id.
 [[kv_namespaces]]
 binding = "INGEST_CURSOR"

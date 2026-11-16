@@ -21,12 +21,12 @@
     "@opusfinder/email": "workspace:*",
     "@opusfinder/embeddings": "workspace:*",
     "@opusfinder/llm": "workspace:*",
-    "@opusfinder/locations": "workspace:*",
     "@opusfinder/rerank": "workspace:*",
     "@opusfinder/shared": "workspace:*",
     "inngest": "^3.54.2"
   },
   "devDependencies": {
+    "@opusfinder/locations": "workspace:*",
     "tsx": "^4"
   }
 }

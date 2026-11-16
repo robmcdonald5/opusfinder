@@ -93,6 +93,9 @@ importers:
       '@opusfinder/discovery':
         specifier: workspace:*
         version: link:../../packages/discovery
+      '@opusfinder/locations':
+        specifier: workspace:*
+        version: link:../../packages/locations
       '@opusfinder/shared':
         specifier: workspace:*
         version: link:../../packages/shared
@@ -293,9 +296,6 @@ importers:
       '@opusfinder/llm':
         specifier: workspace:*
         version: link:../llm
-      '@opusfinder/locations':
-        specifier: workspace:*
-        version: link:../locations
       '@opusfinder/rerank':
         specifier: workspace:*
         version: link:../rerank
@@ -306,6 +306,9 @@ importers:
         specifier: ^3.54.2
         version: 3.54.2(@opentelemetry/core@2.7.1(@opentelemetry/api@1.9.0))(@sveltejs/kit@2.65.1(@opentelemetry/api@1.9.0)(@sveltejs/vite-plugin-svelte@7.1.2(svelte@5.56.3(@typescript-eslint/types@8.59.4))(vite@8.0.16(@types/node@25.9.3)(esbuild@0.28.1)(tsx@4.22.3)(yaml@2.9.0)))(svelte@5.56.3(@typescript-eslint/types@8.59.4))(typescript@6.0.3)(vite@8.0.16(@types/node@25.9.3)(esbuild@0.28.1)(tsx@4.22.3)(yaml@2.9.0)))(typescript@6.0.3)(zod@4.4.3)
     devDependencies:
+      '@opusfinder/locations':
+        specifier: workspace:*
+        version: link:../locations
       tsx:
         specifier: ^4
         version: 4.22.3
