@@ -10,6 +10,7 @@
   "scripts": {
     "eval": "tsx scripts/eval.ts",
     "eval:compare": "tsx scripts/compare.ts",
+    "rerank:parity": "tsx scripts/rerank-parity.ts",
     "extract-profile": "tsx scripts/extract-profile.ts",
     "cv-extract": "tsx scripts/cv-extract.ts",
     "build:pool": "tsx scripts/build-pool.ts",
