@@ -55,6 +55,9 @@ export interface RunScript {
   sleep?: string;
   /** Then fail a step: with the stages' no-retry error, a plain error, or a drizzle-shaped query error. */
   fail?: "no-retry" | "plain" | "query";
+  /** Then send an email (`send-email`) and fail the write that records it (`record-sent`) this many
+   *  times before it succeeds. */
+  recordSentFails?: number;
 }
 
 const ENGINE_ENTRY = `
@@ -62,14 +65,17 @@ import { WorkflowEntrypoint } from "cloudflare:workers";
 import { NonRetryableError } from "cloudflare:workflows";
 import { NonRetriableError } from "@opusfinder/digest";
 import { startUserRuns } from "./fan-out.ts";
-import { STEP_CONFIG, workflowStepTools } from "./steps.ts";
+import { stepConfig, workflowStepTools } from "./steps.ts";
 
-// The production policy with its waits shortened: 4 retries, as STEP_CONFIG has.
-const FAST = { ...STEP_CONFIG, retries: { ...STEP_CONFIG.retries, delay: 20, backoff: "constant" } };
+// Each step's production policy (its retry count) with the waits shortened.
+const fast = (id) => {
+  const config = stepConfig(id);
+  return { ...config, retries: { limit: config.retries.limit, delay: 20, backoff: "constant" } };
+};
 
 const instances = new Map();
 const store = {
-  last: async (userIds) => new Map(userIds.flatMap((u) => (instances.has(u) ? [[u, instances.get(u)]] : []))),
+  state: async (userIds) => new Map(userIds.map((u) => [u, { instanceId: instances.get(u) ?? null, dueSince: 0 }])),
   record: async (userId, id) => void instances.set(userId, id),
 };
 const scripts = new Map();
@@ -83,7 +89,7 @@ export class UserRun extends WorkflowEntrypoint {
     const tools = workflowStepTools(
       { do: (name, config, callback) => step.do(name, config, callback), sleep: (name, ms) => step.sleep(name, ms) },
       (message) => new NonRetryableError(message),
-      FAST,
+      fast,
     );
     await tools.run("load", async () => ({ started: count(userId + ":load") }));
     if (script.sleep) await tools.sleep("wait", script.sleep);
@@ -97,6 +103,16 @@ export class UserRun extends WorkflowEntrypoint {
           throw failed;
         }
         throw new Error("Resend send failed: application_error (500)");
+      });
+    }
+    if (script.recordSentFails !== undefined) {
+      // The delivery tail's first two steps, under their real ids: the email goes out, then the write
+      // that records it fails this many times before it succeeds.
+      await tools.run("send-email", async () => ({ emailId: "email-" + count(userId + ":send-email") }));
+      await tools.run("record-sent", async () => {
+        if (count(userId + ":record-sent") <= script.recordSentFails) {
+          throw new Error("Failed query: update digests\\nparams: 7");
+        }
       });
     }
     return { userId };
@@ -249,7 +265,7 @@ export interface DigestWorker {
   /** The ledger rows the Worker sent since the last call. */
   ledger(): Promise<Record<string, unknown>[]>;
   instance(
-    workflow: "DIGEST_RUN" | "DIGEST_USER",
+    workflow: "DIGEST_RUN" | "DIGEST_USER" | "HEALTH_CHECK",
     id: string,
   ): Promise<{ found: boolean; status?: { status: string } }>;
   /** Every URL the Worker tried to fetch. */
@@ -285,6 +301,7 @@ export async function startDigestWorker(): Promise<DigestWorker> {
         workflows: {
           DIGEST_RUN: { name: "opusfinder-digest-run", className: "DigestRunWorkflow" },
           DIGEST_USER: { name: "opusfinder-digest-user", className: "DigestUserWorkflow" },
+          HEALTH_CHECK: { name: "opusfinder-health-check", className: "HealthCheckWorkflow" },
         },
         outboundService: (request: Request) => {
           outbound.push(request.url);
@@ -306,6 +323,11 @@ export async function startDigestWorker(): Promise<DigestWorker> {
           DIGEST_USER: {
             name: "opusfinder-digest-user",
             className: "DigestUserWorkflow",
+            scriptName: "digest",
+          },
+          HEALTH_CHECK: {
+            name: "opusfinder-health-check",
+            className: "HealthCheckWorkflow",
             scriptName: "digest",
           },
         },

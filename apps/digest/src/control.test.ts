@@ -250,6 +250,27 @@ describe("ledger rows", () => {
       }),
     ).resolves.toBeUndefined();
   });
+
+  it("a control Worker that never answers costs the caller the gate's timeout, no more", async () => {
+    vi.useFakeTimers();
+    const hung: ControlBinding = { ...control(), recordRun: () => new Promise(() => undefined) };
+    let settled = false;
+    const write = recordRun(hung, (finishedMs) =>
+      runRecord("digest", 0, finishedMs, { outcome: "ok", gateMode: "on", detail: "" }),
+    ).then(() => {
+      settled = true;
+    });
+
+    await vi.advanceTimersByTimeAsync(GATE_TIMEOUT_MS - 1);
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    await write;
+
+    expect(settled).toBe(true);
+    expect(console.warn).toHaveBeenCalledWith(
+      expect.stringContaining(`run not recorded (Error: no answer in ${GATE_TIMEOUT_MS} ms)`),
+    );
+  });
 });
 
 describe("registry ⇄ wrangler.toml ⇄ the Worker", () => {
@@ -269,8 +290,9 @@ describe("registry ⇄ wrangler.toml ⇄ the Worker", () => {
     expect(stages.alerts.trigger).toEqual({ cron: HEALTH_CHECK_CRON });
   });
 
-  it("the digest stage names the orchestrator Workflow", () => {
+  it("each stage names the Workflow its tick starts", () => {
     expect(wranglerToml).toContain(`name = "${stages.digest.platformId}"`);
+    expect(wranglerToml).toContain(`name = "${stages.alerts.platformId}"`);
   });
 
   it("both gates are enforced, both stages ship off, and no wrangler var stands in for the gate", () => {

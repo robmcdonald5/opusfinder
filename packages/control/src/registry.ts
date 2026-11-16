@@ -326,6 +326,7 @@ export const stages = {
   alerts: {
     label: "Health alerts",
     runtime: "cf:opusfinder-digest",
+    platformId: "opusfinder-health-check", // the health-check Workflow, one instance per tick
     trigger: { cron: "10 */2 * * *" }, // 10 min after each ingest tick starts, while Neon is awake
     // Shadow not offered: per-check shadow already exists at the policy level (§5.2). So `on` with every
     // check in shadow is this stage's logs-only state: the check runs and reports, and emails nothing.

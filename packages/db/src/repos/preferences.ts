@@ -6,7 +6,7 @@
  * here. `unsubscribeToken` is generated ONCE by the caller (generateUnsubscribeToken) at creation and
  * never rotated by these functions.
  */
-import { and, eq, inArray, isNotNull, sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 
 import type { UserId, UserPreferences } from "@opusfinder/shared";
 
@@ -108,26 +108,6 @@ export async function setDigestApproval(
     .returning();
   if (!rows[0]) throw new Error(`setDigestApproval: no preferences row for ${userId}`);
   return rows[0];
-}
-
-/**
- * The Workflow instance last started for each of these users' digests (`digest_instance_id`); users with
- * none are absent. The daily tick reads it to skip a user whose previous run hasn't finished.
- */
-export async function getDigestInstances(
-  db: Db,
-  userIds: UserId[],
-): Promise<Map<UserId, string>> {
-  if (userIds.length === 0) return new Map();
-  const rows = await db
-    .select({ userId: userPreferences.userId, instanceId: userPreferences.digestInstanceId })
-    .from(userPreferences)
-    .where(
-      and(inArray(userPreferences.userId, userIds), isNotNull(userPreferences.digestInstanceId)),
-    );
-  const instances = new Map<UserId, string>();
-  for (const row of rows) if (row.instanceId) instances.set(row.userId, row.instanceId);
-  return instances;
 }
 
 /**

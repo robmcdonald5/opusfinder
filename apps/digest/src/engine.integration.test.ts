@@ -8,7 +8,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { startEngineWorker, type EngineWorker } from "@test/digest/worker-harness";
 
 import { userRunId } from "./fan-out";
-import { STEP_CONFIG } from "./steps";
+import { RECORD_SENT_CONFIG, STEP_CONFIG } from "./steps";
 
 const MON = "2026-11-16";
 const TUE = "2026-11-17";
@@ -90,5 +90,23 @@ describe("the digest's Workflows rules on the local engine", () => {
     );
     expect(JSON.stringify(ended)).not.toContain("someone@example.com");
     expect(JSON.stringify(ended)).not.toContain("params");
+  }, 30_000);
+
+  it("an email that went out is recorded even when the write fails far past the usual retries", async () => {
+    const user = "user-record-sent";
+    // Twelve failures: three times what any other step survives (STEP_CONFIG's 4 retries would have
+    // ended the run with the email out and nothing stamped, and the next tick would send a second).
+    const failures = 3 * STEP_CONFIG.retries.limit;
+    expect(failures).toBeLessThan(RECORD_SENT_CONFIG.retries.limit);
+    await engine.script(user, { recordSentFails: failures });
+    await engine.fanOut([user], MON);
+
+    expect((await engine.finished(userRunId(user, MON))).status).toBe("complete");
+    const attempts = await engine.attempts();
+    expect(attempts[`${user}:record-sent`]).toBe(failures + 1);
+    expect(attempts[`${user}:send-email`]).toBe(1); // the send step is not run again
+    // While the write was still failing the run was unfinished, so a later tick would have skipped the
+    // user; now that it has ended, the next tick finds nothing in flight.
+    expect(await engine.fanOut([user], TUE)).toMatchObject({ started: 1, inFlight: 0 });
   }, 30_000);
 });

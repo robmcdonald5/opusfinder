@@ -98,6 +98,53 @@ export function listDigestRecipients(
     .limit(opts.limit);
 }
 
+/** What the daily tick's fan-out knows about a due user before it starts their run. */
+export interface DigestFanOutState {
+  /** The Workflow instance last started for the user (`digest_instance_id`); null = none yet. */
+  instanceId: string | null;
+  /** Since when the user has been due, in epoch ms: the end of their cadence window after the last stamp,
+   *  or for a user never stamped, when they got the send permit (failing that, when the row was made). */
+  dueSince: number;
+}
+
+/**
+ * For each of these users, the instance last started for them and since when they have been due. The tick
+ * reads the first to skip a user whose previous run hasn't finished, and the second to take the
+ * longest-waiting users first when it can't start everyone. The windows are {@link cadenceDuePredicate}'s:
+ * a user that predicate calls due has a `dueSince` in the past (digests.integration.test.ts holds the two
+ * together). A user with no preferences row is absent.
+ */
+export async function getDigestFanOutState(
+  db: Db,
+  userIds: UserId[],
+): Promise<Map<UserId, DigestFanOutState>> {
+  if (userIds.length === 0) return new Map();
+  const sent = userPreferences.lastDigestSentAt;
+  const cadence = userPreferences.digestCadence;
+  const rows = await db
+    .select({
+      userId: userPreferences.userId,
+      instanceId: userPreferences.digestInstanceId,
+      dueSince: sql<number>`(extract(epoch FROM COALESCE(
+        ${sent} + CASE ${cadence}
+          WHEN 'daily' THEN interval '20 hours'
+          WHEN 'weekly' THEN interval '6 days 20 hours'
+          WHEN 'monthly' THEN interval '28 days 20 hours'
+        END,
+        ${userPreferences.digestApprovedAt},
+        ${userPreferences.createdAt}
+      )) * 1000)::float8`,
+    })
+    .from(userPreferences)
+    .where(inArray(userPreferences.userId, userIds));
+  return new Map(
+    rows.map((row) => [
+      row.userId,
+      { instanceId: row.instanceId, dueSince: Number(row.dueSince) },
+    ]),
+  );
+}
+
 /**
  * The distinct job ids already shown to a user across all prior digests — the `digest_items`
  * (user_id, job_id) anti-join, fed to `retrieveCandidatesForProfile`'s `excludeJobIds` so a job is

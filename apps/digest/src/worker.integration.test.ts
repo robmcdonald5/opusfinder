@@ -16,6 +16,8 @@ const [DIGEST_CRON, HEALTH_CRON] = [
   ...(/crons = \[([^\]]*)\]/.exec(wranglerToml())?.[1] ?? "").matchAll(/"([^"]+)"/g),
 ].map((m) => m[1]!) as [string, string];
 const TICK = "2026-11-16";
+/** The health check's instance for the harness's default scheduled time (2026-11-16 12:10 UTC). */
+const HEALTH_CHECK_ID = "health-check_2026-11-16T12-10";
 
 /** The gates the control plane would answer with these stored rows (none = registry defaults: all off). */
 function gates(rows: Record<string, string> = {}) {
@@ -79,6 +81,7 @@ describe("the digest Worker bundle in workerd", () => {
       expect.objectContaining({ stage: "alerts", outcome: "skipped", gateMode: "off" }),
     ]);
     expect((await worker.instance("DIGEST_RUN", orchestratorRunId(TICK))).found).toBe(false);
+    expect((await worker.instance("HEALTH_CHECK", HEALTH_CHECK_ID)).found).toBe(false);
     expect(worker.outbound).toEqual([]);
   });
 
@@ -93,6 +96,7 @@ describe("the digest Worker bundle in workerd", () => {
       expect.objectContaining({ stage: "alerts", outcome: "error", detail: "gate unreadable" }),
     ]);
     expect((await worker.instance("DIGEST_RUN", orchestratorRunId(TICK))).found).toBe(false);
+    expect((await worker.instance("HEALTH_CHECK", HEALTH_CHECK_ID)).found).toBe(false);
     expect(worker.outbound).toEqual([]);
   });
 
@@ -112,17 +116,18 @@ describe("the digest Worker bundle in workerd", () => {
     expect(worker.outbound).toEqual([]);
   });
 
-  it("alerts on: the health tick runs its check, and a failure is one ledger line with no secret", async () => {
+  it("alerts on: the tick starts the health check once, however often it fires", async () => {
     await worker.setGates(gates({ alerts: "on" }));
 
-    // The check's first query is refused here, so the tick fails.
-    expect(await worker.fire(HEALTH_CRON)).toBe(false);
+    expect(await worker.fire(HEALTH_CRON)).toBe(true);
+    expect(await worker.fire(HEALTH_CRON)).toBe(true);
 
-    const [row] = await worker.ledger();
-    expect(row).toMatchObject({ stage: "alerts", outcome: "error", gateMode: "on" });
-    expect(String(row!.detail)).not.toContain("\n");
-    expect(JSON.stringify(row)).not.toContain("digest_worker:test");
+    // One instance, under the tick's scheduled minute. Its first query reaches for Neon and nothing else.
+    expect((await worker.instance("HEALTH_CHECK", HEALTH_CHECK_ID)).found).toBe(true);
+    await eventually(() => worker.outbound.length > 0);
     expect(outboundHosts(worker)).toEqual([NEON_HOST]);
+    // The tick wrote no row of its own: the check writes it when it ends.
+    expect(await worker.ledger()).toEqual([]);
   });
 
   it("digest in logs-only mode: the tick starts the orchestrator once, however often it fires", async () => {

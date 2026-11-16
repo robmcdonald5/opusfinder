@@ -42,7 +42,8 @@ export interface ControlBinding {
   recordRun(run: RunRecord): Promise<unknown>;
 }
 
-// A binding call normally answers in milliseconds; past this the gate counts as unreadable.
+// A binding call normally answers in milliseconds; past this the gate counts as unreadable and a ledger
+// row as not written.
 export const GATE_TIMEOUT_MS = 2_000;
 
 /**
@@ -81,10 +82,19 @@ export async function readGate<S extends DigestWorkerStage>(
   stage: S,
 ): Promise<StageGate<S>> {
   if (!control) throw new Error("no CONTROL binding");
+  const gate = await answerInTime(control.gate(stage));
+  const modes: readonly string[] = stages[stage].modes;
+  if (!modes.includes(gate?.mode)) throw new Error("malformed gate answer");
+  return gate as StageGate<S>;
+}
+
+/** `call`'s answer, or a rejection once GATE_TIMEOUT_MS has passed: no call to the control Worker may
+ *  hold a tick or a Workflow step longer than that. */
+async function answerInTime<T>(call: Promise<T>): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | null = null;
   try {
-    const gate = await Promise.race([
-      control.gate(stage),
+    return await Promise.race([
+      call,
       new Promise<never>((_, reject) => {
         timer = setTimeout(
           () => reject(new Error(`no answer in ${GATE_TIMEOUT_MS} ms`)),
@@ -92,9 +102,6 @@ export async function readGate<S extends DigestWorkerStage>(
         );
       }),
     ]);
-    const modes: readonly string[] = stages[stage].modes;
-    if (!modes.includes(gate?.mode)) throw new Error("malformed gate answer");
-    return gate as StageGate<S>;
   } finally {
     if (timer !== null) clearTimeout(timer);
   }
@@ -172,8 +179,9 @@ export function healthVars(gate: GateAnswer): Record<string, string> {
 }
 
 /**
- * Write one ledger row. Any failure, from building the row to the control Worker refusing it, is logged,
- * never thrown: the ledger must not change a tick's outcome. No binding ⇒ nothing to do.
+ * Write one ledger row, best effort. Any failure, from building the row to the control Worker refusing it
+ * or not answering within GATE_TIMEOUT_MS, is logged, never thrown: the ledger must not change a tick's or
+ * a run's outcome, or hold it up. No binding ⇒ nothing to do.
  */
 export async function recordRun(
   control: ControlBinding | undefined,
@@ -181,7 +189,7 @@ export async function recordRun(
 ): Promise<void> {
   if (!control) return;
   try {
-    await control.recordRun(build(Date.now()));
+    await answerInTime(control.recordRun(build(Date.now())));
   } catch (err) {
     console.warn(`control ledger: run not recorded (${errorLine(err)})`);
   }

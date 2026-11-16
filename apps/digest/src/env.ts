@@ -1,7 +1,6 @@
-import type { GateAnswer } from "@opusfinder/control";
 import { createDb, type Db } from "@opusfinder/db";
 import { healthOptionsFromEnv } from "@opusfinder/db/health";
-import { getDigestInstances, setDigestInstance } from "@opusfinder/db/repos";
+import { getDigestFanOutState, setDigestInstance } from "@opusfinder/db/repos";
 import {
   buildDigestDeps,
   getHealthAlertCooldownH,
@@ -12,8 +11,8 @@ import {
 import { sendHealthAlert, type EmailConfig } from "@opusfinder/email";
 import type { UserId } from "@opusfinder/shared";
 
-import { healthVars, readGate, type ControlBinding } from "./control";
-import type { InstanceStore } from "./fan-out";
+import { readGate, type ControlBinding } from "./control";
+import type { FanOutStore } from "./fan-out";
 
 /** The orchestrator Workflow's parameters, all as the tick read them: the tick's UTC date, the stage's
  *  mode (for the ledger row; the send step reads the mode again) and the most user runs to start. */
@@ -21,6 +20,12 @@ export interface RunParams {
   tick: string;
   mode: "shadow" | "on";
   maxUsers: number;
+}
+
+/** The health-check Workflow's parameters: the checks' modes and thresholds and the alert cooldown, as the
+ *  tick read them from the `alerts` gate (./control `healthVars`). */
+export interface HealthParams {
+  vars: Record<string, string>;
 }
 
 export interface Env {
@@ -46,6 +51,8 @@ export interface Env {
   DIGEST_RUN: Workflow<RunParams>;
   /** The per-user Workflow: one instance per due user per tick. */
   DIGEST_USER: Workflow<PerUserEvent["data"]>;
+  /** The health-check Workflow: one instance per 2-hourly tick. */
+  HEALTH_CHECK: Workflow<HealthParams>;
 }
 
 function emailConfig(env: Env): EmailConfig {
@@ -73,19 +80,19 @@ export function digestDeps(env: Env, enforceLifecycle = false): DigestDeps {
   };
 }
 
-/** The fan-out's record of each user's last instance: `user_preferences.digest_instance_id`. */
-export function instanceStore(db: Db): InstanceStore {
+/** What the fan-out reads and writes per user, in `user_preferences`: the instance last started
+ *  (`digest_instance_id`) and since when the user has been due. */
+export function fanOutStore(db: Db): FanOutStore {
   return {
-    last: (userIds) => getDigestInstances(db, userIds as UserId[]),
+    state: (userIds) => getDigestFanOutState(db, userIds as UserId[]),
     record: (userId, instanceId) => setDigestInstance(db, userId as UserId, instanceId),
   };
 }
 
-/** The health check's deps from this Worker's bindings and the `alerts` gate: every check's mode and
- *  threshold and the alert cooldown are the control plane's (./control `healthVars`). A check is reported
- *  and never emailed until its row says enforce. */
-export function healthDeps(env: Env, gate: GateAnswer): HealthCheckDeps {
-  const vars = healthVars(gate);
+/** The health check's deps from this Worker's bindings and the `alerts` gate's settings: every check's
+ *  mode and threshold and the alert cooldown are the control plane's (./control `healthVars`). A check is
+ *  reported and never emailed until its row says enforce. */
+export function healthDeps(env: Env, vars: HealthParams["vars"]): HealthCheckDeps {
   const email = emailConfig(env);
   return {
     db: createDb(env.DATABASE_URL),

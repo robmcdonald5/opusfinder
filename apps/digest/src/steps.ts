@@ -29,6 +29,25 @@ export const STEP_CONFIG: StepConfig = {
   timeout: 5 * 60_000,
 };
 
+/**
+ * The one step with its own policy, a deliberate departure from the Inngest retry count: `record-sent`,
+ * the write that stamps a digest as sent after Resend accepted it. If it gave up after the usual four
+ * retries (about four minutes of Neon failing), the run would end with an email out but no `sent_at` and
+ * no cadence stamp, and the next daily tick would build the user a second digest, sent under a new
+ * idempotency key. The write is idempotent and nothing can be taken back by not retrying it, so it keeps
+ * trying for about 15 hours (60 retries, the wait growing by 30 s each time, up to 30 minutes). The user's
+ * instance stays unfinished meanwhile, so later ticks skip the user.
+ */
+export const RECORD_SENT_CONFIG: StepConfig = {
+  retries: { limit: 60, delay: 30_000, backoff: "linear" },
+  timeout: 5 * 60_000,
+};
+
+/** The retry policy of the stage step `id`. */
+export function stepConfig(id: string): StepConfig {
+  return id === "record-sent" ? RECORD_SENT_CONFIG : STEP_CONFIG;
+}
+
 const UNIT_MS: Record<string, number> = { s: 1_000, m: 60_000, h: 3_600_000 };
 
 /** A stage's wait ("30s", "2m", "10m") in milliseconds. Workflows spells durations differently, and a
@@ -67,19 +86,20 @@ function forEngine(id: string, err: unknown, nonRetryable: (message: string) => 
 
 /**
  * `run` and `sleep` for the stage code, backed by a Workflows step. `nonRetryable` builds the engine's
- * `NonRetryableError` (from `cloudflare:workflows`, which only exists in the Workers runtime).
+ * `NonRetryableError` (from `cloudflare:workflows`, which only exists in the Workers runtime). `configFor`
+ * is each step's retry policy ({@link stepConfig}; a suite passes one with shorter waits).
  */
 export function workflowStepTools(
   step: WorkflowStepLike,
   nonRetryable: (message: string) => Error,
-  config: StepConfig = STEP_CONFIG,
+  configFor: (id: string) => StepConfig = stepConfig,
 ): {
   run<T>(id: string, fn: () => Promise<T>): Promise<T>;
   sleep(id: string, duration: string): Promise<void>;
 } {
   return {
     run: (id, fn) =>
-      step.do(id, config, async () => {
+      step.do(id, configFor(id), async () => {
         try {
           return await fn();
         } catch (err) {

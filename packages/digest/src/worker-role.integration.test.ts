@@ -13,7 +13,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest
 import type { Db } from "@opusfinder/db";
 import {
   countLocalStrings,
-  getDigestInstances,
+  getDigestFanOutState,
   retrieveCandidatesForProfile,
   setDigestInstance,
 } from "@opusfinder/db/repos";
@@ -117,10 +117,10 @@ describe("the digest Worker's work as digest_worker (integration: real PGlite se
     await asRole.enter();
     await setDigestInstance(db, uid(1), `${uid(1)}_2026-11-16`);
 
-    expect(await getDigestInstances(db, [uid(1), uid(2)])).toEqual(
-      new Map([[uid(1), `${uid(1)}_2026-11-16`]]),
-    );
-    expect(await getDigestInstances(db, [])).toEqual(new Map());
+    const state = await getDigestFanOutState(db, [uid(1), uid(2)]);
+    expect(state.get(uid(1))?.instanceId).toBe(`${uid(1)}_2026-11-16`);
+    expect(state.get(uid(2))?.instanceId).toBeNull();
+    expect(await getDigestFanOutState(db, [])).toEqual(new Map());
   });
 
   it("retrieval for a user with a home place reads the place tables", async () => {

@@ -43,7 +43,6 @@ export {
   getOrCreatePreferences,
   updatePreferences,
   setDigestApproval,
-  getDigestInstances,
   setDigestInstance,
 } from "./preferences";
 export type { UserPreferencesRow, CreatePreferencesInput } from "./preferences";
@@ -149,7 +148,13 @@ export {
 } from "./digests";
 export type { DigestEmailPayload, DigestDeliveryOutcome } from "./digests";
 // Pre-send liveness probe — the apply-URL read + dead-link drop.
-export { getDigestApplyTargets, dropDigestItemsAndRecount, getDigestDelivery } from "./digests";
+export {
+  getDigestApplyTargets,
+  dropDigestItemsAndRecount,
+  getDigestDelivery,
+  getDigestFanOutState,
+} from "./digests";
+export type { DigestFanOutState } from "./digests";
 export type { DigestApplyTarget } from "./digests";
 // First writer/reader of health_alerts (cooldown page-once dedup over the health checker).
 export { recordHealthAlert, shouldNotify, DEFAULT_HEALTH_ALERT_COOLDOWN_H } from "./health-alerts";

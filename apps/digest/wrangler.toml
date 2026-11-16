@@ -27,7 +27,7 @@ subrequests = 100000
 # trigger before).
 crons = [
   "10 12 * * *",  # digest — daily at 12:10, starts the orchestrator Workflow
-  "10 */2 * * *", # health check — every 2 h at :10
+  "10 */2 * * *", # health check — every 2 h at :10, starts the health-check Workflow
 ]
 
 # NO [vars]: nothing here switches or tunes this Worker. The secrets (DATABASE_URL, OPENROUTER_API_KEY,
@@ -61,3 +61,9 @@ class_name = "DigestRunWorkflow"
 name = "opusfinder-digest-user"
 binding = "DIGEST_USER"
 class_name = "DigestUserWorkflow"
+
+# The health check: one instance per 2-hourly tick, so a tick that fires twice runs one check.
+[[workflows]]
+name = "opusfinder-health-check"
+binding = "HEALTH_CHECK"
+class_name = "HealthCheckWorkflow"

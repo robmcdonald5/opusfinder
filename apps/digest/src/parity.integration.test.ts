@@ -21,7 +21,7 @@ import { BatchEndedError } from "@opusfinder/llm";
 import { createTestDb } from "@test/db/pglite";
 import { recordParity, type ParityScenario } from "@test/digest/parity";
 
-import { STEP_CONFIG, workflowStepTools, type StepConfig } from "./steps";
+import { RECORD_SENT_CONFIG, STEP_CONFIG, workflowStepTools, type StepConfig } from "./steps";
 
 const FIXTURE = fileURLToPath(new URL("../../../test/digest/parity.fixture.json", import.meta.url));
 
@@ -84,12 +84,16 @@ describe("digest stages on the Workflows step adapter — parity record", () => 
       expect(scenario.outcome, scenario.name).toEqual(throughEngine(want));
     }
 
-    // Every stage step ran as an engine step under the one retry policy, named by its stage id.
+    // Every stage step ran as an engine step named by its stage id, under the usual retry policy, except
+    // the write that records a sent email, which has its own.
     const stageSteps = record.flatMap((s) =>
       s.log.flatMap((entry) => ("step" in entry ? [entry.step] : [])),
     );
     expect(engineSteps.map((s) => s.name)).toEqual(stageSteps);
-    expect(engineSteps.every((s) => s.config === STEP_CONFIG)).toBe(true);
+    for (const { name, config } of engineSteps) {
+      expect(config, name).toBe(name === "record-sent" ? RECORD_SENT_CONFIG : STEP_CONFIG);
+    }
+    expect(engineSteps.some((s) => s.name === "record-sent")).toBe(true);
   }, 60_000);
 });
 

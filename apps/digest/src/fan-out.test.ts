@@ -13,7 +13,8 @@ import {
   startUserRuns,
   tickDate,
   userRunId,
-  type InstanceStore,
+  waitingSince,
+  type FanOutStore,
   type UserRunBinding,
 } from "./fan-out";
 
@@ -44,15 +45,23 @@ function engine() {
   return { instances, binding };
 }
 
+/** The store: each user's last instance id, and since when they have been due (default: all equally,
+ *  long ago, so the sweep's order decides). */
 function memoryStore() {
   const ids = new Map<string, string>();
-  const store: InstanceStore = {
-    last: async (userIds) =>
-      new Map(userIds.flatMap((u) => (ids.has(u) ? [[u, ids.get(u)!]] : []))),
+  const dueSince = new Map<string, number>();
+  const store: FanOutStore = {
+    state: async (userIds) =>
+      new Map(
+        userIds.map((u) => [u, { instanceId: ids.get(u) ?? null, dueSince: dueSince.get(u) ?? 0 }]),
+      ),
     record: async (userId, instanceId) => void ids.set(userId, instanceId),
   };
-  return { ids, store };
+  return { ids, dueSince, store };
 }
+
+/** Noon UTC on a tick's date, in epoch ms. */
+const noon = (tick: string) => Date.parse(`${tick}T12:00:00Z`);
 
 beforeEach(() => {
   vi.spyOn(console, "log").mockImplementation(() => undefined);
@@ -254,18 +263,51 @@ describe("startUserRuns", () => {
     expect(await startedOn("2026-11-20")).toBe(BOB);
   });
 
-  it("takes a user who has never had a run before one who has", async () => {
-    const { binding } = engine();
-    const { ids, store } = memoryStore();
-    ids.set(ALICE, `${ALICE}_2026-11-09`); // gone from the engine: finished long ago
-    ids.set(BOB, `${BOB}_2026-11-02`);
+  it("the limit starves nobody: a steady inflow of new users doesn't keep an existing user out", async () => {
+    const { instances, binding } = engine();
+    const { ids, dueSince, store } = memoryStore();
+    // Two existing users, due since before the first tick. Each had a digest long ago, so each has an
+    // old instance on record (finished; gone from the engine).
+    ids.set(ALICE, `${ALICE}_2026-11-02`);
+    ids.set(BOB, `${BOB}_2026-11-03`);
+    dueSince.set(ALICE, noon("2026-11-14"));
+    dueSince.set(BOB, noon("2026-11-15"));
+    const ticks = [MON, TUE, WED, "2026-11-19", "2026-11-20"];
+    const started: string[] = [];
+    const waitingNewcomers: string[] = [];
 
-    await startUserRuns(store, binding, due(ALICE, BOB, CAROL), MON, 2);
+    for (const [i, tick] of ticks.entries()) {
+      // Every tick as many brand-new users become due as the limit lets start (one), each never run.
+      const newcomer = `newcomer-${i}`;
+      dueSince.set(newcomer, noon(tick) - 3_600_000);
+      waitingNewcomers.push(newcomer);
+      const dueNow = [...waitingNewcomers, ALICE, BOB].filter((user) => !started.includes(user));
+      const before = new Set(instances.keys());
 
-    expect(vi.mocked(binding.create).mock.calls.map(([options]) => options.params.userId)).toEqual([
-      CAROL,
-      BOB,
-    ]);
+      await startUserRuns(store, binding, due(...dueNow), tick, 1);
+
+      const [id] = [...instances.keys()].filter((key) => !before.has(key));
+      instances.set(id!, "complete"); // it finishes and stamps its user, who isn't due again this week
+      started.push(id!.slice(0, -`_${tick}`.length));
+    }
+
+    // First come, first served: the two who were already waiting, then the newcomers in arrival order.
+    expect(started).toEqual([ALICE, BOB, "newcomer-0", "newcomer-1", "newcomer-2"]);
+  });
+
+  it("orders by how long a user has waited: due first, then since their last run was started", () => {
+    const due = noon("2026-11-10");
+    // Never run: waiting since they became due.
+    expect(waitingSince({ instanceId: null, dueSince: due })).toBe(due);
+    // Last run long before they became due again (it finished and stamped them): still since due.
+    expect(waitingSince({ instanceId: `${ALICE}_2026-11-03`, dueSince: due })).toBe(due);
+    // Last run started after they became due (it failed): since the end of that run's day.
+    expect(waitingSince({ instanceId: `${ALICE}_2026-11-12`, dueSince: due })).toBe(
+      Date.parse("2026-11-12T23:59:59.999Z"),
+    );
+    // An id that doesn't end in a date, or a user the store doesn't know: never behind anyone for it.
+    expect(waitingSince({ instanceId: "something-else", dueSince: due })).toBe(due);
+    expect(waitingSince(undefined)).toBe(0);
   });
 
   it("a limit of 0 starts nothing", async () => {

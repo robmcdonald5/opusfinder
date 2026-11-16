@@ -10,7 +10,14 @@ import { NonRetriableError } from "@opusfinder/digest";
 
 import { rejectionReasonOf } from "@test/rejection";
 
-import { durationMs, STEP_CONFIG, workflowStepTools, type WorkflowStepLike } from "./steps";
+import {
+  durationMs,
+  RECORD_SENT_CONFIG,
+  STEP_CONFIG,
+  stepConfig,
+  workflowStepTools,
+  type WorkflowStepLike,
+} from "./steps";
 
 class NonRetryableError extends Error {
   override name = "NonRetryableError";
@@ -43,6 +50,24 @@ describe("the retry policy", () => {
       scored: 3,
     });
     expect(s.do).toHaveBeenCalledWith("rerank", STEP_CONFIG, expect.any(Function));
+  });
+
+  it("gives the write that records a sent email far longer: 60 retries over about 15 hours", async () => {
+    expect(RECORD_SENT_CONFIG).toEqual({
+      retries: { limit: 60, delay: 30_000, backoff: "linear" },
+      timeout: 300_000,
+    });
+    // The waits grow by 30 s each: 30 s, 60 s, … 30 min.
+    const totalMs = Array.from({ length: 60 }, (_, i) => (i + 1) * 30_000).reduce((a, b) => a + b);
+    expect(totalMs / 3_600_000).toBeCloseTo(15.25);
+
+    const s = step();
+    await tools(s).run("record-sent", async () => undefined);
+    expect(s.do).toHaveBeenCalledWith("record-sent", RECORD_SENT_CONFIG, expect.any(Function));
+    // And only that step: its neighbours in the delivery tail keep the usual policy.
+    for (const id of ["send-email", "record-delivery", "record-send-failure", "persist"]) {
+      expect(stepConfig(id)).toBe(STEP_CONFIG);
+    }
   });
 });
 

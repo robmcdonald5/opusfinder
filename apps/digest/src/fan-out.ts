@@ -13,7 +13,8 @@ import type { PerUserEvent, UserRequestedEvent } from "@opusfinder/digest";
  * it). The store (`user_preferences.digest_instance_id`) names the instance last started for each user,
  * written before the start, so the tick asks the engine about exactly that instance and skips the user
  * while it hasn't finished. By induction a user has at most one unfinished run, however many ticks it
- * spans.
+ * spans. The guard knows only the instance recorded last: an older, errored instance restarted by hand
+ * from the Cloudflare dashboard runs beside it unseen (README "Don't restart an old run").
  */
 
 /** The part of a Workflows binding (`Workflow<PerUserEvent["data"]>`) the fan-out uses. */
@@ -22,11 +23,14 @@ export interface UserRunBinding {
   get(id: string): Promise<{ status(): Promise<{ status: string }> }>;
 }
 
-/** Where the instance last started for each user is kept (@opusfinder/db's `getDigestInstances` and
+/** What the fan-out reads and writes per user (@opusfinder/db's `getDigestFanOutState` and
  *  `setDigestInstance` in the Worker). */
-export interface InstanceStore {
-  /** The last instance id of each of these users; a user with none is absent. */
-  last(userIds: string[]): Promise<ReadonlyMap<string, string>>;
+export interface FanOutStore {
+  /** For each of these users: the instance last started for them (null = none yet) and since when they
+   *  have been due, in epoch ms. A user it knows nothing about is absent. */
+  state(
+    userIds: string[],
+  ): Promise<ReadonlyMap<string, { instanceId: string | null; dueSince: number }>>;
   record(userId: string, instanceId: string): Promise<void>;
 }
 
@@ -72,15 +76,32 @@ async function statusOf(binding: UserRunBinding, id: string): Promise<string | n
 }
 
 /**
+ * Since when a user has been waiting for a run, in epoch ms: the later of when they became due and the end
+ * of the day their last run was started (a run id ends in its tick's date). So the queue is first come,
+ * first served: a user left out today keeps their place ahead of everyone who becomes due later, and a
+ * user whose run was started and failed goes behind those who haven't had a turn since. A user the store
+ * knows nothing about has waited longest.
+ */
+export function waitingSince(
+  user: { instanceId: string | null; dueSince: number } | undefined,
+): number {
+  if (!user) return 0;
+  const lastStarted = user.instanceId
+    ? Date.parse(`${user.instanceId.slice(-TICK_LENGTH)}T23:59:59.999Z`)
+    : Number.NaN;
+  return Number.isNaN(lastStarted) ? user.dueSince : Math.max(user.dueSince, lastStarted);
+}
+
+/**
  * Start the per-user runs for `events` on tick `tick`, at most `maxUsers` of them (runs this tick already
  * started count toward it). The limit is a runaway guard, not a schedule: a user over it stays due and is
- * counted, and users are taken longest-waiting first (never started, then by the tick their last run was
- * started on), so a user left out today is ahead of everyone started today and none is starved, even by
- * users whose runs fail every day. One user's failure doesn't stop the others; it is thrown after the loop,
- * so the step is retried and the retry finds the started runs already there.
+ * counted, and users are taken longest-waiting first ({@link waitingSince}), so nobody is starved: not by
+ * users whose runs fail every day, and not by a steady inflow of new users. One user's failure doesn't stop
+ * the others; it is thrown after the loop, so the step is retried and the retry finds the started runs
+ * already there.
  */
 export async function startUserRuns(
-  store: InstanceStore,
+  store: FanOutStore,
   binding: UserRunBinding,
   events: UserRequestedEvent[],
   tick: string,
@@ -90,7 +111,7 @@ export async function startUserRuns(
   const failures: string[] = [];
   const fail = (err: unknown) =>
     failures.push(err instanceof Error ? `${err.name}: ${err.message}` : String(err));
-  const last = await store.last(events.map((event) => event.data.userId));
+  const state = await store.state(events.map((event) => event.data.userId));
 
   // First, who can be started at all: not a user with an unfinished run, not one this tick already
   // started (those count toward the limit before anyone new does).
@@ -99,9 +120,9 @@ export async function startUserRuns(
     const { userId } = event.data;
     const id = userRunId(userId, tick);
     try {
-      const previous = last.get(userId);
+      const previous = state.get(userId)?.instanceId ?? null;
       const previousStatus =
-        previous !== undefined && previous !== id ? await statusOf(binding, previous) : null;
+        previous !== null && previous !== id ? await statusOf(binding, previous) : null;
       if (previousStatus !== null && !FINISHED.has(previousStatus)) result.inFlight++;
       else if ((await statusOf(binding, id)) !== null) result.alreadyStarted++;
       else startable.push(event);
@@ -110,10 +131,10 @@ export async function startUserRuns(
     }
   }
 
-  // Then start them, longest-waiting first, up to the limit. A run id ends in its tick's date, which
-  // sorts as text; a user with no run yet sorts first. The sort is stable, so ties keep the sweep's order.
-  const lastTick = (userId: string) => last.get(userId)?.slice(-TICK_LENGTH) ?? "";
-  startable.sort((a, b) => lastTick(a.data.userId).localeCompare(lastTick(b.data.userId)));
+  // Then start them, longest-waiting first, up to the limit. The sort is stable, so ties keep the
+  // sweep's order.
+  const waiting = (userId: string) => waitingSince(state.get(userId));
+  startable.sort((a, b) => waiting(a.data.userId) - waiting(b.data.userId));
   for (const { data } of startable) {
     if (result.started + result.alreadyStarted >= maxUsers) {
       result.overLimit++;
