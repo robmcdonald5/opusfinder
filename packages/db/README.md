@@ -324,7 +324,9 @@ EXISTS`) removes the seven job-side enrichment columns added by 0013 (`yoe_min`/
   apply it with `drizzle-orm/neon-serverless/migrator`, which wraps the run in one transaction (no script
   wires it today).
 - **Embeddings repo (Phase 4).** `src/repos/embeddings.ts` adds `backfillJobEmbeddings()`
-  (idempotent embed → write loop over NULL-embedding rows), `nearestJobs()` (an exact
+  (idempotent embed → write loop over NULL-embedding rows; a job whose title + description match a
+  stored vector of the embedder's model takes a copy, and identical text on one page is embedded once,
+  so the result counts `embedded` and `reused` apart), `nearestJobs()` (an exact
   cosine `<=>` scan), `jobsNeedingEmbedding()`, `writeJobEmbeddings()`, and
   `jobEmbeddingText()` (title + description — the Phase-5 eval tunable). The embedder is
   **injected** (an `EmbedFn` parameter), so `db` keeps zero dependency on
