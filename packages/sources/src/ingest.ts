@@ -37,7 +37,8 @@ import {
 
 /**
  * The injected embedder — the structural MINIMUM that `backfillJobEmbeddings` accepts (`model` is the
- * tag it stores beside each vector). The real `embed()` satisfies this via structural subtyping. Omit `embed` to
+ * tag it stores beside each vector; called with no texts it returns that tag and makes no provider
+ * request). The real `embed()` satisfies this via structural subtyping. Omit `embed` to
  * skip inline embedding (the Worker does: `@opusfinder/embeddings` can't enter its bundle): jobs are
  * still upserted; the idempotent backfill fills the still-NULL vectors later.
  */
@@ -178,7 +179,7 @@ export interface IngestionCounts {
   hydrateSkipped: number; // listed postings whose detail fetch failed: content kept (only company_id refreshed) / new one deferred; still present
   hydrateListed: number; // postings listed by HYDRATING boards (written + hydrateSkipped) — the health ratio's denominator
   mapSkipped: number; // listed postings mapItem rejected (malformed): not written, not present; many skip their board's sweep
-  embedded: number; // postings embedded inline (0 when `embed` omitted)
+  embedded: number; // postings given a vector inline, embedded or copied from identical text (0 when `embed` omitted)
   embedTokens: number; // Voyage tokens used
   embedFailed: number; // boards whose embed step threw (jobs still persisted)
   // Per-board lifecycle sweep (gated on a non-empty fetch). Count-only/shadow mode keeps `closed` at 0 and
@@ -420,13 +421,13 @@ export async function runIngestion(db: Db, opts: IngestionOptions = {}): Promise
         let embedWarning: string | undefined;
         if (opts.embed && total > 0) {
           try {
-            const { embedded, tokens } = await backfillJobEmbeddings(db, opts.embed, {
+            const { embedded, reused, tokens } = await backfillJobEmbeddings(db, opts.embed, {
               companyId: company.id,
               inputType: "document",
             });
-            boardEmbedded = embedded;
+            boardEmbedded = embedded + reused;
             boardTokens = tokens;
-            counts.embedded += embedded;
+            counts.embedded += boardEmbedded;
             counts.embedTokens += tokens;
           } catch (err) {
             // Jobs are already persisted; a Voyage hiccup just leaves NULL vectors for the next

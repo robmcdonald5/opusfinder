@@ -1,7 +1,7 @@
 /**
  * Job-embedding persistence. Read the rows still missing a vector, write a
- * batch of vectors back, drive the embed → write loop, and run cosine nearest-neighbour
- * retrieval.
+ * batch of vectors back, drive the embed → write loop (identical text is embedded once and its
+ * vector shared), and run cosine nearest-neighbour retrieval.
  *
  * The orchestrator takes the embedder as an INJECTED function (`EmbedFn`) rather than
  * importing `@opusfinder/embeddings`, so this package keeps zero dependency on the
@@ -13,7 +13,7 @@ import { and, desc, eq, sql, type SQL } from "drizzle-orm";
 
 import type { Db } from "../client";
 import { jobs } from "../schema";
-import { resultRows, VECTOR_CAST, vectorLiteral } from "./sql";
+import { intArrayLiteral, resultRows, textArrayLiteral, VECTOR_CAST, vectorLiteral } from "./sql";
 
 // Cap rows per UPDATE so a large caller can't exceed Postgres's 65535 bind-param ceiling
 // (3 params/row). The default backfill batch (64) is far under; this guards future bulk
@@ -27,6 +27,9 @@ type EmbedInputType = "query" | "document" | null;
  * The embedder shape this module needs. The real `embed` from `@opusfinder/embeddings`
  * is structurally assignable (its optional params are compatible), so callers pass it directly.
  * `model` is the id of the model that produced the vectors; it is stored beside each one.
+ *
+ * Called with no texts it returns its `model` and makes no provider request (the real `embed`
+ * short-circuits an empty input). embedNextPage asks this way which model's stored vectors it may reuse.
  */
 type EmbedFn = (
   texts: string[],
@@ -133,7 +136,16 @@ export async function writeJobEmbeddings(
   rows: { id: number; embedding: number[]; contentHash?: string }[],
   model: string,
 ): Promise<number> {
-  let written = 0;
+  return (await writeEmbeddingRows(db, rows, model)).length;
+}
+
+/** {@link writeJobEmbeddings}, returning the ids written. */
+async function writeEmbeddingRows(
+  db: Db,
+  rows: { id: number; embedding: number[]; contentHash?: string }[],
+  model: string,
+): Promise<number[]> {
+  const written: number[] = [];
   for (let i = 0; i < rows.length; i += MAX_ROWS_PER_WRITE) {
     const chunk = rows.slice(i, i + MAX_ROWS_PER_WRITE);
     const tuples = chunk.map(
@@ -147,9 +159,59 @@ export async function writeJobEmbeddings(
       WHERE ${jobs.id} = v.id AND (v.content_hash IS NULL OR ${contentHashSql} = v.content_hash)
       RETURNING ${jobs.id}
     `);
-    written += resultRows(result).length;
+    written.push(...writtenIds(result));
   }
   return written;
+}
+
+/** The ids an `UPDATE ... RETURNING id` wrote. */
+function writtenIds(result: unknown): number[] {
+  return resultRows(result).map((row) => Number((row as { id: unknown }).id));
+}
+
+/**
+ * Give each job on a page the vector of a stored job with the same text, where there is one: a
+ * server-side copy, so no vector crosses the wire and nothing is sent to the provider. Returns the
+ * ids filled.
+ *
+ * The source is found through `content_signature` (indexed) but must match on the title and
+ * description themselves. The signature folds case and whitespace, so two rows can share one and
+ * still embed differently; equal title + description is exactly equal {@link jobEmbeddingText}. A
+ * blank-description job has no signature, so it finds no source here.
+ *
+ * Only a vector of `model` is copied, with its row's tag: after a model swap the old vectors stay
+ * out, and the job is embedded on the new model. The source may be closed; its vector is as good.
+ *
+ * The same content-hash guard as writeJobEmbeddings: a job whose text changed since the page was
+ * read is left NULL. `need` re-reads the target row because a LATERAL subquery can't reference an
+ * UPDATE's target.
+ */
+async function copyStoredEmbeddings(
+  db: Db,
+  page: JobNeedingEmbedding[],
+  model: string,
+): Promise<number[]> {
+  const result: unknown = await db.execute(sql`
+    UPDATE ${jobs}
+    SET embedding = source.embedding, embedding_model = source.embedding_model
+    FROM unnest(
+      ${intArrayLiteral(page.map((job) => job.id))}::int[],
+      ${textArrayLiteral(page.map((job) => job.contentHash))}::text[]
+    ) AS v(id, content_hash)
+    JOIN jobs AS need ON need.id = v.id
+    CROSS JOIN LATERAL (
+      SELECT src.embedding, src.embedding_model
+      FROM jobs AS src
+      WHERE src.content_signature = need.content_signature
+        AND src.embedding_model = ${model}
+        AND src.title = need.title
+        AND src.description_text = need.description_text
+      LIMIT 1
+    ) AS source
+    WHERE ${jobs.id} = v.id AND ${jobs.embedding} IS NULL AND ${contentHashSql} = v.content_hash
+    RETURNING ${jobs.id}
+  `);
+  return writtenIds(result);
 }
 
 /** The embedder returned a different number of vectors than texts: a deterministic bug, so a caller
@@ -161,38 +223,82 @@ export class EmbedCountMismatchError extends Error {
   }
 }
 
+/** One page's outcome. `embedded + reused` is the number of jobs that left the backlog. */
+export interface EmbedPageResult {
+  /** Jobs given a vector the provider computed for them on this page: one per distinct text. */
+  embedded: number;
+  /** Jobs given a vector at no provider cost: a stored job's, or the one just computed for the same
+   *  text on this page. */
+  reused: number;
+  /** Provider tokens the page used. */
+  tokens: number;
+  done: boolean;
+}
+
 /**
- * Embed one page of the backlog: the next `limit` jobs owed a vector, one embed call, one write. The
- * page body shared by {@link backfillJobEmbeddings} and the Inngest drain (one page per step). `done`
- * once a page comes back short. Cursorless: written rows leave the selection, and a row skipped
+ * Embed one page of the backlog: the next `limit` jobs owed a vector. The page body shared by
+ * {@link backfillJobEmbeddings} and the Inngest drain (one page per step). Identical text is paid
+ * for once:
+ *   1. a job whose text a stored job already holds a vector for (of the embedder's model) takes a
+ *      copy ({@link copyStoredEmbeddings});
+ *   2. the rest go to the provider as one embed call, each distinct text once, and the result is
+ *      written to every job with that text.
+ * A page that is all copies makes no provider call.
+ *
+ * `done` once a page comes back short. Cursorless: written rows leave the selection, and a row skipped
  * because its text changed mid-page is re-selected with the new text.
  */
 export async function embedNextPage(
   db: Db,
   embed: EmbedFn,
   opts: { companyId?: number; limit: number; inputType?: EmbedInputType },
-): Promise<{ embedded: number; tokens: number; done: boolean }> {
+): Promise<EmbedPageResult> {
   const batch = await jobsNeedingEmbedding(db, { companyId: opts.companyId, limit: opts.limit });
-  if (batch.length === 0) return { embedded: 0, tokens: 0, done: true };
+  if (batch.length === 0) return { embedded: 0, reused: 0, tokens: 0, done: true };
+  const done = batch.length < opts.limit;
+  const inputType = opts.inputType ?? "document";
 
-  const { embeddings, usage, model } = await embed(
-    batch.map((job) => jobEmbeddingText(job)),
-    { inputType: opts.inputType ?? "document" },
-  );
-  // embed() returns one vector per input in order; assert before zipping by index.
-  if (embeddings.length !== batch.length) {
-    throw new EmbedCountMismatchError(embeddings.length, batch.length);
+  // An empty batch costs nothing and names the model (see EmbedFn).
+  const { model: currentModel } = await embed([], { inputType });
+  const copied = new Set(await copyStoredEmbeddings(db, batch, currentModel));
+
+  const byText = new Map<string, JobNeedingEmbedding[]>();
+  for (const job of batch) {
+    if (copied.has(job.id)) continue;
+    const text = jobEmbeddingText(job);
+    const sameText = byText.get(text);
+    if (sameText) sameText.push(job);
+    else byText.set(text, [job]);
   }
-  const embedded = await writeJobEmbeddings(
-    db,
-    batch.map((job, i) => ({
-      id: job.id,
-      contentHash: job.contentHash,
-      embedding: embeddings[i] as number[],
-    })),
-    model,
+  if (byText.size === 0) return { embedded: 0, reused: copied.size, tokens: 0, done };
+
+  const groups = [...byText.values()];
+  const { embeddings, usage, model } = await embed([...byText.keys()], { inputType });
+  // embed() returns one vector per input in order; assert before zipping by index.
+  if (embeddings.length !== groups.length) {
+    throw new EmbedCountMismatchError(embeddings.length, groups.length);
+  }
+  const written = new Set(
+    await writeEmbeddingRows(
+      db,
+      groups.flatMap((group, i) =>
+        group.map((job) => ({
+          id: job.id,
+          contentHash: job.contentHash,
+          embedding: embeddings[i] as number[],
+        })),
+      ),
+      model,
+    ),
   );
-  return { embedded, tokens: usage.totalTokens, done: batch.length < opts.limit };
+  // The first job written for a text is the one embedded; the others with that text reused its vector.
+  const embedded = groups.filter((group) => group.some((job) => written.has(job.id))).length;
+  return {
+    embedded,
+    reused: copied.size + written.size - embedded,
+    tokens: usage.totalTokens,
+    done,
+  };
 }
 
 /**
@@ -201,15 +307,17 @@ export async function embedNextPage(
  * for next time.
  *
  * `embed` is injected (see {@link EmbedFn}); jobs embed as `"document"` by default.
- * Returns the count embedded + Voyage token usage so the caller can log cost.
+ * Returns the counts embedded and reused ({@link EmbedPageResult}) + Voyage token usage so the
+ * caller can log cost.
  */
 export async function backfillJobEmbeddings(
   db: Db,
   embed: EmbedFn,
   opts: { companyId?: number; batchSize?: number; inputType?: EmbedInputType } = {},
-): Promise<{ embedded: number; tokens: number }> {
+): Promise<{ embedded: number; reused: number; tokens: number }> {
   const limit = opts.batchSize ?? 64;
   let embedded = 0;
+  let reused = 0;
   let tokens = 0;
 
   for (;;) {
@@ -219,11 +327,12 @@ export async function backfillJobEmbeddings(
       inputType: opts.inputType,
     });
     embedded += page.embedded;
+    reused += page.reused;
     tokens += page.tokens;
     if (page.done) break;
   }
 
-  return { embedded, tokens };
+  return { embedded, reused, tokens };
 }
 
 export interface JobNeighbor {
