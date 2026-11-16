@@ -1,0 +1,74 @@
+{
+  "summary": "Working RF systems engineer with roughly 13 years across RF hardware design, satellite communication systems, manufacturing quality and data analysis. Leads supplier-facing DFM and design-specification work for antennas, receivers, filters and amplifiers, and runs EVT, DVT and PVT verification with failure analysis from system to unit level. Has team-leader scope on end-to-end technical projects, production readiness reviews and cascade RF performance prediction. Also brings experience in SQL and statistical data analysis, automated test development and reliability testing, with an M.S. in Electrical and Computer Engineering.",
+  "skills": [
+    "RF system design",
+    "RF hardware design",
+    "Design for manufacturability (DFM)",
+    "EVT/DVT/PVT validation",
+    "Failure analysis",
+    "Satellite communication systems",
+    "Cascade RF performance analysis",
+    "Antenna design",
+    "Filter design",
+    "Amplifier design",
+    "Receiver design",
+    "Supplier management",
+    "Production readiness review",
+    "Automated test development",
+    "Reliability testing",
+    "SQL",
+    "Statistical analysis",
+    "SAS",
+    "SPSS",
+    "Excel",
+    "Data mining",
+    "Data collection",
+    "Ansoft Designer",
+    "AWR Microwave Office",
+    "Spectrum analyzer",
+    "Vector network analyzer",
+    "Signal analyzer",
+    "Logic analyzer",
+    "SPICE",
+    "NI Multisim",
+    "Eagle PCB design",
+    "PCB Artist",
+    "MATLAB",
+    "LabVIEW",
+    "Python",
+    "C",
+    "C++",
+    "Java",
+    "Signal processing",
+    "Radar systems",
+    "Microsoft Office"
+  ],
+  "targetRoles": [
+    "RF Systems Engineer",
+    "RF Hardware Engineer",
+    "Validation Engineer",
+    "Data Analyst"
+  ],
+  "facts": {
+    "credentials": [],
+    "education": [
+      {
+        "level": "master",
+        "field": "Electrical and Computer Engineering",
+        "completed": true
+      },
+      {
+        "level": "bachelor",
+        "field": "Electrical and Computer Engineering",
+        "completed": true
+      }
+    ],
+    "yearsExperience": {
+      "total": null,
+      "byRoleFamily": []
+    },
+    "languages": [],
+    "workAuthorization": null
+  },
+  "extractVersion": 2
+}

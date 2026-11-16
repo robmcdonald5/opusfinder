@@ -1,12 +1,5 @@
 {
   "id": "occupational-therapist",
-  "group": "healthcare-licensed",
-  "source": {
-    "dataset": "opensporks/resumes",
-    "revision": "ed4cb5f3fd1ce7e0a0e74e1a09c1a3b702c2c2eb",
-    "path": "data/data/HEALTHCARE/60624892.pdf",
-    "sha256": "8a4ab8781ef96d21ac462fc9181c57fad3c9eef371cea7894c749ff4f6dba204"
-  },
   "expected": {
     "summary": [["occupational therapist", "occupational therapy"]],
     "skills": [

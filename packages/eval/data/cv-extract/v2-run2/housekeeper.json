@@ -1,0 +1,54 @@
+{
+  "summary": "Housekeeper with over a decade of residential cleaning across private homes, serving multiple recurring clients on weekly and biweekly schedules. Experienced in general housekeeping, laundry and linen care, ironing, pet care, and light errand running, with a record of client trust and referral-based growth. Earlier career includes several years as owner-operator and chef of a breakfast and lunch diner, plus breakfast cooking in a hotel restaurant, bringing food preparation, kitchen sanitation, and small-business management experience.",
+  "skills": [
+    "residential cleaning",
+    "general housekeeping",
+    "laundry",
+    "ironing",
+    "bed making",
+    "linen changing",
+    "window washing",
+    "dusting",
+    "vacuuming",
+    "mopping",
+    "kitchen cleaning",
+    "bathroom cleaning",
+    "refrigerator cleaning",
+    "oven cleaning",
+    "pet care",
+    "errand running",
+    "grocery shopping",
+    "food preparation",
+    "breakfast cooking",
+    "menu development",
+    "kitchen sanitation",
+    "equipment maintenance",
+    "inventory purchasing",
+    "payroll administration",
+    "staff scheduling",
+    "staff hiring"
+  ],
+  "targetRoles": [
+    "Housekeeper",
+    "Private Household Cleaner",
+    "Residential Cleaner",
+    "Breakfast Cook"
+  ],
+  "facts": {
+    "credentials": [],
+    "education": [
+      {
+        "level": "high_school",
+        "field": "Business",
+        "completed": true
+      }
+    ],
+    "yearsExperience": {
+      "total": null,
+      "byRoleFamily": []
+    },
+    "languages": [],
+    "workAuthorization": null
+  },
+  "extractVersion": 2
+}

@@ -1,0 +1,89 @@
+{
+  "id": "admissions-counselor",
+  "heldOut": true,
+  "expected": {
+    "summary": [
+      [
+        "administrative",
+        "administration",
+        "administrator",
+        "executive assistant",
+        "admissions",
+        "recruiter"
+      ]
+    ],
+    "skills": [
+      [
+        "office management",
+        "scheduling",
+        "event planning",
+        "microsoft office",
+        "desktop publishing",
+        "calendar management",
+        "travel coordination"
+      ],
+      [
+        "recruiting",
+        "recruitment",
+        "student recruitment",
+        "admissions",
+        "public relations",
+        "advertising",
+        "expense reports",
+        "payroll",
+        "invoicing"
+      ]
+    ],
+    "targetRoles": [
+      "admissions",
+      "recruiter",
+      "executive assistant",
+      "administrative",
+      "administrator",
+      "executive administration",
+      "office manager",
+      "operations manager"
+    ],
+    "credentials": [
+      {
+        "match": ["peace officer", "law enforcement", "police"]
+      },
+      {
+        "match": ["weapon", "weapons", "firearm", "firearms"],
+        "optional": true
+      }
+    ],
+    "education": [
+      {
+        "level": ["other", "certificate", "associate"],
+        "field": ["business communications", "business communication"],
+        "completed": "any"
+      },
+      {
+        "level": ["other", "certificate", "associate"],
+        "field": ["counseling", "pastoral care", "pastoral"],
+        "completed": "any"
+      },
+      {
+        "level": ["high_school"]
+      },
+      {
+        "level": ["certificate", "other"],
+        "completed": "any",
+        "optional": true
+      }
+    ],
+    "years": [],
+    "languages": [],
+    "workAuthorization": null,
+    "forbidden": ["baptist", "church", "philathea", "missionary"]
+  },
+  "judgementCalls": [
+    "The Illinois State Peace Officer certification (stated in the 1985-1997 police job and again under Education) is required once as a credential, with no status; the 'weapon certification' in the same bullet may come out as a second entry or not at all.",
+    "'Business Communications - Area of Study' and 'Counseling & Pastoral Care - Area of Study' name no degree: each is required as an education entry of unclear level (other / certificate / associate, not bachelor), completed or not.",
+    "The Education section's text is run together, so which school goes with which programme is unclear; schools are not checked.",
+    "The police training academy certification is allowed as an education entry (certificate or other) but not required.",
+    "The affiliations line names religious organisations, which state a religion; none of the forbidden terms may appear in the profile.",
+    "The CV mixes admissions, executive-assistant and 'Executive Administration and Operations Manager' framings, so a wide set of first target roles is accepted."
+  ]
+}

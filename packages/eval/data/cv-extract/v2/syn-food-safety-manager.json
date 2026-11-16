@@ -1,0 +1,84 @@
+{
+  "summary": "Food safety and quality manager with 14 years in the field, combining six years as a county environmental health inspector with eight years in multi-unit restaurant quality assurance. Oversees food safety and quality across a 62-unit fast-casual restaurant portfolio, running third-party audit and pest control programs, guiding operators through health department inspections, and writing SOPs and manager training. Also experienced in commissary HACCP plan maintenance, supplier qualification, recall preparedness and foodborne illness investigation.",
+  "skills": [
+    "HACCP",
+    "third-party audits",
+    "regulatory inspection",
+    "health department relations",
+    "pest control programs",
+    "foodborne illness investigation",
+    "recall management",
+    "crisis response",
+    "SOP development",
+    "training design",
+    "supplier quality management",
+    "allergen control",
+    "food safety compliance",
+    "corrective action management"
+  ],
+  "targetRoles": [
+    "Food Safety Manager",
+    "Quality Assurance Manager",
+    "Food Safety and Quality Manager",
+    "Environmental Health Specialist"
+  ],
+  "facts": {
+    "credentials": [
+      {
+        "name": "Registered Environmental Health Specialist (REHS)",
+        "issuer": "NEHA",
+        "status": "active",
+        "expires": null
+      },
+      {
+        "name": "Certified Professional in Food Safety (CP-FS)",
+        "issuer": "NEHA",
+        "status": null,
+        "expires": null
+      },
+      {
+        "name": "NYC Food Protection Certificate",
+        "issuer": "NYC Department of Health",
+        "status": null,
+        "expires": null
+      }
+    ],
+    "education": [
+      {
+        "level": "master",
+        "field": "Environmental Health",
+        "completed": true
+      },
+      {
+        "level": "bachelor",
+        "field": "Food Science",
+        "completed": true
+      }
+    ],
+    "yearsExperience": {
+      "total": 14,
+      "byRoleFamily": [
+        {
+          "roleFamily": "county health inspection",
+          "years": 6
+        },
+        {
+          "roleFamily": "multi-unit restaurant quality assurance",
+          "years": 8
+        }
+      ]
+    },
+    "languages": [
+      {
+        "language": "English",
+        "proficiency": null
+      },
+      {
+        "language": "Mandarin",
+        "proficiency": "professional proficiency"
+      }
+    ],
+    "workAuthorization": "Eligible to work in the U.S. without sponsorship"
+  },
+  "extractVersion": 2
+}

@@ -1,0 +1,76 @@
+{
+  "summary": "Senior photographer and content producer with about six years of food, restaurant and lifestyle work for brands and agencies. Shoots, lights and styles food and beverage imagery alone or alongside a food stylist, in studio and on location. Delivers finished stills and short vertical video for menus, apps, social and out-of-home, with retouching, colour work and asset library management. Operates at shoot-day scale for multi-account agency clients and planned production with art directors.",
+  "skills": [
+    "Food photography",
+    "Food and beverage styling",
+    "Studio lighting",
+    "Natural-light photography",
+    "Strobe lighting",
+    "Continuous lighting",
+    "Art direction",
+    "Tethered capture",
+    "Capture One",
+    "Lightroom",
+    "Photoshop",
+    "Premiere Pro",
+    "After Effects",
+    "Short-form video production",
+    "Video editing",
+    "Retouching",
+    "Colour correction",
+    "Shot list planning",
+    "Asset library management",
+    "Usage rights management",
+    "Shoot budgeting",
+    "Vendor booking",
+    "Figma",
+    "Frame.io",
+    "Airtable",
+    "Drone photography"
+  ],
+  "targetRoles": [
+    "Food Photographer",
+    "Senior Photographer",
+    "Content Producer",
+    "Photo Assistant"
+  ],
+  "facts": {
+    "credentials": [
+      {
+        "name": "FAA Part 107 Remote Pilot Certificate (drone)",
+        "issuer": null,
+        "status": null,
+        "expires": null
+      },
+      {
+        "name": "California driver license",
+        "issuer": null,
+        "status": null,
+        "expires": null
+      }
+    ],
+    "education": [
+      {
+        "level": "bachelor",
+        "field": "Photography",
+        "completed": true
+      }
+    ],
+    "yearsExperience": {
+      "total": null,
+      "byRoleFamily": []
+    },
+    "languages": [
+      {
+        "language": "English",
+        "proficiency": null
+      },
+      {
+        "language": "Spanish",
+        "proficiency": null
+      }
+    ],
+    "workAuthorization": null
+  },
+  "extractVersion": 2
+}

@@ -1,0 +1,43 @@
+{
+  "id": "tax-examining-clerk",
+  "heldOut": true,
+  "expected": {
+    "summary": [["claim", "claims", "insurance", "tax"]],
+    "skills": [
+      ["claims", "claim", "negotiation", "insurance"],
+      [
+        "excel",
+        "access",
+        "tax",
+        "idrs",
+        "accounting",
+        "reconciling",
+        "reconciliation",
+        "inventory control",
+        "data entry"
+      ]
+    ],
+    "targetRoles": ["claims", "claim", "tax", "adjuster", "insurance"],
+    "credentials": [],
+    "education": [
+      {
+        "level": ["bachelor"],
+        "field": ["computer science"]
+      }
+    ],
+    "years": [
+      {
+        "years": 10,
+        "slot": "either"
+      }
+    ],
+    "languages": [],
+    "workAuthorization": null
+  },
+  "judgementCalls": [
+    "'10 years experience in the field of insurance' is accepted as the total or as a role-family figure.",
+    "The summary presents a claim specialist while the latest job is tax examining clerk, so the first target role may be either track.",
+    "'CA', 'CPT' and 'ICD-9' in the skills line are read as keywords (state, billing codes), not credentials, so none is allowed.",
+    "'Trained in all aspects of insurance property and liability claims' is training, not a credential; no adjuster licence is stated."
+  ]
+}

@@ -1,0 +1,87 @@
+/* A centred header, then two equal columns: the left one is read top to bottom before the right one. */
+@page {
+  size: Letter;
+  margin: 0.5in 0.55in;
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  font:
+    9.5pt/1.38 Verdana,
+    Geneva,
+    sans-serif;
+  color: #202020;
+}
+header {
+  margin-bottom: 12pt;
+  padding-bottom: 8pt;
+  text-align: center;
+  border-bottom: 2px solid #2d6a4f;
+}
+h1 {
+  margin: 0;
+  font-size: 19pt;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.title {
+  margin: 3pt 0;
+  color: #2d6a4f;
+  font-size: 10.5pt;
+}
+.contact {
+  margin: 0;
+  font-size: 8.5pt;
+  color: #555;
+}
+.columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.35in;
+}
+.columns > div + div {
+  padding-left: 0.3in;
+  border-left: 1px solid #b7c9bf;
+}
+h2 {
+  margin: 12pt 0 4pt;
+  padding: 2pt 5pt;
+  background: #e3eee8;
+  color: #1b4332;
+  font-size: 9.5pt;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+.columns h2:first-child {
+  margin-top: 0;
+}
+h3 {
+  margin: 7pt 0 0;
+  font-size: 9.5pt;
+}
+.meta {
+  margin: 0 0 3pt;
+  color: #555;
+  font-size: 8.5pt;
+}
+p {
+  margin: 0 0 4pt;
+}
+ul {
+  margin: 0 0 4pt;
+  padding-left: 12pt;
+}
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 8.5pt;
+}
+td {
+  padding: 2pt 3pt;
+  vertical-align: top;
+  border-bottom: 1px dotted #b7c9bf;
+}

@@ -1,0 +1,106 @@
+{
+  "summary": "Equipment engineering technician and skilled maintenance mechanic with 20 years of material management experience in government settings and 13 years in law enforcement. Experience spans industrial automation and electrical control installation, robotic system setup and programming, mechanical, hydraulic and pneumatic equipment repair, and aerospace wind tunnel test facilities. Also has fire protection system inspection and testing, production control and material expediting, and ISO 9001 quality practice. Works from schematics and troubleshooting diagrams, leads shift coordination and on-the-job training, and maintains PM procedures and spare parts inventory.",
+  "skills": [
+    "Industrial automation",
+    "Factory automation",
+    "Electrical control systems",
+    "Robotic systems",
+    "Robotic simulation",
+    "Robotic programming",
+    "Mechanical troubleshooting",
+    "Electrical troubleshooting",
+    "Preventive maintenance",
+    "Hydraulic systems",
+    "Pneumatic systems",
+    "Mechanical test equipment",
+    "Test equipment operation",
+    "Lubrication systems",
+    "Instrumentation calibration",
+    "Thermocouple installation",
+    "Hand tools",
+    "Conveyor maintenance",
+    "Fire sprinkler system inspection",
+    "Fire pump testing",
+    "Standpipe systems",
+    "Clean agent systems",
+    "Fire alarm equipment",
+    "Fire hose and hydrant testing",
+    "Non-destructive testing",
+    "ISO 9001",
+    "Clean room protocol",
+    "Non-conforming material reporting",
+    "Material management",
+    "Inventory management",
+    "Production control",
+    "Material expediting",
+    "Work order scheduling",
+    "Procurement",
+    "Shipping coordination",
+    "Hazardous materials disposal",
+    "Forklift operation",
+    "Crane operation",
+    "Promis software",
+    "MS Office",
+    "Microsoft Excel",
+    "10-key data entry",
+    "Technical report writing",
+    "On-the-job training",
+    "Shift coordination"
+  ],
+  "targetRoles": [
+    "Equipment Engineering Technician",
+    "Industrial Maintenance Technician",
+    "Maintenance Mechanic",
+    "Production Control Analyst"
+  ],
+  "facts": {
+    "credentials": [
+      {
+        "name": "Forklift certification",
+        "issuer": null,
+        "status": null,
+        "expires": null
+      },
+      {
+        "name": "Crane certification",
+        "issuer": null,
+        "status": null,
+        "expires": null
+      },
+      {
+        "name": "NDT Level II",
+        "issuer": null,
+        "status": null,
+        "expires": null
+      }
+    ],
+    "education": [
+      {
+        "level": "other",
+        "field": "General courses",
+        "completed": true
+      },
+      {
+        "level": "certificate",
+        "field": null,
+        "completed": true
+      }
+    ],
+    "yearsExperience": {
+      "total": null,
+      "byRoleFamily": [
+        {
+          "roleFamily": "Material Management with State and Federal Government",
+          "years": 20
+        },
+        {
+          "roleFamily": "Law Enforcement with the United States Marine Corps and Army National Guard",
+          "years": 13
+        }
+      ]
+    },
+    "languages": [],
+    "workAuthorization": null
+  },
+  "extractVersion": 2
+}

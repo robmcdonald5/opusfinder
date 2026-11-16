@@ -1,0 +1,84 @@
+{
+  "summary": "Information technology systems administrator with roughly two decades of experience supporting enterprise Windows environments, including Active Directory, Group Policy, Exchange, and Microsoft 365 and Azure migrations. Works across server management, virtualization with VMware, enterprise backup and storage systems, and network troubleshooting for LAN, WAN, DNS, DHCP, and VPN issues. Automates administrative tasks with PowerShell and scripting, contributes to disaster recovery and security patching, and has supported project planning, requirements, and documentation for infrastructure and application rollouts.",
+  "skills": [
+    "Active Directory",
+    "Group Policy",
+    "PowerShell",
+    "VBScript",
+    "Batch scripting",
+    "Bash",
+    "Microsoft Exchange",
+    "Exchange ActiveSync",
+    "Office 365",
+    "Microsoft Azure",
+    "Windows Server",
+    "Windows 7/8/10 desktop support",
+    "Microsoft Office",
+    "VMware vSphere",
+    "VDI",
+    "Virtual machine administration",
+    "Storage management",
+    "StorSimple",
+    "DataDomain",
+    "Enterprise backup",
+    "Veritas NetBackup",
+    "Backup Exec",
+    "Veeam",
+    "VRanger",
+    "Disaster recovery planning",
+    "System Center Configuration Manager",
+    "Distributed File System",
+    "NTFS permissions",
+    "File server administration",
+    "DNS",
+    "DHCP",
+    "TCP/IP",
+    "VPN",
+    "Cisco ASA",
+    "Proxy server administration",
+    "Wireless LAN configuration",
+    "Network monitoring",
+    "SolarWinds",
+    "Cacti",
+    "Nmap",
+    "Linux",
+    "McAfee antivirus",
+    "Symantec Enterprise Vault",
+    "Microsoft SharePoint",
+    "IIS",
+    "Team Foundation Server",
+    "Patch management",
+    "Server log analysis",
+    "Root cause analysis",
+    "Technical documentation"
+  ],
+  "targetRoles": [
+    "Systems Administrator",
+    "IT Support Technician",
+    "Network Administrator"
+  ],
+  "facts": {
+    "credentials": [
+      {
+        "name": "CompTIA Network+",
+        "issuer": "CompTIA",
+        "status": null,
+        "expires": null
+      }
+    ],
+    "education": [
+      {
+        "level": "bachelor",
+        "field": "Information Technology",
+        "completed": true
+      }
+    ],
+    "yearsExperience": {
+      "total": null,
+      "byRoleFamily": []
+    },
+    "languages": [],
+    "workAuthorization": null
+  },
+  "extractVersion": 2
+}

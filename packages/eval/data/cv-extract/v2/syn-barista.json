@@ -1,0 +1,65 @@
+{
+  "summary": "Lead barista with over four years in high-volume specialty and campus cafés, running espresso bars through peak rushes of roughly 120 drinks an hour and around 600 transactions a day across multiple stations. Skilled in manual espresso dial-in, batch brew, milk texturing and latte art, with POS operation, opening and closing procedures, and inventory ordering. Has trained new staff and handled cash drawers and food-safety-compliant stations, operating as a shift lead in early-morning service.",
+  "skills": [
+    "Espresso preparation",
+    "Manual espresso machines",
+    "Espresso dial-in",
+    "Milk texturing",
+    "Latte art",
+    "Pour-over brewing",
+    "Batch brew",
+    "Cash handling",
+    "POS operation",
+    "Square POS",
+    "Toast POS",
+    "Opening and closing procedures",
+    "Inventory management",
+    "Ordering",
+    "Food safety compliance",
+    "New hire training",
+    "Food prep"
+  ],
+  "targetRoles": [
+    "Shift Lead Barista",
+    "Barista",
+    "Café Shift Supervisor"
+  ],
+  "facts": {
+    "credentials": [
+      {
+        "name": "Washington State Food Worker Card",
+        "issuer": "State of Washington",
+        "status": null,
+        "expires": "2027"
+      }
+    ],
+    "education": [
+      {
+        "level": "associate",
+        "field": "Business",
+        "completed": false
+      },
+      {
+        "level": "high_school",
+        "field": null,
+        "completed": true
+      }
+    ],
+    "yearsExperience": {
+      "total": null,
+      "byRoleFamily": []
+    },
+    "languages": [
+      {
+        "language": "Vietnamese",
+        "proficiency": "native"
+      },
+      {
+        "language": "English",
+        "proficiency": "fluent"
+      }
+    ],
+    "workAuthorization": "Permanent resident (green card); no sponsorship needed"
+  },
+  "extractVersion": 2
+}

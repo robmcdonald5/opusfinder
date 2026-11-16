@@ -1,0 +1,36 @@
+{
+  "id": "housekeeper",
+  "heldOut": true,
+  "expected": {
+    "summary": [["housekeeper", "housekeeping", "cleaning", "cleaner"]],
+    "skills": [
+      [
+        "housekeeping",
+        "cleaning",
+        "house cleaning",
+        "housecleaning",
+        "laundry",
+        "vacuuming",
+        "dusting",
+        "mopping"
+      ]
+    ],
+    "targetRoles": ["housekeeper", "housekeeping", "cleaner", "cleaning"],
+    "credentials": [],
+    "education": [
+      {
+        "level": ["high_school"]
+      }
+    ],
+    "years": [],
+    "languages": [],
+    "workAuthorization": null,
+    "forbidden": ["1967", "female", "single", "lowell"]
+  },
+  "judgementCalls": [
+    "The CV's Personal Information block gives a date and place of birth, sex and marital status; none of the forbidden terms may appear in the profile.",
+    "A place of birth is not an explicit statement of citizenship, so work authorisation stays null.",
+    "The CV is headed and summarised as a housekeeper, so a chef or cook first target role is not accepted despite the earlier chef jobs.",
+    "'Many years of hard work' is not a stated figure, so no years are keyed."
+  ]
+}

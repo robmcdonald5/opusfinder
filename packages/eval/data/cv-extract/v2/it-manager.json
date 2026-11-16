@@ -1,0 +1,105 @@
+{
+  "summary": "Information technology manager with an extensive background in network engineering, systems administration and IT operations for multi-site manufacturing and professional office environments. Has led small technical teams and planned, installed and maintained LAN, WAN and wireless networks, servers, firewalls and end-user hardware. Experienced in disaster recovery planning, enterprise backup and restore, helpdesk administration, software licensing and vendor management, with a track record of performance and cost improvements through network redesign, thin client deployment and automation. Also brings project management and mechanical drafting background, with graduate-level training in leadership and information systems management.",
+  "skills": [
+    "Network engineering",
+    "LAN administration",
+    "WAN administration",
+    "WLAN design and administration",
+    "Network troubleshooting",
+    "Cisco networking",
+    "Juniper networking",
+    "Nortel networking",
+    "Meraki",
+    "Cisco routers",
+    "Cisco Catalyst switches",
+    "HP ProCurve switches",
+    "Palo Alto firewall",
+    "SonicWall firewall",
+    "Barracuda web filter",
+    "Barracuda message archiver",
+    "Riverbed WAN accelerator",
+    "Dell iSCSI SAN",
+    "Structured cabling",
+    "Patch panel termination",
+    "Disaster recovery planning",
+    "Backup and restore",
+    "Helpdesk administration",
+    "Software licensing",
+    "Service contract management",
+    "Vendor management",
+    "Windows Server",
+    "Windows 10",
+    "Microsoft Exchange",
+    "Microsoft SQL Server",
+    "System Center Configuration Manager (SCCM)",
+    "Thin client deployment",
+    "Imaging and system deployment",
+    "User account administration",
+    "Email administration",
+    "IT procedure documentation",
+    "Network documentation",
+    "Project management",
+    "Microsoft Project",
+    "Microsoft Office",
+    "Microsoft Visio",
+    "ERP systems",
+    "SAP R/3",
+    "AutoCAD",
+    "SolidWorks",
+    "Automation scripting",
+    "Asset tracking",
+    "Staff training",
+    "Team leadership"
+  ],
+  "targetRoles": [
+    "Information Technology Manager",
+    "IT Operations Manager",
+    "Network Manager"
+  ],
+  "facts": {
+    "credentials": [
+      {
+        "name": "Microsoft Certified Professional (MCP)",
+        "issuer": null,
+        "status": null,
+        "expires": null
+      },
+      {
+        "name": "CompTIA Network+",
+        "issuer": null,
+        "status": null,
+        "expires": null
+      },
+      {
+        "name": "CompTIA A+",
+        "issuer": null,
+        "status": null,
+        "expires": null
+      }
+    ],
+    "education": [
+      {
+        "level": "master",
+        "field": "Leadership",
+        "completed": true
+      },
+      {
+        "level": "master",
+        "field": "Information Systems Management, Project Management",
+        "completed": true
+      },
+      {
+        "level": "bachelor",
+        "field": "Information Systems Management, Mechanical Engineering",
+        "completed": true
+      }
+    ],
+    "yearsExperience": {
+      "total": null,
+      "byRoleFamily": []
+    },
+    "languages": [],
+    "workAuthorization": null
+  },
+  "extractVersion": 2
+}

@@ -1,0 +1,86 @@
+{
+  "summary": "Front desk and guest services professional with extensive hospitality experience in reservations, check-in and check-out, payment handling and PBX telephone operation. Also brings office administration and human resources support background, including records management, payroll coordination, facilities access and vendor communication. Handles high call volumes, upselling and guest issue resolution, and has supervised register staff and assisted with hiring. Multilingual in English, Farsi, Urdu and Hindi.",
+  "skills": [
+    "Reservations management",
+    "Front desk operations",
+    "Guest check-in and check-out",
+    "Point-of-sale operation",
+    "Cash handling",
+    "Credit and debit card processing",
+    "Foreign currency exchange",
+    "Gift card processing",
+    "PBX operation",
+    "Telephone reception",
+    "Upselling",
+    "Guest relations",
+    "Complaint resolution",
+    "Key card coding",
+    "Data entry",
+    "Records management",
+    "Filing",
+    "Database management",
+    "Inventory management",
+    "Microsoft Office",
+    "Lightspeed POS",
+    "Starguest",
+    "Payroll coordination",
+    "Billing and invoicing",
+    "HRIS",
+    "Employee records management",
+    "Facilities access badge administration",
+    "Event coordination",
+    "Vendor communication",
+    "Accounts payable reconciliation",
+    "Scheduling",
+    "Retail sales",
+    "Customer service",
+    "Store management",
+    "Multilingual communication"
+  ],
+  "targetRoles": [
+    "Front Desk Agent",
+    "Reservations Agent",
+    "Guest Services Agent",
+    "Hotel Receptionist",
+    "Administrative Assistant"
+  ],
+  "facts": {
+    "credentials": [],
+    "education": [
+      {
+        "level": "associate",
+        "field": null,
+        "completed": true
+      },
+      {
+        "level": "certificate",
+        "field": "Legal Administrative Assistant",
+        "completed": true
+      }
+    ],
+    "yearsExperience": {
+      "total": null,
+      "byRoleFamily": []
+    },
+    "languages": [
+      {
+        "language": "English",
+        "proficiency": "fluent"
+      },
+      {
+        "language": "Farsi",
+        "proficiency": "fluent"
+      },
+      {
+        "language": "Urdu",
+        "proficiency": "fluent"
+      },
+      {
+        "language": "Hindi",
+        "proficiency": "fluent"
+      }
+    ],
+    "workAuthorization": null
+  },
+  "extractVersion": 2
+}

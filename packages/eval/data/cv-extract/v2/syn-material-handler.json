@@ -1,0 +1,52 @@
+{
+  "summary": "Material handler with about three years in electronics manufacturing and prior warehouse distribution experience. Handles receiving, put-away, kitting and line-side delivery to cleanroom production, with forklift and reach truck operation in narrow aisles. Works with SAP inventory transactions, RF barcode scanning and cycle counting to keep inventory accurate. Experienced in shift-based work across day and night rotations.",
+  "skills": [
+    "Receiving",
+    "Put-away",
+    "Kitting",
+    "Line-side delivery",
+    "Cycle counting",
+    "SAP",
+    "RF barcode scanning",
+    "Sit-down forklift operation",
+    "Stand-up reach truck operation",
+    "Electric pallet jack operation",
+    "Manual pallet jack operation",
+    "ESD-safe handling",
+    "Shipping labels",
+    "Order packing",
+    "Pallet wrapping",
+    "Order picking",
+    "Voice picking",
+    "Trailer loading"
+  ],
+  "targetRoles": [
+    "Material Handler",
+    "Warehouse Associate",
+    "Inventory Associate"
+  ],
+  "facts": {
+    "credentials": [
+      {
+        "name": "Forklift operator certification",
+        "issuer": "Employer",
+        "status": null,
+        "expires": null
+      }
+    ],
+    "education": [
+      {
+        "level": "high_school",
+        "field": null,
+        "completed": true
+      }
+    ],
+    "yearsExperience": {
+      "total": null,
+      "byRoleFamily": []
+    },
+    "languages": [],
+    "workAuthorization": null
+  },
+  "extractVersion": 2
+}

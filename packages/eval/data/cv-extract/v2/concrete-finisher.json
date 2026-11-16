@@ -1,0 +1,50 @@
+{
+  "summary": "Concrete laborer with over a decade of construction experience in site preparation, concrete placement, and finishing on commercial and residential projects. Skilled in mixing, pouring, spreading, smoothing and patching concrete, installing rebar and expansion joints, and demolishing old concrete surfaces. Operates forklifts, cranes and jackhammers and works from blueprints and project documentation to schedule tasks. Brings a strong safety record, coordinates with subcontractors on completion timelines, and supports team productivity on construction sites.",
+  "skills": [
+    "Concrete mixing",
+    "Concrete placement",
+    "Concrete finishing",
+    "Concrete patching",
+    "Rebar installation",
+    "Expansion joint forming",
+    "Concrete demolition",
+    "Forklift operation",
+    "Crane operation",
+    "Jackhammer operation",
+    "Power tools",
+    "Blueprint reading",
+    "Heavy lifting",
+    "Site cleanup",
+    "Commercial construction",
+    "New construction",
+    "Materials handling",
+    "Inventory monitoring",
+    "Forming and form setting",
+    "Precast concrete handling",
+    "Chemical sanitizing",
+    "Equipment troubleshooting"
+  ],
+  "targetRoles": [
+    "Concrete Laborer",
+    "Concrete Finisher",
+    "Construction Laborer",
+    "Concrete Equipment Operator"
+  ],
+  "facts": {
+    "credentials": [],
+    "education": [
+      {
+        "level": "high_school",
+        "field": null,
+        "completed": true
+      }
+    ],
+    "yearsExperience": {
+      "total": null,
+      "byRoleFamily": []
+    },
+    "languages": [],
+    "workAuthorization": null
+  },
+  "extractVersion": 2
+}

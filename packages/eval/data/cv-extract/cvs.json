@@ -1,0 +1,702 @@
+[
+  {
+    "id": "admissions-counselor",
+    "group": "other-non-tech",
+    "source": {
+      "dataset": "opensporks/resumes",
+      "revision": "ed4cb5f3fd1ce7e0a0e74e1a09c1a3b702c2c2eb",
+      "path": "data/data/PUBLIC-RELATIONS/29329075.pdf",
+      "sha256": "484910575d1faafecc6d2ba58c01fca111fafbb4fafbd6652ee3a92d12f6548f"
+    }
+  },
+  {
+    "id": "aviation-mechanic",
+    "group": "healthcare-licensed",
+    "source": {
+      "dataset": "opensporks/resumes",
+      "revision": "ed4cb5f3fd1ce7e0a0e74e1a09c1a3b702c2c2eb",
+      "path": "data/data/AVIATION/82738323.pdf",
+      "sha256": "94da0beccba1a76e8f1db1cd58ee29d78e2e470b60bad148b8fd6902d58f7150"
+    }
+  },
+  {
+    "id": "bank-branch-manager",
+    "group": "other-non-tech",
+    "source": {
+      "dataset": "opensporks/resumes",
+      "revision": "ed4cb5f3fd1ce7e0a0e74e1a09c1a3b702c2c2eb",
+      "path": "data/data/BANKING/25780596.pdf",
+      "sha256": "a2b279054b5fc9257e97ddadcbd2af5a0cc8e2d429aaec91a79ac00706a4b6a8"
+    }
+  },
+  {
+    "id": "bartender-banquet",
+    "group": "hourly-shift",
+    "source": {
+      "dataset": "opensporks/resumes",
+      "revision": "ed4cb5f3fd1ce7e0a0e74e1a09c1a3b702c2c2eb",
+      "path": "data/data/CHEF/36366044.pdf",
+      "sha256": "418d38b536441264f9467e709486f3d829d01454072ac0803851d7c0adbadbbb"
+    }
+  },
+  {
+    "id": "behavioral-health",
+    "group": "healthcare-licensed",
+    "source": {
+      "dataset": "opensporks/resumes",
+      "revision": "ed4cb5f3fd1ce7e0a0e74e1a09c1a3b702c2c2eb",
+      "path": "data/data/HEALTHCARE/10062724.pdf",
+      "sha256": "a8a7eec27b0824fe46830615ad63816e2e55c5a6b1097d57df7f7f589ca6508f"
+    }
+  },
+  {
+    "id": "business-development",
+    "group": "other-non-tech",
+    "source": {
+      "dataset": "opensporks/resumes",
+      "revision": "ed4cb5f3fd1ce7e0a0e74e1a09c1a3b702c2c2eb",
+      "path": "data/data/BUSINESS-DEVELOPMENT/10289113.pdf",
+      "sha256": "126c50b07b98d39b4bbcc4d10be2817b71fd12aa4b355eaad7924127d047531e"
+    }
+  },
+  {
+    "id": "carpenter",
+    "group": "hourly-shift",
+    "source": {
+      "dataset": "opensporks/resumes",
+      "revision": "ed4cb5f3fd1ce7e0a0e74e1a09c1a3b702c2c2eb",
+      "path": "data/data/CONSTRUCTION/20565849.pdf",
+      "sha256": "c906c971f03b5f7a27692f96098b520d4c6160715a36a5126f47f094c624d9f0"
+    }
+  },
+  {
+    "id": "cashier",
+    "group": "hourly-shift",
+    "source": {
+      "dataset": "opensporks/resumes",
+      "revision": "ed4cb5f3fd1ce7e0a0e74e1a09c1a3b702c2c2eb",
+      "path": "data/data/APPAREL/16391949.pdf",
+      "sha256": "a1ec6c0d6e2a542d375d601545534ae40c5aa149e8fce6837906c55d65557d8d"
+    }
+  },
+  {
+    "id": "city-carrier",
+    "group": "hourly-shift",
+    "source": {
+      "dataset": "opensporks/resumes",
+      "revision": "ed4cb5f3fd1ce7e0a0e74e1a09c1a3b702c2c2eb",
+      "path": "data/data/PUBLIC-RELATIONS/31211074.pdf",
+      "sha256": "f5de8e8586414da74dd8f84c6b442a3c15e82646929542211b594b598c59c905"
+    }
+  },
+  {
+    "id": "cna-skilled-care",
+    "group": "healthcare-licensed",
+    "source": {
+      "dataset": "opensporks/resumes",
+      "revision": "ed4cb5f3fd1ce7e0a0e74e1a09c1a3b702c2c2eb",
+      "path": "data/data/HEALTHCARE/18714571.pdf",
+      "sha256": "1c1ab05d6f98a322e43b8b1d7ed5f16412e3f293cdb2eec1fe65880fe3d332f9"
+    }
+  },
+  {
+    "id": "concrete-finisher",
+    "group": "hourly-shift",
+    "source": {
+      "dataset": "opensporks/resumes",
+      "revision": "ed4cb5f3fd1ce7e0a0e74e1a09c1a3b702c2c2eb",
+      "path": "data/data/CONSTRUCTION/78298706.pdf",
+      "sha256": "c14f73cca34a074677c56b8d43875c91bb0129dca718e3d0d9587ce1c6840d5d"
+    }
+  },
+  {
+    "id": "cost-accounting-manager",
+    "group": "other-non-tech",
+    "source": {
+      "dataset": "opensporks/resumes",
+      "revision": "ed4cb5f3fd1ce7e0a0e74e1a09c1a3b702c2c2eb",
+      "path": "data/data/FINANCE/11441764.pdf",
+      "sha256": "c285a3760defded89e6e8c2ffa63f1cfb14eae095980ed41be521acaccc63506"
+    }
+  },
+  {
+    "id": "cpa-accountant",
+    "group": "other-non-tech",
+    "source": {
+      "dataset": "opensporks/resumes",
+      "revision": "ed4cb5f3fd1ce7e0a0e74e1a09c1a3b702c2c2eb",
+      "path": "data/data/ACCOUNTANT/15592167.pdf",
+      "sha256": "7503a5f49be55f3290877ad9d694be60ff682d35ce2b5f7b1b137251d0feb1e1"
+    }
+  },
+  {
+    "id": "delivery-driver",
+    "group": "hourly-shift",
+    "source": {
+      "dataset": "opensporks/resumes",
+      "revision": "ed4cb5f3fd1ce7e0a0e74e1a09c1a3b702c2c2eb",
+      "path": "data/data/CONSTRUCTION/22894544.pdf",
+      "sha256": "34de183ba952bcb74175558047e26d05bb474c8ffdc411245aba520211bb49c7"
+    }
+  },
+  {
+    "id": "dental-hygienist",
+    "group": "healthcare-licensed",
+    "source": {
+      "dataset": "opensporks/resumes",
+      "revision": "ed4cb5f3fd1ce7e0a0e74e1a09c1a3b702c2c2eb",
+      "path": "data/data/ARTS/14248724.pdf",
+      "sha256": "6c6d48553e3d6392b94bad5c4ceb1c81f95d785f1a43640902ccf66f8a1d20c9"
+    }
+  },
+  {
+    "id": "emergency-physician",
+    "group": "healthcare-licensed",
+    "source": {
+      "dataset": "opensporks/resumes",
+      "revision": "ed4cb5f3fd1ce7e0a0e74e1a09c1a3b702c2c2eb",
+      "path": "data/data/FITNESS/21178545.pdf",
+      "sha256": "9c3b12cb2d3e1e136a5417f6b38ae9836de584bcd6f28cdd9af8afddfcb281af"
+    }
+  },
+  {
+    "id": "etl-developer",
+    "group": "tech",
+    "source": {
+      "dataset": "opensporks/resumes",
+      "revision": "ed4cb5f3fd1ce7e0a0e74e1a09c1a3b702c2c2eb",
+      "path": "data/data/AUTOMOBILE/28790806.pdf",
+      "sha256": "1137acbb6d4156dd5fff5c75332700b4731aff1b9cde3653bfd31d802cbd3319"
+    }
+  },
+  {
+    "id": "finance-manager",
+    "group": "other-non-tech",
+    "source": {
+      "dataset": "opensporks/resumes",
+      "revision": "ed4cb5f3fd1ce7e0a0e74e1a09c1a3b702c2c2eb",
+      "path": "data/data/FINANCE/28522529.pdf",
+      "sha256": "37cccf91871fb95c0213e3609f314a3d9707ddb954241f3ad7cf18a709293cbe"
+    }
+  },
+  {
+    "id": "food-server",
+    "group": "hourly-shift",
+    "source": {
+      "dataset": "opensporks/resumes",
+      "revision": "ed4cb5f3fd1ce7e0a0e74e1a09c1a3b702c2c2eb",
+      "path": "data/data/CHEF/28176889.pdf",
+      "sha256": "f9e9c6f67c3886945d6b691d0ea60f046f538f0833188460cdc558a94c03d9e4"
+    }
+  },
+  {
+    "id": "government-attorney",
+    "group": "healthcare-licensed",
+    "source": {
+      "dataset": "opensporks/resumes",
+      "revision": "ed4cb5f3fd1ce7e0a0e74e1a09c1a3b702c2c2eb",
+      "path": "data/data/ADVOCATE/14445309.pdf",
+      "sha256": "9331f7e239354548a2656e8baa52a77b29e3c04b8d7857198f6c76cd774cd841"
+    }
+  },
+  {
+    "id": "grain-inspector",
+    "group": "other-non-tech",
+    "source": {
+      "dataset": "opensporks/resumes",
+      "revision": "ed4cb5f3fd1ce7e0a0e74e1a09c1a3b702c2c2eb",
+      "path": "data/data/AGRICULTURE/16849128.pdf",
+      "sha256": "4f351e84259cd5383adace6faff8aa11eeeb65bbde58823bbc8beece03a8943c"
+    }
+  },
+  {
+    "id": "hotel-front-desk",
+    "group": "hourly-shift",
+    "source": {
+      "dataset": "opensporks/resumes",
+      "revision": "ed4cb5f3fd1ce7e0a0e74e1a09c1a3b702c2c2eb",
+      "path": "data/data/APPAREL/29028935.pdf",
+      "sha256": "2cf3aae67388da3213b563f70f1061c0314288a3a359ecf00595952060de5ec8"
+    }
+  },
+  {
+    "id": "housekeeper",
+    "group": "hourly-shift",
+    "source": {
+      "dataset": "opensporks/resumes",
+      "revision": "ed4cb5f3fd1ce7e0a0e74e1a09c1a3b702c2c2eb",
+      "path": "data/data/CHEF/25452321.pdf",
+      "sha256": "932d882808099f1f30ac1b25c1fe98d9249e07a3e49c4096978ea7145199944a"
+    }
+  },
+  {
+    "id": "hr-director-manufacturing",
+    "group": "other-non-tech",
+    "source": {
+      "dataset": "opensporks/resumes",
+      "revision": "ed4cb5f3fd1ce7e0a0e74e1a09c1a3b702c2c2eb",
+      "path": "data/data/HR/11480899.pdf",
+      "sha256": "8a5c69551757bf1beef72dacb94c94a5993ff8b4f2d54fddf4113a7735ced385"
+    }
+  },
+  {
+    "id": "hr-manager",
+    "group": "other-non-tech",
+    "source": {
+      "dataset": "opensporks/resumes",
+      "revision": "ed4cb5f3fd1ce7e0a0e74e1a09c1a3b702c2c2eb",
+      "path": "data/data/HR/25724495.pdf",
+      "sha256": "6309664a10527c40e0daef72dea949dbe4079763cb3fb9a787d95e227b51347a"
+    }
+  },
+  {
+    "id": "it-manager",
+    "group": "tech",
+    "source": {
+      "dataset": "opensporks/resumes",
+      "revision": "ed4cb5f3fd1ce7e0a0e74e1a09c1a3b702c2c2eb",
+      "path": "data/data/INFORMATION-TECHNOLOGY/10247517.pdf",
+      "sha256": "4ad66017c1ee02face3163b2a70de9b6c38311047dee1bb465fa994e7747c4eb"
+    }
+  },
+  {
+    "id": "it-specialist",
+    "group": "tech",
+    "source": {
+      "dataset": "opensporks/resumes",
+      "revision": "ed4cb5f3fd1ce7e0a0e74e1a09c1a3b702c2c2eb",
+      "path": "data/data/INFORMATION-TECHNOLOGY/13477922.pdf",
+      "sha256": "047445cacb5f37b77d7e9f2fa58bee6a4c9599b8fe9ed1e8290eaed9e51babe9"
+    }
+  },
+  {
+    "id": "it-sysadmin",
+    "group": "tech",
+    "source": {
+      "dataset": "opensporks/resumes",
+      "revision": "ed4cb5f3fd1ce7e0a0e74e1a09c1a3b702c2c2eb",
+      "path": "data/data/INFORMATION-TECHNOLOGY/10089434.pdf",
+      "sha256": "98819185680ad47fbc77fed679f1205641114c97d9a1592b134102c3b018e1af"
+    }
+  },
+  {
+    "id": "lead-maintenance-mechanic",
+    "group": "hourly-shift",
+    "source": {
+      "dataset": "opensporks/resumes",
+      "revision": "ed4cb5f3fd1ce7e0a0e74e1a09c1a3b702c2c2eb",
+      "path": "data/data/APPAREL/19070271.pdf",
+      "sha256": "15410bba8987c5ecd087367b93348757b5564f0e5a7a764d130c92cffd258f03"
+    }
+  },
+  {
+    "id": "line-cook",
+    "group": "hourly-shift",
+    "source": {
+      "dataset": "opensporks/resumes",
+      "revision": "ed4cb5f3fd1ce7e0a0e74e1a09c1a3b702c2c2eb",
+      "path": "data/data/ARTS/39064638.pdf",
+      "sha256": "014ec9eec1dc9d2cd76ee6416c503482b4f13781e258a16e591503581aaadab9"
+    }
+  },
+  {
+    "id": "lvn-field-nurse",
+    "group": "healthcare-licensed",
+    "source": {
+      "dataset": "opensporks/resumes",
+      "revision": "ed4cb5f3fd1ce7e0a0e74e1a09c1a3b702c2c2eb",
+      "path": "data/data/HEALTHCARE/25834360.pdf",
+      "sha256": "d4dd217be0233d5eba9a749aaea173147babf997f50a29049b25bbb7f84f9365"
+    }
+  },
+  {
+    "id": "maintenance-technician",
+    "group": "hourly-shift",
+    "source": {
+      "dataset": "opensporks/resumes",
+      "revision": "ed4cb5f3fd1ce7e0a0e74e1a09c1a3b702c2c2eb",
+      "path": "data/data/ENGINEERING/10219099.pdf",
+      "sha256": "1f7f2777712c359cc08699384779e8e68792b9dcdefa6efcc58f3750d7d0189e"
+    }
+  },
+  {
+    "id": "media-relations",
+    "group": "other-non-tech",
+    "source": {
+      "dataset": "opensporks/resumes",
+      "revision": "ed4cb5f3fd1ce7e0a0e74e1a09c1a3b702c2c2eb",
+      "path": "data/data/DIGITAL-MEDIA/10005171.pdf",
+      "sha256": "87614c98cca485c585299368112ac80aeb6a89db8db16d3f8fc022488bcabb0a"
+    }
+  },
+  {
+    "id": "network-engineer",
+    "group": "tech",
+    "source": {
+      "dataset": "opensporks/resumes",
+      "revision": "ed4cb5f3fd1ce7e0a0e74e1a09c1a3b702c2c2eb",
+      "path": "data/data/BPO/63158213.pdf",
+      "sha256": "505e599fe5ec25b80998e480e21e246bd56eeb40cb72c057dadb366be7bc3353"
+    }
+  },
+  {
+    "id": "nurse-practitioner",
+    "group": "healthcare-licensed",
+    "source": {
+      "dataset": "opensporks/resumes",
+      "revision": "ed4cb5f3fd1ce7e0a0e74e1a09c1a3b702c2c2eb",
+      "path": "data/data/ADVOCATE/46772262.pdf",
+      "sha256": "76362dec323cee9222eb9502e17e2e2fa3989343a45d3e3737f2256996041c75"
+    }
+  },
+  {
+    "id": "occupational-therapist",
+    "group": "healthcare-licensed",
+    "source": {
+      "dataset": "opensporks/resumes",
+      "revision": "ed4cb5f3fd1ce7e0a0e74e1a09c1a3b702c2c2eb",
+      "path": "data/data/HEALTHCARE/60624892.pdf",
+      "sha256": "8a4ab8781ef96d21ac462fc9181c57fad3c9eef371cea7894c749ff4f6dba204"
+    }
+  },
+  {
+    "id": "pharmacy-technician",
+    "group": "healthcare-licensed",
+    "source": {
+      "dataset": "opensporks/resumes",
+      "revision": "ed4cb5f3fd1ce7e0a0e74e1a09c1a3b702c2c2eb",
+      "path": "data/data/ADVOCATE/17254634.pdf",
+      "sha256": "11e294076ff8706f7c9d330b454e308d61ff4336fab86465f3abd6c853814c49"
+    }
+  },
+  {
+    "id": "phlebotomist",
+    "group": "healthcare-licensed",
+    "source": {
+      "dataset": "opensporks/resumes",
+      "revision": "ed4cb5f3fd1ce7e0a0e74e1a09c1a3b702c2c2eb",
+      "path": "data/data/ADVOCATE/13809698.pdf",
+      "sha256": "12b4b7ef11f10a990303b02ea0dfddfe6da5843605fd5830f1817c1cb88a45a9"
+    }
+  },
+  {
+    "id": "process-consultant",
+    "group": "other-non-tech",
+    "source": {
+      "dataset": "opensporks/resumes",
+      "revision": "ed4cb5f3fd1ce7e0a0e74e1a09c1a3b702c2c2eb",
+      "path": "data/data/CONSULTANT/10984392.pdf",
+      "sha256": "c205dfb2abf6356d4232e7c56722ec28b6de87b931266548cb1903094f6a3093"
+    }
+  },
+  {
+    "id": "product-designer",
+    "group": "tech",
+    "source": {
+      "dataset": "opensporks/resumes",
+      "revision": "ed4cb5f3fd1ce7e0a0e74e1a09c1a3b702c2c2eb",
+      "path": "data/data/DESIGNER/10751444.pdf",
+      "sha256": "6eb5a6eccd5fa99effcffea574b509f744d0fa95ba61e308753c06632e7974cb"
+    }
+  },
+  {
+    "id": "rf-systems-engineer",
+    "group": "tech",
+    "source": {
+      "dataset": "opensporks/resumes",
+      "revision": "ed4cb5f3fd1ce7e0a0e74e1a09c1a3b702c2c2eb",
+      "path": "data/data/INFORMATION-TECHNOLOGY/10265057.pdf",
+      "sha256": "2533491769c59630b8886e3a1115c7e0272b0d74fd948747bc8283aae96f97c6"
+    }
+  },
+  {
+    "id": "rn-staff-nurse",
+    "group": "healthcare-licensed",
+    "source": {
+      "dataset": "opensporks/resumes",
+      "revision": "ed4cb5f3fd1ce7e0a0e74e1a09c1a3b702c2c2eb",
+      "path": "data/data/AGRICULTURE/10953078.pdf",
+      "sha256": "969600d30c27d03a2c7c5632ff11aab6d47e0b342395da6b5156cc8e3afe8d15"
+    }
+  },
+  {
+    "id": "rn-supervisor",
+    "group": "healthcare-licensed",
+    "source": {
+      "dataset": "opensporks/resumes",
+      "revision": "ed4cb5f3fd1ce7e0a0e74e1a09c1a3b702c2c2eb",
+      "path": "data/data/FITNESS/24219583.pdf",
+      "sha256": "8c3a0ba3c89b5003a1532e82c7bb92de6f3823e2404cdd6a5703edde4d713676"
+    }
+  },
+  {
+    "id": "sales-associate-retail",
+    "group": "hourly-shift",
+    "source": {
+      "dataset": "opensporks/resumes",
+      "revision": "ed4cb5f3fd1ce7e0a0e74e1a09c1a3b702c2c2eb",
+      "path": "data/data/SALES/33236701.pdf",
+      "sha256": "64691bae27e6b80ce99f3cca49816d8c40d6a7744f6318d249d135e8fef9403a"
+    }
+  },
+  {
+    "id": "sales-executive",
+    "group": "other-non-tech",
+    "source": {
+      "dataset": "opensporks/resumes",
+      "revision": "ed4cb5f3fd1ce7e0a0e74e1a09c1a3b702c2c2eb",
+      "path": "data/data/SALES/10464113.pdf",
+      "sha256": "9a24676339c91d29cfd4450cf1b05dea637d9a46ae4be6b0fe51154ccce4bf3d"
+    }
+  },
+  {
+    "id": "spanish-teacher",
+    "group": "other-non-tech",
+    "source": {
+      "dataset": "opensporks/resumes",
+      "revision": "ed4cb5f3fd1ce7e0a0e74e1a09c1a3b702c2c2eb",
+      "path": "data/data/TEACHER/25588694.pdf",
+      "sha256": "c115494ed7cb1223dccff25e1a9928292ec722286b77fc18a7504a7763546513"
+    }
+  },
+  {
+    "id": "staff-pharmacist",
+    "group": "healthcare-licensed",
+    "source": {
+      "dataset": "opensporks/resumes",
+      "revision": "ed4cb5f3fd1ce7e0a0e74e1a09c1a3b702c2c2eb",
+      "path": "data/data/INFORMATION-TECHNOLOGY/48037995.pdf",
+      "sha256": "670de9b34fe70dd0995a57544e4e731429aca8b083b9a32d352d2c6d4d0ef993"
+    }
+  },
+  {
+    "id": "syn-barista",
+    "group": "hourly-shift",
+    "source": {
+      "synthetic": true,
+      "layout": "sidebar-right",
+      "posting": {
+        "title": "Barista",
+        "employer": "SpaceX",
+        "url": "https://boards.greenhouse.io/spacex/jobs/8626596002",
+        "retrieved": "2026-11-16"
+      },
+      "sha256": "5707e0076e1d2ca3467bcd0e838bc94b477576e99fa8fde8b09e14124a7ec732"
+    }
+  },
+  {
+    "id": "syn-cdl-driver",
+    "group": "hourly-shift",
+    "source": {
+      "synthetic": true,
+      "layout": "two-column",
+      "posting": {
+        "title": "Delivery Systems Specialist - Driver",
+        "employer": "SpaceX",
+        "url": "https://boards.greenhouse.io/spacex/jobs/8675197002",
+        "retrieved": "2026-11-16"
+      },
+      "sha256": "6e154162274c29537cb132c88a183eabde663680bd9e863462c652c9dc76e8a2"
+    }
+  },
+  {
+    "id": "syn-cnc-machinist",
+    "group": "hourly-shift",
+    "source": {
+      "synthetic": true,
+      "layout": "sidebar-left",
+      "posting": {
+        "title": "CNC Machinist II, Second Shift",
+        "employer": "Relativity Space",
+        "url": "https://boards.greenhouse.io/relativity/jobs/8494018002",
+        "retrieved": "2026-11-16"
+      },
+      "sha256": "94dc9b7dfe29f30121acb05ac66b8583b4ba4ed118eda1b9d29fad3913994a80"
+    }
+  },
+  {
+    "id": "syn-electrician",
+    "group": "healthcare-licensed",
+    "source": {
+      "synthetic": true,
+      "layout": "sidebar-right",
+      "posting": {
+        "title": "Electrician",
+        "employer": "SpaceX",
+        "url": "https://boards.greenhouse.io/spacex/jobs/8672648002",
+        "retrieved": "2026-11-16"
+      },
+      "sha256": "f7f0b167865e9a8184a4165295b2df33c7d3d63e7ea4f8e768923c6f9580744d"
+    }
+  },
+  {
+    "id": "syn-food-safety-manager",
+    "group": "other-non-tech",
+    "source": {
+      "synthetic": true,
+      "layout": "sidebar-left",
+      "posting": {
+        "title": "Senior Food Safety Manager",
+        "employer": "sweetgreen",
+        "url": "https://boards.greenhouse.io/sweetgreen/jobs/8191701",
+        "retrieved": "2026-11-16"
+      },
+      "sha256": "947b0457f6198af667d323daf8e7977b762cbeee553bcab13d37b1e942a541a9"
+    }
+  },
+  {
+    "id": "syn-hvac-technician",
+    "group": "healthcare-licensed",
+    "source": {
+      "synthetic": true,
+      "layout": "two-column",
+      "posting": {
+        "title": "HVAC Technician",
+        "employer": "SpaceX",
+        "url": "https://boards.greenhouse.io/spacex/jobs/8934427002",
+        "retrieved": "2026-11-16"
+      },
+      "sha256": "10fe4826472b9e7577bd83442050615991886ea0f0ce087272380e26ae4050e1"
+    }
+  },
+  {
+    "id": "syn-material-handler",
+    "group": "hourly-shift",
+    "source": {
+      "synthetic": true,
+      "layout": "sidebar-left",
+      "posting": {
+        "title": "Material Handler (Starlink/Akoustis)",
+        "employer": "SpaceX",
+        "url": "https://boards.greenhouse.io/spacex/jobs/8868876002",
+        "retrieved": "2026-11-16"
+      },
+      "sha256": "555839abab6ba456608007e4e8faf97fb65de199fc0f06b56fb27f8c74277bd5"
+    }
+  },
+  {
+    "id": "syn-medical-assistant",
+    "group": "healthcare-licensed",
+    "source": {
+      "synthetic": true,
+      "layout": "sidebar-left",
+      "posting": {
+        "title": "Certified Medical Assistant (Darien)",
+        "employer": "One Medical",
+        "url": "https://boards.greenhouse.io/onemedical/jobs/8337173",
+        "retrieved": "2026-11-16"
+      },
+      "sha256": "8d279a17ffa8265e7173ec822dba8360842f496e0930de7f1209d820ec0970bf"
+    }
+  },
+  {
+    "id": "syn-photographer",
+    "group": "other-non-tech",
+    "source": {
+      "synthetic": true,
+      "layout": "two-column",
+      "posting": {
+        "title": "Photographer & Content Specialist",
+        "employer": "sweetgreen",
+        "url": "https://boards.greenhouse.io/sweetgreen/jobs/8332510",
+        "retrieved": "2026-11-16"
+      },
+      "sha256": "8a378d3d2d80d6fcebb55b143d4c257601b337c13729f0753d5cd05a5d8c1dcc"
+    }
+  },
+  {
+    "id": "syn-physician-assistant",
+    "group": "healthcare-licensed",
+    "source": {
+      "synthetic": true,
+      "layout": "two-column",
+      "posting": {
+        "title": "1099 Bilingual NP/PA - Virtual Urgent Care",
+        "employer": "Oscar Health",
+        "url": "https://boards.greenhouse.io/oscar/jobs/8056685",
+        "retrieved": "2026-11-16"
+      },
+      "sha256": "afcfb43537466f980272a2ee171266e900f49ce60fcae7803a7e18c6f8579f95"
+    }
+  },
+  {
+    "id": "syn-recruiter",
+    "group": "other-non-tech",
+    "source": {
+      "synthetic": true,
+      "layout": "sidebar-right",
+      "posting": {
+        "title": "Recruiter, Go-To-Market (Starlink)",
+        "employer": "SpaceX",
+        "url": "https://boards.greenhouse.io/spacex/jobs/8864582002",
+        "retrieved": "2026-11-16"
+      },
+      "sha256": "578b81945fcf185d8ca07032e16c777a98bc658219d3160613071fdebb2e3d74"
+    }
+  },
+  {
+    "id": "syn-restaurant-general-manager",
+    "group": "other-non-tech",
+    "source": {
+      "synthetic": true,
+      "layout": "sidebar-right",
+      "posting": {
+        "title": "Restaurant General Manager",
+        "employer": "sweetgreen",
+        "url": "https://boards.greenhouse.io/sweetgreen/jobs/8382548",
+        "retrieved": "2026-11-16"
+      },
+      "sha256": "5670564801fea7eeb796cb7bc52932b8e8dde6e973962a12b282277e0a10b2ba"
+    }
+  },
+  {
+    "id": "systems-eng-manager",
+    "group": "tech",
+    "source": {
+      "dataset": "opensporks/resumes",
+      "revision": "ed4cb5f3fd1ce7e0a0e74e1a09c1a3b702c2c2eb",
+      "path": "data/data/ENGINEERING/61579998.pdf",
+      "sha256": "9b46dbab5d6cbc0beb95f69b6cc90c2fb99745a08888677db89fb3e52ac732df"
+    }
+  },
+  {
+    "id": "tax-examining-clerk",
+    "group": "other-non-tech",
+    "source": {
+      "dataset": "opensporks/resumes",
+      "revision": "ed4cb5f3fd1ce7e0a0e74e1a09c1a3b702c2c2eb",
+      "path": "data/data/AUTOMOBILE/47487091.pdf",
+      "sha256": "c57613036f67876a52c9ae0f1bc73e01cc5dc4c59b9510b5adaa5bd8b4363d42"
+    }
+  },
+  {
+    "id": "teacher-ec4",
+    "group": "healthcare-licensed",
+    "source": {
+      "dataset": "opensporks/resumes",
+      "revision": "ed4cb5f3fd1ce7e0a0e74e1a09c1a3b702c2c2eb",
+      "path": "data/data/TEACHER/28013287.pdf",
+      "sha256": "f2d000cfa1d640ab984e40c01546b0a9551b197c968e86529c2d4eed7426a2ae"
+    }
+  },
+  {
+    "id": "victim-advocate",
+    "group": "other-non-tech",
+    "source": {
+      "dataset": "opensporks/resumes",
+      "revision": "ed4cb5f3fd1ce7e0a0e74e1a09c1a3b702c2c2eb",
+      "path": "data/data/ADVOCATE/13967854.pdf",
+      "sha256": "9183db6a904457bdba2f3252fa5543637d7d260394aaab557d7a709e31acf28e"
+    }
+  },
+  {
+    "id": "warehouse-selector",
+    "group": "hourly-shift",
+    "source": {
+      "dataset": "opensporks/resumes",
+      "revision": "ed4cb5f3fd1ce7e0a0e74e1a09c1a3b702c2c2eb",
+      "path": "data/data/FITNESS/28321954.pdf",
+      "sha256": "16df9a02114af246fd04ce948fd215475db129363f58485f6d8fc20afbc20297"
+    }
+  }
+]

@@ -1,0 +1,53 @@
+{
+  "summary": "Sales executive with over a decade of business-to-business sales experience selling accounts receivable, collection, billing and healthcare services to physicians, hospitals and medical practices, plus commercial and consumer sales. Has prospected, closed and retained clients across multiple states, including territory and regional management roles, and has trained and supported new sales representatives. Scope has included territories spanning several Ohio and Kentucky markets and monthly placement volumes in the millions, with a record of growing client lists, profits and retention through CRM-driven account management.",
+  "skills": [
+    "Inside sales",
+    "Outside sales",
+    "Customer service",
+    "Prospecting",
+    "Cold calling",
+    "Sales presentations",
+    "Closing",
+    "Client retention",
+    "Account management",
+    "Territory management",
+    "Salesforce",
+    "ACT! CRM",
+    "GoldMine CRM",
+    "Allscripts software",
+    "Practice Fusion",
+    "Database management",
+    "Direct mail",
+    "Appointment setting",
+    "Sales reporting",
+    "Sales training",
+    "Microsoft Outlook",
+    "Accounts receivable solutions",
+    "Medical billing",
+    "Credit reporting",
+    "Credentialing services"
+  ],
+  "targetRoles": [
+    "Sales Executive",
+    "Account Manager",
+    "Territory Sales Manager",
+    "Healthcare Sales Representative"
+  ],
+  "facts": {
+    "credentials": [],
+    "education": [
+      {
+        "level": "high_school",
+        "field": "Business",
+        "completed": true
+      }
+    ],
+    "yearsExperience": {
+      "total": null,
+      "byRoleFamily": []
+    },
+    "languages": [],
+    "workAuthorization": null
+  },
+  "extractVersion": 2
+}

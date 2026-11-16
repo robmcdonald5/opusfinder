@@ -1,0 +1,105 @@
+{
+  "summary": "Board-certified physician assistant with about 9 years of clinical practice across urgent care, family medicine and telemedicine. Delivers adult and pediatric urgent-care evaluation and triage by video, phone and secure messaging, with bilingual English and Spanish clinical communication. Experienced in high-volume walk-in clinics, procedural care including laceration repair and incision and drainage, and federally qualified health center chronic-disease management. Works evening and weekend coverage with remote physician backup and supports antibiotic stewardship and peer review.",
+  "skills": [
+    "Telemedicine triage",
+    "Virtual examination",
+    "Urgent care",
+    "Laceration repair",
+    "Incision and drainage",
+    "Splinting",
+    "Foreign body removal",
+    "Suturing",
+    "X-ray interpretation",
+    "EKG interpretation",
+    "E-prescribing",
+    "Controlled substance monitoring",
+    "PDMP",
+    "Chronic disease management",
+    "Antibiotic stewardship",
+    "Chart review",
+    "Epic",
+    "athenahealth",
+    "Doxy.me",
+    "ACLS",
+    "BLS",
+    "Spanish clinical communication"
+  ],
+  "targetRoles": [
+    "Physician Assistant",
+    "Telemedicine Physician Assistant",
+    "Urgent Care Physician Assistant"
+  ],
+  "facts": {
+    "credentials": [
+      {
+        "name": "Physician Assistant-Certified (PA-C)",
+        "issuer": "National Commission on Certification of Physician Assistants (NCCPA)",
+        "status": null,
+        "expires": "2027-12"
+      },
+      {
+        "name": "Physician Assistant license, Florida",
+        "issuer": null,
+        "status": "active",
+        "expires": "2027-01"
+      },
+      {
+        "name": "Physician Assistant license, Georgia",
+        "issuer": null,
+        "status": "active",
+        "expires": "2026-06"
+      },
+      {
+        "name": "DEA Registration",
+        "issuer": null,
+        "status": "active",
+        "expires": null
+      },
+      {
+        "name": "ACLS",
+        "issuer": "American Heart Association",
+        "status": null,
+        "expires": null
+      },
+      {
+        "name": "BLS",
+        "issuer": "American Heart Association",
+        "status": null,
+        "expires": null
+      }
+    ],
+    "education": [
+      {
+        "level": "master",
+        "field": "Physician Assistant Studies",
+        "completed": true
+      },
+      {
+        "level": "bachelor",
+        "field": "Biology",
+        "completed": true
+      }
+    ],
+    "yearsExperience": {
+      "total": 9,
+      "byRoleFamily": [
+        {
+          "roleFamily": "telemedicine",
+          "years": 4
+        }
+      ]
+    },
+    "languages": [
+      {
+        "language": "English",
+        "proficiency": "native"
+      },
+      {
+        "language": "Spanish",
+        "proficiency": "fluent"
+      }
+    ],
+    "workAuthorization": null
+  },
+  "extractVersion": 2
+}

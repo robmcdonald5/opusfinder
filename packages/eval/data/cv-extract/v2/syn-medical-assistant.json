@@ -1,0 +1,86 @@
+{
+  "summary": "Certified medical assistant with 6 years in primary care and urgent care, splitting work between clinical lab and front-desk operations. Skilled in venipuncture, specimen processing, rooming and vital signs, EKG, immunizations and point-of-care testing, with experience scheduling, insurance verification and referrals. Handles high daily draw volumes in a multi-provider practice and trains new assistants on specimen handling and EHR lab workflow.",
+  "skills": [
+    "Venipuncture",
+    "Capillary blood collection",
+    "Phlebotomy",
+    "Specimen processing",
+    "Specimen labelling",
+    "Patient rooming",
+    "Vital signs",
+    "12-lead EKG",
+    "Immunizations",
+    "Injections",
+    "Point-of-care testing",
+    "Rapid strep testing",
+    "Influenza testing",
+    "A1c testing",
+    "Epic",
+    "athenahealth",
+    "Insurance verification",
+    "Referral coordination",
+    "Appointment scheduling",
+    "Wound care",
+    "Suture removal",
+    "Splinting",
+    "Triage",
+    "Vaccine storage temperature monitoring",
+    "BLS",
+    "Staff training"
+  ],
+  "targetRoles": [
+    "Certified Medical Assistant",
+    "Phlebotomy Technician",
+    "Clinical Medical Assistant"
+  ],
+  "facts": {
+    "credentials": [
+      {
+        "name": "Certified Medical Assistant (CMA)",
+        "issuer": "AAMA",
+        "status": null,
+        "expires": "2028-03"
+      },
+      {
+        "name": "Certified Phlebotomy Technician (CPT)",
+        "issuer": "National Healthcare Association",
+        "status": null,
+        "expires": null
+      },
+      {
+        "name": "BLS for Healthcare Providers",
+        "issuer": "American Heart Association",
+        "status": "active",
+        "expires": null
+      }
+    ],
+    "education": [
+      {
+        "level": "certificate",
+        "field": "Medical Assisting",
+        "completed": true
+      },
+      {
+        "level": "high_school",
+        "field": null,
+        "completed": true
+      }
+    ],
+    "yearsExperience": {
+      "total": 6,
+      "byRoleFamily": []
+    },
+    "languages": [
+      {
+        "language": "English",
+        "proficiency": "native"
+      },
+      {
+        "language": "Spanish",
+        "proficiency": "conversational"
+      }
+    ],
+    "workAuthorization": "Authorized to work in the United States"
+  },
+  "extractVersion": 2
+}

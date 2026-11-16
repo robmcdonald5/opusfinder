@@ -1,0 +1,82 @@
+{
+  "summary": "Class A commercial truck driver with 11 years of regional and local freight experience, including flatbed and dry van work and 1.2 million accident-free miles. Operates tractor-trailers with hazmat, tanker and doubles/triples endorsements, and handles loading, unloading and load securement with sit-down, reach and truck-mounted forklifts. Maintains clean electronic logs, pre- and post-trip inspections and warehouse freight scanning records. Former U.S. Army motor transport operator with convoy experience in heavy tactical vehicles.",
+  "skills": [
+    "Class A CDL operation",
+    "tractor-trailer operation",
+    "flatbed load securement",
+    "dry van operation",
+    "forklift operation",
+    "sit-down forklift",
+    "reach truck operation",
+    "truck-mounted forklift",
+    "pallet jack operation",
+    "hazmat transport",
+    "tanker transport",
+    "doubles and triples towing",
+    "pre-trip inspection",
+    "post-trip inspection",
+    "electronic logging device (ELD)",
+    "route delivery",
+    "load and unload",
+    "yard operation",
+    "trailer yard moves",
+    "warehouse management system (WMS)",
+    "RF scanner operation",
+    "convoy operation",
+    "tactical vehicle operation",
+    "freight documentation"
+  ],
+  "targetRoles": [
+    "Class A Truck Driver",
+    "Regional Truck Driver",
+    "Flatbed Driver",
+    "Yard Jockey"
+  ],
+  "facts": {
+    "credentials": [
+      {
+        "name": "CDL Class A with Hazmat (H), Tanker (N) and Doubles/Triples (T) endorsements",
+        "issuer": "State of Washington",
+        "status": null,
+        "expires": null
+      },
+      {
+        "name": "DOT medical examiner's certificate",
+        "issuer": null,
+        "status": null,
+        "expires": "2027-08"
+      },
+      {
+        "name": "Transportation Worker Identification Credential (TWIC)",
+        "issuer": null,
+        "status": null,
+        "expires": null
+      },
+      {
+        "name": "Forklift operator certification, sit-down and reach truck",
+        "issuer": null,
+        "status": null,
+        "expires": null
+      }
+    ],
+    "education": [
+      {
+        "level": "certificate",
+        "field": "Class A CDL Training",
+        "completed": true
+      },
+      {
+        "level": "high_school",
+        "field": "GED",
+        "completed": true
+      }
+    ],
+    "yearsExperience": {
+      "total": 11,
+      "byRoleFamily": []
+    },
+    "languages": [],
+    "workAuthorization": null
+  },
+  "extractVersion": 2
+}

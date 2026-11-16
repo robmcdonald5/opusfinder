@@ -112,35 +112,97 @@ not overwrite existing labels without `--force`.
 Scale the set toward the spec's ~50 examples via public CV datasets (Kaggle/HuggingFace) + more ATS
 boards as adapters land.
 
+## Test profiles
+
+The profiles the eval runs on are what the production CV extraction (transcribe → structure → scrub,
+the calls `ingestCv` makes) produced from a fixed set of 64 CVs. They are spread over four field
+groups, so a result can be read per group instead of as one average that tech would dominate:
+
+| group                                                                  | profiles | dataset CVs | synthetic CVs |
+| ---------------------------------------------------------------------- | -------- | ----------- | ------------- |
+| `healthcare-licensed`: healthcare, and other work that needs a licence | 19       | 15          | 4             |
+| `hourly-shift`                                                         | 18       | 14          | 4             |
+| `other-non-tech`                                                       | 19       | 15          | 4             |
+| `tech`, kept as a regression check                                     | 8        | 8           | 0             |
+
+`pnpm --filter @opusfinder/eval run cv-extract list` prints the current counts.
+
+- `data/cv-extract/cvs.json` is the registry: every CV's id, its group and where the file comes from.
+  - **Dataset CVs** are PDFs from the CC0 Kaggle "Resume Dataset" (through the `opensporks/resumes`
+    mirror on Hugging Face), each pinned to the dataset commit, the path and the PDF's SHA-256. They
+    are not committed, because the dataset's anonymisation leaves a few names and dates behind.
+    `cv-extract fetch` downloads them to the gitignored `data/cvs/cv-extract/` and fails on any file
+    whose checksum differs, so every checkout works from the same bytes. Transcripts are cached there
+    too and are not committed either.
+  - **Synthetic CVs** (`data/cv-extract/synthetic/<id>.html` and the `<id>.pdf` rendered from it) cover
+    what the dataset lacks: it is all single-column, so these are set in sidebar and two-column
+    layouts, and they add occupations it has few of. Each describes nobody (the name, contact
+    details, employers and numbers are invented) and was written from a real job posting, recorded in
+    the registry as `source.posting`. A harness should check whether that posting is in its job pool:
+    it is a near-certain match for that profile.
+- `data/cv-extract/v<N>/<id>.json` is the profile extraction version N produced from each CV.
+  `cv-extract run` fills the current version's directory.
+
+`loadProfileSet()` (`src/profile-set.ts`) returns the set: for each CV its `id`, `group`, `source`,
+the `StructuredProfile`, and a `contentHash` (SHA-256 over the whole stored profile, key order and
+formatting aside). Ids are stable across re-extractions; the hash changes whenever the profile does, so
+a label keyed on `(id, contentHash)` can tell that it was made against an older profile. The set is
+read at `PROFILE_SET_VERSION`, which is deliberately not `CV_EXTRACT_VERSION`: a prompt change in
+production does not re-key the eval until that constant is moved.
+
+**Real people's CVs** (the owner's, and testers who agreed) are never committed in any form. They go to
+the eval bucket under `profiles/` (`src/private-profiles.ts`: `profiles/index.json`, and per person
+`profiles/<id>/cv.pdf`, `transcript.txt` and `v<N>.json`), under an opaque id. `addPrivateProfile`
+uploads one, `loadPrivateProfiles` returns them in the same shape as `loadProfileSet`,
+`restructurePrivateProfiles` re-extracts them from the stored transcripts when the version moves, and
+`removePrivateProfile` deletes everything held about one person.
+
+**To add a synthetic CV:** write `<id>.html` against one of `synthetic/layouts/*.css`, render it with
+any Chromium (`chromium --headless --no-pdf-header-footer --print-to-pdf=<id>.pdf <id>.html`), add it
+to `cvs.json` with the PDF's SHA-256 and the posting it was written from, then `cv-extract run`. To add
+a dataset CV, add its pin to `cvs.json` and run `cv-extract fetch`, then `run`.
+
+The 12 pooled profiles in `data/profiles/` (see "Profiles, labels, and PII") are the old prompt's
+output for 12 of these CVs and are kept only for the pooled-label flow above. The set holds the same
+CVs re-extracted, under the same ids except two that were taken: `finance-manager` there is
+`cost-accounting-manager` here, and `hr-manager` is `hr-director-manufacturing`.
+
 ## CV extraction check
 
-`cv-extract` scores the production CV extraction (transcribe → structure → scrub, the calls
-`ingestCv` makes) against a hand-checked key, field by field. Run it before changing the CV prompts or
-schema, and bump `CV_EXTRACT_VERSION` (`@opusfinder/llm`) with the change. It is not a CI gate: the
-model is live.
+`cv-extract score` checks the extraction against a hand-written key, field by field, for the 39 CVs
+that have one. Run it before changing the CV prompts or schema, and bump `CV_EXTRACT_VERSION`
+(`@opusfinder/llm`) with the change. It is not a CI gate: the model is live.
 
-- `data/cv-extract/keys/<id>.json` — one key per test CV: where the CV comes from, its field group
-  (`healthcare-licensed`, `hourly-shift`, `other-non-tech`, `tech`), what a correct extraction holds,
-  and the entries where another reading is defensible (`judgementCalls`). The format and its matching
-  rules are documented in `src/cv-extract-key.ts`. The CVs are CC0 dataset PDFs (the same Kaggle
-  "Resume Dataset" as the pooled profiles). They are not committed, because the dataset's
-  anonymisation leaves a few names and dates behind. Each key pins its file instead: the dataset
-  (`opensporks/resumes` on Hugging Face), the dataset commit, the path and the PDF's SHA-256.
-  `cv-extract fetch` downloads them to the gitignored `data/cvs/cv-extract/` and fails on any file
-  whose checksum differs, so every checkout works from the same bytes. Transcripts are cached there
-  too and are not committed either; a fresh checkout re-transcribes on its first `run`.
+- `data/cv-extract/keys/<id>.json` — one key per keyed CV: what a correct extraction holds, and the
+  entries where another reading is defensible (`judgementCalls`). The CV's group and source are in the
+  registry. The format and its matching rules are documented in `src/cv-extract-key.ts`.
+  - **27 keys are the ones the version-2 prompt was tuned against** (one round, on these same CVs).
+  - **12 are held out** (`"heldOut": true`): six dataset CVs and six synthetic ones, two of each in
+    every non-tech group. Their keys were drafted before the prompt was run on them, the dataset ones
+    by a drafter that had not read the prompt. Never tune a prompt against them; their score is the
+    one that says how the prompt does on CVs it was not fitted to.
 - `data/cv-extract/v<N>/<id>.json` — the profile extraction version N produced for each CV. `v1` is
-  the baseline: the structuring prompt as it was before `facts` existed, run once over the same
-  transcripts. It cannot be regenerated from the current code and does not need to be.
-- `reports/cv-extract.json` — every kept version scored against the key: overall, per group, per
-  field, and each wrong field with the reason.
+  the baseline: the structuring prompt as it was before `facts` existed, run once over the first 27
+  CVs' transcripts. It cannot be regenerated from the current code and does not need to be.
+- `data/cv-extract/v<N>-run2/<id>.json` — a second run of version N over the held-out CVs, from
+  scratch (its own transcripts), kept so the report can say what changes between two runs.
+- `reports/cv-extract.json` — every kept version scored against the key: overall, tuned-on against
+  held-out, per group, per field, each wrong field with the reason, and the two-run comparison.
 
 ```
-pnpm --filter @opusfinder/eval run cv-extract fetch     # download the CVs (public, no key)
+pnpm --filter @opusfinder/eval run cv-extract fetch     # download the dataset CVs (public, no key), verify all checksums
 pnpm --filter @opusfinder/eval run cv-extract run       # extract with the current prompt (OpenRouter)
+pnpm --filter @opusfinder/eval run cv-extract run --repeat   # the held-out CVs a second time → v<N>-run2/
 pnpm --filter @opusfinder/eval run cv-extract score     # score every version, write the report
 pnpm --filter @opusfinder/eval run cv-extract review    # the key as a review sheet (data/reviews/)
+pnpm --filter @opusfinder/eval run cv-extract list      # the profile set's counts
 ```
+
+**Version 2 as committed:** 96.9% of fields right on the 27 tuned-on CVs (216/223), and on the 12
+held-out CVs 96.0% in the first run (97/101) and 98.0% in the second (99/101). Four of the 101
+held-out fields were right in one run and wrong in the other, so a single run's figure moves by a few
+points. Both runs missed a "U.S. citizen" note that sat in a two-column CV's contact line: the
+transcription drops contact lines, and the statement went with it.
 
 **The keys are drafted and not yet owner-checked**, so the committed report's numbers are provisional.
 Each key's `judgementCalls` lists where another reading of the CV is defensible; check those, and the
@@ -178,7 +240,11 @@ run on and, optionally, the quantisation:
 
 ```ts
 const { object, usage, host, servedModel } = await callModel({
-  route: { model: "deepseek/deepseek-v4.1-flash", hosts: ["deepinfra/fp8"], quantizations: ["fp8"] },
+  route: {
+    model: "deepseek/deepseek-v4.1-flash",
+    hosts: ["deepinfra/fp8"],
+    quantizations: ["fp8"],
+  },
   schema: MyZodSchema,
   system,
   messages: [{ role: "user", content }],

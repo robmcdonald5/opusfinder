@@ -1,0 +1,77 @@
+{
+  "summary": "Administrative professional with a background spanning executive administration, recruiting and admissions, and public-sector law enforcement. Has worked as an executive assistant to senior leaders in a college presidency, a marketing office, and a public relations firm, handling executive scheduling, travel, event planning, and expense and invoicing reporting. Recruited transfer and non-traditional students and built community college partnerships for a private liberal arts college. Also brings hospital switchboard and reception experience and prior sworn peace officer service with patrol and dispatch duties.",
+  "skills": [
+    "Executive calendar management",
+    "Travel coordination",
+    "Event planning",
+    "Expense reporting",
+    "Invoicing",
+    "Payroll processing",
+    "Correspondence management",
+    "Microsoft Office Suite",
+    "Email management",
+    "Desktop publishing",
+    "Switchboard operation",
+    "Public relations",
+    "Copywriting",
+    "Direct mail",
+    "Print advertising",
+    "Procedure development",
+    "Handbook creation",
+    "Office management",
+    "Student recruiting",
+    "Admissions counseling",
+    "Community partnership development",
+    "Human resources administration",
+    "Research",
+    "Proposal writing",
+    "Patrol operations",
+    "Dispatch operations",
+    "Patient and visitor reception"
+  ],
+  "targetRoles": [
+    "Recruiter",
+    "Admissions Counselor",
+    "Executive Assistant",
+    "Office Manager"
+  ],
+  "facts": {
+    "credentials": [
+      {
+        "name": "Illinois State Peace Officer certification",
+        "issuer": null,
+        "status": null,
+        "expires": null
+      }
+    ],
+    "education": [
+      {
+        "level": "other",
+        "field": "Business Communications",
+        "completed": true
+      },
+      {
+        "level": "other",
+        "field": "Counseling & Pastoral Care",
+        "completed": true
+      },
+      {
+        "level": "certificate",
+        "field": "Illinois State Peace Officer",
+        "completed": true
+      },
+      {
+        "level": "high_school",
+        "field": null,
+        "completed": true
+      }
+    ],
+    "yearsExperience": {
+      "total": null,
+      "byRoleFamily": []
+    },
+    "languages": [],
+    "workAuthorization": null
+  },
+  "extractVersion": 2
+}

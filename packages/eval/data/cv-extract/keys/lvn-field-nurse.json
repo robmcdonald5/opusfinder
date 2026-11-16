@@ -1,12 +1,5 @@
 {
   "id": "lvn-field-nurse",
-  "group": "healthcare-licensed",
-  "source": {
-    "dataset": "opensporks/resumes",
-    "revision": "ed4cb5f3fd1ce7e0a0e74e1a09c1a3b702c2c2eb",
-    "path": "data/data/HEALTHCARE/25834360.pdf",
-    "sha256": "d4dd217be0233d5eba9a749aaea173147babf997f50a29049b25bbb7f84f9365"
-  },
   "expected": {
     "summary": [["vocational nurse", "lvn", "nurse"]],
     "skills": [

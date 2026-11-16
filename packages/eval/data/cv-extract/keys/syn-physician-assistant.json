@@ -1,0 +1,87 @@
+{
+  "id": "syn-physician-assistant",
+  "heldOut": true,
+  "expected": {
+    "summary": [["physician assistant"]],
+    "skills": [
+      ["telemedicine", "telehealth", "virtual"],
+      ["suturing", "laceration", "splinting"]
+    ],
+    "targetRoles": ["physician assistant"],
+    "credentials": [
+      {
+        "match": [
+          "pa c",
+          "nccpa",
+          "physician assistant certified",
+          "certified physician assistant"
+        ],
+        "expires": "2027-12"
+      },
+      {
+        "match": ["physician assistant", "pa"],
+        "also": ["florida", "fl"],
+        "status": "active",
+        "expires": "2027-01"
+      },
+      {
+        "match": ["physician assistant", "pa"],
+        "also": ["georgia", "ga"],
+        "status": "active",
+        "expires": "2026-06"
+      },
+      {
+        "match": ["dea"],
+        "status": "active"
+      },
+      {
+        "match": ["acls", "advanced cardiac", "bls"],
+        "issuer": ["american heart association", "aha"]
+      },
+      {
+        "match": ["bls", "basic life support", "acls"],
+        "issuer": ["american heart association", "aha"],
+        "optional": true
+      }
+    ],
+    "education": [
+      {
+        "level": ["master"],
+        "field": ["physician assistant"]
+      },
+      {
+        "level": ["bachelor"],
+        "field": ["biology"]
+      }
+    ],
+    "years": [
+      {
+        "years": 9,
+        "slot": "total"
+      },
+      {
+        "years": 4,
+        "slot": "family"
+      }
+    ],
+    "languages": [
+      {
+        "match": ["english"],
+        "proficiency": ["native"]
+      },
+      {
+        "match": ["spanish"],
+        "proficiency": ["fluent"]
+      }
+    ],
+    "workAuthorization": ["u s citizen", "us citizen", "citizen"],
+    "forbidden": ["FQ1234563"]
+  },
+  "judgementCalls": [
+    "Synthetic CV, two-column layout: the licences are a table in the right column, and the citizenship statement is in the header's contact line.",
+    "'NCCPA, certified through 12/2027' is an expiry and states no status, although the summary says 'board-certified'.",
+    "The DEA registration is called 'current': status active. Its number must not be extracted.",
+    "'ACLS, BLS ... renewed 2025' may come out as one entry or two; a renewal date is neither a status nor an expiry.",
+    "The CME hours and the workshop under 'Continuing education' are not credentials."
+  ]
+}

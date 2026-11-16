@@ -1,0 +1,60 @@
+{
+  "id": "syn-cdl-driver",
+  "heldOut": true,
+  "expected": {
+    "summary": [["driver", "driving"]],
+    "skills": [["forklift"], ["flatbed", "tractor trailer", "dry van", "53 ft"]],
+    "targetRoles": ["driver"],
+    "credentials": [
+      {
+        "match": ["cdl", "commercial driver"]
+      },
+      {
+        "match": ["hazmat", "hazardous"],
+        "optional": true
+      },
+      {
+        "match": ["tanker"],
+        "optional": true
+      },
+      {
+        "match": ["doubles", "triples"],
+        "optional": true
+      },
+      {
+        "match": ["dot medical", "medical examiner", "medical card", "medical certificate"],
+        "expires": "2027-08"
+      },
+      {
+        "match": ["twic", "transportation worker identification"]
+      },
+      {
+        "match": ["forklift"]
+      }
+    ],
+    "education": [
+      {
+        "level": ["certificate", "other"],
+        "field": ["cdl", "truck driving", "class a", "commercial driving"]
+      },
+      {
+        "level": ["high_school"]
+      }
+    ],
+    "years": [
+      {
+        "years": 11,
+        "slot": "either"
+      }
+    ],
+    "languages": [],
+    "workAuthorization": null
+  },
+  "judgementCalls": [
+    "Synthetic CV, two-column layout: the licences are a table in the right column.",
+    "The three CDL endorsements may be part of the CDL entry or entries of their own.",
+    "Army service and an honorable discharge are not a work-authorisation statement.",
+    "The Safe Driver award is not a credential.",
+    "The CDL training programme is listed under Education: certificate, or other."
+  ]
+}

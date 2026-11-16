@@ -1,0 +1,82 @@
+{
+  "summary": "Bartender and server trainer with a background in banquet event captaining, fine-dining service, and direct sales management. Experienced in bar service, staff onboarding and training, and supervising service teams for private events, including coordinating event orders, venue setup, and communication between guests, servers, and kitchen staff. Earlier career includes in-home consultative sales, recruiting and interviewing large applicant pools, coaching sales representatives, and leading branch-level sales campaigns. Bilingual in English and Spanish, with coursework in neuroscience, biology, and psychology.",
+  "skills": [
+    "Bar service",
+    "Banquet event coordination",
+    "Private event supervision",
+    "Staff training",
+    "Server training",
+    "Cash handling",
+    "Inventory management",
+    "Cost control",
+    "Responsible alcohol service",
+    "Consultative sales",
+    "Customer acquisition",
+    "Referral generation",
+    "Objection handling",
+    "Sales reporting",
+    "Sales team development",
+    "Recruiting",
+    "Interviewing",
+    "Advertising strategy development",
+    "Market demographic analysis",
+    "Customer retention",
+    "Time management",
+    "Goal setting",
+    "Public speaking",
+    "Microsoft Word",
+    "Microsoft PowerPoint",
+    "Microsoft Excel",
+    "Microsoft Access",
+    "Microsoft Publisher",
+    "Microsoft OneNote",
+    "Web design"
+  ],
+  "targetRoles": [
+    "Bartender",
+    "Banquet Captain",
+    "Restaurant Server Trainer",
+    "Sales Manager"
+  ],
+  "facts": {
+    "credentials": [],
+    "education": [
+      {
+        "level": "bachelor",
+        "field": "Neuroscience",
+        "completed": true
+      },
+      {
+        "level": "bachelor",
+        "field": "Biology / Psychology",
+        "completed": true
+      },
+      {
+        "level": "high_school",
+        "field": "General with IB Studies",
+        "completed": true
+      },
+      {
+        "level": "bachelor",
+        "field": null,
+        "completed": false
+      }
+    ],
+    "yearsExperience": {
+      "total": null,
+      "byRoleFamily": []
+    },
+    "languages": [
+      {
+        "language": "English",
+        "proficiency": "bilingual"
+      },
+      {
+        "language": "Spanish",
+        "proficiency": "bilingual; fluent reading and writing"
+      }
+    ],
+    "workAuthorization": null
+  },
+  "extractVersion": 2
+}

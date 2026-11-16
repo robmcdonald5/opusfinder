@@ -1,12 +1,5 @@
 {
   "id": "cashier",
-  "group": "hourly-shift",
-  "source": {
-    "dataset": "opensporks/resumes",
-    "revision": "ed4cb5f3fd1ce7e0a0e74e1a09c1a3b702c2c2eb",
-    "path": "data/data/APPAREL/16391949.pdf",
-    "sha256": "a1ec6c0d6e2a542d375d601545534ae40c5aa149e8fce6837906c55d65557d8d"
-  },
   "expected": {
     "summary": [["cashier", "retail"]],
     "skills": [

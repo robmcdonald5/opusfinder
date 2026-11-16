@@ -1,0 +1,69 @@
+{
+  "summary": "Branch and operations manager with extensive banking and insurance claims experience, including about 26 years in banking across credit investigation, mortgage loan approval and branch management. Background also includes claims arbitration, subrogation supervision and church finance management with a $500,000 annual budget. Skilled in escalated customer service, financial reporting, cash operations, payroll administration and supervising teams of claims handlers. Holds a professional claims adjuster's licence and a bachelor's degree in psychology.",
+  "skills": [
+    "branch management",
+    "operations management",
+    "credit investigation",
+    "loan application review",
+    "mortgage compliance",
+    "commercial loan analysis",
+    "new business development",
+    "financial statements",
+    "financial reporting",
+    "budget management",
+    "accounting",
+    "payroll processing",
+    "cash receipts and disbursements",
+    "cash reconciliation",
+    "cash handling",
+    "claims arbitration",
+    "insurance claims handling",
+    "subrogation",
+    "settlement negotiation",
+    "customer service escalation",
+    "team supervision",
+    "staff coaching",
+    "report preparation",
+    "Microsoft Excel",
+    "Microsoft Word",
+    "adult education instruction"
+  ],
+  "targetRoles": [
+    "Branch Manager",
+    "Operations Manager",
+    "Claims Supervisor"
+  ],
+  "facts": {
+    "credentials": [
+      {
+        "name": "Professional Claims Adjuster's License",
+        "issuer": "University of Florida - Orlando, Florida",
+        "status": null,
+        "expires": null
+      }
+    ],
+    "education": [
+      {
+        "level": "bachelor",
+        "field": "Psychology",
+        "completed": true
+      }
+    ],
+    "yearsExperience": {
+      "total": null,
+      "byRoleFamily": [
+        {
+          "roleFamily": "accounting and business management (church)",
+          "years": 15
+        },
+        {
+          "roleFamily": "banking",
+          "years": 26
+        }
+      ]
+    },
+    "languages": [],
+    "workAuthorization": null
+  },
+  "extractVersion": 2
+}

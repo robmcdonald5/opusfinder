@@ -1,0 +1,74 @@
+{
+  "id": "syn-food-safety-manager",
+  "heldOut": true,
+  "expected": {
+    "summary": [["food safety"]],
+    "skills": [["haccp"], ["audit", "audits", "inspection", "inspections"]],
+    "targetRoles": ["food safety"],
+    "credentials": [
+      {
+        "match": ["rehs", "registered environmental health specialist"],
+        "issuer": ["neha", "national environmental health"],
+        "status": "active"
+      },
+      {
+        "match": [
+          "cp fs",
+          "certified professional in food safety",
+          "certified professional food safety"
+        ],
+        "issuer": ["neha", "national environmental health"]
+      },
+      {
+        "match": ["food protection"],
+        "issuer": ["nyc", "new york city", "department of health"]
+      },
+      {
+        "match": ["pcqi", "preventive controls"],
+        "status": "any",
+        "expires": "any",
+        "optional": true
+      }
+    ],
+    "education": [
+      {
+        "level": ["master"],
+        "field": ["public health", "environmental health"]
+      },
+      {
+        "level": ["bachelor"],
+        "field": ["food science"]
+      }
+    ],
+    "years": [
+      {
+        "years": 14,
+        "slot": "total"
+      },
+      {
+        "years": 6,
+        "slot": "family"
+      },
+      {
+        "years": 8,
+        "slot": "family"
+      }
+    ],
+    "languages": [
+      {
+        "match": ["english"]
+      },
+      {
+        "match": ["mandarin", "chinese"],
+        "proficiency": ["professional"]
+      }
+    ],
+    "workAuthorization": ["eligible to work", "without sponsorship"]
+  },
+  "judgementCalls": [
+    "Synthetic CV, sidebar-left layout: the credentials, languages and eligibility statement are in the sidebar.",
+    "Only the REHS is called 'active'.",
+    "PCQI is listed as a course, which by the rule is not a credential; it is also a recognised qualification, so it is allowed either way.",
+    "'14 years in the field: 6 as a county health inspector and 8 in multi-unit restaurant quality assurance' is a total and two scoped figures."
+  ]
+}

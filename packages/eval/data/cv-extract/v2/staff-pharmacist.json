@@ -1,0 +1,64 @@
+{
+  "summary": "Staff pharmacist with a Doctor of Pharmacy and nine years of retail pharmacy experience in a high-volume setting, managing ancillary staff and fulfilling more than 1,500 prescriptions weekly. Experienced in prescription dispensing and compounding, drug utilization review, drug interaction assessment, and counseling physicians and patients on dosing, side effects and OTC products. Maintains controlled-substance records and inventory, and manages insurance and reimbursement issues with HMOs and other payers. Brings a background in science and electronics engineering and seeks to build clinical experience in a hospital setting.",
+  "skills": [
+    "Prescription dispensing",
+    "Compounding",
+    "Drug interaction assessment",
+    "Drug utilization review",
+    "Clinical interventions",
+    "Patient counseling",
+    "Medication therapy management",
+    "Controlled substance recordkeeping",
+    "Pharmacy inventory management",
+    "Insurance billing and reimbursement",
+    "Pharmacy technician supervision",
+    "Pharmacy operations software",
+    "Microsoft Word",
+    "Microsoft Excel",
+    "Microsoft PowerPoint",
+    "Microsoft Access",
+    "Electronic prescription processing",
+    "Pharmaceutical research",
+    "Data analysis",
+    "Laboratory safety"
+  ],
+  "targetRoles": [
+    "Staff Pharmacist",
+    "Clinical Pharmacist",
+    "Hospital Pharmacist"
+  ],
+  "facts": {
+    "credentials": [
+      {
+        "name": "Pharmacist licence, Massachusetts",
+        "issuer": "Massachusetts Board of Pharmacy",
+        "status": null,
+        "expires": null
+      }
+    ],
+    "education": [
+      {
+        "level": "doctorate",
+        "field": "Pharmaceutics",
+        "completed": true
+      },
+      {
+        "level": "master",
+        "field": "Hardware Engineering",
+        "completed": true
+      }
+    ],
+    "yearsExperience": {
+      "total": 9,
+      "byRoleFamily": []
+    },
+    "languages": [
+      {
+        "language": "Russian",
+        "proficiency": null
+      }
+    ],
+    "workAuthorization": null
+  },
+  "extractVersion": 2
+}

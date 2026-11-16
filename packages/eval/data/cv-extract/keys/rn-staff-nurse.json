@@ -1,12 +1,5 @@
 {
   "id": "rn-staff-nurse",
-  "group": "healthcare-licensed",
-  "source": {
-    "dataset": "opensporks/resumes",
-    "revision": "ed4cb5f3fd1ce7e0a0e74e1a09c1a3b702c2c2eb",
-    "path": "data/data/AGRICULTURE/10953078.pdf",
-    "sha256": "969600d30c27d03a2c7c5632ff11aab6d47e0b342395da6b5156cc8e3afe8d15"
-  },
   "expected": {
     "summary": [["nurse", "nursing", "rn"]],
     "skills": [["wound care"], ["telemetry"], ["iv"]],

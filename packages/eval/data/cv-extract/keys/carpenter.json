@@ -1,12 +1,5 @@
 {
   "id": "carpenter",
-  "group": "hourly-shift",
-  "source": {
-    "dataset": "opensporks/resumes",
-    "revision": "ed4cb5f3fd1ce7e0a0e74e1a09c1a3b702c2c2eb",
-    "path": "data/data/CONSTRUCTION/20565849.pdf",
-    "sha256": "c906c971f03b5f7a27692f96098b520d4c6160715a36a5126f47f094c624d9f0"
-  },
   "expected": {
     "summary": [["carpenter", "carpentry"]],
     "skills": [

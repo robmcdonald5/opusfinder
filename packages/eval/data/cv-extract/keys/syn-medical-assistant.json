@@ -1,0 +1,63 @@
+{
+  "id": "syn-medical-assistant",
+  "heldOut": true,
+  "expected": {
+    "summary": [["medical assistant"]],
+    "skills": [
+      ["venipuncture", "phlebotomy", "blood draw", "blood draws"],
+      ["ekg", "electrocardiogram"]
+    ],
+    "targetRoles": ["medical assistant"],
+    "credentials": [
+      {
+        "match": ["certified medical assistant", "cma"],
+        "expires": "2028-03"
+      },
+      {
+        "match": ["phlebotomy technician", "cpt", "phlebotomy"],
+        "issuer": ["national healthcareer", "nha"]
+      },
+      {
+        "match": ["bls", "basic life support"],
+        "issuer": ["american heart association", "aha"],
+        "status": "active"
+      }
+    ],
+    "education": [
+      {
+        "level": ["certificate", "other"],
+        "field": ["medical assisting"]
+      },
+      {
+        "level": ["high_school"]
+      }
+    ],
+    "years": [
+      {
+        "years": 6,
+        "slot": "either"
+      }
+    ],
+    "languages": [
+      {
+        "match": ["english"],
+        "proficiency": ["native"]
+      },
+      {
+        "match": ["spanish"],
+        "proficiency": ["conversational"]
+      }
+    ],
+    "workAuthorization": [
+      "authorized to work in the united states",
+      "authorized to work in the us"
+    ],
+    "forbidden": ["2841937"]
+  },
+  "judgementCalls": [
+    "Synthetic CV, sidebar-left layout: the certifications, languages and work status are all in the sidebar.",
+    "'BLS ... (current)' is read as status active; the CMA's 'valid through 03/2028' is an expiry and states no status.",
+    "The Epic training and the OSHA bloodborne pathogens refresher under 'Training' are not credentials.",
+    "'Medical Assisting Diploma' from a technical institute is a non-degree programme: certificate, or other."
+  ]
+}

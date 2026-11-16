@@ -6,6 +6,10 @@
  *
  * Text is compared after lowercasing and replacing punctuation with spaces, and an alias matches when
  * its words appear in the text as whole words ("rn" matches "RN Staff Nurse", not "intern").
+ *
+ * Only some of the registry's CVs (./profile-set.ts) have a key. A key marked `heldOut` was drafted
+ * for a CV the extraction prompt had never been run on, and stays out of any prompt tuning: its score
+ * is the one that says how the prompt does on CVs it was not fitted to.
  */
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -19,8 +23,9 @@ import {
   type StructuredProfile,
 } from "@opusfinder/shared";
 
-export const CV_GROUPS = ["healthcare-licensed", "hourly-shift", "other-non-tech", "tech"] as const;
-export type CvGroup = (typeof CV_GROUPS)[number];
+import { CV_GROUPS, type CvEntry, type CvGroup } from "./profile-set";
+
+export { CV_GROUPS, type CvGroup };
 
 /** The fields a profile is scored on. `protected` is scored only for CVs whose key lists forbidden terms. */
 export const SCORED_FIELDS = [
@@ -87,16 +92,10 @@ const KeyLanguage = z.strictObject({
 });
 
 const CvKeySchema = z.strictObject({
+  /** The CV's id in the registry, which holds its group and where the file comes from. */
   id: z.string().regex(/^[a-z0-9-]+$/),
-  group: z.enum(CV_GROUPS),
-  /** Where the CV comes from: a file in a public Hugging Face dataset, pinned to one commit of it and
-   *  to the file's SHA-256, so every download is the same bytes. */
-  source: z.strictObject({
-    dataset: z.string(),
-    revision: z.string().regex(/^[0-9a-f]{40}$/),
-    path: z.string(),
-    sha256: z.string().regex(/^[0-9a-f]{64}$/),
-  }),
+  /** Drafted before the prompt was ever run on this CV, and never tuned against. */
+  heldOut: z.literal(true).optional(),
   expected: z.strictObject({
     /** Each inner list must be met by the summary: it contains one of the list's aliases. */
     summary: z.array(aliases),
@@ -116,10 +115,15 @@ const CvKeySchema = z.strictObject({
   /** What the owner should look at: the entries where another reading of the CV is defensible. */
   judgementCalls: z.array(z.string()),
 });
-export type CvKey = z.infer<typeof CvKeySchema>;
+/** A key together with its CV's registry entry. */
+export type CvKey = z.infer<typeof CvKeySchema> & CvEntry;
 
-/** Every key in `dir`, sorted by id. Throws on a malformed key, naming the file. */
-export function loadCvKeys(dir: string): CvKey[] {
+/**
+ * Every key in `dir`, sorted by id, joined to its CV in `registry`. Throws on a malformed key or one
+ * whose CV is not in the registry, naming the file.
+ */
+export function loadCvKeys(dir: string, registry: readonly CvEntry[]): CvKey[] {
+  const cvs = new Map(registry.map((cv) => [cv.id, cv]));
   const keys = readdirSync(dir)
     .filter((f) => f.endsWith(".json"))
     .sort()
@@ -128,7 +132,9 @@ export function loadCvKeys(dir: string): CvKey[] {
       if (!parsed.success) throw new Error(`${file}: ${z.prettifyError(parsed.error)}`);
       if (`${parsed.data.id}.json` !== file)
         throw new Error(`${file}: id "${parsed.data.id}" ≠ file name`);
-      return parsed.data;
+      const cv = cvs.get(parsed.data.id);
+      if (!cv) throw new Error(`${file}: no CV "${parsed.data.id}" in the registry`);
+      return { ...parsed.data, ...cv };
     });
   return keys;
 }
@@ -414,6 +420,10 @@ export interface ScoreSummary {
   byGroup: Record<CvGroup, Tally>;
   byField: Partial<Record<ScoredField, Tally>>;
   credentialsMentioned: Tally;
+  /** The CVs whose keys the prompt may have been tuned against. */
+  tuned: Tally;
+  /** The held-out CVs. */
+  heldOut: Tally;
 }
 
 /** Add up per-CV results into the totals a report shows. */
@@ -437,10 +447,13 @@ export function summarize(
     },
     byField: {},
     credentialsMentioned: tally(),
+    tuned: tally(),
+    heldOut: tally(),
   };
   for (const { key, profile, results } of scored) {
     for (const r of results) {
       add(summary.overall, r.correct);
+      add(key.heldOut ? summary.heldOut : summary.tuned, r.correct);
       add(FACT_FIELDS.includes(r.field) ? summary.factFields : summary.sharedFields, r.correct);
       add(summary.byGroup[key.group], r.correct);
       add((summary.byField[r.field] ??= tally()), r.correct);

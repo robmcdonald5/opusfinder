@@ -1,0 +1,60 @@
+{
+  "id": "staff-pharmacist",
+  "heldOut": true,
+  "expected": {
+    "summary": [["pharmacist", "pharmacy"]],
+    "skills": [
+      ["dispensing", "compounding", "prescription processing", "prescriptions"],
+      [
+        "drug interaction",
+        "drug interactions",
+        "drug utilization review",
+        "drug utilization reviews",
+        "clinical interventions",
+        "patient counseling",
+        "medication counseling",
+        "therapy management",
+        "patient care",
+        "inventory management",
+        "pharmacy inventory"
+      ]
+    ],
+    "targetRoles": ["pharmacist"],
+    "credentials": [
+      {
+        "match": ["pharmacist", "rph", "board of pharmacy", "pharmacy license", "pharmacy licence"],
+        "status": "any"
+      }
+    ],
+    "education": [
+      {
+        "level": ["doctorate"],
+        "field": ["pharmacy", "pharmaceutics"]
+      },
+      {
+        "level": ["master"],
+        "field": ["hardware engineering", "engineering"]
+      }
+    ],
+    "years": [
+      {
+        "years": 9,
+        "slot": "either"
+      }
+    ],
+    "languages": [
+      {
+        "match": ["russian"],
+        "optional": true
+      }
+    ],
+    "workAuthorization": null
+  },
+  "judgementCalls": [
+    "'In good standing with the Massachusetts Board of Pharmacy' (under Certifications) plus the Staff Pharmacist title is keyed as one required pharmacist licence; the issuer is not checked.",
+    "'In good standing' may be read as active or as no stated status, so the licence's status is not checked.",
+    "'Nine years of retail experience' is accepted as the total or as a role-family figure.",
+    "Russian is never listed as a language, only 'Translated pharmacy communications for Russian speaking customers'; a Russian entry is allowed but not required, and English is not allowed.",
+    "The clinical rotations are part of the PharmD, not separate education entries; the earlier 'Pharmacy technician' job title is not a credential."
+  ]
+}
